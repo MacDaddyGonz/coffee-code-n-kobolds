@@ -7,7 +7,12 @@ Two long-lived branches, both protected and neither deletable:
 | Branch | Purpose | How changes get in |
 | ------ | ------- | ------------------ |
 | `main` | Stable / released code | **Pull request from `dev` only** |
-| `dev`  | Integration branch, day-to-day work | Direct pushes and merges are fine |
+| `dev`  | Integration branch, day-to-day work | **Merge from a short-lived branch** |
+
+All work happens on a branch off `dev` — however small the change. Nothing is committed directly to
+`dev` or `main`.
+
+Branch prefixes: `feature/`, `fix/`, `chore/`, `docs/`.
 
 ```
 feature/xyz ──┐
@@ -35,7 +40,7 @@ git checkout -b feature/short-description
 # ... work ...
 
 git push -u origin feature/short-description
-# open a PR into dev, or merge locally and push dev directly
+# then merge into dev — locally or via a PR, either is fine
 ```
 
 ### Releasing to `main`
