@@ -7,6 +7,5 @@ import { v } from 'convex/values'
 export default defineSchema({
   pings: defineTable({
     name: v.string(),
-    at: v.number(),
   }),
 })
