@@ -48,3 +48,9 @@ coverage/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Convex
+# Note: convex/_generated/ is deliberately NOT ignored. Committing it keeps
+# `npm run build` and a fresh clone typechecking without running the Convex CLI
+# first. Convex regenerates it on every dev/deploy anyway.
+# The deployment URL and dev deploy key live in .env.local, covered by .env.* above.
