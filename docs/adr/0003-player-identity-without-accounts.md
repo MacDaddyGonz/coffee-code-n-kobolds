@@ -27,7 +27,7 @@ reproduce from memory.
 **A player is a seat at the table, and the seat is identified by the display name.**
 
 `players` rows are keyed within one game by `nameKey` — the display name trimmed,
-whitespace-collapsed, truncated to 40 characters and lowercased. `players.join` is idempotent on
+whitespace-collapsed and lowercased. `players.join` is idempotent on
 that key: if a seat with that key exists in that game it is returned, otherwise it is created. So
 `Mike`, `mike` and ` Mike ` are all the same person walking back in.
 
@@ -108,8 +108,8 @@ DM-gated: `characters.assign` (force a character onto a seat, taking it from who
 
 The principle: **the DM code gates forcing, destroying, and anything that reveals the DM code.**
 
-Seat operations — `join`, `rename`, `leave` — and the ordinary `characters.claim` / `release` are
-not gated. A seat is identified by a display name that anyone holding the join code can type, so
+Seat operations — `join`, `rename`, `leave` — and `characters.create` / `rename` / `claim` /
+`release` are not gated. A seat is identified by a display name that anyone holding the join code can type, so
 gating operations on seats would be theatre: it would inconvenience the DM without stopping anybody.
 `claim` refuses a character another seat already holds, which is contention handling rather than
 authorisation; `assign` is the same operation with the force to take it away, which is why *that*
@@ -125,6 +125,15 @@ SHA-256 of `salt:phrase` — never the phrase itself. `games.recoverDmCode` take
 the phrase, and on a match returns the DM code and moves the badge to the calling seat.
 `setRecoveryPhrase` rotates the salt as well as the hash, so the new stored value cannot be compared
 against the old one.
+
+Both `elevateDm` and `recoverDmCode` identify that seat by its id rather than by a display name.
+Taking a name would reintroduce the problem this ADR exists to avoid from the other end: a name held
+in client state goes stale the moment the seat is renamed, and the badge would land on a freshly
+created phantom seat under the old name.
+
+Join codes and DM codes come from `crypto.getRandomValues`, not `Math.random`. The no-lockout
+decision below rests on the codes being unguessable, so a seeded PRNG would quietly undercut the
+reasoning.
 
 Two things to be honest about:
 
@@ -170,11 +179,20 @@ Two things to be honest about:
 - **A player who renames changes their own identity key.** `players.rename` rewrites `nameKey`, so
   the browser must store the new name or the next visit creates a fresh, empty seat. The rename path
   handles this; anything else that changes a display name must too.
-- **Display names are truncated to 40 characters**, so two names differing only past that point
-  collapse onto one seat. Not a realistic problem, but it is a real property of the key.
 - **A stray seat is easy to create and only tidied by hand.** Typing a name that differs from last
   session leaves a duplicate in the roster holding no character. `players.leave` is ungated
   precisely so anyone can clear one up.
+- **Ungated means ungated.** Because `players.leave` is not gated, anyone holding the join code can
+  remove anyone's seat — including the DM's, mid-session. Likewise `characters.create` and
+  `characters.rename` are open to every player, so anyone can rename someone else's character.
+  Both follow from the principle above (only forcing and destroying are gated, and renaming is
+  neither) but they are worth naming rather than leaving to be discovered.
+- **Over-length names are rejected, not shortened.** An earlier draft truncated the display name
+  before keying on it. That was removed: truncation made two names differing only past the cut-off
+  collapse onto one seat, so the second player silently inherited the first's character, with
+  `rejoined: true` looking exactly like an ordinary cleared-cache return. An identity key may be
+  forgiving about the same person; it must never be forgiving about different people. The client
+  caps the field from the same constant, so the rejection is unreachable through the UI.
 
 ### If we add accounts later
 

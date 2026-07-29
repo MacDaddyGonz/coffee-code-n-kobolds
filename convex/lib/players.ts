@@ -3,7 +3,8 @@ import { ConvexError } from 'convex/values'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import { MAX_SEATS_PER_GAME } from './games'
-import { nameKeyFor, normaliseDisplayName } from './codes'
+import { MAX_DISPLAY_NAME_LENGTH, nameKeyFor } from './codes'
+import { requireText } from './names'
 
 /**
  * Take a seat at the table, by name.
@@ -13,19 +14,17 @@ import { nameKeyFor, normaliseDisplayName } from './codes'
  * name within one game, so "restore my session" and "join for the first time"
  * are the same call. A browser that has lost its storage rejoins by retyping
  * the same name, and its character claim is still there. See ADR 0003.
- *
- * Shared by `players.join`, `games.elevateDm` and `games.recoverDmCode` — a DM
- * arriving with a code needs a seat exactly like anyone else.
  */
 export async function joinSeat(
   ctx: MutationCtx,
   gameId: Id<'games'>,
   rawDisplayName: string,
 ): Promise<{ playerId: Id<'players'>; displayName: string; rejoined: boolean }> {
-  const displayName = normaliseDisplayName(rawDisplayName)
-  if (!displayName) {
-    throw new ConvexError({ kind: 'BadInput', message: 'Enter a display name.' })
-  }
+  const displayName = requireText(rawDisplayName, {
+    max: MAX_DISPLAY_NAME_LENGTH,
+    blank: 'Enter a display name.',
+    tooLong: `Keep your display name to ${MAX_DISPLAY_NAME_LENGTH} characters or fewer.`,
+  })
   const nameKey = nameKeyFor(displayName)
 
   const existing = await findSeatByName(ctx, gameId, nameKey)
@@ -36,6 +35,18 @@ export async function joinSeat(
       await ctx.db.patch('players', existing._id, { displayName })
     }
     return { playerId: existing._id, displayName, rejoined: true }
+  }
+
+  // The roster is read with a bound, so the write needs the matching one.
+  // Without it the newest arrivals fall outside the read window and vanish from
+  // the lobby while still holding their nameKey and their character claim — and
+  // moveDmBadgeTo could not see them either.
+  const seats = await listSeats(ctx, gameId)
+  if (seats.length >= MAX_SEATS_PER_GAME) {
+    throw new ConvexError({
+      kind: 'GameFull',
+      message: `This game already has ${MAX_SEATS_PER_GAME} seats.`,
+    })
   }
 
   const playerId = await ctx.db.insert('players', {

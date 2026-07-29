@@ -3,8 +3,17 @@ import { ConvexError, v } from 'convex/values'
 import { mutation, query } from './_generated/server'
 import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
 import { getCharacterInGame, listCharacters } from './lib/characters'
-import { findGameByCode, getGameByCode, requireDm } from './lib/games'
+import { MAX_CHARACTERS_PER_GAME, findGameByCode, getGameByCode, requireDm } from './lib/games'
+import { requireText } from './lib/names'
 import { findClaimHolder, getSeatInGame, listSeats, releaseClaimOn } from './lib/players'
+
+function requireCharacterName(raw: string): string {
+  return requireText(raw, {
+    max: MAX_CHARACTER_NAME_LENGTH,
+    blank: 'Give the character a name.',
+    tooLong: `Keep the character name to ${MAX_CHARACTER_NAME_LENGTH} characters or fewer.`,
+  })
+}
 
 const characterValidator = v.object({
   _id: v.id('characters'),
@@ -54,8 +63,18 @@ export const create = mutation({
   returns: v.object({ characterId: v.id('characters') }),
   handler: async (ctx, args) => {
     const game = await getGameByCode(ctx, args.code)
-    const name = args.name.trim().slice(0, MAX_CHARACTER_NAME_LENGTH)
-    if (!name) throw new ConvexError({ kind: 'BadInput', message: 'Give the character a name.' })
+    const name = requireCharacterName(args.name)
+
+    // The list is read with a bound, so the write needs the matching one — a
+    // character past the read window would be claimable but invisible, and the
+    // seat holding it would report a claim with no name against it.
+    const existing = await listCharacters(ctx, game._id)
+    if (existing.length >= MAX_CHARACTERS_PER_GAME) {
+      throw new ConvexError({
+        kind: 'GameFull',
+        message: `This game already has ${MAX_CHARACTERS_PER_GAME} characters.`,
+      })
+    }
 
     const characterId = await ctx.db.insert('characters', { gameId: game._id, name })
     return { characterId }
@@ -68,11 +87,7 @@ export const rename = mutation({
   handler: async (ctx, args) => {
     const game = await getGameByCode(ctx, args.code)
     const character = await getCharacterInGame(ctx, game._id, args.characterId)
-
-    const name = args.name.trim().slice(0, MAX_CHARACTER_NAME_LENGTH)
-    if (!name) throw new ConvexError({ kind: 'BadInput', message: 'Give the character a name.' })
-
-    await ctx.db.patch('characters', character._id, { name })
+    await ctx.db.patch('characters', character._id, { name: requireCharacterName(args.name) })
     return null
   },
 })

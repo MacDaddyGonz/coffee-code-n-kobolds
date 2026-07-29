@@ -144,15 +144,23 @@ export async function moveDmBadgeTo(ctx: MutationCtx, playerId: Doc<'players'>['
   const player = await ctx.db.get('players', playerId)
   if (!player) throw gameError('GameNotFound', 'That player is no longer in the game.')
 
+  // Grant before revoking. The seat list is read with a bound, and if the target
+  // ever fell outside that window a revoke-then-grant order would clear the old
+  // badge and never set the new one — leaving the game with no DM at all while
+  // reporting success. This order can at worst leave two badges briefly; it can
+  // never leave zero.
+  if (!player.isDm) {
+    await ctx.db.patch('players', playerId, { isDm: true })
+  }
+
   const seats = await ctx.db
     .query('players')
     .withIndex('by_gameId', (q) => q.eq('gameId', player.gameId))
     .take(MAX_SEATS_PER_GAME)
 
   for (const seat of seats) {
-    const shouldBeDm = seat._id === playerId
-    if (seat.isDm !== shouldBeDm) {
-      await ctx.db.patch('players', seat._id, { isDm: shouldBeDm })
+    if (seat._id !== playerId && seat.isDm) {
+      await ctx.db.patch('players', seat._id, { isDm: false })
     }
   }
 }

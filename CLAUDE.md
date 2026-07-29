@@ -52,6 +52,15 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    with a game code and a display name.
 6. **Keep uploads small.** Convex free tier gives 1 GB of file storage for maps, tokens, modal
    images and music. Downscale images on upload.
+7. **The DM code is the only thing that authorises anything.** A player is a seat identified by a
+   display name, so a `playerId` argument is routing, not proof of identity, and `players.isDm` is a
+   badge in the roster. DM-only queries and mutations take `dmCode` and re-verify it server-side
+   every time — see `requireDm` in `convex/lib/games.ts` and
+   [ADR 0003](docs/adr/0003-player-identity-without-accounts.md). Writing `if (player.isDm)` to
+   decide what data to send would defeat invariant 1 completely.
+8. **Give public queries a `returns:` validator.** Built from a projection like `publicGameValidator`
+   in `convex/lib/games.ts`, it makes Convex throw if a DM secret is ever added to a payload by
+   accident. That is what keeps invariant 1 mechanical rather than a thing to remember.
 
 ## Rules scope
 
@@ -65,7 +74,8 @@ inventory and movement-impairing conditions are **excluded by design**, not miss
 npm run dev          # Vite dev server (frontend)
 npm run dev:backend  # convex dev — watches convex/ and pushes to the dev deployment
 npm run build        # tsc --noEmit && vite build (same command CI runs)
-npm run lint         # typecheck only
+npm run lint         # typecheck only — both src/ and convex/
+npm test             # vitest run — the convex-test suites in convex/*.test.ts
 ```
 
 **Both `dev` and `dev:backend` need to be running** for local development — one serves the

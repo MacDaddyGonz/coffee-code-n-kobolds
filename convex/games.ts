@@ -4,14 +4,15 @@ import { mutation, query } from './_generated/server'
 import {
   DM_CODE_LENGTH,
   JOIN_CODE_LENGTH,
+  MAX_DISPLAY_NAME_LENGTH,
   MAX_GAME_NAME_LENGTH,
   MAX_RECOVERY_PHRASE_LENGTH,
   MIN_RECOVERY_PHRASE_LENGTH,
   generateCode,
   nameKeyFor,
-  normaliseDisplayName,
   normaliseRecoveryPhrase,
 } from './lib/codes'
+import { requireText } from './lib/names'
 import {
   findGameByCode,
   gameError,
@@ -24,7 +25,7 @@ import {
   recoveryPhraseMatches,
   requireDm,
 } from './lib/games'
-import { joinSeat } from './lib/players'
+import { getSeatInGame } from './lib/players'
 
 /**
  * The join code has to be unique. Nine attempts against a 31^6 space with a
@@ -32,6 +33,14 @@ import { joinSeat } from './lib/players'
  * a collision fails loudly rather than silently overwriting.
  */
 const CODE_ATTEMPTS = 9
+
+function requireGameName(raw: string): string {
+  return requireText(raw, {
+    max: MAX_GAME_NAME_LENGTH,
+    blank: 'Give the game a name.',
+    tooLong: `Keep the game name to ${MAX_GAME_NAME_LENGTH} characters or fewer.`,
+  })
+}
 
 export const create = mutation({
   args: {
@@ -41,11 +50,12 @@ export const create = mutation({
   },
   returns: v.object({ code: v.string(), dmCode: v.string() }),
   handler: async (ctx, args) => {
-    const name = args.name.trim().slice(0, MAX_GAME_NAME_LENGTH)
-    if (!name) throw new ConvexError({ kind: 'BadInput', message: 'Give the game a name.' })
-
-    const dmName = normaliseDisplayName(args.dmName)
-    if (!dmName) throw new ConvexError({ kind: 'BadInput', message: 'Enter your display name.' })
+    const name = requireGameName(args.name)
+    const dmName = requireText(args.dmName, {
+      max: MAX_DISPLAY_NAME_LENGTH,
+      blank: 'Enter your display name.',
+      tooLong: `Keep your display name to ${MAX_DISPLAY_NAME_LENGTH} characters or fewer.`,
+    })
 
     const phrase = normaliseRecoveryPhrase(args.recoveryPhrase)
     if (phrase.length < MIN_RECOVERY_PHRASE_LENGTH) {
@@ -121,13 +131,17 @@ export const getByCode = query({
  * DM-only call. This only keeps the roster honest about who is running things.
  */
 export const elevateDm = mutation({
-  args: { code: v.string(), dmCode: v.string(), displayName: v.string() },
-  returns: v.object({ playerId: v.id('players') }),
+  args: { code: v.string(), dmCode: v.string(), playerId: v.id('players') },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const game = await requireDm(ctx, args.code, args.dmCode)
-    const { playerId } = await joinSeat(ctx, game._id, args.displayName)
-    await moveDmBadgeTo(ctx, playerId)
-    return { playerId }
+    // Takes the seat id rather than a display name: the caller is already seated
+    // by the time it can ask for the badge, and a name held in client state goes
+    // stale the moment that seat is renamed — which would badge a brand new
+    // phantom seat under the old name instead of the caller.
+    const seat = await getSeatInGame(ctx, game._id, args.playerId)
+    await moveDmBadgeTo(ctx, seat._id)
+    return null
   },
 })
 
@@ -140,16 +154,16 @@ export const elevateDm = mutation({
  * worse outcome than brute force against a code nobody can enumerate.
  */
 export const recoverDmCode = mutation({
-  args: { code: v.string(), recoveryPhrase: v.string(), displayName: v.string() },
-  returns: v.object({ dmCode: v.string(), playerId: v.id('players') }),
+  args: { code: v.string(), recoveryPhrase: v.string(), playerId: v.id('players') },
+  returns: v.object({ dmCode: v.string() }),
   handler: async (ctx, args) => {
     const game = await getGameByCode(ctx, args.code)
     if (!(await recoveryPhraseMatches(game, args.recoveryPhrase))) {
       throw gameError('BadRecoveryPhrase', 'That recovery phrase does not match.')
     }
-    const { playerId } = await joinSeat(ctx, game._id, args.displayName)
-    await moveDmBadgeTo(ctx, playerId)
-    return { dmCode: game.dmCode, playerId }
+    const seat = await getSeatInGame(ctx, game._id, args.playerId)
+    await moveDmBadgeTo(ctx, seat._id)
+    return { dmCode: game.dmCode }
   },
 })
 
@@ -185,9 +199,7 @@ export const rename = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const game = await requireDm(ctx, args.code, args.dmCode)
-    const name = args.name.trim().slice(0, MAX_GAME_NAME_LENGTH)
-    if (!name) throw new ConvexError({ kind: 'BadInput', message: 'Give the game a name.' })
-    await ctx.db.patch('games', game._id, { name })
+    await ctx.db.patch('games', game._id, { name: requireGameName(args.name) })
     return null
   },
 })

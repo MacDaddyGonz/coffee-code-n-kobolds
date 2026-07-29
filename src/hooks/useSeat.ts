@@ -18,8 +18,11 @@ export type SeatStatus =
   | 'loadingGame'
   /** The code in the URL matches no game. */
   | 'noSuchGame'
+  /** A remembered name is being rejoined silently. No gate — this is a returning browser. */
+  | 'restoring'
   /** Game exists, but this browser does not know which seat it is. Show the gate. */
   | 'needsName'
+  /** The player typed a name and we are taking the seat. */
   | 'joining'
   | 'seated'
   | 'error'
@@ -55,6 +58,14 @@ export function useSeat(code: string): Seat {
   const [error, setError] = useState<string | null>(null)
   const [joining, setJoining] = useState(false)
 
+  // Whether a remembered name is waiting to be auto-joined. Without this the
+  // gate flashes for a frame on arrival: the effect has not run yet, so there is
+  // no playerId and nothing in flight, which otherwise reads as "we need a
+  // name". Cleared once the seat resolves, or when the player leaves on purpose.
+  const [autoJoinPending, setAutoJoinPending] = useState(
+    () => getDisplayNameForGame(code) !== null,
+  )
+
   const takeSeat = useCallback(
     async (name: string) => {
       setJoining(true)
@@ -68,6 +79,7 @@ export function useSeat(code: string): Seat {
         setError(errorMessage(thrown, 'Could not join that game.'))
       } finally {
         setJoining(false)
+        setAutoJoinPending(false)
       }
     },
     [code, join],
@@ -80,7 +92,10 @@ export function useSeat(code: string): Seat {
   useEffect(() => {
     if (!game || playerId) return
     const remembered = getDisplayNameForGame(code)
-    if (!remembered) return
+    if (!remembered) {
+      setAutoJoinPending(false)
+      return
+    }
     if (autoJoinedFor.current === code) return
     autoJoinedFor.current = code
     void takeSeat(remembered)
@@ -88,6 +103,9 @@ export function useSeat(code: string): Seat {
 
   const leaveSeat = useCallback(async () => {
     if (!playerId) return
+    // Cleared first so a second identical failure is still a state change, and
+    // therefore still reaches whoever is watching `error` to report it.
+    setError(null)
     try {
       await leave({ code, playerId })
     } catch (thrown) {
@@ -98,14 +116,16 @@ export function useSeat(code: string): Seat {
     autoJoinedFor.current = null
     setPlayerId(null)
     setDisplayName(null)
+    setAutoJoinPending(false)
   }, [code, leave, playerId])
 
   const status: SeatStatus = (() => {
     if (game === undefined) return 'loadingGame'
     if (game === null) return 'noSuchGame'
     if (playerId) return 'seated'
-    if (joining) return 'joining'
     if (error) return 'error'
+    if (autoJoinPending) return 'restoring'
+    if (joining) return 'joining'
     return 'needsName'
   })()
 

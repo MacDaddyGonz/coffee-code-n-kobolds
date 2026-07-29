@@ -19,15 +19,28 @@ export const MAX_GAME_NAME_LENGTH = 60
 export const MAX_CHARACTER_NAME_LENGTH = 40
 
 /**
- * `Math.random` is seeded per execution in Convex and is fine inside a
- * mutation. Codes are not secrets in the cryptographic sense — the DM code's
- * job is to stop a player who already has the join code from picking up DM
- * powers by accident, not to withstand an attack.
+ * Drawn from `crypto.getRandomValues`, not `Math.random`.
+ *
+ * The DM code is the app's only authorisation primitive, and ADR 0003 accepts
+ * having no lockout on recovery attempts specifically because these codes cannot
+ * be enumerated. A seeded PRNG would undercut that reasoning, so the generator
+ * has to be the real thing — it costs nothing here.
+ *
+ * Bytes at or above the largest whole multiple of the alphabet length are
+ * discarded rather than folded with `%`, which would otherwise bias the result
+ * toward the first eight letters of the alphabet.
  */
 export function generateCode(length: number): string {
+  const ceiling = Math.floor(256 / CODE_ALPHABET.length) * CODE_ALPHABET.length
   let out = ''
-  for (let i = 0; i < length; i += 1) {
-    out += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]
+  while (out.length < length) {
+    const bytes = new Uint8Array(length)
+    crypto.getRandomValues(bytes)
+    for (const byte of bytes) {
+      if (out.length === length) break
+      if (byte >= ceiling) continue
+      out += CODE_ALPHABET[byte % CODE_ALPHABET.length]
+    }
   }
   return out
 }
@@ -50,8 +63,20 @@ export function isCompleteJoinCode(code: string): boolean {
 }
 
 /** Trims and collapses runs of whitespace. Keeps the casing the player typed. */
+export function collapseWhitespace(raw: string): string {
+  return raw.trim().replace(/\s+/g, ' ')
+}
+
+/**
+ * Deliberately does NOT truncate. Over-length names are rejected server-side by
+ * `requireText` instead, because `nameKey` is the identity key: two players
+ * whose names differ only past a cut-off would silently land on the same seat,
+ * and the second would inherit the first's character with `rejoined: true`
+ * looking exactly like an ordinary cleared-cache rejoin. Slicing also cuts
+ * surrogate pairs in half and stores invalid UTF-16. See ADR 0003.
+ */
 export function normaliseDisplayName(raw: string): string {
-  return raw.trim().replace(/\s+/g, ' ').slice(0, MAX_DISPLAY_NAME_LENGTH)
+  return collapseWhitespace(raw)
 }
 
 /**

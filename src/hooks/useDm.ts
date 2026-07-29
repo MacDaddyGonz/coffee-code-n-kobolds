@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useMutation } from 'convex/react'
 
 import { api } from '@convex/_generated/api'
+import type { Id } from '@convex/_generated/dataModel'
 import { errorMessage } from '@/lib/errors'
 import { forgetDmCode, getDmCode, rememberDmCode } from '@/lib/session'
 
@@ -14,9 +15,9 @@ export type Dm = {
    */
   dmCode: string | null
   /** Verify a pasted DM code and take the badge. Returns an error message or null. */
-  elevate: (dmCode: string, displayName: string) => Promise<string | null>
+  elevate: (dmCode: string) => Promise<string | null>
   /** Exchange the recovery phrase for the DM code. Returns an error message or null. */
-  recover: (recoveryPhrase: string, displayName: string) => Promise<string | null>
+  recover: (recoveryPhrase: string) => Promise<string | null>
   /** Forget the cached code on this browser. Does not change the game. */
   standDown: () => void
 }
@@ -28,17 +29,22 @@ export type Dm = {
  * DM-only call. Losing browser storage therefore costs DM powers until the code
  * is pasted again — or exchanged for, with the recovery phrase. That is the
  * whole recovery story, and it is why `isDm` here is a UI concern only.
+ *
+ * Takes the seat id rather than its display name: a name held in client state is
+ * stale the moment the seat is renamed, and the badge would land on a phantom
+ * seat under the old name instead of this one.
  */
-export function useDm(code: string, displayName: string | null): Dm {
+export function useDm(code: string, playerId: Id<'players'> | null): Dm {
   const elevateDm = useMutation(api.games.elevateDm)
   const recoverDmCode = useMutation(api.games.recoverDmCode)
 
   const [dmCode, setDmCode] = useState<string | null>(null)
 
   const elevate = useCallback(
-    async (candidate: string, name: string) => {
+    async (candidate: string) => {
+      if (!playerId) return 'Take a seat before claiming the DM badge.'
       try {
-        await elevateDm({ code, dmCode: candidate, displayName: name })
+        await elevateDm({ code, dmCode: candidate, playerId })
       } catch (thrown) {
         return errorMessage(thrown, 'That DM code was not accepted.')
       }
@@ -46,13 +52,14 @@ export function useDm(code: string, displayName: string | null): Dm {
       setDmCode(candidate)
       return null
     },
-    [code, elevateDm],
+    [code, elevateDm, playerId],
   )
 
   const recover = useCallback(
-    async (recoveryPhrase: string, name: string) => {
+    async (recoveryPhrase: string) => {
+      if (!playerId) return 'Take a seat before recovering the DM code.'
       try {
-        const result = await recoverDmCode({ code, recoveryPhrase, displayName: name })
+        const result = await recoverDmCode({ code, recoveryPhrase, playerId })
         rememberDmCode(code, result.dmCode)
         setDmCode(result.dmCode)
         return null
@@ -60,7 +67,7 @@ export function useDm(code: string, displayName: string | null): Dm {
         return errorMessage(thrown, 'That recovery phrase was not accepted.')
       }
     },
-    [code, recoverDmCode],
+    [code, recoverDmCode, playerId],
   )
 
   // Re-present a cached code once we know which seat we are, so the badge lands
@@ -68,16 +75,16 @@ export function useDm(code: string, displayName: string | null): Dm {
   // rejects is dropped rather than kept around failing quietly.
   const restoredFor = useRef<string | null>(null)
   useEffect(() => {
-    if (!displayName || dmCode) return
+    if (!playerId || dmCode) return
     const cached = getDmCode(code)
     if (!cached) return
     if (restoredFor.current === code) return
     restoredFor.current = code
     void (async () => {
-      const failure = await elevate(cached, displayName)
+      const failure = await elevate(cached)
       if (failure) forgetDmCode(code)
     })()
-  }, [code, displayName, dmCode, elevate])
+  }, [code, playerId, dmCode, elevate])
 
   const standDown = useCallback(() => {
     forgetDmCode(code)

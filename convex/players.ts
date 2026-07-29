@@ -1,7 +1,8 @@
 import { ConvexError, v } from 'convex/values'
 
 import { mutation, query } from './_generated/server'
-import { nameKeyFor, normaliseDisplayName } from './lib/codes'
+import { MAX_DISPLAY_NAME_LENGTH, nameKeyFor } from './lib/codes'
+import { requireText } from './lib/names'
 import { findGameByCode, getGameByCode } from './lib/games'
 import { findSeatByName, getSeatInGame, joinSeat, listSeats } from './lib/players'
 import { listCharacters } from './lib/characters'
@@ -95,10 +96,11 @@ export const rename = mutation({
     const game = await getGameByCode(ctx, args.code)
     const seat = await getSeatInGame(ctx, game._id, args.playerId)
 
-    const displayName = normaliseDisplayName(args.displayName)
-    if (!displayName) {
-      throw new ConvexError({ kind: 'BadInput', message: 'Enter a display name.' })
-    }
+    const displayName = requireText(args.displayName, {
+      max: MAX_DISPLAY_NAME_LENGTH,
+      blank: 'Enter a display name.',
+      tooLong: `Keep your display name to ${MAX_DISPLAY_NAME_LENGTH} characters or fewer.`,
+    })
 
     const nameKey = nameKeyFor(displayName)
     const clash = await findSeatByName(ctx, game._id, nameKey)

@@ -13,6 +13,7 @@ import type * as games from "../games.js";
 import type * as lib_characters from "../lib/characters.js";
 import type * as lib_codes from "../lib/codes.js";
 import type * as lib_games from "../lib/games.js";
+import type * as lib_names from "../lib/names.js";
 import type * as lib_players from "../lib/players.js";
 import type * as players from "../players.js";
 
@@ -28,6 +29,7 @@ declare const fullApi: ApiFromModules<{
   "lib/characters": typeof lib_characters;
   "lib/codes": typeof lib_codes;
   "lib/games": typeof lib_games;
+  "lib/names": typeof lib_names;
   "lib/players": typeof lib_players;
   players: typeof players;
 }>;

@@ -1,12 +1,18 @@
-import type { Id } from '@convex/_generated/dataModel'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { useQuery } from 'convex/react'
+
+import { DmBar } from '@/components/lobby/dm/DmBar'
 import type { Dm } from '@/hooks/useDm'
+import { api } from '@convex/_generated/api'
+import type { Id } from '@convex/_generated/dataModel'
+import { LobbyCharacters } from './LobbyCharacters'
+import { LobbyRoster } from './LobbyRoster'
 
 export type LobbyProps = {
   code: string
   playerId: Id<'players'>
-  displayName: string
   dm: Dm
+  /** Give up this seat and drop back to the name gate. Owned by useSeat. */
+  onLeaveSeat: () => Promise<void>
 }
 
 /**
@@ -20,17 +26,25 @@ export type LobbyProps = {
  * a seat, remove a seat, delete a character), shown only when `dm.isDm`, and
  * passing `dm.dmCode` to the mutations that require it. Renders <DmBar> for the
  * game-level DM controls.
- *
- * TODO(wave-2): implement against the props above.
  */
-export function Lobby(_props: LobbyProps) {
+export function Lobby({ code, playerId, dm, onLeaveSeat }: LobbyProps) {
+  const seats = useQuery(api.players.list, { code })
+  const characters = useQuery(api.characters.list, { code })
+
+  // The roster takes the character list too: the DM's assign dialog picks from
+  // it, and a third subscription for the same rows would buy nothing.
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Lobby</CardTitle>
-        <CardDescription>Who is here and what they are playing.</CardDescription>
-      </CardHeader>
-      <CardContent className="text-muted-foreground text-sm">Not built yet.</CardContent>
-    </Card>
+    <div className="flex flex-col gap-6">
+      <DmBar code={code} dm={dm} />
+      <LobbyRoster
+        code={code}
+        playerId={playerId}
+        seats={seats}
+        characters={characters}
+        dm={dm}
+        onLeaveSeat={onLeaveSeat}
+      />
+      <LobbyCharacters code={code} playerId={playerId} characters={characters} dm={dm} />
+    </div>
   )
 }

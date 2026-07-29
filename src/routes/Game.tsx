@@ -1,4 +1,6 @@
+import { useEffect } from 'react'
 import { Link, useParams } from 'react-router'
+import { toast } from 'sonner'
 
 import { CopyButton } from '@/components/CopyButton'
 import { Lobby } from '@/components/lobby/Lobby'
@@ -19,9 +21,17 @@ export default function Game() {
   const code = normaliseJoinCode(params.code ?? '')
 
   const seat = useSeat(code)
-  const dm = useDm(code, seat.displayName)
+  const dm = useDm(code, seat.playerId)
 
-  if (seat.status === 'loadingGame') {
+  // leaveSeat reports failure by setting seat.error instead of rejecting, and a
+  // failed leave keeps us seated — so the lobby would show nothing at all.
+  useEffect(() => {
+    if (seat.status === 'seated' && seat.error) toast.error(seat.error)
+  }, [seat.error, seat.status])
+
+  // 'restoring' is a returning browser rejoining a remembered name. It gets the
+  // skeleton rather than the name gate, because it was never asked a question.
+  if (seat.status === 'loadingGame' || seat.status === 'restoring') {
     return (
       <Shell>
         <Skeleton className="h-8 w-64" />
@@ -66,7 +76,7 @@ export default function Game() {
       </header>
 
       {seat.status === 'seated' ? (
-        <Lobby code={code} playerId={seat.playerId!} displayName={seat.displayName!} dm={dm} />
+        <Lobby code={code} playerId={seat.playerId!} dm={dm} onLeaveSeat={seat.leaveSeat} />
       ) : (
         <NameGate
           code={code}
