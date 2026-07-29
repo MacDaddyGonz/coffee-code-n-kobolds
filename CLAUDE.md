@@ -3,7 +3,8 @@
 Browser-based virtual tabletop for playing D&D Lite. Desktop browsers only — no mobile layouts, no
 SSR, no SEO.
 
-Spec: [docs/requirements.md](docs/requirements.md). Decisions: [docs/adr/](docs/adr/).
+Spec: [docs/requirements.md](docs/requirements.md). Build order:
+[docs/roadmap.md](docs/roadmap.md). Decisions: [docs/adr/](docs/adr/).
 
 ## Branching — always work on a branch
 

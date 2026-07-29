@@ -17,7 +17,8 @@ complexity neither of them lets you skip.
   speed, one action + one bonus action + one reaction per turn, no inventory, no movement-impairing
   conditions.
 
-Full spec: [docs/requirements.md](docs/requirements.md).
+Full spec: [docs/requirements.md](docs/requirements.md). Build order:
+[docs/roadmap.md](docs/roadmap.md).
 
 ## Status
 
