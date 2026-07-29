@@ -21,8 +21,9 @@ Full spec: [docs/requirements.md](docs/requirements.md).
 
 ## Status
 
-🚧 **Pre-alpha.** Requirements are captured and the stack is chosen. No application code yet —
-scaffolding is the next step.
+🚧 **Pre-alpha.** Scaffolded and deploying, but there is no game yet. The app currently renders a
+live-sync smoke test — two browser tabs sharing state through Convex — which exists to prove the
+build and deploy pipeline end to end. Game features start landing on top of it next.
 
 **v1 scope note:** there are no user accounts. You join a game with a game code and a display name,
 and characters live inside the game rather than against a user. This is a deliberate deviation from
@@ -36,7 +37,7 @@ the requirements — see [ADR 0002](docs/adr/0002-defer-user-accounts.md).
 | Backend, database, realtime, file storage | [Convex](https://convex.dev) |
 | Map canvas | react-konva |
 | 3D dice | @3d-dice/dice-box |
-| Styling / components | Tailwind + shadcn/ui |
+| Styling / components | Tailwind (shadcn/ui to be added with the first real screen) |
 | Hosting | GitHub Pages, deployed via GitHub Actions |
 
 One external service, no servers, $0/month. The reasoning — and the alternatives rejected, including
@@ -48,9 +49,30 @@ the client.
 
 ## Getting started
 
-Nothing to run yet. Setup instructions land here once the project is scaffolded.
+Requires Node.js 24+.
 
-Decisions made so far are recorded in [docs/adr/](docs/adr/).
+```bash
+npm install
+npx convex dev     # first run only: signs in and provisions your dev deployment
+```
+
+After that, local development needs **two terminals**:
+
+```bash
+npm run dev          # Vite dev server → http://localhost:5173/coffee-code-n-kobolds/
+npm run dev:backend  # convex dev — watches convex/ and syncs functions
+```
+
+`npm run dev:backend` writes `.env.local`, which supplies the `VITE_CONVEX_URL` the frontend needs —
+so the frontend will not start cleanly until it has run at least once.
+
+```bash
+npm run build   # tsc --noEmit && vite build — the same command CI runs
+npm run lint    # typecheck only
+```
+
+Deploys happen automatically on push to `main`. Decisions made so far are recorded in
+[docs/adr/](docs/adr/).
 
 ## Contributing
 
