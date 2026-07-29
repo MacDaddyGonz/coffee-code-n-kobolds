@@ -6,19 +6,18 @@ import type { LobbyCharacter } from './lobbyTypes'
 
 type LobbyCharacterDmActionsProps = {
   character: LobbyCharacter
-  dmCode: string
   busy: boolean
-  pending: string | null
+  /** True while this character's delete is the call in flight. */
+  removing: boolean
   onRename: () => void
-  onRemove: (character: LobbyCharacter, dmCode: string) => Promise<boolean>
+  onRemove: () => Promise<boolean>
 }
 
 /** Rename and delete, shown per character only to an elevated DM. */
 export function LobbyCharacterDmActions({
   character,
-  dmCode,
   busy,
-  pending,
+  removing,
   onRename,
   onRemove,
 }: LobbyCharacterDmActionsProps) {
@@ -54,8 +53,8 @@ export function LobbyCharacterDmActions({
           'character. There is no undo.'
         }
         confirmLabel={`Delete ${character.name}`}
-        busy={pending === `remove:${character._id}`}
-        onConfirm={() => onRemove(character, dmCode)}
+        busy={removing}
+        onConfirm={onRemove}
       />
     </>
   )

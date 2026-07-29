@@ -2,6 +2,7 @@ import { useId, useState } from 'react'
 import { useMutation } from 'convex/react'
 import { toast } from 'sonner'
 
+import { FieldError } from '@/components/FieldError'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -19,7 +20,7 @@ import { api } from '@convex/_generated/api'
 import {
   MAX_RECOVERY_PHRASE_LENGTH,
   MIN_RECOVERY_PHRASE_LENGTH,
-  normaliseRecoveryPhrase,
+  recoveryPhraseProblem,
 } from '@convex/lib/codes'
 
 type RecoveryPhraseDialogProps = {
@@ -31,9 +32,9 @@ type RecoveryPhraseDialogProps = {
  * Replaces the phrase that exchanges for the DM code.
  *
  * The old phrase is not asked for: holding the DM code is already the stronger
- * credential, and the server checks it. Validation mirrors the server's — same
- * minimum, measured on the same normalised form — so the two never disagree
- * about whether a phrase is long enough.
+ * credential, and the server checks it. Validation goes through
+ * `recoveryPhraseProblem`, the same rules the mutation applies, so the two never
+ * disagree about whether a phrase is long enough.
  */
 export function RecoveryPhraseDialog({ code, dmCode }: RecoveryPhraseDialogProps) {
   const setRecoveryPhrase = useMutation(api.games.setRecoveryPhrase)
@@ -57,12 +58,9 @@ export function RecoveryPhraseDialog({ code, dmCode }: RecoveryPhraseDialogProps
     event.preventDefault()
     if (busy) return
 
-    if (normaliseRecoveryPhrase(phrase).length < MIN_RECOVERY_PHRASE_LENGTH) {
-      setError(`The recovery phrase needs at least ${MIN_RECOVERY_PHRASE_LENGTH} characters.`)
-      return
-    }
-    if (normaliseRecoveryPhrase(confirm) !== normaliseRecoveryPhrase(phrase)) {
-      setError('Those two phrases are not the same.')
+    const problem = recoveryPhraseProblem(phrase, confirm)
+    if (problem) {
+      setError(problem.message)
       return
     }
 
@@ -123,11 +121,7 @@ export function RecoveryPhraseDialog({ code, dmCode }: RecoveryPhraseDialogProps
               disabled={busy}
             />
           </div>
-          {error ? (
-            <p role="alert" className="text-destructive text-sm">
-              {error}
-            </p>
-          ) : null}
+          <FieldError message={error} />
           <DialogFooter>
             <Button
               type="button"

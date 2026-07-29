@@ -1,19 +1,10 @@
 import { ConvexError, v } from 'convex/values'
 
 import { mutation, query } from './_generated/server'
-import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
 import { getCharacterInGame, listCharacters } from './lib/characters'
 import { MAX_CHARACTERS_PER_GAME, findGameByCode, getGameByCode, requireDm } from './lib/games'
-import { requireText } from './lib/names'
+import { requireCharacterName } from './lib/names'
 import { findClaimHolder, getSeatInGame, listSeats, releaseClaimOn } from './lib/players'
-
-function requireCharacterName(raw: string): string {
-  return requireText(raw, {
-    max: MAX_CHARACTER_NAME_LENGTH,
-    blank: 'Give the character a name.',
-    tooLong: `Keep the character name to ${MAX_CHARACTER_NAME_LENGTH} characters or fewer.`,
-  })
-}
 
 const characterValidator = v.object({
   _id: v.id('characters'),
@@ -39,18 +30,17 @@ export const list = query({
       seats.filter((seat) => seat.characterId).map((seat) => [seat.characterId!, seat]),
     )
 
-    return characters
-      .map((character) => {
-        const holder = holderByCharacter.get(character._id) ?? null
-        return {
-          _id: character._id,
-          name: character.name,
-          claimedByPlayerId: holder?._id ?? null,
-          claimedByName: holder?.displayName ?? null,
-          createdAt: character._creationTime,
-        }
-      })
-      .sort((a, b) => a.createdAt - b.createdAt)
+    // Characters arrive oldest-first: Convex appends _creationTime to every index.
+    return characters.map((character) => {
+      const holder = holderByCharacter.get(character._id) ?? null
+      return {
+        _id: character._id,
+        name: character.name,
+        claimedByPlayerId: holder?._id ?? null,
+        claimedByName: holder?.displayName ?? null,
+        createdAt: character._creationTime,
+      }
+    })
   },
 })
 

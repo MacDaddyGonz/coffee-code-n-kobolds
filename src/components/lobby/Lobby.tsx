@@ -11,6 +11,8 @@ export type LobbyProps = {
   code: string
   playerId: Id<'players'>
   dm: Dm
+  /** Rename this seat, storage included. Owned by useSeat. */
+  onRenameSeat: (displayName: string) => Promise<void>
   /** Give up this seat and drop back to the name gate. Owned by useSeat. */
   onLeaveSeat: () => Promise<void>
 }
@@ -23,11 +25,11 @@ export type LobbyProps = {
  * refresh. That is the milestone's headline acceptance test.
  *
  * Owns the per-seat and per-character DM affordances too (assign a character to
- * a seat, remove a seat, delete a character), shown only when `dm.isDm`, and
- * passing `dm.dmCode` to the mutations that require it. Renders <DmBar> for the
- * game-level DM controls.
+ * a seat, remove a seat, delete a character), shown only when this browser holds
+ * a `dm.dmCode`, and passing it to the mutations that require it. Renders
+ * <DmBar> for the game-level DM controls.
  */
-export function Lobby({ code, playerId, dm, onLeaveSeat }: LobbyProps) {
+export function Lobby({ code, playerId, dm, onRenameSeat, onLeaveSeat }: LobbyProps) {
   const seats = useQuery(api.players.list, { code })
   const characters = useQuery(api.characters.list, { code })
 
@@ -42,6 +44,7 @@ export function Lobby({ code, playerId, dm, onLeaveSeat }: LobbyProps) {
         seats={seats}
         characters={characters}
         dm={dm}
+        onRenameSeat={onRenameSeat}
         onLeaveSeat={onLeaveSeat}
       />
       <LobbyCharacters code={code} playerId={playerId} characters={characters} dm={dm} />

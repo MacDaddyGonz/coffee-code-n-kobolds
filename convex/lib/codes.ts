@@ -62,6 +62,17 @@ export function isCompleteJoinCode(code: string): boolean {
   return normaliseJoinCode(code).length === JOIN_CODE_LENGTH
 }
 
+/**
+ * The whole of what the server forgives in a DM code: case and surrounding
+ * whitespace. Deliberately *not* `normaliseJoinCode` — dropping out-of-alphabet
+ * characters would silently accept a code with whitespace or punctuation through
+ * the middle of it, and the check on the app's only bearer secret should not be
+ * that generous. The join field is more forgiving on purpose; this is not.
+ */
+export function normaliseDmCode(raw: string): string {
+  return raw.trim().toUpperCase()
+}
+
 /** Trims and collapses runs of whitespace. Keeps the casing the player typed. */
 export function collapseWhitespace(raw: string): string {
   return raw.trim().replace(/\s+/g, ' ')
@@ -89,5 +100,35 @@ export function nameKeyFor(raw: string): string {
 
 /** Recovery phrases are matched the same forgiving way display names are. */
 export function normaliseRecoveryPhrase(raw: string): string {
-  return raw.trim().replace(/\s+/g, ' ').toLowerCase()
+  return collapseWhitespace(raw).toLowerCase()
+}
+
+/**
+ * The check behind both "choose a recovery phrase" forms, in the order and the
+ * words `games.create` and `games.setRecoveryPhrase` use: the minimum measured on
+ * the normalised phrase, the maximum on what was actually typed, the confirmation
+ * compared normalised. Shared so no form accepts a phrase the server is about to
+ * reject, and so the two forms cannot drift apart from each other either.
+ *
+ * `field` says which of the two inputs the message belongs under; a form with a
+ * single error line can ignore it.
+ */
+export function recoveryPhraseProblem(
+  phrase: string,
+  confirm: string,
+): { field: 'phrase' | 'confirm'; message: string } | null {
+  const normalised = normaliseRecoveryPhrase(phrase)
+  if (normalised.length < MIN_RECOVERY_PHRASE_LENGTH) {
+    return {
+      field: 'phrase',
+      message: `The recovery phrase needs at least ${MIN_RECOVERY_PHRASE_LENGTH} characters.`,
+    }
+  }
+  if (phrase.length > MAX_RECOVERY_PHRASE_LENGTH) {
+    return { field: 'phrase', message: 'That recovery phrase is too long.' }
+  }
+  if (normaliseRecoveryPhrase(confirm) !== normalised) {
+    return { field: 'confirm', message: 'The two phrases do not match.' }
+  }
+  return null
 }

@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router'
 import { toast } from 'sonner'
 
 import { CopyButton } from '@/components/CopyButton'
+import { Shell } from '@/components/Shell'
 import { Lobby } from '@/components/lobby/Lobby'
 import { NameGate } from '@/components/lobby/NameGate'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -76,7 +77,13 @@ export default function Game() {
       </header>
 
       {seat.status === 'seated' ? (
-        <Lobby code={code} playerId={seat.playerId!} dm={dm} onLeaveSeat={seat.leaveSeat} />
+        <Lobby
+          code={code}
+          playerId={seat.playerId!}
+          dm={dm}
+          onRenameSeat={seat.renameSeat}
+          onLeaveSeat={seat.leaveSeat}
+        />
       ) : (
         <NameGate
           code={code}
@@ -86,11 +93,5 @@ export default function Game() {
         />
       )}
     </Shell>
-  )
-}
-
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-8 p-8">{children}</main>
   )
 }

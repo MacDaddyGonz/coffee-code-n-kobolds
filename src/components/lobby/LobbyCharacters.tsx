@@ -12,13 +12,13 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Skeleton } from '@/components/ui/skeleton'
 import type { Dm } from '@/hooks/useDm'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import { MAX_CHARACTER_NAME_LENGTH } from '@convex/lib/codes'
 import { LobbyCharacterDmActions } from './LobbyCharacterDmActions'
 import { LobbyRenameForm } from './LobbyRenameForm'
+import { LobbyRow, LobbyRowSkeletons, LobbyRows } from './LobbyRow'
 import type { LobbyCharacter } from './lobbyTypes'
 import { useLobbyAction } from './useLobbyAction'
 
@@ -42,6 +42,9 @@ export function LobbyCharacters({ code, playerId, characters, dm }: LobbyCharact
   const [renamingId, setRenamingId] = useState<Id<'characters'> | null>(null)
 
   const busy = action.pending !== null
+  // Narrowed once here, so the row callbacks close over the code itself rather
+  // than handing it to a presentational component to hand straight back.
+  const dmCode = dm.dmCode
 
   const add = () =>
     void action
@@ -82,32 +85,19 @@ export function LobbyCharacters({ code, playerId, characters, dm }: LobbyCharact
       </CardHeader>
       <CardContent>
         {characters === undefined ? (
-          <ul className="divide-y">
-            {[0, 1].map((row) => (
-              <li key={row} className="flex min-h-13 items-center justify-between gap-3 py-2">
-                <div className="flex flex-col gap-1.5">
-                  <Skeleton className="h-4 w-28" />
-                  <Skeleton className="h-3 w-36" />
-                </div>
-                <Skeleton className="h-7 w-28" />
-              </li>
-            ))}
-          </ul>
+          <LobbyRowSkeletons rows={2} />
         ) : characters.length === 0 ? (
           <p className="text-muted-foreground">
             No characters yet. Add one below and anybody at the table can pick it up.
           </p>
         ) : (
-          <ul className="divide-y">
+          <LobbyRows>
             {characters.map((character) => {
               const mine = character.claimedByPlayerId === playerId
               const takenByOther = character.claimedByPlayerId !== null && !mine
 
               return (
-                <li
-                  key={character._id}
-                  className="flex min-h-13 items-center justify-between gap-3 py-2"
-                >
+                <LobbyRow key={character._id}>
                   {renamingId === character._id ? (
                     <LobbyRenameForm
                       label={`New name for ${character.name}`}
@@ -166,21 +156,20 @@ export function LobbyCharacters({ code, playerId, characters, dm }: LobbyCharact
                       </Button>
                     )}
 
-                    {dm.dmCode !== null ? (
+                    {dmCode !== null ? (
                       <LobbyCharacterDmActions
                         character={character}
-                        dmCode={dm.dmCode}
                         busy={busy}
-                        pending={action.pending}
+                        removing={action.pending === `remove:${character._id}`}
                         onRename={() => setRenamingId(character._id)}
-                        onRemove={remove}
+                        onRemove={() => remove(character, dmCode)}
                       />
                     ) : null}
                   </div>
-                </li>
+                </LobbyRow>
               )
             })}
-          </ul>
+          </LobbyRows>
         )}
       </CardContent>
       <CardFooter>

@@ -3,8 +3,8 @@ import { ConvexError } from 'convex/values'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import { MAX_SEATS_PER_GAME } from './games'
-import { MAX_DISPLAY_NAME_LENGTH, nameKeyFor } from './codes'
-import { requireText } from './names'
+import { nameKeyFor } from './codes'
+import { requireDisplayName } from './names'
 
 /**
  * Take a seat at the table, by name.
@@ -20,11 +20,7 @@ export async function joinSeat(
   gameId: Id<'games'>,
   rawDisplayName: string,
 ): Promise<{ playerId: Id<'players'>; displayName: string; rejoined: boolean }> {
-  const displayName = requireText(rawDisplayName, {
-    max: MAX_DISPLAY_NAME_LENGTH,
-    blank: 'Enter a display name.',
-    tooLong: `Keep your display name to ${MAX_DISPLAY_NAME_LENGTH} characters or fewer.`,
-  })
+  const displayName = requireDisplayName(rawDisplayName)
   const nameKey = nameKeyFor(displayName)
 
   const existing = await findSeatByName(ctx, gameId, nameKey)
@@ -93,17 +89,6 @@ export async function getSeatInGame(
   return seat
 }
 
-/** Clears the claim on `characterId` from whichever seat holds it, if any. */
-export async function releaseClaimOn(ctx: MutationCtx, characterId: Id<'characters'>) {
-  const holder = await ctx.db
-    .query('players')
-    .withIndex('by_characterId', (q) => q.eq('characterId', characterId))
-    .unique()
-  if (holder) {
-    await ctx.db.patch('players', holder._id, { characterId: undefined })
-  }
-}
-
 export async function findClaimHolder(
   ctx: QueryCtx,
   characterId: Id<'characters'>,
@@ -112,4 +97,12 @@ export async function findClaimHolder(
     .query('players')
     .withIndex('by_characterId', (q) => q.eq('characterId', characterId))
     .unique()
+}
+
+/** Clears the claim on `characterId` from whichever seat holds it, if any. */
+export async function releaseClaimOn(ctx: MutationCtx, characterId: Id<'characters'>) {
+  const holder = await findClaimHolder(ctx, characterId)
+  if (holder) {
+    await ctx.db.patch('players', holder._id, { characterId: undefined })
+  }
 }

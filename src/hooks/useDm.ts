@@ -7,11 +7,10 @@ import { errorMessage } from '@/lib/errors'
 import { forgetDmCode, getDmCode, rememberDmCode } from '@/lib/session'
 
 export type Dm = {
-  /** True once this browser holds a DM code the server has accepted. */
-  isDm: boolean
   /**
-   * The code to pass to DM-only mutations. Every DM-only Convex function
-   * re-verifies it server-side — nothing is authorised by this flag being true.
+   * The code to pass to DM-only mutations, or null when this browser does not
+   * hold one. Every DM-only Convex function re-verifies it server-side — having
+   * it here authorises nothing, it only says what the UI may offer.
    */
   dmCode: string | null
   /** Verify a pasted DM code and take the badge. Returns an error message or null. */
@@ -28,7 +27,9 @@ export type Dm = {
  * The DM code is a bearer secret: the browser keeps it and presents it on every
  * DM-only call. Losing browser storage therefore costs DM powers until the code
  * is pasted again — or exchanged for, with the recovery phrase. That is the
- * whole recovery story, and it is why `isDm` here is a UI concern only.
+ * whole recovery story, and it is why what this hook holds is a UI concern only:
+ * nothing is authorised client-side, because the code is re-verified server-side
+ * on every DM-only call.
  *
  * Takes the seat id rather than its display name: a name held in client state is
  * stale the moment the seat is renamed, and the badge would land on a phantom
@@ -92,5 +93,5 @@ export function useDm(code: string, playerId: Id<'players'> | null): Dm {
     restoredFor.current = null
   }, [code])
 
-  return { isDm: dmCode !== null, dmCode, elevate, recover, standDown }
+  return { dmCode, elevate, recover, standDown }
 }

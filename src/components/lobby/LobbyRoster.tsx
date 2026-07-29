@@ -5,15 +5,14 @@ import { PencilIcon, UserMinusIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Skeleton } from '@/components/ui/skeleton'
 import type { Dm } from '@/hooks/useDm'
-import { rememberDisplayName } from '@/lib/session'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import { MAX_DISPLAY_NAME_LENGTH } from '@convex/lib/codes'
 import { ConfirmDialog } from './ConfirmDialog'
 import { LobbyAssignDialog } from './LobbyAssignDialog'
 import { LobbyRenameForm } from './LobbyRenameForm'
+import { LobbyRow, LobbyRows, LobbyRowSkeletons } from './LobbyRow'
 import type { LobbyCharacter, LobbySeat } from './lobbyTypes'
 import { useLobbyAction } from './useLobbyAction'
 
@@ -23,6 +22,7 @@ type LobbyRosterProps = {
   seats: LobbySeat[] | undefined
   characters: LobbyCharacter[] | undefined
   dm: Dm
+  onRenameSeat: (displayName: string) => Promise<void>
   onLeaveSeat: () => Promise<void>
 }
 
@@ -33,22 +33,19 @@ export function LobbyRoster({
   seats,
   characters,
   dm,
+  onRenameSeat,
   onLeaveSeat,
 }: LobbyRosterProps) {
-  const renameSeat = useMutation(api.players.rename)
   const removeSeat = useMutation(api.players.leave)
   const assignCharacter = useMutation(api.characters.assign)
   const action = useLobbyAction()
   const [renaming, setRenaming] = useState(false)
+  const busy = action.pending !== null
 
+  // useSeat owns our own rename, because the display name is this browser's
+  // identity key (ADR 0003) and storage has to move with it.
   const submitRename = (displayName: string) =>
-    action.run('rename', 'Could not change that name.', async () => {
-      const result = await renameSeat({ code, playerId, displayName })
-      // The display name is the identity key for the seat (ADR 0003), so this
-      // browser has to learn the new one. Skip it and the next visit rejoins
-      // under the old name, leaving a second seat and an orphaned character.
-      rememberDisplayName(code, result.displayName)
-    })
+    action.run('rename', 'Could not change that name.', () => onRenameSeat(displayName))
 
   // useSeat owns the seat, so it does the leaving: it forgets the name and resets
   // its own state, which brings the name gate back without a reload.
@@ -74,30 +71,16 @@ export function LobbyRoster({
       </CardHeader>
       <CardContent>
         {seats === undefined ? (
-          <ul className="divide-y">
-            {[0, 1, 2].map((row) => (
-              <li key={row} className="flex min-h-13 items-center justify-between gap-3 py-2">
-                <div className="flex flex-col gap-1.5">
-                  <Skeleton className="h-4 w-32" />
-                  <Skeleton className="h-3 w-24" />
-                </div>
-                <Skeleton className="h-7 w-24" />
-              </li>
-            ))}
-          </ul>
+          <LobbyRowSkeletons rows={3} />
         ) : seats.length === 0 ? (
           <p className="text-muted-foreground">Nobody is at this table yet.</p>
         ) : (
-          <ul className="divide-y">
+          <LobbyRows>
             {seats.map((seat) => {
               const isYou = seat._id === playerId
-              const busy = action.pending !== null
 
               return (
-                <li
-                  key={seat._id}
-                  className="flex min-h-13 items-center justify-between gap-3 py-2"
-                >
+                <LobbyRow key={seat._id}>
                   {isYou && renaming ? (
                     <LobbyRenameForm
                       label="Your display name"
@@ -166,10 +149,10 @@ export function LobbyRoster({
                       />
                     ) : null}
                   </div>
-                </li>
+                </LobbyRow>
               )
             })}
-          </ul>
+          </LobbyRows>
         )}
 
         {seats !== undefined && seats.length === 1 ? (

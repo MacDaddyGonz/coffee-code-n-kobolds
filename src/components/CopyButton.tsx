@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 type CopyButtonProps = {
   value: string
   label: string
-  size?: 'default' | 'sm' | 'icon' | 'icon-sm'
 }
 
 /**
@@ -14,14 +13,14 @@ type CopyButtonProps = {
  * without a user gesture or over plain HTTP, so failure is silent-but-visible:
  * the tick simply does not appear.
  */
-export function CopyButton({ value, label, size = 'icon-sm' }: CopyButtonProps) {
+export function CopyButton({ value, label }: CopyButtonProps) {
   const [copied, setCopied] = useState(false)
 
   return (
     <Button
       type="button"
       variant="ghost"
-      size={size}
+      size="icon-sm"
       aria-label={`Copy ${label}`}
       title={`Copy ${label}`}
       onClick={() => {
@@ -35,7 +34,6 @@ export function CopyButton({ value, label, size = 'icon-sm' }: CopyButtonProps) 
       }}
     >
       {copied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
-      {size === 'default' || size === 'sm' ? (copied ? 'Copied' : 'Copy') : null}
     </Button>
   )
 }

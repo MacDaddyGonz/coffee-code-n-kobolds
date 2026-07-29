@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useState, type FormEvent, type ReactNode } from 'react'
 import { useMutation } from 'convex/react'
 import { useNavigate } from 'react-router'
 import {
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
+import { FieldError } from '@/components/FieldError'
 import { Alert, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,9 +26,8 @@ import {
   MAX_DISPLAY_NAME_LENGTH,
   MAX_GAME_NAME_LENGTH,
   MAX_RECOVERY_PHRASE_LENGTH,
-  MIN_RECOVERY_PHRASE_LENGTH,
   normaliseDisplayName,
-  normaliseRecoveryPhrase,
+  recoveryPhraseProblem,
 } from '@convex/lib/codes'
 
 type Created = { code: string; dmCode: string }
@@ -106,49 +106,43 @@ export function CreateGamePanel() {
           />
         ) : (
           <form onSubmit={(event) => void onSubmit(event)} className={PANEL_BODY} noValidate>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="create-name">Game name</Label>
-              <Input
-                id="create-name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                maxLength={MAX_GAME_NAME_LENGTH}
-                placeholder="Tomb of the Coffee Lich"
-                autoComplete="off"
-                disabled={busy}
-                aria-invalid={errors.name !== undefined}
-                aria-describedby={errors.name ? 'create-name-error' : undefined}
-              />
-              {errors.name ? (
-                <p id="create-name-error" className="text-destructive text-xs">
-                  {errors.name}
-                </p>
-              ) : null}
-            </div>
+            <Field
+              id="create-name"
+              label="Game name"
+              value={name}
+              onChange={setName}
+              maxLength={MAX_GAME_NAME_LENGTH}
+              placeholder="Tomb of the Coffee Lich"
+              disabled={busy}
+              error={errors.name}
+            />
 
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="create-dm-name">Your display name</Label>
-              <Input
-                id="create-dm-name"
-                value={dmName}
-                onChange={(event) => setDmName(event.target.value)}
-                maxLength={MAX_DISPLAY_NAME_LENGTH}
-                placeholder="Mike"
-                autoComplete="off"
-                disabled={busy}
-                aria-invalid={errors.dmName !== undefined}
-                aria-describedby={errors.dmName ? 'create-dm-name-error' : undefined}
-              />
-              {errors.dmName ? (
-                <p id="create-dm-name-error" className="text-destructive text-xs">
-                  {errors.dmName}
-                </p>
-              ) : null}
-            </div>
+            <Field
+              id="create-dm-name"
+              label="Your display name"
+              value={dmName}
+              onChange={setDmName}
+              maxLength={MAX_DISPLAY_NAME_LENGTH}
+              placeholder="Mike"
+              disabled={busy}
+              error={errors.dmName}
+            />
 
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <Label htmlFor="create-phrase">DM recovery phrase</Label>
+            <Field
+              id="create-phrase"
+              label="DM recovery phrase"
+              // Masked by default because a game is often set up on a shared
+              // screen and this phrase hands over the DM role. The toggle and the
+              // confirm field are both here because masking hides typos.
+              type={revealPhrase ? 'text' : 'password'}
+              value={phrase}
+              onChange={setPhrase}
+              maxLength={MAX_RECOVERY_PHRASE_LENGTH}
+              autoComplete="new-password"
+              disabled={busy}
+              error={errors.phrase}
+              hint="How you get your DM code back if this browser forgets it."
+              action={
                 <Button
                   type="button"
                   variant="ghost"
@@ -159,52 +153,20 @@ export function CreateGamePanel() {
                   {revealPhrase ? <EyeOffIcon aria-hidden /> : <EyeIcon aria-hidden />}
                   {revealPhrase ? 'Hide' : 'Show'}
                 </Button>
-              </div>
-              <Input
-                id="create-phrase"
-                // Masked by default because a game is often set up on a shared
-                // screen and this phrase hands over the DM role. The toggle and
-                // the confirm field are both here because masking hides typos.
-                type={revealPhrase ? 'text' : 'password'}
-                value={phrase}
-                onChange={(event) => setPhrase(event.target.value)}
-                maxLength={MAX_RECOVERY_PHRASE_LENGTH}
-                autoComplete="new-password"
-                disabled={busy}
-                aria-invalid={errors.phrase !== undefined}
-                aria-describedby={
-                  errors.phrase ? 'create-phrase-hint create-phrase-error' : 'create-phrase-hint'
-                }
-              />
-              <p id="create-phrase-hint" className="text-muted-foreground text-xs">
-                How you get your DM code back if this browser forgets it.
-              </p>
-              {errors.phrase ? (
-                <p id="create-phrase-error" className="text-destructive text-xs">
-                  {errors.phrase}
-                </p>
-              ) : null}
-            </div>
+              }
+            />
 
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="create-phrase-confirm">Confirm recovery phrase</Label>
-              <Input
-                id="create-phrase-confirm"
-                type={revealPhrase ? 'text' : 'password'}
-                value={confirm}
-                onChange={(event) => setConfirm(event.target.value)}
-                maxLength={MAX_RECOVERY_PHRASE_LENGTH}
-                autoComplete="new-password"
-                disabled={busy}
-                aria-invalid={errors.confirm !== undefined}
-                aria-describedby={errors.confirm ? 'create-phrase-confirm-error' : undefined}
-              />
-              {errors.confirm ? (
-                <p id="create-phrase-confirm-error" className="text-destructive text-xs">
-                  {errors.confirm}
-                </p>
-              ) : null}
-            </div>
+            <Field
+              id="create-phrase-confirm"
+              label="Confirm recovery phrase"
+              type={revealPhrase ? 'text' : 'password'}
+              value={confirm}
+              onChange={setConfirm}
+              maxLength={MAX_RECOVERY_PHRASE_LENGTH}
+              autoComplete="new-password"
+              disabled={busy}
+              error={errors.confirm}
+            />
 
             {failure ? (
               <Alert variant="destructive">
@@ -224,6 +186,78 @@ export function CreateGamePanel() {
   )
 }
 
+type FieldProps = {
+  id: string
+  label: string
+  value: string
+  onChange: (value: string) => void
+  maxLength: number
+  error: string | undefined
+  type?: string
+  autoComplete?: string
+  placeholder?: string
+  disabled?: boolean
+  hint?: string
+  /** Sits opposite the label — the recovery phrase's Show/Hide toggle. */
+  action?: ReactNode
+}
+
+/**
+ * One labelled input of this form, owning the `aria-invalid` / `aria-describedby`
+ * wiring. Local because it is shaped around exactly these four fields; the point
+ * is that the wiring is written once rather than four times, since the copy that
+ * goes subtly wrong is the one nobody reads again.
+ */
+function Field({
+  id,
+  label,
+  value,
+  onChange,
+  maxLength,
+  error,
+  type,
+  autoComplete = 'off',
+  placeholder,
+  disabled,
+  hint,
+  action,
+}: FieldProps) {
+  const hintId = hint ? `${id}-hint` : undefined
+  const errorId = error ? `${id}-error` : undefined
+  const describedBy = [hintId, errorId].filter(Boolean).join(' ')
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      {action ? (
+        <div className="flex items-center justify-between gap-2">
+          <Label htmlFor={id}>{label}</Label>
+          {action}
+        </div>
+      ) : (
+        <Label htmlFor={id}>{label}</Label>
+      )}
+      <Input
+        id={id}
+        type={type}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        maxLength={maxLength}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        disabled={disabled}
+        aria-invalid={error !== undefined}
+        aria-describedby={describedBy || undefined}
+      />
+      {hint ? (
+        <p id={hintId} className="text-muted-foreground text-xs">
+          {hint}
+        </p>
+      ) : null}
+      <FieldError id={errorId} message={error} />
+    </div>
+  )
+}
+
 /**
  * Validated with the same functions the mutation uses, so the client and the
  * server never disagree about whether a phrase is long enough or two phrases
@@ -235,12 +269,8 @@ function validate(name: string, dmName: string, phrase: string, confirm: string)
   if (!name.trim()) errors.name = 'Give the game a name.'
   if (!normaliseDisplayName(dmName)) errors.dmName = 'Enter your display name.'
 
-  const normalised = normaliseRecoveryPhrase(phrase)
-  if (normalised.length < MIN_RECOVERY_PHRASE_LENGTH) {
-    errors.phrase = `At least ${MIN_RECOVERY_PHRASE_LENGTH} characters.`
-  } else if (normaliseRecoveryPhrase(confirm) !== normalised) {
-    errors.confirm = 'The two phrases do not match.'
-  }
+  const problem = recoveryPhraseProblem(phrase, confirm)
+  if (problem) errors[problem.field] = problem.message
 
   return errors
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useMutation, useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
 
@@ -25,16 +25,21 @@ export type SeatStatus =
   /** The player typed a name and we are taking the seat. */
   | 'joining'
   | 'seated'
-  | 'error'
 
 export type Seat = {
   status: SeatStatus
   game: PublicGame | null
   playerId: Id<'players'> | null
-  displayName: string | null
   error: string | null
   /** Join or rejoin under this name. Idempotent server-side. */
   takeSeat: (displayName: string) => Promise<void>
+  /**
+   * Rename this seat. The display name *is* the seat's identity key (ADR 0003),
+   * so the rename and the storage write are one operation — split them and the
+   * next visit rejoins under the old name, orphaning the character. Returns an
+   * error message or null.
+   */
+  renameSeat: (displayName: string) => Promise<void>
   /** Give up the seat and return to the name gate. The character is untouched. */
   leaveSeat: () => Promise<void>
 }
@@ -51,19 +56,20 @@ export type Seat = {
 export function useSeat(code: string): Seat {
   const game = useQuery(api.games.getByCode, { code })
   const join = useMutation(api.players.join)
+  const rename = useMutation(api.players.rename)
   const leave = useMutation(api.players.leave)
 
   const [playerId, setPlayerId] = useState<Id<'players'> | null>(null)
-  const [displayName, setDisplayName] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [joining, setJoining] = useState(false)
 
-  // Whether a remembered name is waiting to be auto-joined. Without this the
-  // gate flashes for a frame on arrival: the effect has not run yet, so there is
-  // no playerId and nothing in flight, which otherwise reads as "we need a
-  // name". Cleared once the seat resolves, or when the player leaves on purpose.
-  const [autoJoinPending, setAutoJoinPending] = useState(
-    () => getDisplayNameForGame(code) !== null,
+  // The remembered name still waiting to be rejoined, if there is one. Without
+  // it the gate flashes for a frame on arrival: the effect has not run yet, so
+  // there is no playerId and nothing in flight, which otherwise reads as "we
+  // need a name". Cleared once the seat resolves, or when the player leaves on
+  // purpose.
+  const [pendingRejoin, setPendingRejoin] = useState<string | null>(() =>
+    getDisplayNameForGame(code),
   )
 
   const takeSeat = useCallback(
@@ -74,32 +80,39 @@ export function useSeat(code: string): Seat {
         const seat = await join({ code, displayName: name })
         rememberDisplayName(code, seat.displayName)
         setPlayerId(seat.playerId)
-        setDisplayName(seat.displayName)
       } catch (thrown) {
         setError(errorMessage(thrown, 'Could not join that game.'))
       } finally {
         setJoining(false)
-        setAutoJoinPending(false)
+        setPendingRejoin(null)
       }
     },
     [code, join],
   )
 
-  // Rejoin on arrival when we already know the name. Idempotent, so React's
-  // double-invoked effects in development are harmless; the ref only stops a
-  // redundant round trip.
-  const autoJoinedFor = useRef<string | null>(null)
+  // Rejoin on arrival when we already know the name. React double-invokes
+  // effects in development, so the join can go out twice there — harmless,
+  // because players.join is idempotent on the name key by design and hands back
+  // the same seat.
   useEffect(() => {
-    if (!game || playerId) return
-    const remembered = getDisplayNameForGame(code)
-    if (!remembered) {
-      setAutoJoinPending(false)
-      return
-    }
-    if (autoJoinedFor.current === code) return
-    autoJoinedFor.current = code
-    void takeSeat(remembered)
-  }, [code, game, playerId, takeSeat])
+    if (!game || playerId || joining || !pendingRejoin) return
+    void takeSeat(pendingRejoin)
+  }, [game, joining, pendingRejoin, playerId, takeSeat])
+
+  // Lets the rejection propagate, unlike leaveSeat: renaming leaves the caller on
+  // screen with its own error handling, whereas leaving tears this hook's state
+  // down and has nowhere to report to.
+  const renameSeat = useCallback(
+    async (displayName: string) => {
+      if (!playerId) return
+      const result = await rename({ code, playerId, displayName })
+      // The display name IS the seat's identity key, so the mutation and this
+      // write are one operation — a rename the browser forgets orphans the
+      // character on the next visit.
+      rememberDisplayName(code, result.displayName)
+    },
+    [code, playerId, rename],
+  )
 
   const leaveSeat = useCallback(async () => {
     if (!playerId) return
@@ -113,21 +126,18 @@ export function useSeat(code: string): Seat {
       return
     }
     forgetDisplayName(code)
-    autoJoinedFor.current = null
     setPlayerId(null)
-    setDisplayName(null)
-    setAutoJoinPending(false)
+    setPendingRejoin(null)
   }, [code, leave, playerId])
 
   const status: SeatStatus = (() => {
     if (game === undefined) return 'loadingGame'
     if (game === null) return 'noSuchGame'
     if (playerId) return 'seated'
-    if (error) return 'error'
-    if (autoJoinPending) return 'restoring'
+    if (pendingRejoin) return 'restoring'
     if (joining) return 'joining'
     return 'needsName'
   })()
 
-  return { status, game: game ?? null, playerId, displayName, error, takeSeat, leaveSeat }
+  return { status, game: game ?? null, playerId, error, takeSeat, renameSeat, leaveSeat }
 }

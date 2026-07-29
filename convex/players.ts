@@ -1,11 +1,11 @@
 import { ConvexError, v } from 'convex/values'
 
+import type { Id } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
-import { MAX_DISPLAY_NAME_LENGTH, nameKeyFor } from './lib/codes'
-import { requireText } from './lib/names'
+import { nameKeyFor } from './lib/codes'
+import { requireDisplayName } from './lib/names'
 import { findGameByCode, getGameByCode } from './lib/games'
 import { findSeatByName, getSeatInGame, joinSeat, listSeats } from './lib/players'
-import { listCharacters } from './lib/characters'
 
 /**
  * One row of the lobby roster. `characterName` is resolved here rather than
@@ -45,22 +45,32 @@ export const list = query({
     const game = await findGameByCode(ctx, args.code)
     if (!game) return []
 
-    const [seats, characters] = await Promise.all([
-      listSeats(ctx, game._id),
-      listCharacters(ctx, game._id),
-    ])
-    const nameById = new Map(characters.map((character) => [character._id, character.name]))
+    const seats = await listSeats(ctx, game._id)
 
-    return seats
-      .map((seat) => ({
-        _id: seat._id,
-        displayName: seat.displayName,
-        isDm: seat.isDm,
-        characterId: seat.characterId ?? null,
-        characterName: seat.characterId ? nameById.get(seat.characterId) ?? null : null,
-        joinedAt: seat._creationTime,
-      }))
-      .sort((a, b) => a.joinedAt - b.joinedAt)
+    // Point gets over the handful of characters actually held, rather than a
+    // range read of the table. A range read is invalidated by any insert into
+    // its range, so adding a character nobody holds would still re-run this
+    // query and re-push the whole roster to every client. Point reads are
+    // tracked per document, so only a rename of a held character does that.
+    const held = await Promise.all(
+      seats
+        .filter((seat) => seat.characterId)
+        .map((seat) => ctx.db.get('characters', seat.characterId!)),
+    )
+    const nameById = new Map<Id<'characters'>, string>()
+    for (const character of held) {
+      if (character) nameById.set(character._id, character.name)
+    }
+
+    // Seats arrive oldest-first: Convex appends _creationTime to every index.
+    return seats.map((seat) => ({
+      _id: seat._id,
+      displayName: seat.displayName,
+      isDm: seat.isDm,
+      characterId: seat.characterId ?? null,
+      characterName: seat.characterId ? nameById.get(seat.characterId) ?? null : null,
+      joinedAt: seat._creationTime,
+    }))
   },
 })
 
@@ -79,9 +89,7 @@ export const listNames = query({
     const game = await findGameByCode(ctx, args.code)
     if (!game) return []
     const seats = await listSeats(ctx, game._id)
-    return seats
-      .sort((a, b) => a._creationTime - b._creationTime)
-      .map((seat) => ({ displayName: seat.displayName, isDm: seat.isDm }))
+    return seats.map((seat) => ({ displayName: seat.displayName, isDm: seat.isDm }))
   },
 })
 
@@ -96,11 +104,7 @@ export const rename = mutation({
     const game = await getGameByCode(ctx, args.code)
     const seat = await getSeatInGame(ctx, game._id, args.playerId)
 
-    const displayName = requireText(args.displayName, {
-      max: MAX_DISPLAY_NAME_LENGTH,
-      blank: 'Enter a display name.',
-      tooLong: `Keep your display name to ${MAX_DISPLAY_NAME_LENGTH} characters or fewer.`,
-    })
+    const displayName = requireDisplayName(args.displayName)
 
     const nameKey = nameKeyFor(displayName)
     const clash = await findSeatByName(ctx, game._id, nameKey)

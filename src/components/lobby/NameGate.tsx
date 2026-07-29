@@ -1,6 +1,7 @@
 import { useId, useState } from 'react'
 import { useQuery } from 'convex/react'
 
+import { FieldError } from '@/components/FieldError'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -11,6 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { getLastDisplayName } from '@/lib/session'
 import { api } from '@convex/_generated/api'
 import { MAX_DISPLAY_NAME_LENGTH, normaliseDisplayName } from '@convex/lib/codes'
+import { LobbyRow, LobbyRows } from './LobbyRow'
 
 export type NameGateProps = {
   code: string
@@ -72,11 +74,7 @@ export function NameGate({ code, busy, error, onTakeSeat }: NameGateProps) {
               {busy ? 'Taking your seat…' : 'Take my seat'}
             </Button>
           </div>
-          {error ? (
-            <p id={errorId} className="text-destructive text-sm">
-              {error}
-            </p>
-          ) : null}
+          <FieldError id={errorId} message={error} />
         </form>
 
         <Separator />
@@ -88,28 +86,28 @@ export function NameGate({ code, busy, error, onTakeSeat }: NameGateProps) {
             empty one.
           </p>
           {seats === undefined ? (
-            <SeatRows>
-              <SeatRow>
+            <LobbyRows>
+              <LobbyRow size="compact">
                 <Skeleton className="h-4 w-32" />
                 <Skeleton className="h-8 w-24" />
-              </SeatRow>
-              <SeatRow>
+              </LobbyRow>
+              <LobbyRow size="compact">
                 <Skeleton className="h-4 w-24" />
                 <Skeleton className="h-8 w-24" />
-              </SeatRow>
-            </SeatRows>
+              </LobbyRow>
+            </LobbyRows>
           ) : seats.length === 0 ? (
-            <SeatRows>
-              <SeatRow>
+            <LobbyRows>
+              <LobbyRow size="compact">
                 <span className="text-muted-foreground text-sm">
                   Nobody has joined yet — you will be first.
                 </span>
-              </SeatRow>
-            </SeatRows>
+              </LobbyRow>
+            </LobbyRows>
           ) : (
-            <SeatRows>
+            <LobbyRows>
               {seats.map((seat) => (
-                <SeatRow key={seat.displayName}>
+                <LobbyRow key={seat.displayName} size="compact">
                   <span className="flex items-center gap-2 text-sm">
                     {seat.displayName}
                     {seat.isDm ? <Badge variant="secondary">DM</Badge> : null}
@@ -123,21 +121,12 @@ export function NameGate({ code, busy, error, onTakeSeat }: NameGateProps) {
                   >
                     That's me
                   </Button>
-                </SeatRow>
+                </LobbyRow>
               ))}
-            </SeatRows>
+            </LobbyRows>
           )}
         </section>
       </CardContent>
     </Card>
   )
-}
-
-function SeatRows({ children }: { children: React.ReactNode }) {
-  return <ul className="divide-border flex flex-col divide-y">{children}</ul>
-}
-
-/** Fixed row height, so loading, empty and populated do not shift the card. */
-function SeatRow({ children }: { children: React.ReactNode }) {
-  return <li className="flex h-11 items-center justify-between gap-3">{children}</li>
 }

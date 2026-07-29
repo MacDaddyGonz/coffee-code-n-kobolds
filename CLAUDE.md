@@ -58,9 +58,17 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    every time — see `requireDm` in `convex/lib/games.ts` and
    [ADR 0003](docs/adr/0003-player-identity-without-accounts.md). Writing `if (player.isDm)` to
    decide what data to send would defeat invariant 1 completely.
-8. **Give public queries a `returns:` validator.** Built from a projection like `publicGameValidator`
-   in `convex/lib/games.ts`, it makes Convex throw if a DM secret is ever added to a payload by
-   accident. That is what keeps invariant 1 mechanical rather than a thing to remember.
+8. **Give public queries a `returns:` validator — but know what it does and does not catch.** Built
+   from a projection like `publicGameValidator` in `convex/lib/games.ts`, it makes Convex throw if a
+   secret *field* is ever added to a payload by accident. That is what keeps the `games` document's
+   DM code and recovery hash out of player payloads mechanically rather than by memory.
+
+   It does **nothing** for a leaked *row*. A DM-layer token has the same shape as a player-layer
+   token, so a validator would happily approve a payload full of them. Milestone 2's real guard has
+   to be a single reader function every token query goes through — one place that takes "is this
+   caller the DM?" and returns only the rows that caller may see — plus a test asserting a player
+   payload contains no DM-layer id. Use `resolveDm` in `convex/lib/games.ts` for the boolean; never
+   `players.isDm` (invariant 7). Same shape applies to exact NPC hit points in Milestone 3.
 
 ## Rules scope
 

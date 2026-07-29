@@ -1,5 +1,7 @@
 import { useId, useState } from 'react'
 
+import { CodeInput } from '@/components/CodeInput'
+import { FieldError } from '@/components/FieldError'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -14,7 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import type { Dm } from '@/hooks/useDm'
-import { DM_CODE_LENGTH, MAX_RECOVERY_PHRASE_LENGTH, normaliseJoinCode } from '@convex/lib/codes'
+import { DM_CODE_LENGTH, MAX_RECOVERY_PHRASE_LENGTH } from '@convex/lib/codes'
 
 type ElevateDialogProps = {
   dm: Dm
@@ -58,31 +60,23 @@ export function ElevateDialog({ dm, onRecovered }: ElevateDialogProps) {
     }
   }
 
-  async function submitCode(event: React.FormEvent) {
+  /** The two paths differ only in which call they make and what follows a success. */
+  async function submit(
+    event: React.FormEvent,
+    attempt: () => Promise<string | null>,
+    onSuccess?: () => void,
+  ) {
     event.preventDefault()
     if (busy) return
     setBusy(true)
-    const failure = await dm.elevate(dmCode)
+    const failure = await attempt()
     setBusy(false)
     if (failure) {
       setError(failure)
       return
     }
     changeOpen(false)
-  }
-
-  async function submitPhrase(event: React.FormEvent) {
-    event.preventDefault()
-    if (busy) return
-    setBusy(true)
-    const failure = await dm.recover(phrase)
-    setBusy(false)
-    if (failure) {
-      setError(failure)
-      return
-    }
-    changeOpen(false)
-    onRecovered()
+    onSuccess?.()
   }
 
   return (
@@ -103,7 +97,10 @@ export function ElevateDialog({ dm, onRecovered }: ElevateDialogProps) {
         </DialogHeader>
 
         {lostCode ? (
-          <form className="flex flex-col gap-3" onSubmit={(event) => void submitPhrase(event)}>
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(event) => void submit(event, () => dm.recover(phrase), onRecovered)}
+          >
             <div className="flex flex-col gap-2">
               <Label htmlFor={`${fieldId}-phrase`}>Recovery phrase</Label>
               <Input
@@ -114,16 +111,13 @@ export function ElevateDialog({ dm, onRecovered }: ElevateDialogProps) {
                 autoComplete="off"
                 spellCheck={false}
                 disabled={busy}
+                aria-describedby={error ? `${fieldId}-error` : undefined}
               />
               <p className="text-muted-foreground text-xs">
                 Capitals and extra spaces don't matter.
               </p>
             </div>
-            {error ? (
-              <p role="alert" className="text-destructive text-sm">
-                {error}
-              </p>
-            ) : null}
+            <FieldError id={`${fieldId}-error`} message={error} />
             <DialogFooter>
               <Button
                 type="button"
@@ -142,26 +136,22 @@ export function ElevateDialog({ dm, onRecovered }: ElevateDialogProps) {
             </DialogFooter>
           </form>
         ) : (
-          <form className="flex flex-col gap-3" onSubmit={(event) => void submitCode(event)}>
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(event) => void submit(event, () => dm.elevate(dmCode))}
+          >
             <div className="flex flex-col gap-2">
               <Label htmlFor={`${fieldId}-code`}>DM code</Label>
-              <Input
+              <CodeInput
                 id={`${fieldId}-code`}
                 value={dmCode}
-                onChange={(event) =>
-                  setDmCode(normaliseJoinCode(event.target.value).slice(0, DM_CODE_LENGTH))
-                }
-                autoComplete="off"
-                autoCapitalize="characters"
-                spellCheck={false}
-                className="font-mono text-lg tracking-[0.2em] uppercase"
+                onChange={setDmCode}
+                length={DM_CODE_LENGTH}
+                placeholder=""
+                aria-describedby={error ? `${fieldId}-error` : undefined}
               />
             </div>
-            {error ? (
-              <p role="alert" className="text-destructive text-sm">
-                {error}
-              </p>
-            ) : null}
+            <FieldError id={`${fieldId}-error`} message={error} />
             <Separator />
             <div className="flex items-center justify-between gap-2">
               <Button

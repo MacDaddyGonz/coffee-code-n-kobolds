@@ -1,6 +1,11 @@
 import { ConvexError } from 'convex/values'
 
-import { collapseWhitespace } from './codes'
+import {
+  MAX_CHARACTER_NAME_LENGTH,
+  MAX_DISPLAY_NAME_LENGTH,
+  MAX_GAME_NAME_LENGTH,
+  collapseWhitespace,
+} from './codes'
 
 /**
  * Trims, collapses whitespace, and **rejects** anything blank or over-length
@@ -37,4 +42,36 @@ export function requireText(
     throw new ConvexError({ kind: 'BadInput', message: options.tooLong })
   }
   return value
+}
+
+/**
+ * Every user-facing name in the app goes through one of these three, so the
+ * limit and the wording live in one place rather than being re-inlined at each
+ * call site.
+ *
+ * `blank` is overridable only because creating your own game says "your display
+ * name" where joining someone else's says "a display name".
+ */
+export function requireDisplayName(raw: string, blank = 'Enter a display name.'): string {
+  return requireText(raw, {
+    max: MAX_DISPLAY_NAME_LENGTH,
+    blank,
+    tooLong: `Keep your display name to ${MAX_DISPLAY_NAME_LENGTH} characters or fewer.`,
+  })
+}
+
+export function requireGameName(raw: string): string {
+  return requireText(raw, {
+    max: MAX_GAME_NAME_LENGTH,
+    blank: 'Give the game a name.',
+    tooLong: `Keep the game name to ${MAX_GAME_NAME_LENGTH} characters or fewer.`,
+  })
+}
+
+export function requireCharacterName(raw: string): string {
+  return requireText(raw, {
+    max: MAX_CHARACTER_NAME_LENGTH,
+    blank: 'Give the character a name.',
+    tooLong: `Keep the character name to ${MAX_CHARACTER_NAME_LENGTH} characters or fewer.`,
+  })
 }

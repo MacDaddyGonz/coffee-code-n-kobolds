@@ -4,18 +4,12 @@ import { mutation, query } from './_generated/server'
 import {
   DM_CODE_LENGTH,
   JOIN_CODE_LENGTH,
-  MAX_DISPLAY_NAME_LENGTH,
-  MAX_GAME_NAME_LENGTH,
-  MAX_RECOVERY_PHRASE_LENGTH,
-  MIN_RECOVERY_PHRASE_LENGTH,
   generateCode,
-  nameKeyFor,
-  normaliseRecoveryPhrase,
+  recoveryPhraseProblem,
 } from './lib/codes'
-import { requireText } from './lib/names'
+import { requireDisplayName, requireGameName } from './lib/names'
 import {
   findGameByCode,
-  gameError,
   getGameByCode,
   hashRecoveryPhrase,
   moveDmBadgeTo,
@@ -25,7 +19,7 @@ import {
   recoveryPhraseMatches,
   requireDm,
 } from './lib/games'
-import { getSeatInGame } from './lib/players'
+import { getSeatInGame, joinSeat } from './lib/players'
 
 /**
  * The join code has to be unique. Nine attempts against a 31^6 space with a
@@ -34,12 +28,21 @@ import { getSeatInGame } from './lib/players'
  */
 const CODE_ATTEMPTS = 9
 
-function requireGameName(raw: string): string {
-  return requireText(raw, {
-    max: MAX_GAME_NAME_LENGTH,
-    blank: 'Give the game a name.',
-    tooLong: `Keep the game name to ${MAX_GAME_NAME_LENGTH} characters or fewer.`,
-  })
+/**
+ * The minimum is measured on the normalised phrase and the maximum on the raw
+ * argument, deliberately. Padding must not buy its way past the minimum, because
+ * that is the length the phrase is worth guessing against; the maximum is there
+ * to bound what gets handed to the hash, which is the raw string.
+ */
+/**
+ * Defers to the same predicate both "choose a phrase" forms use, so the client
+ * cannot accept a phrase this is about to reject. The phrase stands in as its own
+ * confirmation, which leaves only the two length rules — there is no second field
+ * to compare on this side of the wire.
+ */
+function requireRecoveryPhrase(raw: string) {
+  const problem = recoveryPhraseProblem(raw, raw)
+  if (problem) throw new ConvexError({ kind: 'BadInput', message: problem.message })
 }
 
 export const create = mutation({
@@ -51,22 +54,8 @@ export const create = mutation({
   returns: v.object({ code: v.string(), dmCode: v.string() }),
   handler: async (ctx, args) => {
     const name = requireGameName(args.name)
-    const dmName = requireText(args.dmName, {
-      max: MAX_DISPLAY_NAME_LENGTH,
-      blank: 'Enter your display name.',
-      tooLong: `Keep your display name to ${MAX_DISPLAY_NAME_LENGTH} characters or fewer.`,
-    })
-
-    const phrase = normaliseRecoveryPhrase(args.recoveryPhrase)
-    if (phrase.length < MIN_RECOVERY_PHRASE_LENGTH) {
-      throw new ConvexError({
-        kind: 'BadInput',
-        message: `The recovery phrase needs at least ${MIN_RECOVERY_PHRASE_LENGTH} characters.`,
-      })
-    }
-    if (args.recoveryPhrase.length > MAX_RECOVERY_PHRASE_LENGTH) {
-      throw new ConvexError({ kind: 'BadInput', message: 'That recovery phrase is too long.' })
-    }
+    const dmName = requireDisplayName(args.dmName, 'Enter your display name.')
+    requireRecoveryPhrase(args.recoveryPhrase)
 
     let code: string | null = null
     for (let attempt = 0; attempt < CODE_ATTEMPTS; attempt += 1) {
@@ -100,13 +89,11 @@ export const create = mutation({
     })
 
     // The creator gets a seat straight away, so the lobby is never empty and the
-    // DM appears in the roster like anyone else.
-    await ctx.db.insert('players', {
-      gameId,
-      displayName: dmName,
-      nameKey: nameKeyFor(dmName),
-      isDm: true,
-    })
+    // DM appears in the roster like anyone else — which is why it goes through
+    // the same joinSeat every other arrival uses rather than its own insert.
+    const { playerId } = await joinSeat(ctx, gameId, dmName)
+    const seat = await getSeatInGame(ctx, gameId, playerId)
+    await moveDmBadgeTo(ctx, seat)
 
     return { code, dmCode }
   },
@@ -140,7 +127,7 @@ export const elevateDm = mutation({
     // stale the moment that seat is renamed — which would badge a brand new
     // phantom seat under the old name instead of the caller.
     const seat = await getSeatInGame(ctx, game._id, args.playerId)
-    await moveDmBadgeTo(ctx, seat._id)
+    await moveDmBadgeTo(ctx, seat)
     return null
   },
 })
@@ -159,10 +146,13 @@ export const recoverDmCode = mutation({
   handler: async (ctx, args) => {
     const game = await getGameByCode(ctx, args.code)
     if (!(await recoveryPhraseMatches(game, args.recoveryPhrase))) {
-      throw gameError('BadRecoveryPhrase', 'That recovery phrase does not match.')
+      throw new ConvexError({
+        kind: 'BadRecoveryPhrase',
+        message: 'That recovery phrase does not match.',
+      })
     }
     const seat = await getSeatInGame(ctx, game._id, args.playerId)
-    await moveDmBadgeTo(ctx, seat._id)
+    await moveDmBadgeTo(ctx, seat)
     return { dmCode: game.dmCode }
   },
 })
@@ -172,17 +162,7 @@ export const setRecoveryPhrase = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const game = await requireDm(ctx, args.code, args.dmCode)
-
-    const phrase = normaliseRecoveryPhrase(args.recoveryPhrase)
-    if (phrase.length < MIN_RECOVERY_PHRASE_LENGTH) {
-      throw new ConvexError({
-        kind: 'BadInput',
-        message: `The recovery phrase needs at least ${MIN_RECOVERY_PHRASE_LENGTH} characters.`,
-      })
-    }
-    if (args.recoveryPhrase.length > MAX_RECOVERY_PHRASE_LENGTH) {
-      throw new ConvexError({ kind: 'BadInput', message: 'That recovery phrase is too long.' })
-    }
+    requireRecoveryPhrase(args.recoveryPhrase)
 
     // New salt as well, so the stored hash cannot be compared against the old one.
     const dmRecoverySalt = randomSalt()

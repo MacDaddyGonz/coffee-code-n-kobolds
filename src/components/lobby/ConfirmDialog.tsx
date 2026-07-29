@@ -17,18 +17,27 @@ type ConfirmDialogProps = {
   title: string
   description: string
   confirmLabel: string
-  busy: boolean
-  /** Resolves false when the call failed, which keeps the dialog open to retry. */
-  onConfirm: () => Promise<boolean>
+  /** Defaults to 'Cancel'. */
+  cancelLabel?: string
+  /** `default` for a confirmation that undoes nothing, like standing down as DM. */
+  confirmVariant?: 'default' | 'destructive'
+  busy?: boolean
+  /**
+   * Resolves false when the call failed, which keeps the dialog open to retry. A
+   * synchronous handler cannot fail, so the dialog just closes.
+   */
+  onConfirm: () => Promise<boolean> | void
 }
 
-/** Second click for the destructive lobby actions: removing a seat, deleting a character. */
+/** Second click for the lobby actions that are worth confirming. */
 export function ConfirmDialog({
   trigger,
   title,
   description,
   confirmLabel,
-  busy,
+  cancelLabel = 'Cancel',
+  confirmVariant = 'destructive',
+  busy = false,
   onConfirm,
 }: ConfirmDialogProps) {
   const [open, setOpen] = useState(false)
@@ -44,16 +53,16 @@ export function ConfirmDialog({
         <DialogFooter>
           <DialogClose asChild>
             <Button type="button" variant="outline">
-              Cancel
+              {cancelLabel}
             </Button>
           </DialogClose>
           <Button
             type="button"
-            variant="destructive"
+            variant={confirmVariant}
             disabled={busy}
             onClick={() => {
-              void onConfirm().then((done) => {
-                if (done) setOpen(false)
+              void Promise.resolve(onConfirm()).then((done) => {
+                if (done !== false) setOpen(false)
               })
             }}
           >

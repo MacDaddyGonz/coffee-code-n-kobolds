@@ -86,6 +86,16 @@ The riskiest milestone. Do it carefully; everything visual sits on it.
   invariant 2.
 - Layers: background / player / DM. **DM layer contents are filtered inside the Convex query** —
   never sent to player clients. CLAUDE.md invariant 1.
+
+  Milestone 1 left the seam for this, and it is worth using rather than rediscovering.
+  `resolveDm` in `convex/lib/games.ts` answers "is this caller the DM?" from an optional `dmCode`
+  without throwing, which is what a query needs — `requireDm` is the throwing form, for mutations.
+  Never branch on `players.isDm`; it is a roster badge, not authority (invariant 7).
+
+  Note what does **not** transfer: the `returns:` validator that guards the `games` document catches
+  a leaked *field*, and a DM-layer token is a leaked *row* of exactly the same shape. Put every token
+  read behind one reader function that takes `isDm` and returns only permitted rows, and write a test
+  asserting a player payload contains no DM-layer id. A validator will not catch this one.
 - react-konva stage: pan, grid overlay, round tokens, snap-to-grid.
 - Drag handling: render locally, throttle writes to ~10/sec, commit on drop, Convex optimistic
   updates for instant feel.
