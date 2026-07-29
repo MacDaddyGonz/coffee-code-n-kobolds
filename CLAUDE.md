@@ -38,6 +38,10 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    either in the client is not security.
 2. **Don't write token positions to the database on every mouse-move.** Render drags locally,
    throttle writes to ~10/sec, commit on drop. Use Convex optimistic updates so it feels instant.
+   Relatedly, keep **token position in its own table**, separate from the token's stable data
+   (art, name, size). Convex rewrites the whole document on every patch, so mixing high-churn
+   position data into a document that also holds rarely-changing fields makes every drag contend
+   with reads of all of it.
 3. **Hash routing only** (`/#/game/ABC123`). GitHub Pages has no rewrite rules, so a browser-path
    deep link 404s on refresh.
 4. **Vite needs `base: '/coffee-code-n-kobolds/'`.** The site is served from a subpath; omitting
@@ -56,4 +60,35 @@ inventory and movement-impairing conditions are **excluded by design**, not miss
 
 ## Commands
 
-None yet — the project is not scaffolded. This section gets filled in by the scaffolding branch.
+```powershell
+npm run dev          # Vite dev server (frontend)
+npm run dev:backend  # convex dev — watches convex/ and pushes to the dev deployment
+npm run build        # tsc --noEmit && vite build (same command CI runs)
+npm run lint         # typecheck only
+```
+
+**Both `dev` and `dev:backend` need to be running** for local development — one serves the
+frontend, the other syncs Convex functions. `npm run dev:backend` also writes `.env.local`, which
+the frontend needs for `VITE_CONVEX_URL`.
+
+Deployment is automatic on push to `main` (see `.github/workflows/deploy.yml`). It deploys the
+Convex backend and builds the frontend in one step so the two can't drift.
+
+## Imports
+
+- `@/…` → `src/…`
+- `@convex/…` → `convex/…` (mainly `@convex/_generated/api`)
+
+<!-- convex-ai-start -->
+
+This project uses [Convex](https://convex.dev) as its backend.
+
+When working on Convex code, **always read
+`convex/_generated/ai/guidelines.md` first** for important guidelines on
+how to correctly use Convex APIs and patterns. The file contains rules that
+override what you may have learned about Convex from training data.
+
+Convex agent skills for common tasks can be installed by running
+`npx convex ai-files install`.
+
+<!-- convex-ai-end -->
