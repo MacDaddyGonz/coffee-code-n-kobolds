@@ -88,7 +88,7 @@ The riskiest milestone. Do it carefully; everything visual sits on it.
   never sent to player clients. CLAUDE.md invariant 1.
 
   Milestone 1 left the seam for this, and it is worth using rather than rediscovering.
-  `resolveDm` in `convex/lib/games.ts` answers "is this caller the DM?" from an optional `dmCode`
+  `resolveDmAccess` in `convex/lib/games.ts` answers "is this caller the DM?" from an optional `dmCode`
   without throwing, which is what a query needs — `requireDm` is the throwing form, for mutations.
   Never branch on `players.isDm`; it is a roster badge, not authority (invariant 7).
 

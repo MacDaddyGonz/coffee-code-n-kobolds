@@ -67,8 +67,8 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    token, so a validator would happily approve a payload full of them. Milestone 2's real guard has
    to be a single reader function every token query goes through — one place that takes "is this
    caller the DM?" and returns only the rows that caller may see — plus a test asserting a player
-   payload contains no DM-layer id. Use `resolveDm` in `convex/lib/games.ts` for the boolean; never
-   `players.isDm` (invariant 7). Same shape applies to exact NPC hit points in Milestone 3.
+   payload contains no DM-layer id. Use `resolveDmAccess` in `convex/lib/games.ts` for the boolean;
+   never `players.isDm` (invariant 7). The same shape applies to exact NPC hit points in Milestone 3.
 
 ## Rules scope
 
@@ -86,9 +86,13 @@ npm run lint         # typecheck only — both src/ and convex/
 npm test             # vitest run — the convex-test suites in convex/*.test.ts
 ```
 
-**Both `dev` and `dev:backend` need to be running** for local development — one serves the
-frontend, the other syncs Convex functions. `npm run dev:backend` also writes `.env.local`, which
-the frontend needs for `VITE_CONVEX_URL`.
+**`npm run dev:backend` is needed whenever you are changing anything under `convex/`** — it watches
+those files and pushes them to the dev deployment. It also writes `.env.local`, which the frontend
+needs for `VITE_CONVEX_URL`.
+
+To *use* the app you only need `npm run dev`. The dev deployment lives in Convex's cloud and stays
+up on its own, so a frontend pointed at it works with no second terminal. That is why testing a
+lobby in two browsers needs one command, not two.
 
 Deployment is automatic on push to `main` (see `.github/workflows/deploy.yml`). It deploys the
 Convex backend and builds the frontend in one step so the two can't drift.
