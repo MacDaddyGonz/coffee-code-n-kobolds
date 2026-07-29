@@ -10,3 +10,4 @@ being overwritten.
 | - | -------- | ------ |
 | [0001](0001-platform-and-hosting.md) | Convex backend, Vite SPA on GitHub Pages | Accepted |
 | [0002](0002-defer-user-accounts.md) | Defer user accounts; characters belong to the game | Accepted |
+| [0003](0003-player-identity-without-accounts.md) | Player identity without accounts: a seat is a name | Accepted |

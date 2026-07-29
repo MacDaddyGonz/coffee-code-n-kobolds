@@ -52,6 +52,23 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    with a game code and a display name.
 6. **Keep uploads small.** Convex free tier gives 1 GB of file storage for maps, tokens, modal
    images and music. Downscale images on upload.
+7. **The DM code is the only thing that authorises anything.** A player is a seat identified by a
+   display name, so a `playerId` argument is routing, not proof of identity, and `players.isDm` is a
+   badge in the roster. DM-only queries and mutations take `dmCode` and re-verify it server-side
+   every time — see `requireDm` in `convex/lib/games.ts` and
+   [ADR 0003](docs/adr/0003-player-identity-without-accounts.md). Writing `if (player.isDm)` to
+   decide what data to send would defeat invariant 1 completely.
+8. **Give public queries a `returns:` validator — but know what it does and does not catch.** Built
+   from a projection like `publicGameValidator` in `convex/lib/games.ts`, it makes Convex throw if a
+   secret *field* is ever added to a payload by accident. That is what keeps the `games` document's
+   DM code and recovery hash out of player payloads mechanically rather than by memory.
+
+   It does **nothing** for a leaked *row*. A DM-layer token has the same shape as a player-layer
+   token, so a validator would happily approve a payload full of them. Milestone 2's real guard has
+   to be a single reader function every token query goes through — one place that takes "is this
+   caller the DM?" and returns only the rows that caller may see — plus a test asserting a player
+   payload contains no DM-layer id. Use `resolveDmAccess` in `convex/lib/games.ts` for the boolean;
+   never `players.isDm` (invariant 7). The same shape applies to exact NPC hit points in Milestone 3.
 
 ## Rules scope
 
@@ -65,12 +82,17 @@ inventory and movement-impairing conditions are **excluded by design**, not miss
 npm run dev          # Vite dev server (frontend)
 npm run dev:backend  # convex dev — watches convex/ and pushes to the dev deployment
 npm run build        # tsc --noEmit && vite build (same command CI runs)
-npm run lint         # typecheck only
+npm run lint         # typecheck only — both src/ and convex/
+npm test             # vitest run — the convex-test suites in convex/*.test.ts
 ```
 
-**Both `dev` and `dev:backend` need to be running** for local development — one serves the
-frontend, the other syncs Convex functions. `npm run dev:backend` also writes `.env.local`, which
-the frontend needs for `VITE_CONVEX_URL`.
+**`npm run dev:backend` is needed whenever you are changing anything under `convex/`** — it watches
+those files and pushes them to the dev deployment. It also writes `.env.local`, which the frontend
+needs for `VITE_CONVEX_URL`.
+
+To *use* the app you only need `npm run dev`. The dev deployment lives in Convex's cloud and stays
+up on its own, so a frontend pointed at it works with no second terminal. That is why testing a
+lobby in two browsers needs one command, not two.
 
 Deployment is automatic on push to `main` (see `.github/workflows/deploy.yml`). It deploys the
 Convex backend and builds the frontend in one step so the two can't drift.
