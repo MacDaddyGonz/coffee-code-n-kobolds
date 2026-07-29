@@ -21,25 +21,55 @@ deploying. Acceptance criteria are written so you can tell "done" from "mostly d
 **Done.** Vite + React + TypeScript + Convex, deploying to GitHub Pages on push to `main`. A
 live-sync smoke test proves the whole path end to end.
 
-The `pings` table and `convex/ping.ts` are scaffolding — delete them in Milestone 1.
+The `pings` table and `convex/ping.ts` were scaffolding to prove that path. **Both are gone**,
+removed in Milestone 1 along with the smoke-test screen they backed.
 
 ---
 
-## Milestone 1 — Games and players
+## ✅ Milestone 1 — Games and players
 
-The join flow. No map yet.
+**Done.** Create a game, join it with a code, and a live lobby showing who is in and which character
+each of them has claimed. No map yet.
 
-- `games` table: join code, DM code, display name of creator, currently active scene.
-- `characters` stored inside the game — see [ADR 0002](adr/0002-defer-user-accounts.md). Not against
-  a user identity.
-- `players` in the game: display name, which character they've claimed, joined-at.
-- Routes: home screen (create game / join with code), `/game/:code` showing who's in the lobby.
-- DM role: whoever created the game. Recoverable with the DM code, so a cleared browser can't
-  permanently lock you out of your own game.
-- Delete the `pings` scaffolding.
+- `games` table: name, join code, creator's display name, DM code, and a per-game salt plus SHA-256
+  of the DM recovery phrase. The phrase itself is never stored.
+- `players` table — a **seat at the table**, not a user. Identified within a game by `nameKey` (the
+  display name normalised and lowercased), so `players.join` is idempotent and a cleared browser
+  rejoins by retyping the same name. See [ADR 0003](adr/0003-player-identity-without-accounts.md).
+- `characters` stored inside the game, with the claim pointer running seat → character
+  (`players.characterId`) and never the reverse — so deleting every seat leaves the characters
+  intact. [ADR 0002](adr/0002-defer-user-accounts.md).
+- Join codes from an alphabet with no `I`, `L`, `O`, `0` or `1`, normalised identically on the
+  client and the server from one shared module.
+- DM role: a **bearer credential**, re-verified server-side on every DM-only call. `players.isDm` is
+  a badge and `playerId` is a routing argument — **neither authorises anything.** DM-gated
+  operations are forcing (`characters.assign`), destroying (`characters.remove`), renaming the game,
+  and anything that hands back the DM code. Seat operations are not gated, because a seat is
+  identified by a name anyone with the join code can type.
+- DM recovery: game code + recovery phrase exchanges for the DM code in-app, so a cleared browser
+  months later is a nuisance rather than a lockout. No failed-attempt lockout, deliberately — see
+  ADR 0003.
+- `publicGameValidator` as a `returns:` validator on every public game query, so a DM secret added
+  to a projection by accident throws at runtime instead of shipping. CLAUDE.md invariant 1.
+- Routes: home screen (create game / join with code) and `/#/game/:code` with a name gate and the
+  lobby.
+- Browser storage holds prefills, the per-game display name and the per-game DM code — nothing that
+  cannot be retyped.
+
+**Two things deliberately not done here:**
+
+- **No `activeSceneId` and no game status field on `games`.** A `v.id('scenes')` field needs a
+  `scenes` table, and an empty forward-reference table is worse than a one-line schema addition
+  later. Milestone 2 adds the table and both fields together.
+- **No presence or online-now tracking.** The lobby shows the durable roster of who has joined,
+  which is what the acceptance test needs. Heartbeats are exactly the high-churn data that belongs
+  in its own table (CLAUDE.md invariant 2), so live presence — if it turns out to be wanted at all —
+  comes later with a table of its own.
 
 **Acceptance:** two browsers join the same code, each picks a name, and each sees the other appear
-in the lobby without a refresh. Closing and reopening the browser rejoins as the same player.
+in the lobby without a refresh. Clearing site data and retyping the same display name lands on the
+same seat with the same character still claimed. A player cannot delete a character or take one off
+another seat without the DM code.
 
 ---
 
@@ -47,7 +77,9 @@ in the lobby without a refresh. Closing and reopening the browser rejoins as the
 
 The riskiest milestone. Do it carefully; everything visual sits on it.
 
-- `scenes` table: background image, grid size, grid offset.
+- `scenes` table: background image, grid size, grid offset. Add `games.activeSceneId` and a game
+  status field at the same time — they were left out of Milestone 1 because a `v.id('scenes')` field
+  needs this table to exist first.
 - **Two token tables**, deliberately split: stable data (art, name, size, layer, owning character)
   separate from position. Convex rewrites a whole document on patch, so mixing high-churn position
   into the stable document makes every drag contend with reads of all of it. See CLAUDE.md
@@ -163,6 +195,7 @@ substantially smaller.
 - How much of the D&D Lite spell and feat lists to hard-code versus make editable. Hard-coding is
   faster; editable avoids a code change every time you want a new spell.
 - Whether NPC sheets need the full character schema or a reduced one. Reduced is less work but means
-  two shapes to maintain.
+  two shapes to maintain. Milestone 1's `characters` table holds only `gameId` and `name`, so nothing
+  built so far constrains the answer.
 - Whether the initiative tracker belongs in Milestone 4 rather than 6 — a real session will answer
   this.

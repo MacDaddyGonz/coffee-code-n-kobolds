@@ -22,13 +22,16 @@ Full spec: [docs/requirements.md](docs/requirements.md). Build order:
 
 ## Status
 
-🚧 **Pre-alpha.** Scaffolded and deploying, but there is no game yet. The app currently renders a
-live-sync smoke test — two browser tabs sharing state through Convex — which exists to prove the
-build and deploy pipeline end to end. Game features start landing on top of it next.
+🚧 **Pre-alpha.** The join flow works: create a game, join it with a code, and a live lobby showing
+who is in and which character each of them has claimed. No map, no character sheets and no dice yet
+— those are Milestones 2–4 in [the roadmap](docs/roadmap.md).
 
 **v1 scope note:** there are no user accounts. You join a game with a game code and a display name,
 and characters live inside the game rather than against a user. This is a deliberate deviation from
-the requirements — see [ADR 0002](docs/adr/0002-defer-user-accounts.md).
+the requirements — see [ADR 0002](docs/adr/0002-defer-user-accounts.md). Identity is your display
+name: a player is a seat at the table, found by the name you type, so clearing your browser costs
+you a retyped name and never a character — see
+[ADR 0003](docs/adr/0003-player-identity-without-accounts.md).
 
 ## Tech stack
 
@@ -70,6 +73,7 @@ so the frontend will not start cleanly until it has run at least once.
 ```bash
 npm run build   # tsc --noEmit && vite build — the same command CI runs
 npm run lint    # typecheck only
+npm test        # vitest run — Convex function tests via convex-test
 ```
 
 Deploys happen automatically on push to `main`. Decisions made so far are recorded in
