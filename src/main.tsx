@@ -1,10 +1,12 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { RouterProvider, createHashRouter } from 'react-router'
+import { Navigate, RouterProvider, createHashRouter } from 'react-router'
 import { ConvexProvider, ConvexReactClient } from 'convex/react'
 
-import Home from '@/routes/Home'
+import { Toaster } from '@/components/ui/sonner'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import Game from '@/routes/Game'
+import Home from '@/routes/Home'
 import '@/index.css'
 
 const convexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined
@@ -22,12 +24,16 @@ const convex = new ConvexReactClient(convexUrl)
 const router = createHashRouter([
   { path: '/', element: <Home /> },
   { path: '/game/:code', element: <Game /> },
+  { path: '*', element: <Navigate to="/" replace /> },
 ])
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ConvexProvider client={convex}>
-      <RouterProvider router={router} />
+      <TooltipProvider>
+        <RouterProvider router={router} />
+        <Toaster />
+      </TooltipProvider>
     </ConvexProvider>
   </StrictMode>,
 )

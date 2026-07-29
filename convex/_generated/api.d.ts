@@ -8,7 +8,13 @@
  * @module
  */
 
-import type * as ping from "../ping.js";
+import type * as characters from "../characters.js";
+import type * as games from "../games.js";
+import type * as lib_characters from "../lib/characters.js";
+import type * as lib_codes from "../lib/codes.js";
+import type * as lib_games from "../lib/games.js";
+import type * as lib_players from "../lib/players.js";
+import type * as players from "../players.js";
 
 import type {
   ApiFromModules,
@@ -17,7 +23,13 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  ping: typeof ping;
+  characters: typeof characters;
+  games: typeof games;
+  "lib/characters": typeof lib_characters;
+  "lib/codes": typeof lib_codes;
+  "lib/games": typeof lib_games;
+  "lib/players": typeof lib_players;
+  players: typeof players;
 }>;
 
 /**
