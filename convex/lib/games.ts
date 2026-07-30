@@ -1,4 +1,4 @@
-import { ConvexError, v } from 'convex/values'
+import { ConvexError, v, type Infer } from 'convex/values'
 
 import type { Doc } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
@@ -33,6 +33,17 @@ export const MAX_TOKENS_PER_GAME = 200
 export const MAX_PLACEMENTS_PER_SCENE = 200
 
 /**
+ * Whether the group is still gathering or already on the board, spelled once.
+ *
+ * The schema, the public projection and `gameStatus` below all need this union, and
+ * three copies of a two-member union is three places to forget the third member a
+ * later milestone adds. `GameStatus` is the same statement as a TypeScript type, so
+ * the two cannot drift either.
+ */
+export const gameStatusValidator = v.union(v.literal('lobby'), v.literal('playing'))
+export type GameStatus = Infer<typeof gameStatusValidator>
+
+/**
  * The only shape of a game a public query may return.
  *
  * `dmCode`, `dmRecoverySalt` and `dmRecoveryHash` are absent by construction.
@@ -51,7 +62,7 @@ export const publicGameValidator = v.object({
   // are not: the *contents* of that scene still go through lib/board.ts, which is
   // where the DM layer is filtered out. Naming a scene reveals nothing.
   activeSceneId: v.union(v.id('scenes'), v.null()),
-  status: v.union(v.literal('lobby'), v.literal('playing')),
+  status: gameStatusValidator,
 })
 
 export function publicGame(game: Doc<'games'>) {
@@ -77,7 +88,7 @@ export function publicGame(game: Doc<'games'>) {
  * written it since Milestone 2, so the default only ever applies to games made
  * before then.
  */
-export function gameStatus(game: Doc<'games'>): 'lobby' | 'playing' {
+export function gameStatus(game: Doc<'games'>): GameStatus {
   return game.status ?? 'lobby'
 }
 

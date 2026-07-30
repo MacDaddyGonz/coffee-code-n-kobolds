@@ -1,17 +1,30 @@
+import { memo } from 'react'
 import { MaximizeIcon, MinusIcon, PlusIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { NativeSelect } from '@/components/ui/native-select'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { MAX_SCALE, MIN_SCALE, ZOOM_PRESETS } from '@/lib/camera'
-import type { BoardCamera } from '@/hooks/useBoardCamera'
 import { cn } from '@/lib/utils'
 
 export type ZoomControlsProps = {
-  camera: BoardCamera
+  /**
+   * The camera's scale, and deliberately not the camera.
+   *
+   * This bar reads one number, but a `BoardCamera` is a fresh object every render
+   * of the board — so taking the whole thing defeated the memo below and put four
+   * Radix tooltip subtrees and a sorted options array through reconciliation on
+   * every frame of every pan, for a bar whose contents had not moved.
+   */
+  scale: number
+  onZoomBy: (direction: 1 | -1) => void
+  onZoomToScale: (scale: number) => void
+  onFit: () => void
+  onReset: () => void
   className?: string
 }
 
@@ -26,8 +39,14 @@ export type ZoomControlsProps = {
  * Positioning is left to whoever renders this, since only they know where the
  * canvas edges are.
  */
-export function ZoomControls({ camera, className }: ZoomControlsProps) {
-  const { scale } = camera.camera
+export const ZoomControls = memo(function ZoomControls({
+  scale,
+  onZoomBy,
+  onZoomToScale,
+  onFit,
+  onReset,
+  className,
+}: ZoomControlsProps) {
   const percent = Math.round(scale * 100)
 
   // The dropdown has to read as the live zoom, but a native select can only show
@@ -53,7 +72,7 @@ export function ZoomControls({ camera, className }: ZoomControlsProps) {
             size="icon-sm"
             aria-label="Zoom out"
             disabled={scale <= MIN_SCALE}
-            onClick={() => camera.zoomBy(-1)}
+            onClick={() => onZoomBy(-1)}
           >
             <MinusIcon aria-hidden />
           </Button>
@@ -61,18 +80,18 @@ export function ZoomControls({ camera, className }: ZoomControlsProps) {
         <TooltipContent>Zoom out (−)</TooltipContent>
       </Tooltip>
 
-      <select
+      <NativeSelect
         aria-label="Zoom level"
-        className="border-input h-7 rounded-lg border bg-transparent px-1.5 text-xs tabular-nums outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+        className="h-7 px-1.5 text-xs tabular-nums"
         value={String(preset ?? scale)}
-        onChange={(e) => camera.zoomToScale(Number(e.target.value))}
+        onChange={(e) => onZoomToScale(Number(e.target.value))}
       >
         {options.map((option) => (
           <option key={option} value={String(option)}>
             {Math.round(option * 100)}%
           </option>
         ))}
-      </select>
+      </NativeSelect>
 
       <Tooltip>
         <TooltipTrigger asChild>
@@ -82,7 +101,7 @@ export function ZoomControls({ camera, className }: ZoomControlsProps) {
             size="icon-sm"
             aria-label="Zoom in"
             disabled={scale >= MAX_SCALE}
-            onClick={() => camera.zoomBy(1)}
+            onClick={() => onZoomBy(1)}
           >
             <PlusIcon aria-hidden />
           </Button>
@@ -97,7 +116,7 @@ export function ZoomControls({ camera, className }: ZoomControlsProps) {
             variant="ghost"
             size="icon-sm"
             aria-label="Fit map to view"
-            onClick={camera.fit}
+            onClick={onFit}
           >
             <MaximizeIcon aria-hidden />
           </Button>
@@ -112,7 +131,7 @@ export function ZoomControls({ camera, className }: ZoomControlsProps) {
             variant="ghost"
             size="xs"
             className="tabular-nums"
-            onClick={camera.reset}
+            onClick={onReset}
           >
             100%
           </Button>
@@ -121,4 +140,4 @@ export function ZoomControls({ camera, className }: ZoomControlsProps) {
       </Tooltip>
     </div>
   )
-}
+})

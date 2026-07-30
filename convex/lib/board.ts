@@ -11,8 +11,7 @@
 // passes through the single predicate below, and any future query that wants token
 // data has to come here to get it.
 
-import { ConvexError, v } from 'convex/values'
-import type { Infer } from 'convex/values'
+import { ConvexError, v, type Infer } from 'convex/values'
 
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
@@ -20,11 +19,22 @@ import { MAX_PLACEMENTS_PER_SCENE, MAX_SCENES_PER_GAME, MAX_TOKENS_PER_GAME } fr
 import { findClaimHolder } from './players'
 import type { Point } from './grid'
 
+/**
+ * The two layers a token can be on, spelled once.
+ *
+ * Used by the schema, by the public projection and by `board.addToken`'s argument
+ * validator, because this union is the field the DM layer's whole secrecy turns on
+ * (invariant 8) and three copies of it are three places for a fourth member to be
+ * added to two of them. The client derives its own type from `PublicToken['layer']`
+ * rather than re-spelling it either.
+ */
+export const tokenLayerValidator = v.union(v.literal('player'), v.literal('dm'))
+
 /** The public shape of a token. artUrl is a signed storage URL, null when there is no art. */
 export const publicTokenValidator = v.object({
   _id: v.id('tokens'),
   name: v.string(),
-  layer: v.union(v.literal('player'), v.literal('dm')),
+  layer: tokenLayerValidator,
   sizeSquares: v.number(),
   artUrl: v.union(v.string(), v.null()),
   tint: v.string(),
@@ -74,8 +84,15 @@ function maySee(token: Doc<'tokens'>, isDm: boolean): boolean {
   return isDm || token.layer === 'player'
 }
 
-/** Filtered token documents for this caller. THE choke point. */
-export async function visibleTokens(
+/**
+ * Filtered token documents for this caller. THE choke point.
+ *
+ * Private deliberately: a caller outside this module holding raw `Doc<'tokens'>`
+ * rows is a projection waiting to be written somewhere else, and the point of the
+ * choke point is that the filtering and the projecting live together. Everything
+ * beyond this file gets `publicTokens` below instead.
+ */
+async function visibleTokens(
   ctx: QueryCtx,
   gameId: Id<'games'>,
   isDm: boolean,
@@ -289,4 +306,32 @@ export async function countTokensInGame(ctx: QueryCtx, gameId: Id<'games'>): Pro
     .take(MAX_TOKENS_PER_GAME)
 
   return tokens.length
+}
+
+/**
+ * Is this blob still the art of a token in this game? So `files.discard` can refuse
+ * to delete a file that something on the board is drawing.
+ *
+ * It lives here rather than in files.ts for the reason at the top of this module:
+ * the leak guard greps the sources, and a read of the `tokens` table outside this
+ * file is a violation whether it returns rows or a boolean. A boolean is all that
+ * crosses the boundary, which is also why there is no `isDm` argument — the only
+ * caller is DM-gated, and the question is about a storage id the caller already
+ * holds rather than about what is on the board.
+ *
+ * Counts both layers: a DM-layer skeleton's portrait is exactly as much in use as a
+ * hero's, and a check that skipped the hidden half would let a mis-sequenced client
+ * blank out the encounter it was hiding.
+ */
+export async function tokenReferencesImage(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+  imageId: Id<'_storage'>,
+): Promise<boolean> {
+  const tokens = await ctx.db
+    .query('tokens')
+    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  return tokens.some((token) => token.imageId === imageId)
 }

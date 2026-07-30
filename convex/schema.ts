@@ -1,6 +1,13 @@
 import { defineSchema, defineTable } from 'convex/server'
 import { v } from 'convex/values'
 
+// The two literal unions this schema shares with the queries that project them and
+// the mutations that take them as arguments. Imported rather than re-spelled so the
+// table definition and the public payload cannot end up disagreeing about which
+// members exist — see the notes beside each field below.
+import { tokenLayerValidator } from './lib/board'
+import { gameStatusValidator } from './lib/games'
+
 export default defineSchema({
   games: defineTable({
     name: v.string(),
@@ -22,7 +29,7 @@ export default defineSchema({
     // the board. Optional only because adding a required field to a table that
     // already has rows fails the schema push — read it through `gameStatus` in
     // lib/games.ts, never directly, so the default lives in exactly one place.
-    status: v.optional(v.union(v.literal('lobby'), v.literal('playing'))),
+    status: v.optional(gameStatusValidator),
   }).index('by_code', ['code']),
 
   // A seat at the table, not a user. Identified within a game by nameKey, so a
@@ -88,7 +95,7 @@ export default defineSchema({
     // THE SECRET IS HERE. A 'dm' token must never reach a player client, and it has
     // the same shape as a 'player' one — so a `returns:` validator cannot catch a
     // leak of it. Every read goes through lib/board.ts. See invariant 8.
-    layer: v.union(v.literal('player'), v.literal('dm')),
+    layer: tokenLayerValidator,
     // Diameter in grid squares. 1 = one square, 2 = a 2×2 ogre.
     sizeSquares: v.number(),
     // Absent → drawn as a coloured coin with the name's initials, which is enough

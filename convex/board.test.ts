@@ -9,6 +9,7 @@ import type { Id } from './_generated/dataModel'
 import { MAX_TOKENS_PER_GAME } from './lib/games'
 import { cellOf, snapToGrid } from './lib/grid'
 import type { Grid, Point } from './lib/grid'
+import { MAX_TOKEN_BYTES } from './lib/limits'
 import schema from './schema'
 
 const modules = import.meta.glob('./**/*.ts')
@@ -78,6 +79,10 @@ async function storeImage(t: Harness, label: string, bytes = 64): Promise<Id<'_s
   const body = new Uint8Array(bytes)
   for (let i = 0; i < bytes; i += 1) body[i] = (label.charCodeAt(i % label.length) + i) % 256
   return await t.run(async (ctx) => await ctx.storage.store(new Blob([body])))
+}
+
+async function blobExists(t: Harness, imageId: Id<'_storage'>) {
+  return (await t.run(async (ctx) => await ctx.db.system.get('_storage', imageId))) !== null
 }
 
 async function makeScene(
@@ -1011,6 +1016,81 @@ describe('board.addToken', () => {
   })
 
   /**
+   * The size of the art is read out of storage, not taken from the client, because
+   * the browser's downscaler is a courtesy that saves an upload rather than the
+   * enforcement — CLAUDE.md invariant 6 is a promise about what is in storage, and a
+   * limit only the browser applies is one a client bug silently removes.
+   *
+   * The blob surviving the refusal is asserted positively, as `scenes.create`'s
+   * equivalent test does: a Convex mutation is one transaction, so the refusal cannot
+   * delete what it refused, and cleaning up is `files.discard`'s job because that is
+   * the call that commits. See ADR 0004.
+   */
+  test('refuses art over MAX_TOKEN_BYTES, and files.discard clears the blob', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    const imageId = await storeImage(t, 'huge-token', MAX_TOKEN_BYTES + 1)
+    expect(await blobExists(t, imageId)).toBe(true)
+
+    await expectKind(addToken(t, game.code, game.dmCode, sceneId, { imageId }), 'BadInput')
+
+    // No token, and no placement either — the whole transaction rolled back.
+    expect(await t.query(api.board.tokens, { code: game.code, dmCode: game.dmCode })).toEqual([])
+    expect(
+      await t.query(api.board.positions, { code: game.code, sceneId, dmCode: game.dmCode }),
+    ).toEqual([])
+    // And the blob is still there, for the same reason.
+    expect(await blobExists(t, imageId)).toBe(true)
+
+    // The client's catch calls this, and it is the call that commits.
+    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId })
+    expect(await blobExists(t, imageId)).toBe(false)
+  })
+
+  test('accepts art of exactly MAX_TOKEN_BYTES', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    const imageId = await storeImage(t, 'exact-token', MAX_TOKEN_BYTES)
+
+    const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { imageId })
+
+    expect((await tokenRow(t, tokenId))?.imageId).toBe(imageId)
+    const [token] = await t.query(api.board.tokens, { code: game.code })
+    expect(typeof token.artUrl).toBe('string')
+  })
+
+  /**
+   * A storage id that resolves to nothing is what a retried upload path produces —
+   * `files.discard` ran and then the create was attempted again with the same id. A
+   * token made from it would draw as a blank coin forever, so it is refused rather
+   * than stored, exactly as `scenes.create` refuses one.
+   */
+  test('refuses a storage id that is no longer in storage', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    const imageId = await storeImage(t, 'gone-token')
+    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId })
+    expect(await blobExists(t, imageId)).toBe(false)
+
+    await expectKind(addToken(t, game.code, game.dmCode, sceneId, { imageId }), 'BadInput')
+    expect(await t.query(api.board.tokens, { code: game.code, dmCode: game.dmCode })).toEqual([])
+  })
+
+  /** A token with no art at all is the common case, and skips the storage read. */
+  test('accepts a token with no imageId', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+
+    const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { name: 'Plain Coin' })
+
+    expect((await tokenRow(t, tokenId))?.imageId).toBeUndefined()
+  })
+
+  /**
    * MAX_TOKENS_PER_GAME and MAX_PLACEMENTS_PER_SCENE are both 200, so a single
    * scene cannot exceed the placement cap without first exceeding the token cap.
    * The tokens are split across two scenes so that what is being tested here is
@@ -1095,6 +1175,63 @@ describe('board.removeToken', () => {
       tokenId: first,
     })
     expect(await t.query(api.board.tokens, { code: game.code })).toEqual([])
+  })
+})
+
+describe('files.discard refuses art that is still in use', () => {
+  /**
+   * `discard` is DM-gated, which bounds who can call it — but the caller is the DM's
+   * own client, calling from an error path with an id it may have mis-sequenced, so
+   * the gate is not the same thing as the call being correct. Deleting the art of a
+   * token that is on the board would strip a creature to a blank coin with nothing in
+   * the app able to explain why.
+   */
+  test('a live token’s art survives a discard, and goes when the token does', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    const imageId = await storeImage(t, 'live-token-art')
+    const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { imageId })
+
+    await expectKind(
+      t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId }),
+      'BadInput',
+    )
+    expect(await blobExists(t, imageId)).toBe(true)
+
+    // `removeToken` is the way to delete art that is in use, because it deletes the
+    // thing using it in the same transaction.
+    await t.mutation(api.board.removeToken, { code: game.code, dmCode: game.dmCode, tokenId })
+    expect(await blobExists(t, imageId)).toBe(false)
+  })
+
+  /**
+   * Both layers, and this is the case that matters most: the DM's hidden encounter
+   * art is exactly as much in use as a hero's portrait, and a check that read only the
+   * visible half would blank out the ambush it was hiding.
+   */
+  test('a DM-layer token’s art is protected too', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    const imageId = await storeImage(t, 'secret-token-art')
+    await addToken(t, game.code, game.dmCode, sceneId, { layer: 'dm', imageId })
+
+    await expectKind(
+      t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId }),
+      'BadInput',
+    )
+    expect(await blobExists(t, imageId)).toBe(true)
+  })
+
+  /** The control: a blob nothing points at is still discarded, or the guard is useless. */
+  test('an unreferenced blob is still deleted', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const imageId = await storeImage(t, 'orphan')
+
+    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId })
+    expect(await blobExists(t, imageId)).toBe(false)
   })
 })
 

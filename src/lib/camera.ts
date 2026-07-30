@@ -19,7 +19,7 @@
 // there is no server half of this to keep in step and nothing here needs a
 // rendered component to test.
 
-import type { Point } from '@convex/lib/grid'
+import type { Point, Size } from '@convex/lib/grid'
 
 /**
  * `scale` is image pixels to screen pixels; `x`/`y` are where the image's origin
@@ -28,8 +28,6 @@ import type { Point } from '@convex/lib/grid'
  * without a translation layer in between to get wrong.
  */
 export type Camera = { scale: number; x: number; y: number }
-
-export type Size = { width: number; height: number }
 
 /**
  * Zoom limits. The floor is generous because a 5040×4620 battle map is 20 times

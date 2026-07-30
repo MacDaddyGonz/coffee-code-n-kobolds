@@ -54,7 +54,12 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    [ADR 0002](docs/adr/0002-defer-user-accounts.md). There are no user accounts in v1; players join
    with a game code and a display name.
 6. **Keep uploads small.** Convex free tier gives 1 GB of file storage for maps, tokens, modal
-   images and music. Downscale images on upload.
+   images and music. Downscale images on upload — and **check the size server-side, against the
+   stored blob**. The browser's downscaler is a courtesy that saves an upload; the enforcement is
+   `scenes.create` and `board.addToken` reading `ctx.db.system.get('_storage', imageId)` and refusing
+   anything over `MAX_SCENE_BYTES` / `MAX_TOKEN_BYTES` in `convex/lib/limits.ts`. A limit only the
+   client applies is a limit a client bug removes. The refusing mutation cannot delete the blob it
+   refused — one transaction — so that is `files.discard`'s job (ADR 0004).
 7. **The DM code is the only thing that authorises anything.** A player is a seat identified by a
    display name, so a `playerId` argument is routing, not proof of identity, and `players.isDm` is a
    badge in the roster. DM-only queries and mutations take `dmCode` and re-verify it server-side
@@ -90,7 +95,18 @@ npm run dev:backend  # convex dev — watches convex/ and pushes to the dev depl
 npm run build        # tsc --noEmit && vite build (same command CI runs)
 npm run lint         # typecheck only — both src/ and convex/
 npm test             # vitest run — the convex-test suites in convex/*.test.ts
+npm run test:smoke   # scripts/board-smoke.mjs — the board API against the REAL dev deployment
 ```
+
+`npm run test:smoke` is not a second copy of `npm test`, and the difference is the point:
+**convex-test does not apply Convex's own value validation.** A write it accepts locally can still be
+rejected by a real deployment — Milestone 1 shipped exactly that bug, a truncated display name
+leaving a lone UTF-16 surrogate that the suite stored happily and the cloud refused. The smoke script
+does genuine round trips against the dev deployment (a real upload URL, a real POST of real bytes,
+real float64s through the position table), so that class of failure surfaces here rather than in
+front of the group. It needs `.env.local` (or `VITE_CONVEX_URL`), which `npm run dev:backend`
+writes, and it creates a throwaway game each run, deleting the scene and tokens it made on the way
+out — the game document itself stays, because there is no delete API for one before Milestone 7.
 
 **`npm run dev:backend` is needed whenever you are changing anything under `convex/`** — it watches
 those files and pushes them to the dev deployment. It also writes `.env.local`, which the frontend

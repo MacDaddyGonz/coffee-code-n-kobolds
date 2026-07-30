@@ -74,25 +74,10 @@ describe('throttle', () => {
     expect(sent.mock.calls).toEqual([['drag start'], ['snapped']])
   })
 
-  test('flush sends the pending call now rather than at the end of the window', () => {
+  test('cancel is harmless with nothing pending', () => {
     const sent = vi.fn()
     const move = throttle(sent, MOVE_THROTTLE_MS)
 
-    move('first')
-    move('last')
-    move.flush()
-
-    expect(sent.mock.calls).toEqual([['first'], ['last']])
-
-    vi.advanceTimersByTime(MOVE_THROTTLE_MS * 5)
-    expect(sent).toHaveBeenCalledTimes(2)
-  })
-
-  test('flush and cancel are harmless with nothing pending', () => {
-    const sent = vi.fn()
-    const move = throttle(sent, MOVE_THROTTLE_MS)
-
-    move.flush()
     move.cancel()
 
     expect(sent).not.toHaveBeenCalled()

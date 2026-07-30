@@ -114,7 +114,3 @@ export function getCamera(code: string, sceneId: string): Camera | null {
 export function rememberCamera(code: string, sceneId: string, camera: Camera) {
   write(KEY.cameraFor(code, sceneId), JSON.stringify(camera))
 }
-
-export function forgetCamera(code: string, sceneId: string) {
-  write(KEY.cameraFor(code, sceneId), null)
-}

@@ -5,6 +5,7 @@ import { ConfirmDialog } from '@/components/lobby/ConfirmDialog'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { NativeSelect } from '@/components/ui/native-select'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicScene } from '@convex/lib/scenes'
@@ -59,9 +60,9 @@ export function SceneSelect({ code, dmCode, scenes, activeSceneId }: SceneSelect
         <Label htmlFor={`${fieldId}-scene`} className="text-xs">
           On the table
         </Label>
-        <select
+        <NativeSelect
           id={`${fieldId}-scene`}
-          className="border-input h-7 max-w-64 rounded-lg border bg-transparent px-1.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50 dark:bg-input/30"
+          className="h-7 max-w-64 px-1.5"
           value={activeSceneId ?? ''}
           disabled={busy}
           onChange={(event) => switchTo(event.target.value as Id<'scenes'>)}
@@ -75,7 +76,7 @@ export function SceneSelect({ code, dmCode, scenes, activeSceneId }: SceneSelect
               {scene.name}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       </div>
 
       {active ? (

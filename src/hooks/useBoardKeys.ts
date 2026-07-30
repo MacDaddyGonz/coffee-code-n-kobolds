@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import type { Id } from '@convex/_generated/dataModel'
 import type { Cell } from '@convex/lib/grid'
 import type { BoardCamera } from '@/hooks/useBoardCamera'
+import { isTypingElement } from '@/lib/utils'
 
 /** One square, or five with shift — a full round's dash for a 30-foot speed. */
 const NUDGE_CELLS = 1
@@ -21,7 +22,7 @@ const ARROWS: Record<string, Cell> = {
 }
 
 /**
- * A copy of the guard in `useBoardCamera`, and deliberately a copy.
+ * Is somebody typing rather than driving the board?
  *
  * The board's shortcuts are single characters — `f`, `0`, `-` — so every one of
  * them is also something somebody might type. The grid calibrator nudges its own
@@ -29,18 +30,16 @@ const ARROWS: Record<string, Cell> = {
  * that makes this load-bearing rather than tidy: without it, one arrow press would
  * shift the grid *and* pan the map, and neither would end up where it was aimed.
  *
- * A focused button is deliberately not typing. Clicking Fit and then pressing `F`
- * again should work, and a button ignores every key this hook handles anyway.
+ * Asked of `document.activeElement` and not of the event target, because a key
+ * that reaches the window while a field is focused belongs to the field whatever
+ * it was dispatched at. And a focused button is deliberately *not* typing here,
+ * where it is for the space-pan modifier: clicking Fit and then pressing `F` again
+ * should work, and a button ignores every key this hook handles anyway. Both
+ * differences are arguments; the list of element types they differ about is not,
+ * which is why that part lives in `@/lib/utils`.
  */
 function isTyping(): boolean {
-  const active = document.activeElement
-  if (!(active instanceof HTMLElement)) return false
-  return (
-    active.isContentEditable ||
-    active instanceof HTMLInputElement ||
-    active instanceof HTMLTextAreaElement ||
-    active instanceof HTMLSelectElement
-  )
+  return isTypingElement(document.activeElement, { buttons: false })
 }
 
 /**

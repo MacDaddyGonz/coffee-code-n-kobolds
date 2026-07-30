@@ -113,9 +113,12 @@ type BitmapCall = { options: ImageBitmapOptions | undefined }
 
 let bitmapCalls: BitmapCall[] = []
 let closedBitmaps = 0
+let transferredBitmaps = 0
+let drawnBitmaps = 0
 let convertCalls: { type?: string; quality?: number }[] = []
 let sourceSize: { width: number; height: number } | null = null
 let webp: 'supported' | 'throws' | 'substitutes-png' = 'supported'
+let contexts: 'bitmaprenderer' | '2d-only' | 'none' = 'bitmaprenderer'
 let revokedUrls: string[] = []
 
 class FakeImage {
@@ -144,7 +147,23 @@ class FakeCanvas {
   ) {}
 
   getContext(kind: string) {
-    return kind === '2d' ? { drawImage: () => {} } : null
+    if (contexts === 'none') return null
+    if (kind === 'bitmaprenderer') {
+      return contexts === 'bitmaprenderer'
+        ? {
+            transferFromImageBitmap: () => {
+              transferredBitmaps++
+            },
+          }
+        : null
+    }
+    return kind === '2d'
+      ? {
+          drawImage: () => {
+            drawnBitmaps++
+          },
+        }
+      : null
   }
 
   async convertToBlob(options?: { type?: string; quality?: number }) {
@@ -161,10 +180,13 @@ class FakeCanvas {
 beforeEach(() => {
   bitmapCalls = []
   closedBitmaps = 0
+  transferredBitmaps = 0
+  drawnBitmaps = 0
   convertCalls = []
   revokedUrls = []
   sourceSize = { width: 5040, height: 4620 }
   webp = 'supported'
+  contexts = 'bitmaprenderer'
 
   vi.stubGlobal('URL', {
     createObjectURL: () => 'blob:probe',
@@ -237,19 +259,43 @@ describe('downscaleImage', () => {
     expect(result.blob.type).toBe('image/png')
   })
 
-  test('releases the bitmap, and does so even when encoding fails', async () => {
-    await downscaleImage(sourceFile(1024), { maxEdge: MAP_MAX_EDGE, quality: 0.82 })
-    expect(closedBitmaps).toBe(1)
-
-    vi.stubGlobal('OffscreenCanvas', class Broken extends FakeCanvas {
-      getContext() {
-        return null
-      }
+  test('moves the pixels into the canvas instead of copying them', async () => {
+    const result = await downscaleImage(sourceFile(1024), {
+      maxEdge: MAP_MAX_EDGE,
+      quality: 0.82,
     })
+
+    // The decoder already produced exactly the image we want, so there is no
+    // `drawImage` and no second ~24 MB RGBA buffer to allocate and blit into.
+    expect(transferredBitmaps).toBe(1)
+    expect(drawnBitmaps).toBe(0)
+    // A transferred bitmap comes back detached: it has already been released, and
+    // there is nothing left for `close()` to do.
+    expect(closedBitmaps).toBe(0)
+    // And the dimensions are still reported, read before the transfer took them.
+    expect([result.width, result.height]).toEqual([2560, 2347])
+  })
+
+  test('copies, and releases the bitmap, when the browser has no bitmaprenderer', async () => {
+    contexts = '2d-only'
+    const result = await downscaleImage(sourceFile(1024), {
+      maxEdge: MAP_MAX_EDGE,
+      quality: 0.82,
+    })
+
+    expect(drawnBitmaps).toBe(1)
+    expect(transferredBitmaps).toBe(0)
+    // A 23 MP bitmap left for the collector is a real leak over a dozen maps.
+    expect(closedBitmaps).toBe(1)
+    expect(result.blob.type).toBe('image/webp')
+  })
+
+  test('releases the bitmap on the copy path even when the canvas is unusable', async () => {
+    contexts = 'none'
     await expect(
       downscaleImage(sourceFile(1024), { maxEdge: MAP_MAX_EDGE, quality: 0.82 }),
     ).rejects.toThrow(/cannot prepare images/)
-    expect(closedBitmaps).toBe(2)
+    expect(closedBitmaps).toBe(1)
   })
 
   test('revokes the probe URL', async () => {

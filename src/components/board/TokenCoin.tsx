@@ -1,26 +1,15 @@
+import { memo, useMemo } from 'react'
 import { Circle, Group, Text } from 'react-konva'
 import type Konva from 'konva'
 
-import { useCanvasImage } from './SceneImage'
-import type { PublicToken } from '@convex/lib/board'
+import { useCanvasImage } from '@/hooks/useCanvasImage'
+// The board's token type, imported rather than restated. A structural copy of it
+// lived here to keep the canvas independent of the hook that feeds it — but this
+// is `import type`, which is erased, so there is no runtime dependency to be
+// independent of and nothing stopping a test rendering a hand-written token.
+import type { BoardToken } from '@/hooks/useBoard'
 import type { Point } from '@convex/lib/grid'
 import type { PublicScene } from '@convex/lib/scenes'
-
-/**
- * What a coin needs of a token, which is `BoardToken` from `@/hooks/useBoard`
- * spelled out structurally rather than imported.
- *
- * The two are the same type by construction, so a `BoardToken` passes here without
- * a cast. Declaring it locally keeps the canvas independent of the hook that feeds
- * it: these components can be rendered from a DM preview, or from a test, with a
- * hand-written token and no subscription behind it.
- */
-export type CoinToken = PublicToken & {
-  /** Image-space centre of the token, or null when it is not on this scene. */
-  position: Point | null
-  /** An affordance only — the server re-checks every move. */
-  canMove: boolean
-}
 
 /** Screen-pixel weights, divided by the scale so they hold at any zoom. */
 const EDGE_WIDTH = 2
@@ -40,17 +29,25 @@ const NAME_MIN_COIN_DIAMETER = 26
 const SELECTION_COLOUR = '#ffffff'
 
 export type TokenCoinProps = {
-  token: CoinToken
+  token: BoardToken
   scene: PublicScene
   /** The camera's scale. Needed for the same reason GridOverlay needs it. */
   scale: number
   selected: boolean
   draggable: boolean
-  onSelect: () => void
-  onDragStart?: () => void
+  /**
+   * The token comes back out with every callback, so the parent can pass one
+   * function for the whole layer instead of closing a fresh one over each coin.
+   * That is what lets the memo below actually skip anything: react-konva compares
+   * `on*` props by reference and answers a new function by unbinding the old
+   * listener and binding the new one, so a per-coin arrow was four detach/attach
+   * pairs per coin per render of a board that had not changed.
+   */
+  onSelect: (token: BoardToken) => void
+  onDragStart?: (token: BoardToken) => void
   /** Image-space centre, mid-drag. Throttle the writes; see CLAUDE.md invariant 2. */
-  onDragMove?: (point: Point) => void
-  onDragEnd?: (point: Point) => void
+  onDragMove?: (token: BoardToken, point: Point) => void
+  onDragEnd?: (token: BoardToken, point: Point) => void
 }
 
 /**
@@ -61,13 +58,19 @@ export type TokenCoinProps = {
  * across, in image-space pixels — which is what makes an ogre four squares wide on
  * every screen at the table regardless of what its picture happens to be.
  *
+ * Memoised, and every prop above is either a primitive or an identity its parent
+ * holds still on purpose. A pan changes the stage's transform and nothing else, so
+ * with this in place a pan reconciles no coins at all — where without it a
+ * twenty-token board spent every frame of every pan rebuilding eighty Konva event
+ * bindings to arrive back where it started.
+ *
  * There is no permission logic here, and there is nothing to hide. A DM-layer token
  * reaches this component only on the DM's own screen, because `convex/lib/board.ts`
  * never put one in anybody else's payload. Deciding visibility in a renderer is
  * precisely what CLAUDE.md invariant 1 forbids: the bundle is public, so a client
  * that has been sent a secret has already leaked it whether or not it draws it.
  */
-export function TokenCoin({
+export const TokenCoin = memo(function TokenCoin({
   token,
   scene,
   scale,
@@ -80,8 +83,13 @@ export function TokenCoin({
 }: TokenCoinProps) {
   const art = useCanvasImage(token.artUrl)
 
+  // Held still across renders that did not change the zoom. A fresh array is a
+  // fresh prop identity to Konva, which sets the attribute and asks for a redraw
+  // of the layer whether or not the two dashes in it differ.
+  const selectionDash = useMemo(() => [6 / scale, 4 / scale], [scale])
+
   // A token in the game's library but not on this scene has nothing to draw. The
-  // hook above still runs, so the rule against conditional hooks holds.
+  // hooks above still run, so the rule against conditional hooks holds.
   const position = token.position
   if (!position) return null
 
@@ -106,15 +114,9 @@ export function TokenCoin({
 
   return (
     <Group
-      // Load-bearing, not decoration. `useSmoothPositions` interpolates a remote
-      // token by writing this node's position sixty times a second, and it reaches
-      // the node with `stage.findOne('#' + tokenId)` — there is no other route,
-      // because the drag handlers below hand out a point rather than a node. Remove
-      // this and nothing breaks loudly: remote tokens simply step once per write
-      // instead of sliding, which is the one thing this milestone's smoothness
-      // criterion is about. Dropping a token back on the square it came from would
-      // also leave the coin visually off-centre, because react-konva sees `x`/`y`
-      // props that have not changed and so leaves the node where the drag left it.
+      // Load-bearing, not decoration: it is how `useSmoothPositions` finds this node
+      // to interpolate it, and removing it degrades silently rather than breaking.
+      // The mechanism and the two symptoms are documented once, in useTokenMove.ts.
       id={token._id}
       x={position.x}
       y={position.y}
@@ -125,22 +127,22 @@ export function TokenCoin({
         // you touch it. Left button only: a right-click is not a selection, and a
         // middle-drag never reaches Konva because BoardStage claims it for panning.
         if (event.evt.button !== 0) return
-        onSelect()
+        onSelect(token)
       }}
       onMouseEnter={(event) => cursor(event, draggable ? 'grab' : 'pointer')}
       onMouseLeave={(event) => cursor(event, '')}
       onDragStart={(event) => {
         cursor(event, 'grabbing')
-        onDragStart?.()
+        onDragStart?.(token)
       }}
       // Konva owns the node's position for the duration of a drag, so these read it
       // back off the node rather than tracking the pointer themselves. A throttled
       // write echoing back mid-drag lands as a new `x`/`y` prop, which trails the
       // same pointer and so is invisible.
-      onDragMove={(event) => onDragMove?.({ x: event.target.x(), y: event.target.y() })}
+      onDragMove={(event) => onDragMove?.(token, { x: event.target.x(), y: event.target.y() })}
       onDragEnd={(event) => {
         cursor(event, draggable ? 'grab' : '')
-        onDragEnd?.({ x: event.target.x(), y: event.target.y() })
+        onDragEnd?.(token, { x: event.target.x(), y: event.target.y() })
       }}
     >
       {selected ? (
@@ -151,7 +153,7 @@ export function TokenCoin({
           radius={radius + SELECTION_GAP / scale}
           stroke={SELECTION_COLOUR}
           strokeWidth={SELECTION_WIDTH / scale}
-          dash={[6 / scale, 4 / scale]}
+          dash={selectionDash}
           shadowColor="#000000"
           shadowBlur={3 / scale}
           shadowOpacity={0.9}
@@ -213,7 +215,7 @@ export function TokenCoin({
       ) : null}
     </Group>
   )
-}
+})
 
 /**
  * Fill the circle with the art, whatever shape the art is.

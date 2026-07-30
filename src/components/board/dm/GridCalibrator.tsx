@@ -7,6 +7,7 @@ import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { parseNumber } from '@/lib/utils'
 import { api } from '@convex/_generated/api'
 import {
   MAX_GRID_SIZE,
@@ -23,18 +24,6 @@ export type GridCalibratorProps = {
   scene: PublicScene
 }
 
-/**
- * Empty means empty, not zero.
- *
- * `Number('')` is 0, which would sail through every check and store a grid whose
- * square is zero pixels wide — dividing by it hands `Infinity` to the position
- * table on the first drag. NaN is the honest answer for a blank field, and
- * `isUsableGrid` refuses it.
- */
-function parseNumber(raw: string): number {
-  return raw.trim() === '' ? Number.NaN : Number(raw)
-}
-
 /** Back out of a float that came from a division, so 16.000000001 reads as 16. */
 function trim(value: number): string {
   return Number.isFinite(value) ? String(Number(value.toFixed(3))) : ''
@@ -46,6 +35,65 @@ function unusableMessage(imageWidth: number): string {
   return (
     `Fill in all three. A square has to be between ${MIN_GRID_SIZE} and ${MAX_GRID_SIZE} pixels, ` +
     `which puts the square count somewhere between 1 and ${most} across this map.`
+  )
+}
+
+/**
+ * Arrow keys nudge the focused field by a pixel, Shift by ten.
+ *
+ * Handled on the input rather than on the board, deliberately: the board's own
+ * arrow keys move the selected token and do not fire while an input has focus, so
+ * lining a grid up with a printed one has to be possible from the field the DM is
+ * already typing in. `preventDefault` matters — a number input steps itself on the
+ * same keys, and both would apply.
+ */
+function nudge(
+  event: React.KeyboardEvent<HTMLInputElement>,
+  value: string,
+  set: (next: string) => void,
+) {
+  const direction = event.key === 'ArrowUp' ? 1 : event.key === 'ArrowDown' ? -1 : 0
+  if (direction === 0) return
+  event.preventDefault()
+  const current = parseNumber(value)
+  const from = Number.isFinite(current) ? current : 0
+  set(trim(from + direction * (event.shiftKey ? 10 : 1)))
+}
+
+type NudgeFieldProps = {
+  id: string
+  label: string
+  value: string
+  /** Only the square count has a floor. The offsets are freely negative. */
+  min?: number
+  disabled: boolean
+  onChange: (next: string) => void
+}
+
+/**
+ * One nudgeable number field. The three below differ by label, value and floor and
+ * by nothing else, so they are one component and a list rather than three near
+ * copies of fifteen lines — where a fix applied to two of them and not the third is
+ * the sort of thing nobody notices until the grid is out by one axis.
+ */
+function NudgeField({ id, label, value, min, disabled, onChange }: NudgeFieldProps) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Label htmlFor={id} className="text-xs">
+        {label}
+      </Label>
+      <Input
+        id={id}
+        type="number"
+        min={min}
+        step={1}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => nudge(event, value, onChange)}
+        className="h-7 w-24 tabular-nums"
+        disabled={disabled}
+      />
+    </div>
   )
 }
 
@@ -84,27 +132,30 @@ export function GridCalibrator({ code, dmCode, scene }: GridCalibratorProps) {
   const down = squaresDown(scene.imageHeight, grid.gridSize)
   const busy = action.pending !== null
 
-  /**
-   * Arrow keys nudge the focused field by a pixel, Shift by ten.
-   *
-   * Handled on the input rather than on the board, deliberately: the board's own
-   * arrow keys move the selected token and do not fire while an input has focus,
-   * so lining a grid up with a printed one has to be possible from the field the
-   * DM is already typing in. `preventDefault` matters — a number input steps
-   * itself on the same keys, and both would apply.
-   */
-  function nudge(
-    event: React.KeyboardEvent<HTMLInputElement>,
-    value: string,
-    set: (next: string) => void,
-  ) {
-    const direction = event.key === 'ArrowUp' ? 1 : event.key === 'ArrowDown' ? -1 : 0
-    if (direction === 0) return
-    event.preventDefault()
-    const current = parseNumber(value)
-    const from = Number.isFinite(current) ? current : 0
-    set(trim(from + direction * (event.shiftKey ? 10 : 1)))
-  }
+  const fields: NudgeFieldProps[] = [
+    {
+      id: `${fieldId}-across`,
+      label: 'Squares across',
+      value: across,
+      min: 1,
+      disabled: busy,
+      onChange: setAcross,
+    },
+    {
+      id: `${fieldId}-x`,
+      label: 'Offset X',
+      value: offsetX,
+      disabled: busy,
+      onChange: setOffsetX,
+    },
+    {
+      id: `${fieldId}-y`,
+      label: 'Offset Y',
+      value: offsetY,
+      disabled: busy,
+      onChange: setOffsetY,
+    },
+  ]
 
   const save = () =>
     void action
@@ -124,52 +175,9 @@ export function GridCalibrator({ code, dmCode, scene }: GridCalibratorProps) {
       }}
     >
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex flex-col gap-1">
-          <Label htmlFor={`${fieldId}-across`} className="text-xs">
-            Squares across
-          </Label>
-          <Input
-            id={`${fieldId}-across`}
-            type="number"
-            min={1}
-            step={1}
-            value={across}
-            onChange={(event) => setAcross(event.target.value)}
-            onKeyDown={(event) => nudge(event, across, setAcross)}
-            className="h-7 w-24 tabular-nums"
-            disabled={busy}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor={`${fieldId}-x`} className="text-xs">
-            Offset X
-          </Label>
-          <Input
-            id={`${fieldId}-x`}
-            type="number"
-            step={1}
-            value={offsetX}
-            onChange={(event) => setOffsetX(event.target.value)}
-            onKeyDown={(event) => nudge(event, offsetX, setOffsetX)}
-            className="h-7 w-24 tabular-nums"
-            disabled={busy}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor={`${fieldId}-y`} className="text-xs">
-            Offset Y
-          </Label>
-          <Input
-            id={`${fieldId}-y`}
-            type="number"
-            step={1}
-            value={offsetY}
-            onChange={(event) => setOffsetY(event.target.value)}
-            onKeyDown={(event) => nudge(event, offsetY, setOffsetY)}
-            className="h-7 w-24 tabular-nums"
-            disabled={busy}
-          />
-        </div>
+        {fields.map((field) => (
+          <NudgeField key={field.id} {...field} />
+        ))}
         <Button type="submit" size="sm" disabled={busy || !usable}>
           Save grid
         </Button>

@@ -3,12 +3,18 @@ import { useMutation } from 'convex/react'
 import { ConfirmDialog } from '@/components/lobby/ConfirmDialog'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { Button } from '@/components/ui/button'
+import type { PublicGame } from '@/hooks/useSeat'
 import { api } from '@convex/_generated/api'
 
 export type StartGameButtonProps = {
   code: string
   dmCode: string
-  status: 'lobby' | 'playing'
+  /**
+   * Taken from the game payload's own type rather than re-spelled as a union. This
+   * button is the only thing that writes the field, so it is the last place that
+   * should be able to disagree with the server about what the values are.
+   */
+  status: PublicGame['status']
   /** Whether the game has an active scene. `games.start` refuses without one. */
   hasScene: boolean
 }

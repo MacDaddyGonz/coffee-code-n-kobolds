@@ -6,7 +6,6 @@ import type Konva from 'konva'
 import { GridOverlay } from './GridOverlay'
 import { SceneImage } from './SceneImage'
 import type { BoardCamera } from '@/hooks/useBoardCamera'
-import type { Size } from '@/lib/camera'
 import { cn } from '@/lib/utils'
 import type { PublicScene } from '@convex/lib/scenes'
 
@@ -15,15 +14,21 @@ export type BoardStageProps = {
   camera: BoardCamera
   /** A click on the map itself, hitting no token — the gesture that deselects. */
   onBackgroundClick: () => void
-  /**
-   * The measured size of the canvas, reported upward because only this component
-   * knows it: the camera needs a viewport to fit a map to and to zoom about the
-   * centre of, and it is a layout fact, not a prop anybody can pass in.
-   */
-  onViewportChange: (viewport: Size) => void
   /** The interactive layers — `TokenLayer`. See the note on the layer order below. */
   children?: ReactNode
   className?: string
+}
+
+/**
+ * Konva events bubble, so a token's own drag reaches the stage's handlers too. The
+ * comparison against the stage is what tells "the view moved" from "a token did" —
+ * and returning the stage rather than a boolean is what stops the three callers
+ * below each re-deriving it, which is how one of them ended up with its own spelling
+ * of the same check.
+ */
+function stageOf(event: Konva.KonvaEventObject<unknown>): Konva.Stage | null {
+  const stage = event.target.getStage()
+  return stage !== null && event.target === stage ? stage : null
 }
 
 /**
@@ -45,12 +50,10 @@ export function BoardStage({
   scene,
   camera,
   onBackgroundClick,
-  onViewportChange,
   children,
   className,
 }: BoardStageProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 })
   const [pointerPanning, setPointerPanning] = useState(false)
 
   // Whether the gesture in progress moved the camera. A pan ends in a click, and
@@ -58,31 +61,11 @@ export function BoardStage({
   // betrayal that is hard to attribute afterwards.
   const panned = useRef(false)
 
-  const { camera: view, panBy, setCamera, onWheel, spacePanning } = camera
-
-  useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
-
-    const observer = new ResizeObserver((entries) => {
-      const box = entries[0]?.contentRect
-      if (!box) return
-      const width = Math.round(box.width)
-      const height = Math.round(box.height)
-      // The identity of this object is load-bearing: it is handed straight to
-      // `onViewportChange` below, and a fresh object on every observation would
-      // push a new value at the camera on every frame of a window resize.
-      setViewport((previous) =>
-        previous.width === width && previous.height === height ? previous : { width, height },
-      )
-    })
-    observer.observe(container)
-    return () => observer.disconnect()
-  }, [])
-
-  useEffect(() => {
-    onViewportChange(viewport)
-  }, [viewport, onViewportChange])
+  // The viewport is measured by `useBoardCamera`, from the board's own element, and
+  // read back here. It used to be measured here and pushed up through a callback,
+  // which meant one fact of layout in two pieces of state with an effect keeping
+  // them in step — and the camera is the thing that needs it, so it owns it.
+  const { camera: view, viewport, panBy, setCamera, onWheel, spacePanning } = camera
 
   /**
    * Panning with the middle button, and with the space bar held, done by hand.
@@ -138,13 +121,9 @@ export function BoardStage({
     }
   }, [panBy, spacePanning])
 
-  // Konva events bubble, so a token's own drag reaches these handlers too. The
-  // comparison against the stage is what tells "the view moved" from "a token did".
-  const isStage = (event: Konva.KonvaEventObject<unknown>) => event.target === event.target.getStage()
-
   const commitPan = (event: Konva.KonvaEventObject<DragEvent>) => {
-    const stage = event.target.getStage()
-    if (!stage || event.target !== stage) return
+    const stage = stageOf(event)
+    if (!stage) return
     panned.current = true
     // Committed during the drag as well as at the end of it, so the persisted camera
     // and anything else reading it keep up with what is on screen. The camera's own
@@ -184,12 +163,12 @@ export function BoardStage({
         draggable
         onWheel={onWheel}
         onDragStart={(event) => {
-          if (isStage(event)) panned.current = false
+          if (stageOf(event)) panned.current = false
         }}
         onDragMove={commitPan}
         onDragEnd={commitPan}
         onClick={(event) => {
-          if (!isStage(event)) return
+          if (!stageOf(event)) return
           if (panned.current) {
             panned.current = false
             return

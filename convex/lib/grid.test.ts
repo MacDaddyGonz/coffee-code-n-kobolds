@@ -4,7 +4,6 @@ import {
   MAX_GRID_SIZE,
   MIN_GRID_SIZE,
   centreOfCell,
-  cellDistance,
   cellOf,
   gridLines,
   gridSizeFor,
@@ -370,20 +369,5 @@ describe('gridLines', () => {
     expect(gridLines({ gridSize: 140, gridOffsetX: Number.NaN, gridOffsetY: 0 }, 2240, 1680)).toEqual(
       { vertical: [], horizontal: [] },
     )
-  })
-})
-
-describe('cellDistance', () => {
-  test('measures orthogonal and diagonal spans in squares', () => {
-    expect(cellDistance({ col: 0, row: 0 }, { col: 3, row: 0 })).toBe(3)
-    expect(cellDistance({ col: 0, row: 0 }, { col: 0, row: -4 })).toBe(4)
-    expect(cellDistance({ col: 0, row: 0 }, { col: 3, row: 4 })).toBe(5)
-    expect(cellDistance({ col: 2, row: 2 }, { col: 2, row: 2 })).toBe(0)
-  })
-
-  test('is symmetric', () => {
-    const a = { col: -3, row: 7 }
-    const b = { col: 5, row: -2 }
-    expect(cellDistance(a, b)).toBe(cellDistance(b, a))
   })
 })

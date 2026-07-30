@@ -1,8 +1,9 @@
 import { ConvexError, v } from 'convex/values'
 
 import { mutation } from './_generated/server'
+import { tokenReferencesImage } from './lib/board'
 import { requireDm } from './lib/games'
-import { listScenes } from './lib/scenes'
+import { sceneReferencesImage } from './lib/scenes'
 
 /**
  * Hand out a one-shot URL the browser can POST a map or a token image to.
@@ -49,11 +50,17 @@ export const generateUploadUrl = mutation({
  * and a second discard of the same blob should be a no-op rather than a second
  * error on top of the first.
  *
- * Refuses a blob a scene still points at, so a wrongly-plumbed catch handler
- * cannot blank out a live map. Token art is *not* checked here, because every read
- * of the token tables belongs in `lib/board.ts` — so this is a guard against a
- * mistake rather than a promise, and `scenes.remove` and `board.removeToken`
- * remain the ways to delete a file that is actually in use.
+ * Refuses a blob anything still points at — a scene's background or a token's art —
+ * so a wrongly-plumbed catch handler cannot blank the map out from under the table
+ * or strip the art off a live token. Being DM-gated bounds *who* can call this, but
+ * it does not make the call correct: the DM's own client is what invokes it, from an
+ * error path, with an id it may have mis-sequenced.
+ *
+ * The token half is asked as a question of `lib/board.ts` rather than answered here,
+ * because every read of the token tables belongs in that module and the leak guard
+ * greps these sources to prove it. Only a boolean crosses the boundary.
+ * `scenes.remove` and `board.removeToken` remain the ways to delete a file that is
+ * genuinely in use, because they delete the thing using it in the same transaction.
  */
 export const discard = mutation({
   args: { code: v.string(), dmCode: v.string(), imageId: v.id('_storage') },
@@ -66,11 +73,16 @@ export const discard = mutation({
     const blob = await ctx.db.system.get('_storage', args.imageId)
     if (!blob) return null
 
-    const scenes = await listScenes(ctx, game._id)
-    if (scenes.some((scene) => scene.imageId === args.imageId)) {
+    if (await sceneReferencesImage(ctx, game._id, args.imageId)) {
       throw new ConvexError({
         kind: 'BadInput',
         message: 'That image is in use by a scene. Delete the scene instead.',
+      })
+    }
+    if (await tokenReferencesImage(ctx, game._id, args.imageId)) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message: 'That image is in use by a token. Remove the token instead.',
       })
     }
 

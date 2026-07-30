@@ -43,23 +43,50 @@ function nodePoint(node: KonvaNode): Point {
 }
 
 /**
- * The Konva node drawing one token, found through the stage rather than a ref.
+ * The board's Konva stage, found by containment rather than by a ref.
  *
- * A ref would have to be threaded from every `TokenCoin` back up here, and the
- * only thing this needs it for is moving a coin between React renders. Konva
- * already indexes nodes by id, so the token id doubles as the handle — which keeps
- * the component contract to plain data and means a token that has not been drawn
- * yet simply returns null instead of being a missing ref to defend against.
+ * A ref would have to be threaded from `BoardStage` back up here, and the only
+ * thing this needs it for is moving coins between React renders. `Konva.stages` is
+ * a short global list, so asking which of them lives inside our container answers
+ * it without the component contract growing a handle.
+ *
+ * It does touch the DOM — `container.contains` — so it is called once per frame
+ * and per effect run, never once per token. That is the whole reason it is its own
+ * function rather than folded into a lookup.
+ */
+function findStage(container: HTMLElement | null): Konva.Stage | null {
+  if (!container) return null
+  return Konva.stages.find((candidate) => container.contains(candidate.container())) ?? null
+}
+
+/**
+ * Every drawn coin on the board, indexed by token id.
+ *
+ * `stage.findOne('#id')` walks the whole tree and re-parses the selector at every
+ * node it visits, so twenty tokens is twenty full descendant walks a frame. The
+ * coins are the direct children of the token layers and the only nodes there with
+ * an id, so one shallow pass over those children collects all of them.
  *
  * This depends on `TokenCoin` giving its group `id={token._id}`. Without it the
  * board still works and stays correct — every position React is handed is right —
  * but motion between renders is lost, so remote tokens step ten times a second
  * instead of sliding. It degrades rather than breaks, deliberately.
  */
+function coinNodes(stage: Konva.Stage | null): Map<string, KonvaNode> {
+  const nodes = new Map<string, KonvaNode>()
+  if (!stage) return nodes
+  for (const layer of stage.getLayers()) {
+    for (const child of layer.getChildren()) {
+      const id = child.id()
+      if (id) nodes.set(id, child)
+    }
+  }
+  return nodes
+}
+
+/** One coin, for the callers that only ever want one. */
 function findTokenNode(container: HTMLElement | null, tokenId: Id<'tokens'>): KonvaNode | null {
-  if (!container) return null
-  const stage = Konva.stages.find((candidate) => container.contains(candidate.container()))
-  return stage?.findOne<KonvaNode>(`#${tokenId}`) ?? null
+  return findStage(container)?.findOne<KonvaNode>(`#${tokenId}`) ?? null
 }
 
 /** What one call to `board.moveToken` says, before the game and the seat are added. */
@@ -449,7 +476,10 @@ export function useSmoothPositions(args: {
   const tick: () => void = useCallback(() => {
     frame.current = null
     const now = performance.now()
-    const container = containerRef.current
+    // Both lookups hoisted out of the loop below. Inside it they were a DOM call
+    // and a full tree walk per moving token per frame, which at twenty tokens is
+    // the kind of work that decides whether the board holds sixty frames.
+    const nodes = coinNodes(findStage(containerRef.current))
     const layers = new Set<KonvaLayer>()
     let running = false
 
@@ -468,7 +498,7 @@ export function useSmoothPositions(args: {
       }
       if (progress < 1) running = true
 
-      const node = findTokenNode(container, tokenId)
+      const node = nodes.get(tokenId)
       if (!node) continue
       node.position(tween.current)
       const layer = node.getLayer()
@@ -500,7 +530,9 @@ export function useSmoothPositions(args: {
   // stale would yank it backwards before sliding it forwards again.
   useEffect(() => {
     const now = performance.now()
-    const container = containerRef.current
+    // Indexed once, for the same reason as in `tick`: this runs after every commit,
+    // which during a drag is ten times a second.
+    const nodes = coinNodes(findStage(containerRef.current))
     const live = new Set<Id<'tokens'>>()
 
     for (const token of tokens) {
@@ -508,7 +540,7 @@ export function useSmoothPositions(args: {
       live.add(token._id)
 
       const drawn = (fallback: Point) => {
-        const node = findTokenNode(container, token._id)
+        const node = nodes.get(token._id)
         return node ? nodePoint(node) : fallback
       }
 

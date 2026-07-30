@@ -1,5 +1,6 @@
-import { useMemo } from 'react'
+import { memo, useCallback, useMemo } from 'react'
 import { Shape } from 'react-konva'
+import type { Context as KonvaContext } from 'konva/lib/Context'
 
 import { gridLines } from '@convex/lib/grid'
 import type { PublicScene } from '@convex/lib/scenes'
@@ -38,11 +39,18 @@ export type GridOverlayProps = {
  *
  * One `Shape` with a hand-written `sceneFunc`, not a `Line` per line. A 5320×7840
  * map at 140 px squares is 38 verticals and 56 horizontals, and this component
- * re-renders on every wheel notch and every frame of a pan; ninety-odd Konva nodes
- * each with their own transform and hit region is real work to do sixty times a
- * second, where one path is not.
+ * re-renders on every wheel notch; ninety-odd Konva nodes each with their own
+ * transform and hit region is real work to do at that rate, where one path is not.
+ *
+ * Both the memo and the `useCallback` under it are about the same mechanism, and
+ * neither is decoration. Konva's `_setAttr` skips the write and the redraw only for
+ * an *equal* value, which two functions never are — so a `sceneFunc` rebuilt each
+ * render always set the attribute, always asked the layer to redraw, and so rebuilt
+ * and double-stroked this whole path on renders that changed nothing about the
+ * grid. That included every one of the ten position ticks a second during a drag,
+ * which should be touching the token layer's canvas and nothing else.
  */
-export function GridOverlay({ scene, scale }: GridOverlayProps) {
+export const GridOverlay = memo(function GridOverlay({ scene, scale }: GridOverlayProps) {
   const { imageWidth, imageHeight, gridSize, gridOffsetX, gridOffsetY } = scene
 
   const lines = useMemo(
@@ -50,35 +58,34 @@ export function GridOverlay({ scene, scale }: GridOverlayProps) {
     [gridSize, gridOffsetX, gridOffsetY, imageWidth, imageHeight],
   )
 
+  const draw = useCallback(
+    (context: KonvaContext) => {
+      // Built once and stroked twice. A path survives `stroke()`, so the halo and
+      // the line share it and the coordinates are only walked once.
+      context.beginPath()
+      for (const x of lines.vertical) {
+        context.moveTo(x, 0)
+        context.lineTo(x, imageHeight)
+      }
+      for (const y of lines.horizontal) {
+        context.moveTo(0, y)
+        context.lineTo(imageWidth, y)
+      }
+
+      context.lineWidth = HALO_WIDTH / scale
+      context.strokeStyle = HALO_COLOUR
+      context.stroke()
+
+      context.lineWidth = LINE_WIDTH / scale
+      context.strokeStyle = LINE_COLOUR
+      context.stroke()
+    },
+    [lines, scale, imageWidth, imageHeight],
+  )
+
   // The DM's switch, honoured here rather than by the caller so that every board —
   // the played one and any preview — obeys it without being asked to.
   if (!scene.gridVisible) return null
 
-  return (
-    <Shape
-      listening={false}
-      perfectDrawEnabled={false}
-      sceneFunc={(context) => {
-        // Built once and stroked twice. A path survives `stroke()`, so the halo and
-        // the line share it and the coordinates are only walked once.
-        context.beginPath()
-        for (const x of lines.vertical) {
-          context.moveTo(x, 0)
-          context.lineTo(x, imageHeight)
-        }
-        for (const y of lines.horizontal) {
-          context.moveTo(0, y)
-          context.lineTo(imageWidth, y)
-        }
-
-        context.lineWidth = HALO_WIDTH / scale
-        context.strokeStyle = HALO_COLOUR
-        context.stroke()
-
-        context.lineWidth = LINE_WIDTH / scale
-        context.strokeStyle = LINE_COLOUR
-        context.stroke()
-      }}
-    />
-  )
-}
+  return <Shape listening={false} perfectDrawEnabled={false} sceneFunc={draw} />
+})

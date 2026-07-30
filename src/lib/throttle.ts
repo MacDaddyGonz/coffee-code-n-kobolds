@@ -26,20 +26,24 @@ export const MOVE_THROTTLE_MS = 100
  * starts moving on other screens at once, and the last call in any window is
  * always delivered so the token never comes to rest at a stale position.
  *
- * `flush()` sends a pending call now — for when the caller knows this is the
- * end, such as a keyup ending a run of arrow-key repeats.
- *
  * `cancel()` drops a pending call, and exists to fix an ordering bug rather
  * than to save a write. On drop the board sends the final, snapped position
  * directly. If an intermediate call were still sitting in the trailing timer it
  * would land *after* that final write and leave the token stranded between
  * squares, with the server having no way to tell it was stale. Cancelling first
  * makes the settled write unconditionally last.
+ *
+ * That cancel-then-settle pattern is the *only* way a run of moves is ended here,
+ * for both input methods: a pointer drop and a keyup both cancel and then send the
+ * settled position themselves. There is deliberately no `flush()` that would send
+ * whatever was pending instead — the pending call carries an unsnapped, already
+ * superseded position, so flushing it would be the very write cancel exists to
+ * discard, merely delivered sooner.
  */
 export function throttle<A extends unknown[]>(
   fn: (...args: A) => void,
   waitMs: number,
-): ((...args: A) => void) & { flush: () => void; cancel: () => void } {
+): ((...args: A) => void) & { cancel: () => void } {
   let timer: ReturnType<typeof setTimeout> | null = null
   let pending: A | null = null
 
@@ -74,12 +78,5 @@ export function throttle<A extends unknown[]>(
     pending = null
   }
 
-  const flush = () => {
-    if (pending === null) return
-    const args = pending
-    cancel()
-    fn(...args)
-  }
-
-  return Object.assign(throttled, { flush, cancel })
+  return Object.assign(throttled, { cancel })
 }

@@ -1,5 +1,4 @@
-import { ConvexError, v } from 'convex/values'
-import type { Infer } from 'convex/values'
+import { ConvexError, v, type Infer } from 'convex/values'
 
 import type { Doc, Id } from '../_generated/dataModel'
 import type { QueryCtx } from '../_generated/server'
@@ -68,6 +67,20 @@ export async function listScenes(ctx: QueryCtx, gameId: Id<'games'>): Promise<Do
     .query('scenes')
     .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
     .take(MAX_SCENES_PER_GAME)
+}
+
+/**
+ * Is this blob still a scene's background? The other half of `files.discard`'s
+ * refusal, stated as a predicate so that call reads as one question asked of both
+ * tables rather than a list walk here and a helper call there.
+ */
+export async function sceneReferencesImage(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+  imageId: Id<'_storage'>,
+): Promise<boolean> {
+  const scenes = await listScenes(ctx, gameId)
+  return scenes.some((scene) => scene.imageId === imageId)
 }
 
 /**

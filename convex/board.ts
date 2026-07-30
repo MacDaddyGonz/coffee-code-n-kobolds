@@ -9,6 +9,7 @@ import {
   publicTokenValidator,
   publicTokens,
   requireMovableToken,
+  tokenLayerValidator,
   visiblePositions,
 } from './lib/board'
 import { getCharacterInGame } from './lib/characters'
@@ -16,6 +17,7 @@ import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
 import { MAX_TOKENS_PER_GAME, findGameByCode, requireDm, resolveDmAccess } from './lib/games'
 import type { Point } from './lib/grid'
 import { isUsableTokenSize, snapToGrid } from './lib/grid'
+import { MAX_TOKEN_BYTES } from './lib/limits'
 import { requireText } from './lib/names'
 import { findSceneInGame, getSceneInGame } from './lib/scenes'
 
@@ -116,6 +118,10 @@ export const positions = query({
 /**
  * DM-gated because putting a creature on the board is the DM's job, and because
  * the `layer` argument decides what the other players are allowed to know exists.
+ *
+ * Every check below is the real one, and the matching checks in the browser are a
+ * courtesy that saves an upload rather than the enforcement — the same stance
+ * `scenes.create` takes, including the size of the blob.
  */
 export const addToken = mutation({
   args: {
@@ -123,7 +129,7 @@ export const addToken = mutation({
     dmCode: v.string(),
     sceneId: v.id('scenes'),
     name: v.string(),
-    layer: v.union(v.literal('player'), v.literal('dm')),
+    layer: tokenLayerValidator,
     sizeSquares: v.number(),
     tint: v.string(),
     imageId: v.optional(v.id('_storage')),
@@ -153,6 +159,35 @@ export const addToken = mutation({
       throw new ConvexError({ kind: 'BadInput', message: 'Pick a colour for the token.' })
     }
     requireFinite(args)
+
+    // The size of the art, read out of storage rather than taken as an argument,
+    // because the byte count is the one fact about an upload the client cannot be
+    // trusted to report — it is the client being checked. `scenes.create` does
+    // exactly this for a map; token art had only the browser's word for it, which
+    // makes CLAUDE.md invariant 6 a client-side promise for half the uploads in the
+    // app. A token is downscaled to 256 px on its long edge, so anything over
+    // MAX_TOKEN_BYTES means the downscaler was bypassed or broke.
+    //
+    // The refused blob survives, exactly as it does in `scenes.create`, and for the
+    // same unavoidable reason: a mutation is one transaction, so a
+    // `ctx.storage.delete` on the way out of a throwing handler is rolled back with
+    // everything else. Cleaning up is `files.discard`'s job because it is the call
+    // that commits — see ADR 0004.
+    if (args.imageId !== undefined) {
+      const blob = await ctx.db.system.get('_storage', args.imageId)
+      if (!blob) {
+        throw new ConvexError({
+          kind: 'BadInput',
+          message: 'That upload is no longer in storage. Try adding the token again.',
+        })
+      }
+      if (blob.size > MAX_TOKEN_BYTES) {
+        throw new ConvexError({
+          kind: 'BadInput',
+          message: `Token art has to be under ${MAX_TOKEN_BYTES / 1024} KB once downscaled. That one is bigger.`,
+        })
+      }
+    }
 
     // An id from another game would put someone else's character on this board.
     if (args.characterId !== undefined) {
@@ -228,10 +263,15 @@ export const moveToken = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    // Before any read. This is the write the app makes ten times a second, so a
+    // call that is going to be refused on its arguments alone should cost no I/O to
+    // refuse — and the coordinates are checkable without knowing anything about the
+    // game, the scene or the token.
+    requireFinite(args)
+
     const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
     const scene = await getSceneInGame(ctx, game._id, args.sceneId)
     const token = await requireMovableToken(ctx, game, args.tokenId, isDm, args.playerId)
-    requireFinite(args)
 
     const point = args.settle
       ? snapToGrid({ x: args.x, y: args.y }, scene, token.sizeSquares)

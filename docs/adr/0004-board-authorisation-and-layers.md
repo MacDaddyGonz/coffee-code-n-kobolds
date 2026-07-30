@@ -216,10 +216,11 @@ Named so that Milestone 5 is not boxed in by silence:
   with the throw, and `ctx.scheduler` is transactional too. `files.discard` is the good-citizen path
   and the client's catch calls it, but a browser that crashes or closes the tab first never does.
   `scenes.create` is not the boundary here in any case: `files.generateUploadUrl` can mint a blob
-  that nothing ever references. What holds invariant 6 is the refusal itself — an oversized map
-  never becomes a scene — and the real fix for the residue is a sweeper over `_storage` rows with no
-  referencing scene or token, which belongs with the library editor and the admin view in
-  Milestone 7.
+  that nothing ever references. What holds invariant 6 is the refusal itself — an oversized map never
+  becomes a scene, and an oversized token image never becomes token art, because `board.addToken`
+  reads `_storage` against its own limit the same way — and the real fix for the residue is a sweeper
+  over `_storage` rows with no referencing scene or token, which belongs with the library editor and
+  the admin view in Milestone 7.
 
 ## Alternatives considered
 

@@ -8,12 +8,6 @@
 // works on a plain `Grid`, not a `Doc<'scenes'>`, so it is trivially testable and
 // callable before a scene document exists.
 
-/**
- * One square is five feet — the whole of the D&D Lite movement rules that touches
- * the board. Milestone 6's ruler reports distances in these units.
- */
-export const FEET_PER_SQUARE = 5
-
 /** Sane bounds for a hand-calibrated grid, in image-space pixels per square. */
 export const MIN_GRID_SIZE = 4
 export const MAX_GRID_SIZE = 2000
@@ -34,6 +28,9 @@ export type Grid = {
 }
 
 export type Point = { x: number; y: number }
+
+/** Pixel extent of something rectangular — an image, a viewport, a scaled fit. */
+export type Size = { width: number; height: number }
 
 /** Column and row, zero-based, and freely negative — a map's grid may start off-image. */
 export type Cell = { col: number; row: number }
@@ -117,11 +114,6 @@ export function moveByCells(
     grid,
     sizeSquares,
   )
-}
-
-/** Distance in squares between two cells, for Milestone 6's ruler. */
-export function cellDistance(a: Cell, b: Cell): number {
-  return Math.hypot(b.col - a.col, b.row - a.row)
 }
 
 /**

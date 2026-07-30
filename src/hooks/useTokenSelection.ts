@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 
 import type { Id } from '@convex/_generated/dataModel'
 import type { BoardToken } from '@/hooks/useBoard'
@@ -28,8 +28,32 @@ export type TokenSelection = {
 export function useTokenSelection(tokens: BoardToken[]): TokenSelection {
   const [selectedTokenId, setSelectedTokenId] = useState<Id<'tokens'> | null>(null)
 
+  /**
+   * The selection, and the only place the question is answered.
+   *
+   * The three conditions are one thing, not a match plus two guards, and they were
+   * previously spread across a `find` that checked the id, an effect that checked
+   * all three, and a return value derived from the first — which meant the token
+   * this hook handed out could be one the effect was about to reject.
+   *
+   * A selection has to be able to lose its token, because plenty of things take it
+   * away from under the person holding it: the DM deletes it, the DM switches
+   * scenes so it is no longer placed on the board in front of us, or a player
+   * claims the character and this browser stops being allowed to move it. Asking
+   * the current board all three questions every render is what makes those cases
+   * free — there is no state to correct, so there is no render in between during
+   * which the highlight is gone and the arrow keys are still aimed at it.
+   *
+   * The id in state is deliberately left alone when it stops matching. Nothing
+   * reads it directly, and keeping it means a token that comes *back* — positions
+   * arriving a beat after the token list, most often — is still selected rather
+   * than needing a second click.
+   */
   const selectedToken = useMemo(
-    () => tokens.find((token) => token._id === selectedTokenId) ?? null,
+    () =>
+      tokens.find(
+        (token) => token._id === selectedTokenId && token.canMove && token.position !== null,
+      ) ?? null,
     [tokens, selectedTokenId],
   )
 
@@ -44,22 +68,9 @@ export function useTokenSelection(tokens: BoardToken[]): TokenSelection {
 
   const clear = useCallback(() => setSelectedTokenId(null), [])
 
-  // A selection has to be able to lose its token, because plenty of things take it
-  // away from under the person holding it: the DM deletes it, the DM switches
-  // scenes so it is no longer placed on the board in front of us, or a player
-  // claims the character and this browser stops being allowed to move it. Left
-  // alone, the id would stay selected forever — the highlight gone, the arrow keys
-  // still aimed at it, and nothing on screen to explain why they stopped working.
-  useEffect(() => {
-    if (selectedTokenId === null) return
-    const token = tokens.find((candidate) => candidate._id === selectedTokenId)
-    if (!token || !token.canMove || !token.position) setSelectedTokenId(null)
-  }, [tokens, selectedTokenId])
-
-  // Derived rather than the raw state, so the one render between a token vanishing
-  // and the effect above noticing does not hand out an id that is no longer on the
-  // board — which a caller would spend that render highlighting nothing, or aiming
-  // an arrow key at a token the server has already deleted.
+  // Both derived from the token above rather than from the raw state, so a caller
+  // can never be handed an id for a token that is not on the board, is not theirs
+  // to move, or is not standing anywhere on this scene.
   return {
     selectedTokenId: selectedToken?._id ?? null,
     selectedToken,

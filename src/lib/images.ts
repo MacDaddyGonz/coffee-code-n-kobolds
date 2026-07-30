@@ -14,6 +14,11 @@
  * so the upload panel can show the DM what it saved before anything is stored.
  */
 
+// The same `Size` the grid maths and the camera use. A width and a height is a
+// width and a height whichever side of the wire it is on, and a third local copy
+// of the pair is a third thing to keep in step.
+import type { Size } from '@convex/lib/grid'
+
 /**
  * Long-edge caps, in pixels.
  *
@@ -51,8 +56,6 @@ export const TOKEN_QUALITY = 0.9
  * module, which is where the check and the resize belong together.
  */
 export { MAX_SCENE_BYTES } from '@convex/lib/limits'
-
-export type Size = { width: number; height: number }
 
 export type Downscaled = {
   blob: Blob
@@ -146,8 +149,20 @@ async function encode(canvas: OffscreenCanvas, quality: number): Promise<Blob> {
  * `resizeQuality: 'high'` because the default is nearest-neighbour-ish and a
  * map's grid lines alias into a moiré pattern under it.
  *
- * The bitmap is closed on the way out. A 23 MP bitmap left for the collector is
- * a genuine leak over a session where the DM tries a dozen maps.
+ * The bitmap's pixels are then *moved* into the canvas rather than drawn into it.
+ * `createImageBitmap` has already produced exactly the image we want, so a
+ * `drawImage` into a 2d context would allocate a second RGBA buffer the same size
+ * and blit the whole thing across for no change — around 24 MB of copy per map at
+ * 2560 px. `transferFromImageBitmap` hands the existing buffer over instead, and
+ * as a consequence *consumes* the bitmap: it comes back detached, with nothing
+ * left to release, which is why only the fallback path closes it.
+ *
+ * The fallback matters. `bitmaprenderer` is the one context this needs and an
+ * engine may not have it, so a null there drops back to the copying path rather
+ * than failing the upload — and a browser with neither says so in the DM's words.
+ * A 23 MP bitmap left for the collector is a genuine leak over a session where
+ * the DM tries a dozen maps, so that path closes it whether the encode works or
+ * not.
  */
 export async function downscaleImage(
   file: Blob,
@@ -161,20 +176,34 @@ export async function downscaleImage(
     resizeHeight: target.height,
     resizeQuality: 'high',
   })
+  // Read before the transfer. A transferred bitmap is detached, so its own
+  // `width` is no longer there to report as the stored scene's dimensions.
+  const { width, height } = bitmap
+
+  const canvas = new OffscreenCanvas(width, height)
+  intoCanvas(canvas, bitmap)
+  const blob = await encode(canvas, options.quality)
+
+  return { blob, width, height, originalBytes: file.size, bytes: blob.size }
+}
+
+/**
+ * Get the bitmap's pixels into the canvas, by transfer if the browser can and by
+ * copy if it cannot. The canvas is the output; there is nothing to return.
+ */
+function intoCanvas(canvas: OffscreenCanvas, bitmap: ImageBitmap): void {
+  const renderer = canvas.getContext('bitmaprenderer')
+  if (renderer) {
+    // Consumes the bitmap. Nothing to close afterwards, and closing it would be
+    // a no-op on an already-detached object rather than a second release.
+    renderer.transferFromImageBitmap(bitmap)
+    return
+  }
+
   try {
-    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
     const context = canvas.getContext('2d')
     if (!context) throw new Error('This browser cannot prepare images for upload.')
     context.drawImage(bitmap, 0, 0)
-
-    const blob = await encode(canvas, options.quality)
-    return {
-      blob,
-      width: bitmap.width,
-      height: bitmap.height,
-      originalBytes: file.size,
-      bytes: blob.size,
-    }
   } finally {
     bitmap.close()
   }

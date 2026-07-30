@@ -1,11 +1,11 @@
 import { useEffect } from 'react'
-import { useQuery } from 'convex/react'
 import { Link, useParams } from 'react-router'
 import { toast } from 'sonner'
 
 import { CopyButton } from '@/components/CopyButton'
 import { Shell } from '@/components/Shell'
 import { Board } from '@/components/board/Board'
+import { MapSetupOverlay } from '@/components/board/dm/MapSetupOverlay'
 import { Lobby } from '@/components/lobby/Lobby'
 import { NameGate } from '@/components/lobby/NameGate'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -13,7 +13,6 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useDm } from '@/hooks/useDm'
 import { useSeat } from '@/hooks/useSeat'
-import { api } from '@convex/_generated/api'
 import { normaliseJoinCode } from '@convex/lib/codes'
 
 /**
@@ -25,16 +24,11 @@ export default function Game() {
   const params = useParams<{ code: string }>()
   const code = normaliseJoinCode(params.code ?? '')
 
+  // The seat, the character it holds and whether this browser is the DM. All three
+  // are resolved by their own hook — this route wires them together and decides
+  // between the lobby and the board, which is all it should be doing.
   const seat = useSeat(code)
   const dm = useDm(code, seat.playerId)
-
-  // Which character this seat holds, read from the roster rather than kept in
-  // client state: the seat → character pointer runs one way (ADR 0003), so the
-  // roster is the authority and a claim made in another browser is reflected
-  // here without anything to keep in sync. The board only uses it to decide
-  // which tokens to offer as draggable; the server re-checks every move.
-  const seats = useQuery(api.players.list, { code })
-  const myCharacterId = seats?.find((row) => row._id === seat.playerId)?.characterId ?? null
 
   // leaveSeat reports failure by setting seat.error instead of rejecting, and a
   // failed leave keeps us seated — so the lobby would show nothing at all.
@@ -100,8 +94,16 @@ export default function Game() {
             code={code}
             dm={dm}
             playerId={seat.playerId!}
-            myCharacterId={myCharacterId}
-          />
+            myCharacterId={seat.characterId}
+          >
+            {/* The board's DM slot. Nothing was ever passed into it, which left the
+                grid calibrator reachable only from the lobby — so a grid found to be
+                a fraction out mid-fight cost the whole table a trip off the board to
+                fix. A player is given nothing here, and that is not the guard: the
+                panel's own queries and mutations all take the DM code and re-verify
+                it server-side (invariant 7). */}
+            {dm.dmCode !== null ? <MapSetupOverlay code={code} dmCode={dm.dmCode} /> : null}
+          </Board>
         ) : (
           <Lobby
             code={code}

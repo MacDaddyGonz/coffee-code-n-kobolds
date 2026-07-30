@@ -84,6 +84,11 @@ describe('token reads are confined to one module', () => {
     ).toBe(true)
   })
 
+  /**
+   * One sweep, and the offender list carries the file name and the needle that
+   * matched — so a failure reads as "convex/foo.ts contains .query('tokens'"
+   * without a second per-file test restating the same thing.
+   */
   test('no other convex module reads tokens or tokenPositions', () => {
     const offenders: string[] = []
     for (const [path, text] of scanned) {
@@ -93,19 +98,5 @@ describe('token reads are confined to one module', () => {
       }
     }
     expect(offenders).toEqual([])
-  })
-
-  /**
-   * The same guard stated per file, so a failure names the file rather than
-   * handing back one list to read through.
-   */
-  test.each(
-    Object.entries(sources)
-      .filter(([path]) => isScanned(path) && path !== READER)
-      .map(([path, text]) => [path, text] as const),
-  )('%s goes through lib/board.ts for token data', (_path, text) => {
-    for (const needle of FORBIDDEN) {
-      expect(text.includes(needle)).toBe(false)
-    }
   })
 })

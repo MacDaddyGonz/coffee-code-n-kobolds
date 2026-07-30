@@ -111,10 +111,13 @@ it took are recorded in [ADR 0004](adr/0004-board-authorisation-and-layers.md).
   Convex**: it is a view, not shared state, so it costs zero database traffic and is remembered per
   game and scene in local storage.
 - **Upload with a downscale on the client and a size guard on the server** — 2560 px long edge for
-  maps, 256 px for tokens, WebP, and `scenes.create` refuses an oversize blob outright — a
+  maps, 256 px for tokens, WebP, and both `scenes.create` and `board.addToken` read the stored blob
+  and refuse an oversize one outright, each against its own limit in `convex/lib/limits.ts` — a
   client-side cap the server does not check is a cap a bug removes. CLAUDE.md invariant 6. The
   refusal cannot also delete the blob it refused, because a mutation is one transaction; the client's
-  catch calls `files.discard` for that. The full library editor is still Milestone 7.
+  catch calls `files.discard` for that, and that call refuses a blob a scene or a token still points
+  at so a mis-sequenced catch cannot strip the art off the board. The full library editor is still
+  Milestone 7.
 - **Grid calibration by squares-across**, with an arrow-key offset nudge against a live overlay.
   `gridSize` is a float, so 2240 / 16 is exactly 140 rather than a rounded 139 that drifts a whole
   square out by the far edge.
@@ -127,8 +130,9 @@ it took are recorded in [ADR 0004](adr/0004-board-authorisation-and-layers.md).
   point support it; what is missing is the UI and the mutation.
 - **No tabbed DM panel and no polished scene-switch UX** — Milestone 5. `scenes.setActive` exists and
   is DM-gated, driven by a bare `<select>` in the DM setup panel.
-- **No marker or ruler tools** — Milestone 6. `cellDistance` in `convex/lib/grid.ts` is the ruler's
-  maths, written now because the grid module is where it belongs.
+- **No marker or ruler tools** — Milestone 6. `convex/lib/grid.ts` gives it the cell arithmetic to
+  build on (`cellOf`, `centreOfCell`), but nothing distance-related is written yet — a shared module
+  is the most expensive place to park code nothing calls.
 - **No character sheets and no token health bars** — Milestone 3. `tokens.characterId` links a token
   to a character, and nothing else about a character is on the board yet.
 - **No token or map libraries** — Milestone 7. Uploads go straight onto the board.

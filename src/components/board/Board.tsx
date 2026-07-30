@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { toast } from 'sonner'
 
 import { BoardEmpty } from '@/components/board/BoardEmpty'
@@ -7,13 +7,13 @@ import { BoardStage } from '@/components/board/BoardStage'
 import { TokenLayer } from '@/components/board/TokenLayer'
 import { ZoomControls } from '@/components/board/ZoomControls'
 import { Skeleton } from '@/components/ui/skeleton'
+import type { BoardToken } from '@/hooks/useBoard'
 import { useBoard } from '@/hooks/useBoard'
 import { useBoardCamera } from '@/hooks/useBoardCamera'
 import { useBoardKeys } from '@/hooks/useBoardKeys'
 import type { Dm } from '@/hooks/useDm'
 import { useSmoothPositions, useTokenMove } from '@/hooks/useTokenMove'
 import { useTokenSelection } from '@/hooks/useTokenSelection'
-import type { Size } from '@/lib/camera'
 import type { Id } from '@convex/_generated/dataModel'
 
 export type BoardProps = {
@@ -26,7 +26,7 @@ export type BoardProps = {
    * The DM's map panel, rendered over the canvas. A slot rather than something this
    * component builds, because the panel is DM-only and its own owner: the board has
    * no business knowing what is in it, and a player's board is given nothing to put
-   * here.
+   * here. `Game.tsx` fills it — see `MapSetupOverlay`.
    */
   children?: ReactNode
 }
@@ -52,22 +52,19 @@ export function Board({ code, dm, playerId, myCharacterId, children }: BoardProp
   // focusable container is `BoardStage`'s own div inside it, so both questions are
   // answered by containment rather than by identity.
   const containerRef = useRef<HTMLDivElement>(null)
-  const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 })
 
   const board = useBoard({ code, dmCode: dm.dmCode, playerId, myCharacterId })
   const scene = board.scene
-
-  // Reported up from the stage rather than measured here, because the stage is the
-  // element that has the size. Wrapped so the identity is stable: `BoardStage`
-  // re-runs the effect that calls this whenever it changes.
-  const onViewportChange = useCallback((next: Size) => setViewport(next), [])
 
   const image = useMemo(
     () => (scene ? { width: scene.imageWidth, height: scene.imageHeight } : null),
     [scene],
   )
 
-  const camera = useBoardCamera({ code, sceneId: scene?._id ?? null, image, viewport })
+  // The camera measures the container itself. It is the thing that needs a viewport
+  // — to fit a map to and to zoom about the centre of — so it takes the element
+  // rather than being told, which is one measurement and one piece of state.
+  const camera = useBoardCamera({ code, sceneId: scene?._id ?? null, image, containerRef })
   const selection = useTokenSelection(board.tokens)
 
   const move = useTokenMove({
@@ -85,6 +82,14 @@ export function Board({ code, dm, playerId, myCharacterId, children }: BoardProp
     heldTokenId: move.heldTokenId,
     localPositionOf: move.localPositionOf,
   })
+
+  // Hoisted out of the JSX so `TokenLayer` is handed the same function every render.
+  // A fresh arrow there would have been a changed prop on every coin on every frame
+  // of a pan, and react-konva answers a changed handler by rebinding the listener.
+  const onSelect = useCallback(
+    (token: BoardToken) => selection.select(token._id),
+    [selection.select],
+  )
 
   useBoardKeys({
     containerRef,
@@ -118,12 +123,7 @@ export function Board({ code, dm, playerId, myCharacterId, children }: BoardProp
         <Skeleton className="absolute inset-0 rounded-xl" />
       ) : drawable && scene ? (
         <>
-          <BoardStage
-            scene={scene}
-            camera={camera}
-            onBackgroundClick={selection.clear}
-            onViewportChange={onViewportChange}
-          >
+          <BoardStage scene={scene} camera={camera} onBackgroundClick={selection.clear}>
             <TokenLayer
               tokens={tokens}
               scene={scene}
@@ -132,13 +132,22 @@ export function Board({ code, dm, playerId, myCharacterId, children }: BoardProp
               // Held space turns the whole board into a pan surface, so a press that
               // lands on a token has to move the view rather than the creature.
               draggable={!camera.spacePanning}
-              onSelect={(token) => selection.select(token._id)}
+              onSelect={onSelect}
               onDragStart={move.onDragStart}
               onDragMove={move.onDragMove}
               onDragEnd={move.onDragEnd}
             />
           </BoardStage>
-          <ZoomControls camera={camera} className="absolute bottom-3 left-3" />
+          <ZoomControls
+            // The scale, not the camera: a `BoardCamera` is a new object every render
+            // and the bar reads one number off it. See `ZoomControlsProps`.
+            scale={camera.camera.scale}
+            onZoomBy={camera.zoomBy}
+            onZoomToScale={camera.zoomToScale}
+            onFit={camera.fit}
+            onReset={camera.reset}
+            className="absolute bottom-3 left-3"
+          />
         </>
       ) : (
         <BoardEmpty scene={scene} isDm={board.isDm} />

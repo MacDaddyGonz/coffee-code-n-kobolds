@@ -2,27 +2,31 @@ import { useId, useState } from 'react'
 import { useMutation, useQuery } from 'convex/react'
 import { toast } from 'sonner'
 
+import { DialogFormFooter } from '@/components/DialogFormFooter'
 import { FieldError } from '@/components/FieldError'
+import { ImagePicker } from '@/components/ImagePicker'
+import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { errorMessage } from '@/lib/errors'
+import { NativeSelect } from '@/components/ui/native-select'
+import { useImageUpload } from '@/hooks/useImageUpload'
+import { parseNumber } from '@/lib/utils'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
+import type { PublicToken } from '@convex/lib/board'
 import { MAX_CHARACTER_NAME_LENGTH } from '@convex/lib/codes'
 import { MAX_TOKEN_SQUARES, MIN_TOKEN_SQUARES, isUsableTokenSize } from '@convex/lib/grid'
 import type { PublicScene } from '@convex/lib/scenes'
-import { ImagePicker, useImageUpload } from './SceneUploadDialog'
 
 export type TokenAddDialogProps = {
   code: string
@@ -30,13 +34,15 @@ export type TokenAddDialogProps = {
   scene: PublicScene
 }
 
-type Layer = 'player' | 'dm'
+/**
+ * Taken from the server's own token shape rather than spelled out again. This is
+ * the field that decides secrecy, so a third literal of the union is the last thing
+ * that should be able to drift from the one the mutation validates against.
+ */
+type Layer = PublicToken['layer']
 
 /** A default that is legible on a map without being either team's colour. */
 const DEFAULT_TINT = '#8b5cf6'
-
-const SELECT_CLASS =
-  'border-input h-8 w-full rounded-lg border bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50 dark:bg-input/30'
 
 /**
  * Put a creature on the board.
@@ -55,6 +61,7 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
   const addToken = useMutation(api.board.addToken)
   const characters = useQuery(api.characters.list, { code })
   const upload = useImageUpload({ code, dmCode, kind: 'token' })
+  const action = useLobbyAction()
   const fieldId = useId()
 
   const [open, setOpen] = useState(false)
@@ -63,8 +70,6 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
   const [size, setSize] = useState('1')
   const [tint, setTint] = useState(DEFAULT_TINT)
   const [characterId, setCharacterId] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
 
   function changeOpen(next: boolean) {
     setOpen(next)
@@ -74,18 +79,16 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
       setSize('1')
       setTint(DEFAULT_TINT)
       setCharacterId('')
-      setError(null)
+      action.clearError()
       upload.reset()
     }
   }
 
-  const sizeSquares = size.trim() === '' ? Number.NaN : Number(size)
-  const busy = saving || upload.stage !== null
+  const sizeSquares = parseNumber(size)
+  const busy = action.pending !== null || upload.stage !== null
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
-    if (busy) return
-    setError(null)
 
     // Dropped in the middle of the map, because that is the one place guaranteed to
     // be on it. The server snaps this to a square on the way in, so the token is on
@@ -103,21 +106,19 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
       y: scene.imageHeight / 2,
     }
 
-    setSaving(true)
-    try {
-      // Only the art path needs the discard-on-refusal dance, so a token with no
-      // art never generates an upload URL at all.
-      if (upload.prepared) {
-        await upload.commit((image) => addToken({ ...base, imageId: image.imageId }))
-      } else {
-        await addToken(base)
-      }
-    } catch (thrown) {
-      setError(errorMessage(thrown, 'Could not add that token.'))
-      return
-    } finally {
-      setSaving(false)
-    }
+    const done = await action.run(
+      'add',
+      'Could not add that token.',
+      () =>
+        // Only the art path needs the discard-on-refusal dance, so a token with no
+        // art never generates an upload URL at all.
+        upload.prepared
+          ? upload.commit((image) => addToken({ ...base, imageId: image.imageId }))
+          : addToken(base),
+      { report: 'field' },
+    )
+    if (!done) return
+
     changeOpen(false)
     toast.success(
       layer === 'dm'
@@ -234,14 +235,14 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
             label="Art (optional)"
             upload={upload}
             hint="Shrunk to 256 px here before uploading. Leave it empty for a coloured coin with initials."
-            disabled={saving}
+            disabled={action.pending !== null}
           />
 
           <div className="flex flex-col gap-2">
             <Label htmlFor={`${fieldId}-character`}>Character (optional)</Label>
-            <select
+            <NativeSelect
               id={`${fieldId}-character`}
-              className={SELECT_CLASS}
+              className="w-full"
               value={characterId}
               disabled={busy}
               onChange={(event) => setCharacterId(event.target.value)}
@@ -252,31 +253,21 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
                   {character.name}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
             <p className="text-muted-foreground text-xs">
               Attaching a character is what lets the player holding it move this token. Table
               manners rather than a lock — see ADR 0004 — but it is what stops a misclick.
             </p>
           </div>
 
-          <FieldError message={error} />
+          <FieldError message={action.error} />
 
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={busy}
-              onClick={() => changeOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={busy || name.trim() === '' || !isUsableTokenSize(sizeSquares)}
-            >
-              {upload.stage === 'uploading' ? 'Uploading…' : 'Add the token'}
-            </Button>
-          </DialogFooter>
+          <DialogFormFooter
+            busy={busy}
+            canSubmit={name.trim() !== '' && isUsableTokenSize(sizeSquares)}
+            submitLabel={upload.stage === 'uploading' ? 'Uploading…' : 'Add the token'}
+            onCancel={() => changeOpen(false)}
+          />
         </form>
       </DialogContent>
     </Dialog>
