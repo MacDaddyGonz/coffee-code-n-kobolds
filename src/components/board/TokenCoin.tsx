@@ -16,7 +16,6 @@ const EDGE_WIDTH = 2
 const SELECTION_WIDTH = 2
 const SELECTION_GAP = 4
 const NAME_FONT_SIZE = 12
-const NAME_MIN_HALF_WIDTH = 60
 
 /**
  * Below this many screen pixels across, a coin's name is wider than the coin and a
@@ -99,9 +98,17 @@ export const TokenCoin = memo(function TokenCoin({
   const nameFontSize = NAME_FONT_SIZE / scale
   const showName = diameter * scale >= NAME_MIN_COIN_DIAMETER
 
-  // Half the width the label is centred in: wide enough for a name on a small coin,
-  // and never narrower than the coin itself.
-  const nameHalfWidth = Math.max(radius, NAME_MIN_HALF_WIDTH / scale)
+  // Half the width the label is centred in — and it is the coin's own half-width,
+  // deliberately, with `ellipsis` below doing the truncating.
+  //
+  // It used to be `max(radius, 60 / scale)`, which at a fitted zoom made the box
+  // around two and a half squares wide. Two tokens standing next to each other then
+  // overprinted their names into an unreadable smear, and a huddle of six was worse.
+  // A label that cannot leave its own square cannot collide with its neighbour, so
+  // the board stays readable exactly when it is busiest — which is the case that
+  // matters. The price is a clipped name on a one-square coin; the full name is a
+  // hover away, and the tint and art carry the identity in the meantime.
+  const nameHalfWidth = radius
 
   const cursor = (event: Konva.KonvaEventObject<MouseEvent>, style: string) => {
     // Konva's own container, which sits inside BoardStage's div. That div sets the

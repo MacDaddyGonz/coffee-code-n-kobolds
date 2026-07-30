@@ -936,6 +936,74 @@ describe('board.addToken', () => {
     expect({ x: stored!.x, y: stored!.y }).toEqual(snapToGrid({ x: 511.37, y: 91.11 }, GRID, 1))
   })
 
+  /**
+   * Found by running the real app rather than by a test: the token dialog offers the
+   * middle of the map as its drop point, so snapping alone put every new token into
+   * the square the previous one was already in. Six goblins arrived as one coin with
+   * six names printed on top of each other. Each individual write was correct, which
+   * is exactly why nothing here caught it.
+   */
+  test('drops each new token on an empty square rather than stacking them', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    await calibrate(t, game.code, game.dmCode, sceneId)
+
+    // The same requested point every time, as the dialog does.
+    const drop = { x: 1120, y: 840 }
+    const ids = []
+    for (let i = 0; i < 6; i += 1) {
+      ids.push(await addToken(t, game.code, game.dmCode, sceneId, { ...drop, name: `Goblin ${i}` }))
+    }
+
+    const centres = []
+    for (const id of ids) {
+      const stored = await placement(t, sceneId, id)
+      centres.push(`${stored!.x},${stored!.y}`)
+    }
+    expect(new Set(centres).size).toBe(6)
+
+    // Still on the grid, and still near where they were asked for — a free square,
+    // not an arbitrary one.
+    for (const id of ids) {
+      const stored = await placement(t, sceneId, id)
+      const snapped = snapToGrid({ x: stored!.x, y: stored!.y }, GRID, 1)
+      expect({ x: stored!.x, y: stored!.y }).toEqual(snapped)
+      expect(Math.abs(stored!.x - drop.x)).toBeLessThanOrEqual(GRID.gridSize * 2)
+      expect(Math.abs(stored!.y - drop.y)).toBeLessThanOrEqual(GRID.gridSize * 2)
+    }
+  })
+
+  /**
+   * The displacement above is for *adding* only. Two figures crowding a doorway is a
+   * legitimate thing to want, so a move must never shove anything aside.
+   */
+  test('moveToken does not displace a token already on the square', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    await calibrate(t, game.code, game.dmCode, sceneId)
+
+    const first = await addToken(t, game.code, game.dmCode, sceneId, { x: 1120, y: 840 })
+    const second = await addToken(t, game.code, game.dmCode, sceneId, { x: 4000, y: 3000 })
+    const settled = await placement(t, sceneId, first)
+
+    await t.mutation(api.board.moveToken, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId,
+      tokenId: second,
+      x: settled!.x,
+      y: settled!.y,
+      settle: true,
+    })
+
+    const a = await placement(t, sceneId, first)
+    const b = await placement(t, sceneId, second)
+    expect({ x: b!.x, y: b!.y }).toEqual({ x: settled!.x, y: settled!.y })
+    expect({ x: a!.x, y: a!.y }).toEqual({ x: settled!.x, y: settled!.y })
+  })
+
   test('rejects a tint that is not a #rrggbb string', async () => {
     const t = harness()
     const game = await makeGame(t)

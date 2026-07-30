@@ -17,7 +17,8 @@ import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import { MAX_PLACEMENTS_PER_SCENE, MAX_SCENES_PER_GAME, MAX_TOKENS_PER_GAME } from './games'
 import { findClaimHolder } from './players'
-import type { Point } from './grid'
+import type { Grid, Point } from './grid'
+import { cellOf, centreOfCell, snapToGrid } from './grid'
 
 /**
  * The two layers a token can be on, spelled once.
@@ -222,6 +223,74 @@ export async function requireMovableToken(
   }
 
   return token
+}
+
+/**
+ * How far from the asked-for square to look for an empty one. Eight rings is 289
+ * squares, which is more of a search than any real board needs — it exists so the
+ * loop terminates rather than because anyone will reach it.
+ */
+const FREE_CELL_RINGS = 8
+
+/**
+ * The nearest empty square to `point`, for dropping a *new* token.
+ *
+ * Every token is added at the same default spot — the middle of the map — and
+ * snapping then puts each one in the identical square, so a DM adding six goblins
+ * got six coins stacked in one cell with their names overprinted into mush and five
+ * drags needed to undo it. Found by running the app; no test would have noticed,
+ * because every individual write was correct.
+ *
+ * Deliberately only used by `addToken`. Moving a token onto an occupied square is a
+ * legitimate thing to want — two figures crowding a doorway — so `moveToken` must
+ * never displace anything, and this is not called from there.
+ *
+ * Occupancy compares snapped centres rather than footprints. A 2×2 ogre overlapping
+ * a 1×1 goblin's square is not detected, which is the honest limit of one line of
+ * arithmetic; it costs a drag in a rare case, where the stacking above cost a drag
+ * every single time.
+ */
+export async function freeCellNear(
+  ctx: QueryCtx,
+  sceneId: Id<'scenes'>,
+  grid: Grid,
+  sizeSquares: number,
+  point: Point,
+): Promise<Point> {
+  const placements = await ctx.db
+    .query('tokenPositions')
+    .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
+    .take(MAX_PLACEMENTS_PER_SCENE)
+
+  // Keyed on the snapped centre, so a placement left off-grid by an interrupted
+  // drag still occupies the square it is sitting in.
+  const taken = new Set(
+    placements.map((placement) => {
+      const centre = snapToGrid({ x: placement.x, y: placement.y }, grid, sizeSquares)
+      return `${centre.x},${centre.y}`
+    }),
+  )
+
+  const wanted = cellOf(point, grid, sizeSquares)
+  for (let ring = 0; ring <= FREE_CELL_RINGS; ring += 1) {
+    for (let dCol = -ring; dCol <= ring; dCol += 1) {
+      for (let dRow = -ring; dRow <= ring; dRow += 1) {
+        // Only the edge of each ring: the inside was covered by a smaller one.
+        if (ring > 0 && Math.abs(dCol) !== ring && Math.abs(dRow) !== ring) continue
+        const candidate = centreOfCell(
+          { col: wanted.col + dCol, row: wanted.row + dRow },
+          grid,
+          sizeSquares,
+        )
+        if (!taken.has(`${candidate.x},${candidate.y}`)) return candidate
+      }
+    }
+  }
+
+  // Every square within the search is occupied, which needs 289 tokens on one
+  // scene and cannot happen under MAX_TOKENS_PER_GAME. Stack rather than refuse:
+  // a token the DM cannot place at all is worse than one they have to drag.
+  return centreOfCell(wanted, grid, sizeSquares)
 }
 
 /** Insert or update the placement of a token on a scene. */

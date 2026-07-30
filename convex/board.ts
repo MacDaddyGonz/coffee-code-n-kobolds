@@ -4,6 +4,7 @@ import { mutation, query } from './_generated/server'
 import {
   countTokensInGame,
   deleteTokenPlacements,
+  freeCellNear,
   placeToken,
   publicPositionValidator,
   publicTokenValidator,
@@ -219,13 +220,14 @@ export const addToken = mutation({
       tint: args.tint,
       characterId: args.characterId,
     })
-    // Snapped on the way in, so a token is on a square from the moment it exists
-    // rather than from its first drag.
+    // On a square from the moment it exists rather than from its first drag — and on
+    // an *empty* one. Every token is added at the same default point, so snapping
+    // alone dropped each new one into the square the last one is already in.
     await placeToken(
       ctx,
       scene._id,
       tokenId,
-      snapToGrid({ x: args.x, y: args.y }, scene, args.sizeSquares),
+      await freeCellNear(ctx, scene._id, scene, args.sizeSquares, { x: args.x, y: args.y }),
     )
     return { tokenId }
   },
