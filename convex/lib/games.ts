@@ -12,6 +12,9 @@ import { normaliseDmCode, normaliseJoinCode, normaliseRecoveryPhrase } from './c
  */
 export const MAX_SEATS_PER_GAME = 50
 export const MAX_CHARACTERS_PER_GAME = 200
+export const MAX_SCENES_PER_GAME = 25
+export const MAX_TOKENS_PER_GAME = 200
+export const MAX_PLACEMENTS_PER_SCENE = 200
 
 /**
  * The only shape of a game a public query may return.
@@ -27,6 +30,12 @@ export const publicGameValidator = v.object({
   name: v.string(),
   code: v.string(),
   createdByName: v.string(),
+  // Which board everyone is on, and whether the game has started. Neither is a
+  // secret — every client needs both to know what to render — and note what they
+  // are not: the *contents* of that scene still go through lib/board.ts, which is
+  // where the DM layer is filtered out. Naming a scene reveals nothing.
+  activeSceneId: v.union(v.id('scenes'), v.null()),
+  status: v.union(v.literal('lobby'), v.literal('playing')),
 })
 
 export function publicGame(game: Doc<'games'>) {
@@ -36,7 +45,24 @@ export function publicGame(game: Doc<'games'>) {
     name: game.name,
     code: game.code,
     createdByName: game.createdByName,
+    // Normalised to null rather than left undefined: `undefined` is not a Convex
+    // value, so an optional field has to become something on the way out.
+    activeSceneId: game.activeSceneId ?? null,
+    status: gameStatus(game),
   }
+}
+
+/**
+ * The only place the stored `status` is read.
+ *
+ * The field is optional in the schema because adding a required one to a table
+ * that already has rows fails the schema push, and widen–migrate–narrow costs two
+ * deploys to delete one `??` from a game with three players. `games.create` has
+ * written it since Milestone 2, so the default only ever applies to games made
+ * before then.
+ */
+export function gameStatus(game: Doc<'games'>): 'lobby' | 'playing' {
+  return game.status ?? 'lobby'
 }
 
 /** Returns null for an unknown code — for queries that render "no such game". */

@@ -86,6 +86,9 @@ export const create = mutation({
       dmCode,
       dmRecoverySalt,
       dmRecoveryHash: await hashRecoveryPhrase(dmRecoverySalt, args.recoveryPhrase),
+      // Written explicitly rather than left to `gameStatus`'s default, so the
+      // default only ever covers games created before Milestone 2.
+      status: 'lobby',
     })
 
     // The creator gets a seat straight away, so the lobby is never empty and the
