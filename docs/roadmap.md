@@ -119,15 +119,25 @@ it took are recorded in [ADR 0004](adr/0004-board-authorisation-and-layers.md).
   at so a mis-sequenced catch cannot strip the art off the board. The full library editor is still
   Milestone 7.
 - **Grid calibration by squares-across**, with an arrow-key offset nudge against a live overlay.
-  `gridSize` is a float, so 2240 / 16 is exactly 140 rather than a rounded 139 that drifts a whole
-  square out by the far edge.
+  Changes **apply as they are made** rather than sitting behind a Save button: calibrating a grid is
+  aiming at a target you can see, and a commit step between each adjustment and its overlay makes the
+  aiming worse. `gridSize` is a float, so 2240 / 16 is exactly 140 rather than a rounded 139 that
+  drifts a whole square out by the far edge.
+- **Token control corrected after the first real session.** `requireMovableToken` used to let a
+  player move any token with no character attached, which sounded reasonable and was not: every NPC
+  the DM adds is unattached, so the whole table could shove the monsters around. It now refuses
+  unless the calling seat has claimed the token's character — control is granted, never assumed, and
+  an unattached token or an unclaimed character is the DM's. The ceiling is unchanged and still
+  honest: a `playerId` is routing, so this stops a misclick, not the network tab. Accounts were
+  reconsidered here and declined again — [ADR 0002](adr/0002-defer-user-accounts.md) and
+  [ADR 0004](adr/0004-board-authorisation-and-layers.md).
 - Scene names are DM-only: `scenes.list` requires the DM code because a list of names is a spoiler,
   and players get only the active scene.
 
 **Deliberately not done here:**
 
-- **No layer toggle and no moving tokens between layers** — Milestone 5. The schema and the choke
-  point support it; what is missing is the UI and the mutation.
+- **No layer toggle and no moving tokens between layers** — Milestone 5. The choke point supports
+  the move; the schema supports only two layers, and Milestone 5's third one is a union change.
 - **No tabbed DM panel and no polished scene-switch UX** — Milestone 5. `scenes.setActive` exists and
   is DM-gated, driven by a bare `<select>` in the DM setup panel.
 - **No marker or ruler tools** — Milestone 6. `convex/lib/grid.ts` gives it the cell arithmetic to
@@ -197,15 +207,54 @@ before building more** — a session will tell you what's genuinely missing fast
 
 ## Milestone 5 — DM tooling
 
+The four bold items at the end were **requested after playing Milestone 2**. The rest was always
+here.
+
 - DM panel, tabbed: all player sheets, all NPC sheets, token list, modal image library, music.
 - DM can click any sheet item to roll on a player's behalf.
 - Scene switching — changes the visible board for everyone in the game.
-- Layer toggle, and moving tokens/images between layers (bringing enemy NPCs in from the DM layer).
-- DM can move any token on any layer, including player tokens.
 - Modal image pop-up: DM opens an image for the whole group, and closes it for everyone.
+- DM can move any token on any layer, including player tokens. The mutation already allows this;
+  what is missing is the UI to reach a token the DM cannot currently see.
+- **Layers, done properly — Background, Player, GM, bottom to top.** They behave like an image
+  editor's: an object belongs to one layer, and you see through the upper layers to what is below.
+  Players see Background and Player, and may only interact with their own tokens on Player. The GM
+  toggles between the player's two-layer view and all three, and sets an *active* layer to place
+  onto — including dropping a token on Background, where players see it and can never interact with
+  it. GM is the existing `'dm'` layer under Roll20's name for it; the new one is Background. **That
+  needs a third member on the `layer` union in `convex/schema.ts`**, which today allows
+  `'player' | 'dm'` and carries a comment saying no token lives on the background layer: the comment
+  is as wrong as the union and both change together. Then every read path through
+  `convex/lib/board.ts` needs revisiting, because `maySee` is a two-way test and a third layer is not
+  something it extends to by itself.
+- **Many-to-many token control.** A player may control one token or several; a token may be
+  controlled by nobody (an NPC, DM only), by one player, or by many — a pet, or an enemy the DM has
+  handed the party. Today's model is a single chain, token → character → seat, which cannot express a
+  shared pet at all. The shape to build is an explicit **controllers relation keyed on seats** rather
+  than characters, because granting the party a pet grants it to players and a character is claimed
+  by exactly one seat anyway; combined with a derived default so the common case needs no DM action —
+  the seat holding the token's character controls it, plus any seat the DM has explicitly granted.
+  Zero controllers then means DM-only, which is the corrected default from Milestone 2.
+- **Interactive grid calibration.** Drag handles on the grid's corners and edges to scale it on X and
+  Y like a box in an image editor, and click-drag the grid itself to shift the offset. The numeric
+  fields stay as the fallback for a map whose square size is actually known. Self-contained canvas
+  work, no schema change.
+- **Fog of war**, a layer between Player and GM: the GM draws and erases rectangles to black out
+  parts of the map. The hiding is **real for tokens, polite for the map.** A token standing inside a
+  fogged rectangle is filtered out server-side in `convex/lib/board.ts` — the same choke point the DM
+  layer already goes through — so a hidden monster is genuinely absent from a player's payload. The
+  map image itself stays fully downloaded, so a determined player could read the unfogged floor plan
+  out of devtools. Hiding that too means tiling or masking the map server-side, which multiplies
+  storage against the 1 GB ceiling ([ADR 0001](adr/0001-platform-and-hosting.md)) and complicates
+  both zoom and calibration; the monsters were the secret, not the floor plan. Note also that fog of
+  war appears **nowhere in [requirements.md](requirements.md)** — a deliberate scope addition, not a
+  requirement being met.
 
-**Acceptance:** the DM switches scenes and every client follows. The DM drags an NPC from the DM
-layer to the player layer and it appears for players at that moment — not before.
+**Acceptance:** the DM switches scenes and every client follows. The DM drags an NPC from the GM
+layer to the Player layer and it appears for players at that moment — not before. A token placed on
+Background is visible to a player and cannot be picked up by them. A pet granted to the party can be
+moved by two different players; the monster beside it can be moved by neither. A player whose view of
+a corridor is fogged has no position rows for what is standing in it.
 
 ---
 
@@ -241,8 +290,12 @@ substantially smaller.
 
 ## Deliberately not planned
 
-- **User accounts.** [ADR 0002](adr/0002-defer-user-accounts.md). If added later, it supersedes that
-  ADR rather than editing it.
+- **User accounts.** [ADR 0002](adr/0002-defer-user-accounts.md), reconsidered after Milestone 2's
+  first session and declined again: what accounts would buy is enforcement against an adversary, and
+  the players are colleagues. If added later, it supersedes that ADR rather than editing it.
+- **Anything that closes a hole only devtools can reach.** The threat model is written down in
+  CLAUDE.md. Filtering secrets out of a payload stays absolute because it is free; proving who is
+  asking is out of scope.
 - **Mobile layouts, SSR, SEO.** Desktop browsers only.
 - **Anything in the excluded rules list** in [requirements.md](requirements.md).
 

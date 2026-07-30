@@ -22,6 +22,56 @@
 export const MOVE_THROTTLE_MS = 100
 
 /**
+ * Long enough that a DM typing "16" into the grid calibrator writes once rather
+ * than once for the "1" as well, short enough that the grid feels like it follows
+ * the number rather than lagging behind it.
+ */
+export const SETTINGS_DEBOUNCE_MS = 350
+
+/**
+ * Trailing only — the opposite end of `throttle` below, and a deliberately separate
+ * function rather than a flag on it.
+ *
+ * A drag wants a leading call: the first frame should reach the other screens at
+ * once, because a token that waits before it starts moving looks broken. A settings
+ * field wants the opposite: the first keystroke of "16" is the number 1, which is a
+ * *valid* calibration for a one-square-wide map, so sending it would redraw the grid
+ * to something absurd on its way to the right answer. Waiting for the typing to stop
+ * is the whole point.
+ *
+ * `flush()` applies a pending change now — for a discrete control like a checkbox,
+ * where there is no run of input to wait out. `cancel()` drops it, for unmount.
+ */
+export function debounce<A extends unknown[]>(
+  fn: (...args: A) => void,
+  waitMs: number,
+): ((...args: A) => void) & { flush: () => void; cancel: () => void } {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let pending: A | null = null
+
+  const cancel = () => {
+    if (timer !== null) clearTimeout(timer)
+    timer = null
+    pending = null
+  }
+
+  const send = () => {
+    if (pending === null) return
+    const args = pending
+    cancel()
+    fn(...args)
+  }
+
+  const debounced = (...args: A) => {
+    pending = args
+    if (timer !== null) clearTimeout(timer)
+    timer = setTimeout(send, waitMs)
+  }
+
+  return Object.assign(debounced, { flush: send, cancel })
+}
+
+/**
  * Leading *and* trailing: the first call goes through immediately so a drag
  * starts moving on other screens at once, and the last call in any window is
  * always delivered so the token never comes to rest at a stale position.

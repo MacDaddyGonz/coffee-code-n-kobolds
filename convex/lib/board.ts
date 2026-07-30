@@ -204,22 +204,39 @@ export async function requireMovableToken(
   // dragging the party through a door is a normal thing for them to do.
   if (isDm) return token
 
-  // Be honest about what this is: `playerId` is a routing argument, so anyone can
-  // pass another seat's id and walk straight past this check. It is table manners
-  // rendered server-side — it stops a misclick, not a person — and it is exactly
-  // as spoofable as ungated `players.leave` in ADR 0003. That is acceptable only
-  // because nothing behind it is a secret: a player-layer token is already on
-  // every screen in the game, so the worst outcome is a rude move that everybody
-  // watched happen. The refusal above, which does guard a secret, gets no such
-  // latitude and keys off the DM code alone.
-  if (playerId !== undefined && token.characterId) {
-    const holder = await findClaimHolder(ctx, token.characterId)
-    if (holder && holder._id !== playerId) {
-      throw new ConvexError({
-        kind: 'TokenNotYours',
-        message: `${holder.displayName} is playing that token.`,
-      })
-    }
+  // Be honest about the ceiling. `playerId` is a routing argument, so anyone can pass
+  // another seat's id and walk straight past the checks below; they stop a misclick
+  // and a misunderstanding, not somebody with the network tab open. Closing that needs
+  // real identity, which means accounts, and ADR 0002 declined those deliberately —
+  // ADR 0004 records why that is the right trade at this table rather than a gap
+  // waiting to be filled. It is acceptable because nothing behind this check is a
+  // secret: a player-layer token is already drawn on every screen in the game, so the
+  // worst outcome is a rude move everybody watched happen. The refusal above, which
+  // does guard a secret, gets no such latitude and keys off the DM code alone.
+  // Control is granted, never assumed. This used to let anyone move a token that no
+  // character was attached to, on the reasoning that a creature nobody is playing
+  // should still be draggable. A first real session found that immediately: every
+  // NPC the DM adds has no character attached, so the whole table could shove the
+  // monsters around. An unattached token is the DM's.
+  if (playerId === undefined || !token.characterId) {
+    throw new ConvexError({
+      kind: 'TokenNotYours',
+      message: 'Only the DM can move that token.',
+    })
+  }
+
+  const holder = await findClaimHolder(ctx, token.characterId)
+  if (!holder) {
+    throw new ConvexError({
+      kind: 'TokenNotYours',
+      message: 'Nobody is playing that character yet, so only the DM can move it.',
+    })
+  }
+  if (holder._id !== playerId) {
+    throw new ConvexError({
+      kind: 'TokenNotYours',
+      message: `${holder.displayName} is playing that token.`,
+    })
   }
 
   return token

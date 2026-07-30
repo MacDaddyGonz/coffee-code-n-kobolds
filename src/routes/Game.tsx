@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { CopyButton } from '@/components/CopyButton'
 import { Shell } from '@/components/Shell'
 import { Board } from '@/components/board/Board'
+import { ClaimCharacterNotice } from '@/components/board/ClaimCharacterNotice'
 import { MapSetupOverlay } from '@/components/board/dm/MapSetupOverlay'
 import { Lobby } from '@/components/lobby/Lobby'
 import { NameGate } from '@/components/lobby/NameGate'
@@ -103,6 +104,13 @@ export default function Game() {
                 panel's own queries and mutations all take the DM code and re-verify
                 it server-side (invariant 7). */}
             {dm.dmCode !== null ? <MapSetupOverlay code={code} dmCode={dm.dmCode} /> : null}
+            {/* A player who never claimed a character can move nothing at all now
+                that an unattached token belongs to the DM, and the character list
+                lives in the lobby this screen replaced. Without this the only way
+                out was the DM sending the whole table back. */}
+            {dm.dmCode === null && seat.characterId === null ? (
+              <ClaimCharacterNotice code={code} playerId={seat.playerId!} />
+            ) : null}
           </Board>
         ) : (
           <Lobby

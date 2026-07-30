@@ -763,7 +763,14 @@ describe('who may move a token', () => {
     expect(await placement(t, sceneId, tokenId)).toMatchObject(snapToGrid({ x: 900, y: 900 }, GRID, 1))
   })
 
-  test('does not fire when no playerId is passed', async () => {
+  /**
+   * These three replace tests that asserted the opposite, and the reversal is the
+   * point rather than a detail. The old rule let a player move any token no character
+   * was attached to, which sounded like generosity and meant the whole table could
+   * shove the DM's monsters around — every NPC is unattached by construction. Control
+   * is granted, never assumed.
+   */
+  test('refuses a player with no claimed character, whatever they pass', async () => {
     const t = harness()
     const game = await makeGame(t)
     const sceneId = await makeScene(t, game.code, game.dmCode)
@@ -775,41 +782,62 @@ describe('who may move a token', () => {
       name: 'Thorin',
       characterId: thorin,
     })
+    const before = await placement(t, sceneId, tokenId)
 
-    await t.mutation(api.board.moveToken, {
-      code: game.code,
-      sceneId,
-      tokenId,
-      x: 640,
-      y: 480,
-      settle: true,
-    })
-    expect(await placement(t, sceneId, tokenId)).toMatchObject(snapToGrid({ x: 640, y: 480 }, GRID, 1))
+    // No playerId at all: there is nothing to identify a claim with, so refuse.
+    await expectKind(
+      t.mutation(api.board.moveToken, {
+        code: game.code,
+        sceneId,
+        tokenId,
+        x: 640,
+        y: 480,
+        settle: true,
+      }),
+      'TokenNotYours',
+    )
+    expect(await placement(t, sceneId, tokenId)).toMatchObject({ x: before!.x, y: before!.y })
   })
 
-  test('does not fire for an unowned token, so any player may move it', async () => {
+  test('refuses a player moving an unattached token — every NPC is one', async () => {
     const t = harness()
     const game = await makeGame(t)
     const sceneId = await makeScene(t, game.code, game.dmCode)
     await calibrate(t, game.code, game.dmCode, sceneId)
     const ben = await makeSeat(t, game.code, 'Ben')
     const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { name: 'Loose Barrel' })
+    const before = await placement(t, sceneId, tokenId)
 
+    await expectKind(
+      t.mutation(api.board.moveToken, {
+        code: game.code,
+        sceneId,
+        tokenId,
+        x: 1200,
+        y: 300,
+        settle: true,
+        playerId: ben,
+      }),
+      'TokenNotYours',
+    )
+    expect(await placement(t, sceneId, tokenId)).toMatchObject({ x: before!.x, y: before!.y })
+
+    // The DM still moves it, which is the whole point of the default.
     await t.mutation(api.board.moveToken, {
       code: game.code,
+      dmCode: game.dmCode,
       sceneId,
       tokenId,
       x: 1200,
       y: 300,
       settle: true,
-      playerId: ben,
     })
     expect(await placement(t, sceneId, tokenId)).toMatchObject(
       snapToGrid({ x: 1200, y: 300 }, GRID, 1),
     )
   })
 
-  test('does not fire for a character whose holding seat has left', async () => {
+  test('refuses everyone but the DM once the holding seat has left', async () => {
     const t = harness()
     const game = await makeGame(t)
     const sceneId = await makeScene(t, game.code, game.dmCode)
@@ -823,8 +851,32 @@ describe('who may move a token', () => {
       characterId: thorin,
     })
     await t.mutation(api.players.leave, { code: game.code, playerId: ana })
+    const before = await placement(t, sceneId, tokenId)
 
-    // The claim is gone with the seat, so the token is unowned again.
+    // The claim went with the seat (ADR 0003 — the pointer runs seat → character),
+    // so the token falls back to the DM rather than becoming a free-for-all.
+    await expectKind(
+      t.mutation(api.board.moveToken, {
+        code: game.code,
+        sceneId,
+        tokenId,
+        x: 700,
+        y: 700,
+        settle: true,
+        playerId: ben,
+      }),
+      'TokenNotYours',
+    )
+    expect(await placement(t, sceneId, tokenId)).toMatchObject({ x: before!.x, y: before!.y })
+
+    // And Ana retyping her name reclaims the character, so control comes back to her
+    // rather than needing the DM to repair it.
+    const anaAgain = await makeSeat(t, game.code, 'Ana')
+    await t.mutation(api.characters.claim, {
+      code: game.code,
+      playerId: anaAgain,
+      characterId: thorin,
+    })
     await t.mutation(api.board.moveToken, {
       code: game.code,
       sceneId,
@@ -832,7 +884,7 @@ describe('who may move a token', () => {
       x: 700,
       y: 700,
       settle: true,
-      playerId: ben,
+      playerId: anaAgain,
     })
     expect(await placement(t, sceneId, tokenId)).toMatchObject(snapToGrid({ x: 700, y: 700 }, GRID, 1))
   })

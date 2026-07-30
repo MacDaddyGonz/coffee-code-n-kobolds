@@ -104,12 +104,19 @@ export function useBoard(args: {
       position: at.get(token._id) ?? null,
       // The DM moves anything on their own board, including a claimed hero:
       // dragging the party through a door is a normal thing for them to do. A
-      // player gets their own character's token, and an unclaimed one — which is
-      // how a creature nobody is playing yet still gets to be moved.
+      // player moves the token of the character they are playing, and nothing else
+      // — an unattached token belongs to the DM, so every NPC on the board stays
+      // out of the party's hands.
+      //
+      // This mirrors `requireMovableToken` deliberately, and has to keep mirroring
+      // it. It is not the check that matters — the server refuses regardless — but
+      // a token the UI lets you pick up and the server then rejects is a worse
+      // experience than one that never moved, so the two rules are written to agree.
       canMove:
         isDm ||
         (token.layer === 'player' &&
-          (token.characterId === null || token.characterId === myCharacterId)),
+          myCharacterId !== null &&
+          token.characterId === myCharacterId),
     }))
   }, [tokens, positions, isDm, myCharacterId])
 

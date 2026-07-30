@@ -1,12 +1,11 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation } from 'convex/react'
-import { toast } from 'sonner'
 
 import { FieldError } from '@/components/FieldError'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { SETTINGS_DEBOUNCE_MS, debounce } from '@/lib/throttle'
 import { parseNumber } from '@/lib/utils'
 import { api } from '@convex/_generated/api'
 import {
@@ -66,7 +65,6 @@ type NudgeFieldProps = {
   value: string
   /** Only the square count has a floor. The offsets are freely negative. */
   min?: number
-  disabled: boolean
   onChange: (next: string) => void
 }
 
@@ -76,7 +74,7 @@ type NudgeFieldProps = {
  * copies of fifteen lines — where a fix applied to two of them and not the third is
  * the sort of thing nobody notices until the grid is out by one axis.
  */
-function NudgeField({ id, label, value, min, disabled, onChange }: NudgeFieldProps) {
+function NudgeField({ id, label, value, min, onChange }: NudgeFieldProps) {
   return (
     <div className="flex flex-col gap-1">
       <Label htmlFor={id} className="text-xs">
@@ -91,7 +89,6 @@ function NudgeField({ id, label, value, min, disabled, onChange }: NudgeFieldPro
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => nudge(event, value, onChange)}
         className="h-7 w-24 tabular-nums"
-        disabled={disabled}
       />
     </div>
   )
@@ -132,60 +129,95 @@ export function GridCalibrator({ code, dmCode, scene }: GridCalibratorProps) {
   const down = squaresDown(scene.imageHeight, grid.gridSize)
   const busy = action.pending !== null
 
+  // Set the field, then ask for a write. `apply` reads the newest values off a ref, so
+  // it does not matter that this runs before React has re-rendered with them.
+  const change = (set: (value: string) => void) => (value: string) => {
+    set(value)
+    apply()
+  }
+
+  // Not disabled while a write is in flight, unlike the old Save button. A field that
+  // goes dead for the length of a round trip drops the next keystroke, and with a
+  // write on every change that would happen constantly.
   const fields: NudgeFieldProps[] = [
     {
       id: `${fieldId}-across`,
       label: 'Squares across',
       value: across,
       min: 1,
-      disabled: busy,
-      onChange: setAcross,
+      onChange: change(setAcross),
     },
     {
       id: `${fieldId}-x`,
       label: 'Offset X',
       value: offsetX,
-      disabled: busy,
-      onChange: setOffsetX,
+      onChange: change(setOffsetX),
     },
     {
       id: `${fieldId}-y`,
       label: 'Offset Y',
       value: offsetY,
-      disabled: busy,
-      onChange: setOffsetY,
+      onChange: change(setOffsetY),
     },
   ]
 
-  const save = () =>
-    void action
-      .run('grid', 'Could not save the grid.', () =>
-        updateGrid({ code, dmCode, sceneId: scene._id, ...grid, gridVisible }),
+  // Applied as it is typed rather than behind a Save button. Calibrating is a loop of
+  // nudge-and-look, so a button in the middle of it means either saving twenty times
+  // or — worse, and what actually happened in the first session — nudging, looking at
+  // an overlay that has not changed, and concluding the app is broken.
+  //
+  // Debounced rather than throttled, and `src/lib/throttle.ts` explains why at length:
+  // the first keystroke of "16" is a valid calibration for a one-square map, so a
+  // leading write would redraw the grid to something absurd en route to the answer.
+  //
+  // Held in a ref because the identity has to survive re-renders — every keystroke is
+  // one — or each character would start its own timer and none would ever be replaced.
+  const latest = useRef({ grid, gridVisible, usable })
+  latest.current = { grid, gridVisible, usable }
+
+  // The override exists for the one caller that flushes synchronously. `latest` is
+  // written during render, so a handler that sets state and flushes in the same tick
+  // would send the value it just replaced — React has not re-rendered yet. A typed
+  // field never hits this, because 350ms is many renders away.
+  const apply = useRef(
+    debounce((override?: { gridVisible: boolean }) => {
+      const { grid: g, gridVisible: visible, usable: ok } = latest.current
+      // A half-typed field parses to NaN, which `isUsableGrid` rejects. Skipping is
+      // the right response rather than erroring: the DM is mid-keystroke, not wrong.
+      if (!ok) return
+      void action.run('grid', 'Could not save the grid.', () =>
+        updateGrid({
+          code,
+          dmCode,
+          sceneId: scene._id,
+          ...g,
+          gridVisible: override?.gridVisible ?? visible,
+        }),
       )
-      .then((done) => {
-        if (done) toast.success('Grid saved.')
-      })
+    }, SETTINGS_DEBOUNCE_MS),
+  ).current
+
+  useEffect(() => apply.cancel, [apply])
 
   return (
     <form
       className="flex flex-col gap-3"
       onSubmit={(event) => {
+        // Enter applies immediately, for a DM who types a number and wants it now
+        // rather than in a third of a second.
         event.preventDefault()
-        if (usable) save()
+        apply.flush()
       }}
     >
       <div className="flex flex-wrap items-end gap-3">
         {fields.map((field) => (
           <NudgeField key={field.id} {...field} />
         ))}
-        <Button type="submit" size="sm" disabled={busy || !usable}>
-          Save grid
-        </Button>
       </div>
 
       <p className="text-muted-foreground text-xs">
-        Arrow keys nudge the focused offset by a pixel, Shift by ten. The map is{' '}
-        {scene.imageWidth} × {scene.imageHeight} as stored.
+        Changes apply as you make them{busy ? ' — saving…' : ''}. Arrow keys nudge the focused offset
+        by a pixel, Shift by ten. The map is {scene.imageWidth} × {scene.imageHeight} as stored.
       </p>
 
       {/* The reassurance, and the whole reason the square count is the input. */}
@@ -209,8 +241,15 @@ export function GridCalibrator({ code, dmCode, scene }: GridCalibratorProps) {
           id={`${fieldId}-visible`}
           type="checkbox"
           checked={gridVisible}
-          onChange={(event) => setGridVisible(event.target.checked)}
-          disabled={busy}
+          onChange={(event) => {
+            const next = event.target.checked
+            setGridVisible(next)
+            // Flushed rather than debounced: a checkbox is one decision, not a run of
+            // input to wait out, and a third of a second before the grid vanishes reads
+            // as lag. Passed explicitly because the flush beats the re-render.
+            apply({ gridVisible: next })
+            apply.flush()
+          }}
           className="accent-foreground mt-0.5 size-4"
         />
         <div className="flex flex-col">

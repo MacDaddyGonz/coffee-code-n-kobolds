@@ -61,3 +61,18 @@ characters gain an optional owning-user field while continuing to live under the
 games keep working unchanged. Game codes stay as the join mechanism either way.
 
 That change should be recorded as a new ADR superseding this one.
+
+## Revisited after Milestone 2's first session — the decision stands
+
+Playing the board for the first time put the question properly: players could move any token that had
+no character attached, so was the best-quality fix to build real identity after all? No. "A player may
+only move their own token" is two goals sharing one sentence. Correct behaviour **at the table** is
+delivered completely by a server-side refusal, which the board now has; correct behaviour **against
+an adversary** needs to know who is calling, and that is the only one accounts would buy. The players
+are a handful of colleagues, so the second goal is not wanted, and declining accounts is therefore the
+higher-quality answer rather than the cheaper one — quality includes not carrying sign-up, sessions
+and a user-management surface that this table has no use for.
+
+The trigger that reverses it is an audience, not a feature: **the game being played with people
+outside the trusted group.** Full reasoning, and what the board's refusal does and does not
+guarantee, is in [ADR 0004](0004-board-authorisation-and-layers.md).
