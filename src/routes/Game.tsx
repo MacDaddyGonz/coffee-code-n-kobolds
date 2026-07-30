@@ -5,10 +5,10 @@ import { toast } from 'sonner'
 import { CopyButton } from '@/components/CopyButton'
 import { Shell } from '@/components/Shell'
 import { Board } from '@/components/board/Board'
-import { ClaimCharacterNotice } from '@/components/board/ClaimCharacterNotice'
 import { MapSetupOverlay } from '@/components/board/dm/MapSetupOverlay'
 import { Lobby } from '@/components/lobby/Lobby'
 import { NameGate } from '@/components/lobby/NameGate'
+import { CharacterSheetPanel } from '@/components/sheet/CharacterSheetPanel'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -97,20 +97,25 @@ export default function Game() {
             playerId={seat.playerId!}
             myCharacterId={seat.characterId}
           >
-            {/* The board's DM slot. Nothing was ever passed into it, which left the
-                grid calibrator reachable only from the lobby — so a grid found to be
-                a fraction out mid-fight cost the whole table a trip off the board to
-                fix. A player is given nothing here, and that is not the guard: the
-                panel's own queries and mutations all take the DM code and re-verify
-                it server-side (invariant 7). */}
+            {/* The board's overlay slot. Nothing was ever passed into it, which left
+                the grid calibrator reachable only from the lobby — so a grid found to
+                be a fraction out mid-fight cost the whole table a trip off the board
+                to fix. A player is given no map setup here, and that is not the
+                guard: the panel's own queries and mutations all take the DM code and
+                re-verify it server-side (invariant 7). */}
             {dm.dmCode !== null ? <MapSetupOverlay code={code} dmCode={dm.dmCode} /> : null}
-            {/* A player who never claimed a character can move nothing at all now
+            {/* Everyone gets the sheet panel, the DM included — a DM is a seat and
+                may be playing a character too. It also covers the case the standing
+                claim notice used to: a player who never claimed can move nothing now
                 that an unattached token belongs to the DM, and the character list
-                lives in the lobby this screen replaced. Without this the only way
-                out was the DM sending the whole table back. */}
-            {dm.dmCode === null && seat.characterId === null ? (
-              <ClaimCharacterNotice code={code} playerId={seat.playerId!} />
-            ) : null}
+                lives in the lobby this screen replaced, so the panel offers the list
+                when the seat holds nothing. */}
+            <CharacterSheetPanel
+              code={code}
+              playerId={seat.playerId!}
+              dmCode={dm.dmCode}
+              characterId={seat.characterId}
+            />
           </Board>
         ) : (
           <Lobby

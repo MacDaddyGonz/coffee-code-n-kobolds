@@ -19,16 +19,25 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useImageUpload } from '@/hooks/useImageUpload'
 import { api } from '@convex/_generated/api'
-import { MAX_SCENE_NAME_LENGTH } from '@convex/lib/codes'
+import { MAX_SCENE_NAME_LENGTH, truncateCodePoints } from '@convex/lib/codes'
 
 export type SceneUploadDialogProps = {
   code: string
   dmCode: string
 }
 
-/** Filenames carry the useful part of a map's name — `Admittance [Gridded 16x12].jpg`. */
+/**
+ * Filenames carry the useful part of a map's name — `Admittance [Gridded 16x12].jpg`.
+ *
+ * Cut by code point, not by `slice`. A filename with an emoji straddling code unit
+ * 60 would otherwise yield a lone surrogate that `requireSceneName` accepts — it is
+ * neither blank nor over-length — and that a real deployment then refuses with a raw
+ * `Invalid arguments provided`. That is the Milestone 1 display-name bug exactly,
+ * one milestone later and in a different file; `npm run test:smoke` found it,
+ * because convex-test cannot.
+ */
 function nameFromFile(fileName: string): string {
-  return fileName.replace(/\.[^./\\]+$/, '').slice(0, MAX_SCENE_NAME_LENGTH)
+  return truncateCodePoints(fileName.replace(/\.[^./\\]+$/, ''), MAX_SCENE_NAME_LENGTH)
 }
 
 /**

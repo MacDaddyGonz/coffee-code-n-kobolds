@@ -80,6 +80,55 @@ export function collapseWhitespace(raw: string): string {
 }
 
 /**
+ * A high surrogate with no low one after it, or a low surrogate with no high one
+ * before it — half of an emoji, left behind by something that counted UTF-16 code
+ * units.
+ */
+const LONE_SURROGATE =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
+/**
+ * Is this a string a Convex deployment will actually accept?
+ *
+ * Convex requires strings to be valid Unicode and refuses a malformed one **at the
+ * function boundary**, before any handler runs — so this is not a server-side guard
+ * and adding one would be a guard that cannot fire. It is for the browser, where a
+ * form can say something useful instead of spending a round trip to be told
+ * `Invalid arguments provided`.
+ *
+ * Milestone 1 shipped this bug in a display name cut to length with `slice`, and
+ * Milestone 3's smoke run found it still live in a scene name. Both times the cause
+ * was a client truncating by code unit — which is what `truncateCodePoints` below
+ * exists to stop.
+ */
+export function hasLoneSurrogate(value: string): boolean {
+  return LONE_SURROGATE.test(value)
+}
+
+/**
+ * Cut a string to a length **without splitting a character in half**.
+ *
+ * `String.prototype.slice` counts UTF-16 code units, so cutting at 60 in the middle
+ * of an emoji leaves a lone surrogate — the Milestone 1 bug, in the one place where
+ * truncating is genuinely the right behaviour rather than a shortcut. A filename
+ * suggested as a scene name is a courtesy, so quietly shortening it is correct
+ * where quietly shortening a *display name* would merge two people onto one seat
+ * (see `requireText` in lib/names.ts, which rejects instead, and why).
+ *
+ * Iterating the string yields whole code points, so a pair is either taken or left.
+ */
+export function truncateCodePoints(raw: string, max: number): string {
+  if (raw.length <= max) return raw
+
+  let out = ''
+  for (const codePoint of raw) {
+    if (out.length + codePoint.length > max) break
+    out += codePoint
+  }
+  return out
+}
+
+/**
  * Deliberately does NOT truncate. Over-length names are rejected server-side by
  * `requireText` instead, because `nameKey` is the identity key: two players
  * whose names differ only past a cut-off would silently land on the same seat,

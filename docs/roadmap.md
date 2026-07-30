@@ -159,23 +159,56 @@ settle.
 
 ---
 
-## Milestone 3 — Character sheets
+## ✅ Milestone 3 — Character sheets
 
-The largest milestone by volume, but low risk — it's mostly data modelling and forms.
+**Done.** Sheets for heroes and monsters, hit points on the board, and exact NPC numbers that are
+*absent* from a player's payload rather than hidden in it. The decisions are recorded in
+[ADR 0005](adr/0005-character-sheets-and-hit-point-secrecy.md).
 
-- D&D Lite character schema: six stats, saving throws, AC, HP + max HP, hit dice, initiative,
-  fixed 35ft speed, a limited feats/traits list, a limited spell list.
-- Character editor (DM can edit on a player's behalf, per requirements).
-- Player character sheet slide-out panel.
-- HP adjustment: +/- controls on the sheet and on the token health bar.
-- Token health bars: exact numbers for player characters; **percentage only for NPCs on player
-  clients** — the real numbers must not be in the payload. CLAUDE.md invariant 1.
+- **Two shapes of secret, two different guards** — and getting this distinction right was the whole
+  risk of the milestone. An NPC's **sheet** is a leaked *row* indistinguishable in type from a
+  hero's, so `convex/lib/characters.ts` became a second choke point with one `maySeeCharacter`
+  predicate, and `leakGuard.test.ts` was generalised from one hard-coded reader to a table of
+  table→reader pairs. An NPC's **hit points** are a leaked *field*, so `publicVitalsValidator` is a
+  discriminated union whose player-facing variant has **no numeric member at all** — there is
+  nowhere to put a hit point, and Convex throws if anyone ever adds one. CLAUDE.md invariant 8 used
+  to predict these were the same problem; they are not, and it now says so.
+- **A band, not a percentage.** Players get `healthy | bloodied | critical | down`. A percentage
+  fails the requirement it appears to meet: 82.2% of a guessable maximum hands `37/45` straight back.
+  Four states leak about two bits and still tell the party whether to press the attack. A creature
+  that is alive is never `down`.
+- **A player is told about a monster only when its token is already on their board.** Sending a band
+  for every NPC in the game would publish a *count* — twelve rows is twelve prepared monsters, the
+  same spoiler as a scene name. `characters.vitals` composes the two choke points:
+  `visibleCharacterIds` in `lib/board.ts` answers "whose tokens may this caller see?" and returns
+  nothing but ids.
+- **`characterVitals`, split from the sheet** — but not for the reason invariant 2 usually gives.
+  Hit points change a few times a round, not ten times a second, so write contention alone would not
+  have justified a table. The decisive reason is the shape of the *subscription*: a health-bar query
+  that read character documents would be reading NPC sheets, which are the secret. `maxHp` stays on
+  the sheet, because copying it would make two documents authoritative for the number the band is
+  computed from.
+- **NPC-ness is stored, never inferred.** Deriving it from "has any seat claimed this?" is the exact
+  shape of the Milestone 2 bug, and would fail in both directions.
+- **The reduced NPC sheet shares one `SheetEntry` type** with the full one, across a PC's feats, a
+  PC's spells and a monster's actions — which is what stops "two shapes" becoming two of everything,
+  and gives Milestone 4 one roll path rather than a fork.
+- **The catalogue is content, and a character stores a copy.** `convex/lib/rules.ts` holds 24 spells,
+  16 feats and 12 NPC actions; `catalogueKey` is a breadcrumb, not a foreign key, so retiring an
+  entry leaves every sheet that has it working. Roll specs (`1d8+WIS`) are **validated in shape now
+  and evaluated in Milestone 4** — storing them unvalidated would be a migration over every sheet the
+  moment something first parses one.
+- `ClaimCharacterNotice` is gone, subsumed by the sheet panel as Milestone 2 said it would be.
 
-Check [requirements.md](requirements.md) before adding anything here. No racial abilities, no
-background skills, no inventory, no movement-impairing conditions — those are **excluded by design**.
+**Deliberately not done here:** rolling anything (Milestone 4 — the roll specs are stored and
+validated but never evaluated), temporary hit points and death saves (absent from
+[requirements.md](requirements.md), so out of the rules subset by the same discipline as the
+exclusions), a read-only view of another player's sheet, and the five-section DM panel — the Sheets
+tab is deliberately the seam Milestone 5 grows from, not an attempt at it.
 
 **Acceptance:** create a character, edit its HP from the sheet and from the token, and see both
-update everywhere at once. A player inspecting network traffic sees no exact NPC HP.
+update everywhere at once. A player inspecting network traffic sees no exact NPC HP — asserted by
+`vitals.test.ts` with a positive control, and by `board-smoke.mjs` against the real deployment.
 
 ---
 
@@ -211,6 +244,8 @@ The four bold items at the end were **requested after playing Milestone 2**. The
 here.
 
 - DM panel, tabbed: all player sheets, all NPC sheets, token list, modal image library, music.
+  Milestone 3 left the seam rather than the panel: `MapSetupOverlay` already holds `Tabs` with **Map**
+  and **Sheets**, so this is three more tabs and a rename, not a new component.
 - DM can click any sheet item to roll on a player's behalf.
 - Scene switching — changes the visible board for everyone in the game.
 - Modal image pop-up: DM opens an image for the whole group, and closes it for everyone.
@@ -301,13 +336,18 @@ substantially smaller.
 
 ## Open questions
 
-None of the three blocked Milestone 2, and all three are still open.
+Two of the three were answered by Milestone 3. Both answers are recorded in
+[ADR 0005](adr/0005-character-sheets-and-hit-point-secrecy.md).
 
-- How much of the D&D Lite spell and feat lists to hard-code versus make editable. Hard-coding is
-  faster; editable avoids a code change every time you want a new spell. Milestone 3.
-- Whether NPC sheets need the full character schema or a reduced one. Reduced is less work but means
-  two shapes to maintain. Milestone 1's `characters` table holds only `gameId` and `name`, and
-  Milestone 2 made `tokens.characterId` **optional** — an NPC token needs no character document at
-  all — so nothing built so far constrains the answer and the question is genuinely still open.
+- ~~How much of the D&D Lite spell and feat lists to hard-code versus make editable.~~ **Both.** The
+  catalogue in `convex/lib/rules.ts` is hard-coded, and a character stores a *copy* of the entry it
+  picked rather than a reference — so a custom entry is byte-identical in shape to a catalogue one,
+  and editing or retiring a catalogue entry never rewrites an existing sheet.
+- ~~Whether NPC sheets need the full character schema or a reduced one.~~ **Reduced**: armour class,
+  hit points, an initiative bonus and a list of actions. The cost of two shapes is contained by
+  sharing one `SheetEntry` type across both, which is where the duplication would otherwise have
+  been. `initiativeBonus` is stored rather than derived precisely because there is no Dexterity score
+  to derive it from.
 - Whether the initiative tracker belongs in Milestone 4 rather than 6 — a real session will answer
-  this.
+  this. **Still open**, and Milestones 1–4 are now one milestone away from being playable enough to
+  ask it properly.

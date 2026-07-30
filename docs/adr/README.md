@@ -12,3 +12,4 @@ being overwritten.
 | [0002](0002-defer-user-accounts.md) | Defer user accounts; characters belong to the game | Accepted |
 | [0003](0003-player-identity-without-accounts.md) | Player identity without accounts: a seat is a name | Accepted |
 | [0004](0004-board-authorisation-and-layers.md) | Board authorisation, layers and where a token's position lives | Accepted |
+| [0005](0005-character-sheets-and-hit-point-secrecy.md) | Character sheets, where current hit points live, and two shapes of secret | Accepted |

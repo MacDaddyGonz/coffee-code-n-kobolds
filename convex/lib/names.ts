@@ -42,6 +42,17 @@ export function requireText(
   if (value.length > options.max) {
     throw new ConvexError({ kind: 'BadInput', message: options.tooLong })
   }
+  // No lone-surrogate check here, and the absence is deliberate rather than an
+  // oversight. One was added and then removed: `npm run test:smoke` demonstrated
+  // that Convex's **argument** validation rejects a malformed string at the function
+  // boundary, before any handler runs, so the check could never fire. This codebase
+  // does not keep guards that cannot fail — `leakGuard.test.ts` has two tests whose
+  // whole job is proving that point about itself.
+  //
+  // The place the check is worth having is the browser, where it can say something
+  // useful before a round trip: see `hasLoneSurrogate` in lib/codes.ts and its use
+  // in `sheetProblem`. And the place the bug actually gets *created* is a client
+  // cutting a string to length, which is what `truncateCodePoints` is for.
   return value
 }
 

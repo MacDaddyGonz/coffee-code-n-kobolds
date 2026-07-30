@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react'
 import { Circle, Group, Text } from 'react-konva'
 import type Konva from 'konva'
 
+import { COIN_DETAIL_MIN_DIAMETER, TokenHealthBar } from './TokenHealthBar'
 import { useCanvasImage } from '@/hooks/useCanvasImage'
 // The board's token type, imported rather than restated. A structural copy of it
 // lived here to keep the canvas independent of the hook that feeds it — but this
@@ -16,13 +17,6 @@ const EDGE_WIDTH = 2
 const SELECTION_WIDTH = 2
 const SELECTION_GAP = 4
 const NAME_FONT_SIZE = 12
-
-/**
- * Below this many screen pixels across, a coin's name is wider than the coin and a
- * crowded map turns into a wall of overlapping labels with the tokens lost behind
- * them. The name goes away and the tint carries the identity until you zoom in.
- */
-const NAME_MIN_COIN_DIAMETER = 26
 
 /** White dashes on a dark shadow, so the ring reads on any map art. */
 const SELECTION_COLOUR = '#ffffff'
@@ -96,7 +90,11 @@ export const TokenCoin = memo(function TokenCoin({
   const radius = diameter / 2
   const edge = EDGE_WIDTH / scale
   const nameFontSize = NAME_FONT_SIZE / scale
-  const showName = diameter * scale >= NAME_MIN_COIN_DIAMETER
+  // One test for both things written on a coin — the name below and the health bar
+  // above — so a zoom-out drops them together rather than leaving a board of bars
+  // over anonymous discs. The threshold and the argument for it live with the bar;
+  // see `COIN_DETAIL_MIN_DIAMETER`.
+  const showDetail = diameter * scale >= COIN_DETAIL_MIN_DIAMETER
 
   // Half the width the label is centred in — and it is the coin's own half-width,
   // deliberately, with `ellipsis` below doing the truncating.
@@ -203,7 +201,23 @@ export const TokenCoin = memo(function TokenCoin({
         />
       )}
 
-      {showName ? (
+      {/*
+        Rendered only when there is something to draw, and the condition is the
+        token's own `vitals` rather than anything this component works out. A coin
+        for a character carries a bar, a scenery marker does not, and whether the bar
+        says `20/45` or `Bloodied` was settled on the server long before the payload
+        reached this bundle (CLAUDE.md invariant 1).
+
+        `vitals` is an object, so it would defeat the memo above if it were rebuilt
+        each render — it is not: it comes from the vitals subscription by reference,
+        through the join in `useBoard`, and changes only when somebody's hit points
+        actually do.
+      */}
+      {showDetail && token.vitals ? (
+        <TokenHealthBar vitals={token.vitals} radius={radius} scale={scale} />
+      ) : null}
+
+      {showDetail ? (
         <Text
           text={token.name}
           x={-nameHalfWidth}

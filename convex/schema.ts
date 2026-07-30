@@ -7,6 +7,7 @@ import { v } from 'convex/values'
 // members exist — see the notes beside each field below.
 import { tokenLayerValidator } from './lib/board'
 import { gameStatusValidator } from './lib/games'
+import { sheetValidator } from './lib/sheet'
 
 export default defineSchema({
   games: defineTable({
@@ -53,11 +54,60 @@ export default defineSchema({
     .index('by_characterId', ['characterId']),
 
   // Characters belong to the game, never to a player identity (ADR 0002).
-  // Milestone 3 grows this into the full D&D Lite sheet.
+  //
+  // THE SECRET IS IN `sheet.kind`. An NPC's sheet is a spoiler of exactly the same
+  // shape as a hero's — a name, an armour class, a list of things it does — so no
+  // `returns:` validator can catch a leaked one and the guard has to be structural,
+  // the same way the DM layer's is. `lib/characters.ts` is the only module in
+  // `convex/` that reads this table, and `leakGuard.test.ts` greps the sources to
+  // keep it that way. See invariant 8.
+  //
+  // Note which half of the problem that is. The *document* is a leaked row and
+  // needs the choke point above; an NPC's *hit points* are a leaked field, and are
+  // caught mechanically by the discriminated union in `publicVitalsValidator`
+  // instead. Milestone 3 has one of each, and they need different tools.
   characters: defineTable({
     gameId: v.id('games'),
     name: v.string(),
+    // Optional ONLY because this table has held rows since Milestone 1 and adding a
+    // required field to a populated table fails the schema push. Never read
+    // directly — go through `characterSheet` in lib/sheet.ts, so the default that
+    // makes a legacy row a player character lives in exactly one place. This is the
+    // same treatment `games.status` gets through `gameStatus`, for the same reason.
+    sheet: v.optional(sheetValidator),
   }).index('by_gameId', ['gameId']),
+
+  // HOW A CHARACTER IS DOING RIGHT NOW, split from the sheet that says what it is.
+  //
+  // Invariant 2's usual argument — high-churn writes contending with reads — is
+  // real here but weaker than it was for token positions: hit points change a few
+  // times a round, not ten times a second. The decisive reason is the shape of the
+  // subscription rather than the cost of the write.
+  //
+  // The board needs a live hit-point feed for every visible token. Were current HP
+  // a field on the character document, that feed would have to read whole sheets —
+  // which for an NPC is precisely the secret — and would re-run every time somebody
+  // edited a spell list. In the other direction, one point of damage would re-push
+  // every feat and every spell to everyone watching. Four fields here mean the
+  // health-bar subscription is structurally incapable of carrying a sheet, which is
+  // the same class of guarantee the tokens/tokenPositions split bought.
+  //
+  // `maxHp` deliberately stays on the sheet. The band a player sees is computed
+  // server-side from current/max, so the maximum never has to leave the server for
+  // an NPC — and copying it here would make two documents authoritative for the one
+  // number that decides what a player is told, which is the denormalisation ADR
+  // 0004 rejected for `layer`. `gameId` is not the same thing: a character never
+  // changes game, so that pointer cannot go stale, and it buys one bounded read
+  // where the alternative is a lookup per character.
+  characterVitals: defineTable({
+    gameId: v.id('games'),
+    characterId: v.id('characters'),
+    currentHp: v.number(),
+    // Player characters only, and optional because a monster has none to spend.
+    hitDiceRemaining: v.optional(v.number()),
+  })
+    .index('by_gameId', ['gameId'])
+    .index('by_characterId', ['characterId']),
 
   // One board: a background image plus where its grid is. The background layer of
   // requirements.md — players see it and cannot interact with it.
