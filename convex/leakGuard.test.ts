@@ -2,7 +2,8 @@
 import { describe, expect, test } from 'vitest'
 
 /**
- * The structural half of CLAUDE.md invariant 8.
+ * The structural half of CLAUDE.md invariant 8 — now for both of this
+ * application's same-shape secrets rather than one of them.
  *
  * `publicGameValidator` makes a leaked *field* throw, because a DM code does not
  * fit the shape a public game payload is declared to have. A DM-layer token is a
@@ -10,6 +11,27 @@ import { describe, expect, test } from 'vitest'
  * validator can ever catch it. The only guard that works is that there is exactly
  * one reader: every read of `tokens` and `tokenPositions` lives in
  * `convex/lib/board.ts`, and this test greps the sources to prove it.
+ *
+ * Milestone 3 adds a second secret of precisely that shape, which is why this file
+ * is now a table of pairs instead of one hard-coded reader. An NPC's character
+ * document — a name, an armour class, a list of things it does — is
+ * indistinguishable in *type* from a hero's, so a projection over `characters`
+ * would cheerfully approve an array made entirely of spoilers. `characterVitals`
+ * is the same problem one table over: a monster's row and a hero's row differ only
+ * in which character they point at. So `convex/lib/characters.ts` is the only
+ * module allowed to read either of them, by the same arrangement and enforced by
+ * the same sweep.
+ *
+ * Running the sweep per pair buys a second thing that a single merged list would
+ * not: each reader is swept against the *other* pair's tables. `lib/board.ts` may
+ * not read `characters`, and `lib/characters.ts` may not read `tokens` — the two
+ * choke points meet only through the narrow crossing `visibleCharacterIds` makes,
+ * a set of ids and never a `Doc`.
+ *
+ * Note which half of Milestone 3 this is. An NPC's *sheet* is a leaked row and
+ * needs a choke point; an NPC's exact *hit points* are a leaked field, and are
+ * caught mechanically by the discriminated union in `publicVitalsValidator`
+ * instead. One tool for each shape of leak — `vitals.test.ts` exercises the other.
  *
  * Reading the modules as text rather than importing them is the point — an import
  * tells you what a module exports, and what matters here is what its code does.
@@ -20,24 +42,35 @@ const sources = import.meta.glob('./**/*.ts', {
   eager: true,
 }) as Record<string, string>
 
-/** The one file allowed to touch the two secret-bearing tables. */
-const READER = './lib/board.ts'
+type Guard = {
+  /** The secret-bearing tables that share one reader. */
+  tables: string[]
+  /** The one file allowed to touch them. */
+  reader: string
+}
+
+const GUARDS: Guard[] = [
+  { tables: ['tokens', 'tokenPositions'], reader: './lib/board.ts' },
+  { tables: ['characters', 'characterVitals'], reader: './lib/characters.ts' },
+]
 
 /**
- * Both quote styles for each entry point into the tables. `.query('tokens'` is
- * the index/scan path and `db.get('tokens'` the by-id path; a leak needs only one
- * of them, so the guard has to cover all of them rather than the idiomatic one.
+ * Both quote styles for each entry point into a table. `.query('tokens'` is the
+ * index/scan path and `db.get('tokens'` the by-id path; a leak needs only one of
+ * them, so the guard has to cover all of them rather than the idiomatic one.
  */
-const FORBIDDEN = [
-  ".query('tokens'",
-  '.query("tokens"',
-  ".query('tokenPositions'",
-  '.query("tokenPositions"',
-  "db.get('tokens'",
-  'db.get("tokens"',
-  "db.get('tokenPositions'",
-  'db.get("tokenPositions"',
-]
+function needlesFor(table: string): string[] {
+  return [
+    `.query('${table}'`,
+    `.query("${table}"`,
+    `db.get('${table}'`,
+    `db.get("${table}"`,
+  ]
+}
+
+function needlesForGuard(guard: Guard): string[] {
+  return guard.tables.flatMap(needlesFor)
+}
 
 /**
  * Test files are excluded because they read the stored rows on purpose — that is
@@ -50,53 +83,68 @@ function isScanned(path: string): boolean {
 
 const scanned = Object.entries(sources).filter(([path]) => isScanned(path))
 
-describe('token reads are confined to one module', () => {
-  /**
-   * If `?raw` ever stops resolving under the edge-runtime environment the globs
-   * come back empty and every assertion below passes for the wrong reason. Check
-   * the input first: a guard that cannot fail is not a guard.
-   */
-  test('the source scan actually loaded the convex modules', () => {
-    expect(scanned.length).toBeGreaterThan(8)
-    const paths = scanned.map(([path]) => path)
-    expect(paths).toContain('./schema.ts')
-    expect(paths).toContain('./lib/games.ts')
-    expect(paths).toContain(READER)
-    for (const [path, text] of scanned) {
-      expect(typeof text, `${path} did not load as text`).toBe('string')
-      expect(text.length, `${path} loaded empty`).toBeGreaterThan(0)
-    }
-  })
-
-  /**
-   * The other half of "not vacuous": the guard only means something if the reader
-   * really is reading the tables. Were `lib/board.ts` to stop querying them, the
-   * sweep below would pass over a codebase where nobody reads tokens at all.
-   */
-  test('lib/board.ts is genuinely the reader', () => {
-    const reader = sources[READER]
-    expect(reader, 'convex/lib/board.ts is missing').toBeTypeOf('string')
-    const used = FORBIDDEN.filter((needle) => reader.includes(needle))
-    expect(used.length, 'lib/board.ts reads neither table — the guard is vacuous').toBeGreaterThan(0)
-    expect(
-      used.some((needle) => needle.includes('tokenPositions')),
-      'lib/board.ts never reads tokenPositions',
-    ).toBe(true)
-  })
-
-  /**
-   * One sweep, and the offender list carries the file name and the needle that
-   * matched — so a failure reads as "convex/foo.ts contains .query('tokens'"
-   * without a second per-file test restating the same thing.
-   */
-  test('no other convex module reads tokens or tokenPositions', () => {
-    const offenders: string[] = []
-    for (const [path, text] of scanned) {
-      if (path === READER) continue
-      for (const needle of FORBIDDEN) {
-        if (text.includes(needle)) offenders.push(`${path} contains ${needle}`)
+for (const guard of GUARDS) {
+  describe(`${guard.tables.join(' and ')} reads are confined to ${guard.reader}`, () => {
+    /**
+     * If `?raw` ever stops resolving under the edge-runtime environment the globs
+     * come back empty and every assertion below passes for the wrong reason. Check
+     * the input first: a guard that cannot fail is not a guard.
+     */
+    test('the source scan actually loaded the convex modules', () => {
+      expect(scanned.length).toBeGreaterThan(8)
+      const paths = scanned.map(([path]) => path)
+      expect(paths).toContain('./schema.ts')
+      expect(paths).toContain('./lib/games.ts')
+      expect(paths).toContain(guard.reader)
+      for (const [path, text] of scanned) {
+        expect(typeof text, `${path} did not load as text`).toBe('string')
+        expect(text.length, `${path} loaded empty`).toBeGreaterThan(0)
       }
-    }
-    expect(offenders).toEqual([])
+    })
+
+    /**
+     * The other half of "not vacuous": the guard only means something if the reader
+     * really is reading the tables. Were `lib/board.ts` to stop querying them, the
+     * sweep below would pass over a codebase where nobody reads tokens at all — and
+     * the same trap is waiting for `lib/characters.ts`, whose whole job could be
+     * refactored one function at a time into somewhere the sweep does not look.
+     *
+     * Asserted per table rather than per pair, because a reader that had quietly
+     * stopped touching one of its two tables is exactly the state in which that
+     * table's real reader has moved somewhere unguarded.
+     */
+    test(`${guard.reader} is genuinely the reader of each of its tables`, () => {
+      const reader = sources[guard.reader]
+      expect(reader, `convex/${guard.reader.slice(2)} is missing`).toBeTypeOf('string')
+
+      for (const table of guard.tables) {
+        const used = needlesFor(table).filter((needle) => reader.includes(needle))
+        expect(
+          used.length,
+          `${guard.reader} never reads ${table} — the guard for it is vacuous`,
+        ).toBeGreaterThan(0)
+      }
+    })
+
+    /**
+     * One sweep per pair, and the offender list carries the file name and the needle
+     * that matched — so a failure reads as "convex/foo.ts contains .query('tokens'"
+     * without a second per-file test restating the same thing.
+     *
+     * Every other module is swept, including the *other* pair's reader: a choke
+     * point that reached across into the neighbouring tables would be as much of a
+     * hole as an ordinary query doing it, and harder to notice.
+     */
+    test(`no other convex module reads ${guard.tables.join(' or ')}`, () => {
+      const needles = needlesForGuard(guard)
+      const offenders: string[] = []
+      for (const [path, text] of scanned) {
+        if (path === guard.reader) continue
+        for (const needle of needles) {
+          if (text.includes(needle)) offenders.push(`${path} contains ${needle}`)
+        }
+      }
+      expect(offenders).toEqual([])
+    })
   })
-})
+}

@@ -1,7 +1,7 @@
 import { ConvexError, v } from 'convex/values'
 
-import type { Id } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
+import { playerCharacterNames } from './lib/characters'
 import { nameKeyFor } from './lib/codes'
 import { requireDisplayName } from './lib/names'
 import { findGameByCode, getGameByCode } from './lib/games'
@@ -47,30 +47,35 @@ export const list = query({
 
     const seats = await listSeats(ctx, game._id)
 
-    // Point gets over the handful of characters actually held, rather than a
-    // range read of the table. A range read is invalidated by any insert into
-    // its range, so adding a character nobody holds would still re-run this
-    // query and re-push the whole roster to every client. Point reads are
-    // tracked per document, so only a rename of a held character does that.
-    const held = await Promise.all(
-      seats
-        .filter((seat) => seat.characterId)
-        .map((seat) => ctx.db.get('characters', seat.characterId!)),
+    // The read itself lives in lib/characters.ts, which is the only module allowed
+    // to touch that table now that an NPC sheet is a secret of the same shape as a
+    // hero's (invariant 8). The point-get optimisation and the reason for it moved
+    // with it; so did the filter that stops a roster naming an NPC.
+    const nameById = await playerCharacterNames(
+      ctx,
+      seats.flatMap((seat) => (seat.characterId ? [seat.characterId] : [])),
     )
-    const nameById = new Map<Id<'characters'>, string>()
-    for (const character of held) {
-      if (character) nameById.set(character._id, character.name)
-    }
 
     // Seats arrive oldest-first: Convex appends _creationTime to every index.
-    return seats.map((seat) => ({
-      _id: seat._id,
-      displayName: seat.displayName,
-      isDm: seat.isDm,
-      characterId: seat.characterId ?? null,
-      characterName: seat.characterId ? nameById.get(seat.characterId) ?? null : null,
-      joinedAt: seat._creationTime,
-    }))
+    return seats.map((seat) => {
+      // The id is nulled with the name rather than beside it. `playerCharacterNames`
+      // withholds an NPC's name, so a seat somehow holding one would otherwise come
+      // back with a live id and a blank label — an id a client could then take
+      // straight to `characters.sheet`, which is the one query that would refuse it,
+      // rather than to a screen that renders it. Unreachable today, because `claim`
+      // and `assign` both refuse an NPC; the projection filtering as one decision
+      // rather than two is what keeps it unreachable if Milestone 5 changes who may
+      // hold what.
+      const name = seat.characterId ? nameById.get(seat.characterId) ?? null : null
+      return {
+        _id: seat._id,
+        displayName: seat.displayName,
+        isDm: seat.isDm,
+        characterId: name === null ? null : seat.characterId ?? null,
+        characterName: name,
+        joinedAt: seat._creationTime,
+      }
+    })
   },
 })
 

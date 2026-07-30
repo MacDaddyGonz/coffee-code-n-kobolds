@@ -141,6 +141,36 @@ export async function publicTokens(
 }
 
 /**
+ * The characters standing on tokens this caller may see.
+ *
+ * The only thing that crosses this module's boundary is a filtered set of ids —
+ * never a `Doc<'tokens'>` — which is the same narrow crossing `tokenReferencesImage`
+ * makes below, and it is what lets `characters.vitals` be built out of both choke
+ * points without either one reading the other's tables.
+ *
+ * It exists to close a leak that is easy to miss. A health bar needs hit points for
+ * every creature on the board, and the obvious way to serve one is to send a band
+ * for every NPC in the game — which quietly publishes a *count*. A player reading
+ * twelve entries knows the DM has twelve monsters prepared for tonight, and that is
+ * the same category of spoiler as the scene names ADR 0004 refused to send. Scoping
+ * to what the caller can already see on the board means a hidden creature
+ * contributes nothing at all: not a row, not a band, not a number in a length.
+ */
+export async function visibleCharacterIds(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+  isDm: boolean,
+): Promise<Set<Id<'characters'>>> {
+  const tokens = await visibleTokens(ctx, gameId, isDm)
+
+  const ids = new Set<Id<'characters'>>()
+  for (const token of tokens) {
+    if (token.characterId) ids.add(token.characterId)
+  }
+  return ids
+}
+
+/**
  * Positions on one scene, filtered to tokens this caller may see. For `board.positions`.
  *
  * Each position row is hydrated back to its token so the same `maySee` decides it.
@@ -308,6 +338,36 @@ export async function freeCellNear(
   // scene and cannot happen under MAX_TOKENS_PER_GAME. Stack rather than refuse:
   // a token the DM cannot place at all is worse than one they have to drag.
   return centreOfCell(wanted, grid, sizeSquares)
+}
+
+/**
+ * Take a deleted character off whatever tokens were standing on it.
+ *
+ * `characters.remove` is the only irreversible operation on durable data, and
+ * without this it would leave tokens pointing at a document that has gone. The
+ * pointer runs token → character, so the token is what has to be repaired, and it
+ * has to be repaired here because this is the only module that may write that
+ * table.
+ *
+ * The consequences of skipping it are quiet rather than loud, which is why it is
+ * worth doing: `requireMovableToken` would find no claim holder and fall back to
+ * "only the DM can move that", and the health bar would simply never appear — a
+ * hero's token that has become undraggable with no visible reason why.
+ *
+ * Bounded by the by_characterId index rather than a scan of the game's tokens.
+ */
+export async function detachCharacterFromTokens(
+  ctx: MutationCtx,
+  characterId: Id<'characters'>,
+): Promise<void> {
+  const tokens = await ctx.db
+    .query('tokens')
+    .withIndex('by_characterId', (q) => q.eq('characterId', characterId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  for (const token of tokens) {
+    await ctx.db.patch('tokens', token._id, { characterId: undefined })
+  }
 }
 
 /** Insert or update the placement of a token on a scene. */

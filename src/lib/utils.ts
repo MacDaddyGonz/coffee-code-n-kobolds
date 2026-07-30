@@ -44,10 +44,21 @@ export function isTypingElement(
  * the position table on the first drag. NaN is the honest answer for a blank
  * field, and the `isUsable*` guards in `@convex/lib/grid` refuse it.
  *
- * Shared rather than written out per form for exactly that reason: both callers
- * feed one of those guards, so a divergence here is a NaN — or worse, a zero —
- * reaching a mutation.
+ * A true minus sign (U+2212) is read as a hyphen before parsing, and that is not
+ * politeness about typography — it is a character this application itself puts on
+ * the screen. `signed` prints every derived modifier as `−1`, and `sheetProblem`
+ * words the initiative bounds with the same character, so the obvious thing for
+ * somebody to do with a number they can see is copy it into the one field that takes
+ * a negative one: an NPC's initiative bonus. `Number('−3')` is NaN, so without this
+ * the paste lands as an empty box and the form reddens a field over a value that
+ * looks perfectly correct.
+ *
+ * Shared rather than written out per form for exactly that reason: the callers feed
+ * one of those guards or `sheetProblem`, so a divergence here is a NaN — or worse, a
+ * zero — reaching a mutation. The sheet forms had grown a second copy of this that
+ * had the minus sign and the grid fields did not, which is the drift in miniature.
  */
 export function parseNumber(raw: string): number {
-  return raw.trim() === '' ? Number.NaN : Number(raw)
+  const text = raw.trim().replace('−', '-')
+  return text === '' ? Number.NaN : Number(text)
 }

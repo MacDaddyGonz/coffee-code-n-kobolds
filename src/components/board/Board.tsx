@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 
 import { BoardEmpty } from '@/components/board/BoardEmpty'
 import { BoardStage } from '@/components/board/BoardStage'
+import { TokenHpPopover } from '@/components/board/TokenHpPopover'
 import { TokenLayer } from '@/components/board/TokenLayer'
 import { ZoomControls } from '@/components/board/ZoomControls'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -14,6 +15,7 @@ import { useBoardKeys } from '@/hooks/useBoardKeys'
 import type { Dm } from '@/hooks/useDm'
 import { useSmoothPositions, useTokenMove } from '@/hooks/useTokenMove'
 import { useTokenSelection } from '@/hooks/useTokenSelection'
+import { useHpActions } from '@/hooks/useVitals'
 import type { Id } from '@convex/_generated/dataModel'
 
 export type BoardProps = {
@@ -83,6 +85,27 @@ export function Board({ code, dm, playerId, myCharacterId, children }: BoardProp
     localPositionOf: move.localPositionOf,
   })
 
+  const hp = useHpActions({ code, dmCode: dm.dmCode, playerId })
+
+  /**
+   * The selected token, re-read from the smoothed array rather than taken from
+   * `selection.selectedToken`.
+   *
+   * They are the same creature but not the same position: selection reads the
+   * board before the interpolation, so anchoring the popover to it would leave the
+   * control sitting where the server last said a token was while the coin slides to
+   * where it now is — most visible on somebody else's drag, which is exactly when
+   * the DM is watching that token.
+   */
+  const selectedTokenId = selection.selectedTokenId
+  const hpToken = useMemo(
+    () =>
+      selectedTokenId === null
+        ? null
+        : tokens.find((token) => token._id === selectedTokenId) ?? null,
+    [tokens, selectedTokenId],
+  )
+
   // Hoisted out of the JSX so `TokenLayer` is handed the same function every render.
   // A fresh arrow there would have been a changed prop on every coin on every frame
   // of a pan, and react-konva answers a changed handler by rebinding the listener.
@@ -107,6 +130,13 @@ export function Board({ code, dm, playerId, myCharacterId, children }: BoardProp
   useEffect(() => {
     if (move.error) toast.error(move.error)
   }, [move.error])
+
+  // A refused hit point change is reported the same way and for the same reason: the
+  // bar has already snapped back to whatever the server says, so there is nothing
+  // left on screen for a panel to sit next to and explain.
+  useEffect(() => {
+    if (hp.error) toast.error(hp.error)
+  }, [hp.error])
 
   // A scene whose image has gone is not a board. It should never happen — a storage
   // blob deleted from under a live scene — and `BoardEmpty` says so in its own
@@ -138,6 +168,24 @@ export function Board({ code, dm, playerId, myCharacterId, children }: BoardProp
               onDragEnd={move.onDragEnd}
             />
           </BoardStage>
+          {/*
+            Hidden while this browser is dragging the token, and only that token.
+            React sees a dragged position ten times a second, because that is the
+            rate invariant 2 caps writes at — so a popover following it would stutter
+            along a quarter of a second behind the pointer that is dragging it, under
+            that very pointer. It comes straight back on the drop, at which point the
+            token is where it is going to stay and the control is worth aiming at.
+          */}
+          {hpToken && hpToken.canEditHp && move.heldTokenId !== hpToken._id ? (
+            <TokenHpPopover
+              token={hpToken}
+              scene={scene}
+              // The camera itself this time, not one number off it: the popover is
+              // positioned in screen space, so it needs the pan as well as the zoom.
+              camera={camera.camera}
+              onAdjust={hp.adjust}
+            />
+          ) : null}
           <ZoomControls
             // The scale, not the camera: a `BoardCamera` is a new object every render
             // and the bar reads one number off it. See `ZoomControlsProps`.

@@ -20,7 +20,9 @@ import type * as lib_grid from "../lib/grid.js";
 import type * as lib_limits from "../lib/limits.js";
 import type * as lib_names from "../lib/names.js";
 import type * as lib_players from "../lib/players.js";
+import type * as lib_rules from "../lib/rules.js";
 import type * as lib_scenes from "../lib/scenes.js";
+import type * as lib_sheet from "../lib/sheet.js";
 import type * as players from "../players.js";
 import type * as scenes from "../scenes.js";
 
@@ -43,7 +45,9 @@ declare const fullApi: ApiFromModules<{
   "lib/limits": typeof lib_limits;
   "lib/names": typeof lib_names;
   "lib/players": typeof lib_players;
+  "lib/rules": typeof lib_rules;
   "lib/scenes": typeof lib_scenes;
+  "lib/sheet": typeof lib_sheet;
   players: typeof players;
   scenes: typeof scenes;
 }>;

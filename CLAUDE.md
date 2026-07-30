@@ -46,6 +46,13 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    keys — commit through the one `board.moveToken` mutation, which **snaps server-side** on the
    settling write using `snapToGrid` in `convex/lib/grid.ts`, so no client bug can leave a token
    resting between squares. See [ADR 0004](docs/adr/0004-board-authorisation-and-layers.md).
+
+   **Current hit points are split off the same way**, into `characterVitals`, but check
+   [ADR 0005](docs/adr/0005-character-sheets-and-hit-point-secrecy.md) before citing this invariant
+   as the reason: hit points change a few times a round, not ten times a second, so write contention
+   alone would not have justified it. The decisive reason is the shape of the *subscription* — the
+   board needs live hit points for every visible token, and a health-bar query that read character
+   documents would be reading NPC sheets, which are the secret.
 3. **Hash routing only** (`/#/game/ABC123`). GitHub Pages has no rewrite rules, so a browser-path
    deep link 404s on refresh.
 4. **Vite needs `base: '/coffee-code-n-kobolds/'`.** The site is served from a subpath; omitting
@@ -73,13 +80,27 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
 
    It does **nothing** for a leaked *row*. A DM-layer token has the same shape as a player-layer
    token, so a validator would happily approve a payload full of them. The real guard is therefore
-   structural: `convex/lib/board.ts` is the **only** module in `convex/` that reads `tokens` or
-   `tokenPositions`, every read goes through its one `maySee(token, isDm)` predicate, and `isDm` comes
-   from `resolveDmAccess` in `convex/lib/games.ts` — never `players.isDm` (invariant 7). Two tests
-   hold it there: `leakGuard.test.ts` greps the sources for reads outside that module, and
-   `board.test.ts` scans a player payload for a DM-layer token's id. Exact NPC hit points in
-   Milestone 3 are the same shape of problem — see
-   [ADR 0004](docs/adr/0004-board-authorisation-and-layers.md).
+   structural: **one module reads the secret-bearing tables, and one predicate decides.**
+
+   | Tables | The only module allowed to read them | The predicate |
+   | --- | --- | --- |
+   | `tokens`, `tokenPositions` | `convex/lib/board.ts` | `maySee(token, isDm)` |
+   | `characters`, `characterVitals` | `convex/lib/characters.ts` | `maySeeCharacter(character, isDm)` |
+
+   `isDm` comes from `resolveDmAccess` in `convex/lib/games.ts` in both cases — never `players.isDm`
+   (invariant 7). `leakGuard.test.ts` greps every Convex source and fails on a read outside the
+   declared reader; `board.test.ts` and `vitals.test.ts` scan real player payloads for a secret,
+   each with a positive control so the scan cannot pass on an empty fixture.
+
+   **Know which shape you have before picking a tool.** Milestone 3 has one of each, and they are
+   not interchangeable — see [ADR 0005](docs/adr/0005-character-sheets-and-hit-point-secrecy.md):
+
+   - An NPC's **sheet** is a leaked *row*, indistinguishable in type from a hero's, so it needs the
+     choke point above.
+   - An NPC's **hit points** are a leaked *field*, so `publicVitalsValidator` is a discriminated
+     union whose player-facing variant has no numeric member at all. There is nowhere to put a hit
+     point, and Convex throws if anyone ever adds one. That is the stronger guarantee, and it is
+     available only because this particular secret happens to be a field.
 
 ### Threat model — what the invariants above are for, and where the line is
 

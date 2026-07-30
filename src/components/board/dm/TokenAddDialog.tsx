@@ -27,6 +27,7 @@ import type { PublicToken } from '@convex/lib/board'
 import { MAX_CHARACTER_NAME_LENGTH } from '@convex/lib/codes'
 import { MAX_TOKEN_SQUARES, MIN_TOKEN_SQUARES, isUsableTokenSize } from '@convex/lib/grid'
 import type { PublicScene } from '@convex/lib/scenes'
+import { NpcSheetFields, defaultNpcStats, npcSheetFrom, npcStatsProblem } from './NpcSheetFields'
 
 export type TokenAddDialogProps = {
   code: string
@@ -45,6 +46,18 @@ type Layer = PublicToken['layer']
 const DEFAULT_TINT = '#8b5cf6'
 
 /**
+ * The character select's third answer: make a sheet for this token as it is added.
+ *
+ * A sentinel in the same `<select>` rather than a separate mode switch, because
+ * "who is this?" has exactly one answer and three shapes of it — nobody, somebody
+ * who exists, somebody who does not yet. A select value is a string, so this is
+ * compared *before* the value is ever treated as an id; the empty string keeps its
+ * existing meaning of nothing attached. The leading underscores are not decoration:
+ * a Convex id is base-32-ish and can never collide with this.
+ */
+const NEW_NPC = '__new-npc'
+
+/**
  * Put a creature on the board.
  *
  * The layer is the only field here that decides anything about secrecy, so it is
@@ -56,10 +69,19 @@ const DEFAULT_TINT = '#8b5cf6'
  *
  * Art is optional. A token with none is drawn as a coloured coin with the name's
  * initials, which is enough to play with and saves an upload per goblin.
+ *
+ * So is a character, and that stays a real choice rather than an oversight: a token
+ * with no character attached has no health bar, cannot be moved by anybody but the
+ * DM, and is exactly the right thing for a barrel, a door marker or a crowd of
+ * villagers nobody is going to hit. Only creatures that take damage need a sheet.
  */
 export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
   const addToken = useMutation(api.board.addToken)
-  const characters = useQuery(api.characters.list, { code })
+  const createCharacter = useMutation(api.characters.create)
+  // With the DM code, so monsters are in the list. Without it `characters.list`
+  // answers with the player characters alone — an NPC's *existence* is the spoiler,
+  // which is why the filtering is the query's job and not a `.filter()` here.
+  const characters = useQuery(api.characters.list, { code, dmCode })
   const upload = useImageUpload({ code, dmCode, kind: 'token' })
   const action = useLobbyAction()
   const fieldId = useId()
@@ -70,6 +92,8 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
   const [size, setSize] = useState('1')
   const [tint, setTint] = useState(DEFAULT_TINT)
   const [characterId, setCharacterId] = useState('')
+  const [npcName, setNpcName] = useState('')
+  const [npcStats, setNpcStats] = useState(defaultNpcStats)
 
   function changeOpen(next: boolean) {
     setOpen(next)
@@ -79,42 +103,72 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
       setSize('1')
       setTint(DEFAULT_TINT)
       setCharacterId('')
+      setNpcName('')
+      setNpcStats(defaultNpcStats())
       action.clearError()
       upload.reset()
     }
   }
 
   const sizeSquares = parseNumber(size)
+  const makingNpc = characterId === NEW_NPC
+  // Only asked of the fields that are on screen. A blank armour class in a section
+  // nobody opened is not a reason to refuse a barrel.
+  const npcProblem = makingNpc ? npcStatsProblem(npcStats) : null
   const busy = action.pending !== null || upload.stage !== null
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
 
-    // Dropped in the middle of the map, because that is the one place guaranteed to
-    // be on it. The server snaps this to a square on the way in, so the token is on
-    // the grid from the moment it exists rather than from its first drag.
-    const base = {
-      code,
-      dmCode,
-      sceneId: scene._id,
-      name,
-      layer,
-      sizeSquares,
-      tint,
-      characterId: characterId === '' ? undefined : (characterId as Id<'characters'>),
-      x: scene.imageWidth / 2,
-      y: scene.imageHeight / 2,
-    }
-
     const done = await action.run(
       'add',
       'Could not add that token.',
-      () =>
+      async () => {
+        // Two transactions, unavoidably: `board.addToken` takes a character id, so
+        // the character has to exist before the token can point at it. The failure
+        // that leaves is honest and small — a refused token (an oversize image, a
+        // full game) can leave a sheet behind with nothing standing on it, and the
+        // Sheets tab deletes it in two clicks. The alternative is a combined
+        // mutation that knows about both tables, which buys atomicity for the one
+        // path in three and couples the board's writes to the character editor's.
+        const attachTo = makingNpc
+          ? (
+              await createCharacter({
+                code,
+                dmCode,
+                // The token's own name unless the DM typed a different one — a coin
+                // reading `Goblin archer` over a sheet called something else is a
+                // confusion nobody asked for.
+                name: npcName.trim() === '' ? name : npcName,
+                sheet: npcSheetFrom(npcStats),
+              })
+            ).characterId
+          : characterId === ''
+            ? undefined
+            : (characterId as Id<'characters'>)
+
+        // Dropped in the middle of the map, because that is the one place guaranteed
+        // to be on it. The server snaps this to a square on the way in, so the token
+        // is on the grid from the moment it exists rather than from its first drag.
+        const base = {
+          code,
+          dmCode,
+          sceneId: scene._id,
+          name,
+          layer,
+          sizeSquares,
+          tint,
+          characterId: attachTo,
+          x: scene.imageWidth / 2,
+          y: scene.imageHeight / 2,
+        }
+
         // Only the art path needs the discard-on-refusal dance, so a token with no
         // art never generates an upload URL at all.
-        upload.prepared
-          ? upload.commit((image) => addToken({ ...base, imageId: image.imageId }))
-          : addToken(base),
+        return upload.prepared
+          ? await upload.commit((image) => addToken({ ...base, imageId: image.imageId }))
+          : await addToken(base)
+      },
       { report: 'field' },
     )
     if (!done) return
@@ -247,24 +301,67 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
               disabled={busy}
               onChange={(event) => setCharacterId(event.target.value)}
             >
-              <option value="">Nobody — an NPC</option>
-              {(characters ?? []).map((character) => (
-                <option key={character._id} value={character._id}>
-                  {character.name}
-                </option>
-              ))}
+              <option value="">Nothing — no sheet, no health bar</option>
+              <option value={NEW_NPC}>New NPC sheet…</option>
+              {/* Grouped, because the two kinds are chosen for different reasons: a
+                  hero is picked so its player can move the coin, a monster so the DM
+                  can hit it. Both lists come from one query — and the monsters are in
+                  it only because that query was given a DM code it verified. */}
+              <optgroup label="Player characters">
+                {(characters ?? [])
+                  .filter((character) => character.kind === 'pc')
+                  .map((character) => (
+                    <option key={character._id} value={character._id}>
+                      {character.name}
+                    </option>
+                  ))}
+              </optgroup>
+              <optgroup label="NPCs">
+                {(characters ?? [])
+                  .filter((character) => character.kind === 'npc')
+                  .map((character) => (
+                    <option key={character._id} value={character._id}>
+                      {character.name}
+                    </option>
+                  ))}
+              </optgroup>
             </NativeSelect>
             <p className="text-muted-foreground text-xs">
-              Attaching a character is what lets the player holding it move this token. Table
-              manners rather than a lock — see ADR 0004 — but it is what stops a misclick.
+              A character gives the token a health bar, and lets the player holding it move the
+              coin. Table manners rather than a lock — see ADR 0004 — but it is what stops a
+              misclick. Leave it as nothing for scenery and for a crowd nobody is going to hit.
             </p>
           </div>
 
-          <FieldError message={action.error} />
+          {makingNpc ? (
+            <div className="flex flex-col gap-3 rounded-lg border p-3">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor={`${fieldId}-npc-name`}>NPC name</Label>
+                <Input
+                  id={`${fieldId}-npc-name`}
+                  value={npcName}
+                  onChange={(event) => setNpcName(event.target.value)}
+                  maxLength={MAX_CHARACTER_NAME_LENGTH}
+                  autoComplete="off"
+                  placeholder={name.trim() === '' ? 'Same as the token' : name}
+                  disabled={busy}
+                />
+              </div>
+              <NpcSheetFields stats={npcStats} onChange={setNpcStats} disabled={busy} />
+              <p className="text-muted-foreground text-xs">
+                The sheet is yours alone. Players are sent a word for this creature's health —
+                healthy, bloodied, badly hurt, down — and never the numbers.
+              </p>
+            </div>
+          ) : null}
+
+          <FieldError message={action.error ?? npcProblem} />
 
           <DialogFormFooter
             busy={busy}
-            canSubmit={name.trim() !== '' && isUsableTokenSize(sizeSquares)}
+            canSubmit={
+              name.trim() !== '' && isUsableTokenSize(sizeSquares) && npcProblem === null
+            }
             submitLabel={upload.stage === 'uploading' ? 'Uploading…' : 'Add the token'}
             onCancel={() => changeOpen(false)}
           />
