@@ -81,6 +81,29 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    Milestone 3 are the same shape of problem — see
    [ADR 0004](docs/adr/0004-board-authorisation-and-layers.md).
 
+### Threat model — what the invariants above are for, and where the line is
+
+The audience is a small group of trusted colleagues. That **scopes** the invariants rather than
+softening them, and the distinction matters in both directions, because there are two opposite ways
+to get this wrong.
+
+**Cheap structural guards stay, and invariant 1 is absolute.** Filtering DM data inside the query is
+a predicate in one module — it costs nothing, and it is the only reason an ambush is actually a
+surprise. So there is no trade-off to make here: never send a client a secret it must not have, and
+never "hide" one in the browser instead. Free things do not get weighed against convenience.
+
+**Expensive machinery to close the residual holes does not get built.** A `playerId` is routing and
+not identity (invariant 7), so a player with the network tab open can still pass another seat's id
+and move a token that is not theirs. Closing that needs real user accounts, which
+[ADR 0002](docs/adr/0002-defer-user-accounts.md) has now declined twice —
+[ADR 0004](docs/adr/0004-board-authorisation-and-layers.md) records why advisory enforcement is the
+whole of what this table wants. Server-side refusals that stop a misclick are worth having and are
+not claimed to be more than that.
+
+The line: **not sending a secret is nearly free, so it is required; proving who is asking is not, so
+it is out of scope.** Read this as licence to ship DM data to players and you have inverted it. What
+would move the line is an audience, not a feature — the game being played outside the trusted group.
+
 ## Rules scope
 
 D&D Lite is a deliberately reduced subset of 5e (2024). Before adding a rules feature, check

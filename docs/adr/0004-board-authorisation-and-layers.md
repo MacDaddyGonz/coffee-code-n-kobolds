@@ -29,7 +29,7 @@ where the tension is resolved rather than quietly ignored.
 
 ## Decision
 
-### The layer is a hard boundary; ownership is advisory
+### The layer is a hard boundary; control is granted, never assumed
 
 **A DM-layer row requires a DM code verified on the request.** That is the whole of the security
 model for the board, and it keys off nothing else — not `players.isDm`, which ADR 0003 fixed as a
@@ -37,18 +37,49 @@ roster badge, and not a `playerId` argument, which says which seat to act on rat
 calling. `resolveDmAccess` in `convex/lib/games.ts` produces the boolean and is the only thing
 that may.
 
-**Ownership cannot be enforced, so it is not claimed to be.** `requireMovableToken` does check
-that a player-layer token whose character another seat has claimed is refused with
-`TokenNotYours`, and that check is genuinely useful — it stops a misclick and it tells the truth
-about whose token it is. But anyone can pass another seat's `playerId` and walk straight past it,
-because a `playerId` is routing and not proof of identity. It is table manners rendered
-server-side, in the same honesty bracket as ungated `players.leave`.
+**A player moves a token only when something says they may.** `requireMovableToken` lets a
+non-DM caller move a player-layer token when the token carries a character *and* the calling seat
+has claimed that character. Everything else is the DM's: a token with no character attached, or a
+character nobody has claimed, is refused with `TokenNotYours`.
+
+That default is a correction, recorded here rather than quietly patched. The first version of the
+rule allowed any player to move any token with **no** character attached, on the reasoning that a
+creature nobody is playing should still be draggable by whoever is nearest. The first real session
+found the hole in minutes, because every NPC the DM places is unattached — so the whole table could
+shove the monsters around. Control is granted, never assumed: a token becomes movable because
+something on it says so, not because nothing does.
+
+**The enforcement is still advisory, and that is stated rather than glossed.** Anyone can pass
+another seat's `playerId` and walk straight past every check above, because a `playerId` is routing
+and not proof of identity. What the refusal buys is a misclick stopped and the truth told about
+whose token it is; it is not a defence against somebody with the network tab open. It is table
+manners rendered server-side, in the same honesty bracket as ungated `players.leave`.
 
 **This is acceptable only because nothing behind that check is a secret.** A player-layer token is
 already drawn on every screen in the game; its name, art and position are public by construction.
 The worst outcome of a spoofed `playerId` is a rude move that everybody watched happen, and the
 party can say so out loud. The refusal that *does* guard a secret — the DM layer — gets no such
 latitude, and is decided by the DM code alone.
+
+### Real identity was reconsidered after that session, and declined again
+
+The obvious reading of the bug above is that the advisory ceiling is the actual problem, and that
+the best-quality fix is to go and build the accounts [ADR 0002](0002-defer-user-accounts.md)
+deferred. It is not, and the reason is that "a player may only move their own token" is two goals
+sharing one sentence.
+
+The first is **correct behaviour at the table** — nobody moves the wrong token, and the app says so
+when they try. A server-side refusal delivers that completely, and now does. The second is
+**correct behaviour against an adversary**, which needs to know who is calling, which needs
+identity, which means accounts. Only the second is unmet, and it is explicitly not wanted: the
+players are a handful of colleagues, and a player reaching past the refusal with devtools is not a
+threat this project is protecting against (CLAUDE.md's threat-model note).
+
+So declining accounts is the *higher*-quality choice here rather than the cheaper one. Quality
+includes not carrying sign-up, sessions and a user-management surface that buy nothing at this
+table. The trigger that reverses it is not a feature but an audience: **the game being played with
+people outside the trusted group.** At that point ADR 0002's migration path applies and this
+section is what explains why it was not taken sooner.
 
 ### One choke point, not a validator
 
@@ -164,9 +195,21 @@ Named so that Milestone 5 is not boxed in by silence:
   to record the layer — see the rejected denormalisation below.
 - **Scene-switching UX.** `scenes.setActive` exists and is DM-gated; the tabbed DM panel,
   thumbnails and the polished switch remain Milestone 5's.
-- **Images on layers.** `tokens.layer` has two members rather than the requirements' three,
-  because the background layer is the scene image and no token lives on it. Non-token objects on a
-  layer are a later addition, and they will need the same choke point.
+- **The third layer.** `tokens.layer` has two members rather than the requirements' three, on the
+  reasoning that the background layer *is* the scene image and no token lives on it. Milestone 5
+  overturns that: the DM will place tokens on Background, where players see them and can never
+  interact with them. Adding the member is a one-line schema change and a comment to correct; the
+  work is that `maySee` is currently a two-way test, so every read path in `convex/lib/board.ts`
+  needs revisiting rather than merely extending. Non-token objects on a layer are later still, and
+  will need the same choke point.
+- **Who may control a token, beyond the default above.** One character claimed by one seat is a
+  chain, and a pet the whole party can move is not expressible on it. Milestone 5's shape is an
+  explicit controllers relation keyed on seats, layered over the derived default so the common case
+  still needs no DM action — and zero controllers still means DM-only.
+- **Fog of war.** Not in the requirements at all, and a deliberate Milestone 5 addition. It hides
+  *rows* exactly the way the DM layer does, so it belongs behind this same choke point and the same
+  `TokenNotFound`. Whether the map image itself is hidden is a separate question, answered there and
+  answered no.
 
 ## Consequences
 
@@ -177,6 +220,9 @@ Named so that Milestone 5 is not boxed in by silence:
   not merely undrawn.
 - **The guard is checkable by machine, in one place.** "Does this leak?" is answered by reading
   one file, and a contributor who forgets is caught by a test rather than by a review.
+- **An NPC is DM-only without anybody marking it as one.** "No seat has claimed a character on this
+  token" already says everything the refusal needs, so the narrow default costs no extra field and no
+  step in the DM's setup.
 - **A dropped token is always on a square**, because the server puts it there. No client bug can
   leave one straddling a line.
 - **Movement feels instant and costs almost nothing.** A two-second drag is around twenty mutation
@@ -189,8 +235,10 @@ Named so that Milestone 5 is not boxed in by silence:
 ### Costs and constraints we are accepting
 
 - **A player can move another player's token by passing a different `playerId`.** Stated plainly
-  because it will look like a bug to whoever finds it: it is not fixable without identity, and
-  identity is what ADR 0002 and ADR 0003 deliberately deferred. It is bounded to public data.
+  because it will look like a bug to whoever finds it: it is not fixable without identity, identity
+  is what ADR 0002 and ADR 0003 deliberately deferred, and the section above is why that still holds
+  after a real session. It is bounded to public data, and it is the residual hole the project has
+  decided not to spend on.
 - **`board.positions` re-runs when a token *document* changes**, not only when something moves,
   because each placement is hydrated back to its token so that one predicate decides visibility.
   The join is the price of a single source of truth for the field that decides secrecy.
