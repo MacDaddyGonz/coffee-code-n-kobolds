@@ -22,19 +22,14 @@ import { librarySheet, type LibraryEntry } from './library'
 import { race, type Race } from './races'
 import type {
   AbilityScores,
+  CharacterKind,
   CharacterSheet,
   PcSheet,
-  PresetOverrides,
   PresetSheet,
   SheetEntry,
   StoredSheet,
 } from './sheet'
-import {
-  MAX_ENTRY_ID_LENGTH,
-  SPEED_FEET,
-  defaultPcSheet,
-  noSkills,
-} from './sheet'
+import { MAX_ENTRY_ID_LENGTH, SPEED_FEET, defaultPcSheet, noSkills, withOverrides } from './sheet'
 
 /**
  * The sheet to display, roll and take hit points from, whatever the document holds.
@@ -47,6 +42,30 @@ export function resolveSheet(doc: { sheet?: StoredSheet }): CharacterSheet {
   if (stored === undefined) return defaultPcSheet()
   if (stored.kind !== 'preset') return stored
   return resolvePreset(stored)
+}
+
+/**
+ * Whether this character is a monster — **without resolving anything.**
+ *
+ * This exists for two reasons and the second is the important one.
+ *
+ * The cheap one: `resolveSheet(doc).kind` was the answer, and it costs a library
+ * lookup, several object copies and an id derivation over every feat and spell, all
+ * of it thrown away except one four-character string. `publicCharacters` paid that
+ * twice per character across up to two hundred of them, on a query that re-runs
+ * whenever anybody joins, claims or renames.
+ *
+ * The one that matters: `maySeeCharacter` is the predicate deciding whether an NPC's
+ * sheet reaches a player, and it was reaching through 13,000 lines of hand-written
+ * library content to get its answer. A content bug that made resolution throw would
+ * have taken `characters.list` and `characters.vitals` down for the whole table —
+ * and this milestone has already fixed one instance of exactly that, where a retired
+ * class dereferenced an undefined. **A security predicate should read one stored
+ * field**, and `resolvePreset` returns `kind: 'pc'` unconditionally on both of its
+ * branches, so that field is all the answer ever depended on.
+ */
+export function kindOf(doc: { sheet?: StoredSheet }): CharacterKind {
+  return doc.sheet?.kind === 'npc' ? 'npc' : 'pc'
 }
 
 /** The stored selections, or null for a character that is not built from the library. */
@@ -132,7 +151,10 @@ function resolvePreset(preset: PresetSheet): PcSheet {
         speed: SPEED_FEET,
       }
 
-  return applyOverrides(applyRace(base, race(preset.race), level), preset.overrides)
+  // `withOverrides` lives in lib/sheet.ts rather than here, so the override panel in
+  // the browser can run the identical merge instead of maintaining a second copy of
+  // it. Only the library lookup above is server-only.
+  return withOverrides(applyRace(base, race(preset.race), level), preset.overrides)
 }
 
 function applyRace(sheet: PcSheet, chosen: Race, level: number): PcSheet {
@@ -167,29 +189,6 @@ function applyRace(sheet: PcSheet, chosen: Race, level: number): PcSheet {
       ...sheet.spells,
       ...(chosen.grantedSpells ?? []).map((entry, index) => withId(entry, `race-${chosen.key}`, index)),
     ],
-  }
-}
-
-function applyOverrides(sheet: PcSheet, overrides: PresetOverrides | undefined): PcSheet {
-  if (!overrides) return sheet
-
-  return {
-    ...sheet,
-    abilities: overrides.abilities ? { ...overrides.abilities } : sheet.abilities,
-    saveProficiencies: overrides.saveProficiencies
-      ? { ...overrides.saveProficiencies }
-      : sheet.saveProficiencies,
-    skillProficiencies: overrides.skillProficiencies
-      ? { ...overrides.skillProficiencies }
-      : sheet.skillProficiencies ?? noSkills(),
-    armourClass: overrides.armourClass ?? sheet.armourClass,
-    maxHp: overrides.maxHp ?? sheet.maxHp,
-    hitDice: overrides.hitDice ? { ...overrides.hitDice } : sheet.hitDice,
-    speed: overrides.speed ?? sheet.speed,
-    // Appended rather than replacing, so a plot item the DM handed out survives the
-    // next level's library lookup instead of being overwritten by it.
-    feats: [...sheet.feats, ...(overrides.extraFeats ?? [])],
-    spells: [...sheet.spells, ...(overrides.extraSpells ?? [])],
   }
 }
 

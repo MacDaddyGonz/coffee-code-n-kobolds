@@ -1,7 +1,7 @@
 import { ConvexError, v } from 'convex/values'
 
 import type { Doc, Id } from './_generated/dataModel'
-import type { QueryCtx } from './_generated/server'
+import type { MutationCtx, QueryCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { detachCharacterFromTokens, visibleCharacterIds } from './lib/board'
 import {
@@ -42,7 +42,7 @@ import {
 import { SUBCLASS_LEVEL } from './lib/classes'
 import { perRestAbilities } from './lib/races'
 import { presetOf, resolveSheet } from './lib/resolve'
-import type { StoredSheet } from './lib/sheet'
+import type { PresetSheet, StoredSheet } from './lib/sheet'
 import {
   MAX_MAX_HP,
   defaultSheetFor,
@@ -451,28 +451,26 @@ export const setLevel = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const game = await requireDm(ctx, args.code, args.dmCode)
-    const character = await getCharacterInGame(ctx, game._id, args.characterId)
-
-    const stored = character.sheet
-    if (stored?.kind !== 'preset') {
-      throw new ConvexError({
-        kind: 'BadInput',
-        message: 'That character is not built from the library, so edit its sheet instead.',
-      })
-    }
+    const { character, preset } = await requirePresetCharacter(
+      ctx,
+      args,
+      'That character is not built from the library, so edit its sheet instead.',
+    )
 
     // An archetype chosen at level 2 is cleared if the DM drops the character below
     // it, because the sheet it points at does not exist down there — and leaving a
     // dangling archetype would silently reapply itself on the way back up rather
     // than asking again.
     const level = Math.round(args.level)
-    const next: StoredSheet = {
-      ...stored,
-      level,
-      subclassKey: level < SUBCLASS_LEVEL ? null : stored.subclassKey,
-    }
-    await writeSheet(ctx, character, requireUsableSheet(next))
+    await writeSheet(
+      ctx,
+      character,
+      requireUsableSheet({
+        ...preset,
+        level,
+        subclassKey: level < SUBCLASS_LEVEL ? null : preset.subclassKey,
+      }),
+    )
     return null
   },
 })
@@ -490,21 +488,48 @@ export const setUnlocked = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const game = await requireDm(ctx, args.code, args.dmCode)
-    const character = await getCharacterInGame(ctx, game._id, args.characterId)
-
-    const stored = character.sheet
-    if (stored?.kind !== 'preset') {
-      throw new ConvexError({
-        kind: 'BadInput',
-        message: 'That character is not built from the library.',
-      })
-    }
-
-    await writeSheet(ctx, character, { ...stored, locked: args.locked })
+    const { character, preset } = await requirePresetCharacter(
+      ctx,
+      args,
+      'That character is not built from the library.',
+    )
+    await writeSheet(ctx, character, requireUsableSheet({ ...preset, locked: args.locked }))
     return null
   },
 })
+
+/**
+ * Load a character the DM is about to change through the library, or throw.
+ *
+ * The two mutations above had this preamble written out twice, and the duplication
+ * had already cost something: `setUnlocked` wrote its result straight to
+ * `writeSheet` while `setLevel` put it through `requireUsableSheet` first, so the
+ * one path that skipped re-validation was the one that had been copied from the
+ * other. That is the failure mode `clampHitDice` describes a few files away — not
+ * everywhere at once, but in whichever copy was edited last. Both now go through the
+ * same door and out through the same check.
+ *
+ * `updateSheet` deliberately does not use this: it is reachable by a player, so it
+ * goes through `requireEditableCharacter` and `applyPresetPermissions` instead of a
+ * flat DM gate.
+ */
+async function requirePresetCharacter(
+  ctx: MutationCtx,
+  args: { code: string; dmCode: string; characterId: Id<'characters'> },
+  // Passed rather than shared: "edit its sheet instead" is the useful next step when
+  // somebody tries to level a hand-built character, and no help at all when they try
+  // to unlock one. Sharing the lookup is worth doing; sharing the sentence is not.
+  refusal: string,
+): Promise<{ character: Doc<'characters'>; preset: PresetSheet }> {
+  const game = await requireDm(ctx, args.code, args.dmCode)
+  const character = await getCharacterInGame(ctx, game._id, args.characterId)
+
+  const stored = character.sheet
+  if (stored?.kind !== 'preset') {
+    throw new ConvexError({ kind: 'BadInput', message: refusal })
+  }
+  return { character, preset: stored }
+}
 
 /**
  * A long rest. Hit points to full, hit dice back, once-per-rest abilities unspent.
@@ -558,9 +583,15 @@ export const setPerRest = mutation({
 
     // Checked against the character's own race rather than taken as given, so the
     // stored array cannot fill up with keys nothing will ever clear.
+    //
+    // **Only when spending.** Handing one back is always allowed, and the asymmetry
+    // is what stops a stale key becoming permanent: a DM who changes a character's
+    // race leaves whatever the old race had spent still marked, and a check that
+    // applied here too would make it unclearable by anything short of a long rest —
+    // refusing to undo a state it had been happy to create.
     const preset = presetOf(character)
     const known = preset ? perRestAbilities(preset.race).map((ability) => ability.key) : []
-    if (!known.includes(args.key)) {
+    if (args.spent && !known.includes(args.key)) {
       throw new ConvexError({
         kind: 'BadInput',
         message: 'That character has no such ability.',

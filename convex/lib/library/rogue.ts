@@ -70,7 +70,7 @@ export const ROGUE: ClassLibrary = {
         text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Almost all of a rogue\'s damage comes from this one line.',
         roll: '1d6',
         level: null,
-        catalogueKey: null,
+        catalogueKey: 'sneak-attack',
       },
       {
         name: 'Expertise',
@@ -137,7 +137,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Two dice now, and it grows again at level 4.',
             roll: '2d6',
             level: null,
-            catalogueKey: null,
+            catalogueKey: 'sneak-attack',
           },
           {
             name: 'Cunning Action',
@@ -216,7 +216,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Still two dice this level; your Dexterity is what improved.',
             roll: '2d6',
             level: null,
-            catalogueKey: null,
+            catalogueKey: 'sneak-attack',
           },
           {
             name: 'Cunning Action',
@@ -295,7 +295,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Three dice now, which is why this level hits so much harder.',
             roll: '3d6',
             level: null,
-            catalogueKey: null,
+            catalogueKey: 'sneak-attack',
           },
           {
             name: 'Uncanny Dodge',
@@ -381,7 +381,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Four dice: one well-set-up hit can end a fight.',
             roll: '4d6',
             level: null,
-            catalogueKey: null,
+            catalogueKey: 'sneak-attack',
           },
           {
             name: 'Uncanny Dodge',
@@ -483,7 +483,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Two dice now, and it grows again at level 4.',
             roll: '2d6',
             level: null,
-            catalogueKey: null,
+            catalogueKey: 'sneak-attack',
           },
           {
             name: 'Cunning Action',
@@ -562,7 +562,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Still two dice this level; your Dexterity is what improved.',
             roll: '2d6',
             level: null,
-            catalogueKey: null,
+            catalogueKey: 'sneak-attack',
           },
           {
             name: 'Cunning Action',
@@ -641,7 +641,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Three dice now, which is why this level hits so much harder.',
             roll: '3d6',
             level: null,
-            catalogueKey: null,
+            catalogueKey: 'sneak-attack',
           },
           {
             name: 'Uncanny Dodge',
@@ -727,7 +727,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Four dice: one well-set-up hit can end a fight.',
             roll: '4d6',
             level: null,
-            catalogueKey: null,
+            catalogueKey: 'sneak-attack',
           },
           {
             name: 'Uncanny Dodge',

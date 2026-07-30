@@ -3491,7 +3491,7 @@ describe('characters.create — a character built from the library', () => {
 describe('characters.updateSheet — the permission split over a premade character', () => {
   /**
    * THE MATRIX. Four callers, and the difference between them is the whole of what
-   * `requirePresetChangeAllowed` and `requireEditableCharacter` decide between.
+   * `applyPresetPermissions` and `requireEditableCharacter` decide between.
    *
    * `owner` is the seat holding the character, `other` is a second seat that is not,
    * and `anonymous` is a client that sent no identification at all — which is not
@@ -3576,7 +3576,49 @@ describe('characters.updateSheet — the permission split over a premade charact
     }
   })
 
-  test('a player cannot level themselves by any route through updateSheet', async () => {
+  /**
+   * ⚠️ WHERE THE LEVEL RULE STOPS, recorded so that whoever finds it reads this
+   * rather than filing it as a bug — or, better, decides it *is* one on purpose.
+   *
+   * `applyPresetPermissions` protects a character that is *already* built from the
+   * library. It does nothing on `create`, and nothing when the stored sheet is not a
+   * preset, both by explicit design: "building a character that was not one before —
+   * nothing to protect yet".
+   *
+   * The consequence is that a player can hand themselves a level, in two calls and
+   * without the DM, by replacing their preset with a hand-built `pc` sheet — which is
+   * always allowed, since a hero's sheet belongs to the party — and then building a
+   * fresh preset at whatever level they like. The lock goes the same way.
+   *
+   * That is the advisory ceiling ADR 0004 describes rather than a hole in a secret:
+   * nothing here is hidden from anybody, and every step of it is visible to the whole
+   * table. It is asserted rather than left implicit because a test that only proved
+   * the rule holds would read as a stronger promise than the code makes.
+   */
+  test('the level rule guards an existing premade character, and not the act of making one', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ level: 1, locked: true }))
+    const { code, characterId, ana } = fixture
+
+    // Step one: out of the library altogether, which is not a preset change.
+    await update(t, code, characterId, pcSheet({ className: 'By hand', level: 1 }), {
+      playerId: ana,
+    })
+    expect((await rawCharacter(t, characterId))?.sheet?.kind).toBe('pc')
+
+    // Step two: back in, at a level nobody awarded.
+    await update(t, code, characterId, presetSheet({ level: 5, subclassKey: 'champion' }), {
+      playerId: ana,
+    })
+    expect(await storedPreset(t, characterId)).toMatchObject({ level: 5, locked: false })
+
+    // And the same thing in one call, on a character being created rather than
+    // changed — which is the case the design deliberately leaves open.
+    const fresh = await makePreset(t, code, 'Fresh', presetSheet({ level: MAX_LEVEL }))
+    expect((await storedPreset(t, fresh)).level).toBe(MAX_LEVEL)
+  })
+
+  test('the level a player sends is ignored, whatever nonsense it is', async () => {
     const t = convexTest(schema, modules)
     const fixture = await presetFixture(t, presetSheet({ level: 2, subclassKey: 'champion' }))
     const stored = await storedPreset(t, fixture.characterId)

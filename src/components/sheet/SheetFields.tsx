@@ -3,7 +3,10 @@ import { useState } from 'react'
 
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { NativeSelect } from '@/components/ui/native-select'
 import { cn, parseNumber } from '@/lib/utils'
+import type { HitDice } from '@convex/lib/sheet'
+import { HIT_DIE_FACES } from '@convex/lib/sheet'
 
 // The small controls the two sheet forms are built out of.
 //
@@ -154,6 +157,75 @@ export function NumberInput({ value, onChange, invalid, className, ...rest }: Nu
 
 function formatNumber(value: number): string {
   return Number.isFinite(value) ? String(value) : ''
+}
+
+/**
+ * `n × d8` — a count and a die size, as one field.
+ *
+ * Both sheets that hold hit dice draw this: the hand-built form, where it is part of
+ * the build somebody types, and the override panel, where the DM sets it over the
+ * library's. That is two callers rather than three or four, which is normally under
+ * the bar for extracting anything — but the two copies were byte-for-byte identical
+ * apart from the width of the count box, and one of them had already drifted from
+ * `w-16` to `w-14` with nobody able to say which was intended. A control assembled
+ * out of three primitives is exactly the kind of thing that drifts one class at a
+ * time, and this file's whole reason for existing is that the sheet forms stop
+ * assembling their own.
+ *
+ * The cast is narrowing a `<select>`'s string back to the four literals its own
+ * options were built from, rather than asserting anything the list does not already
+ * guarantee. It is checked anyway: `sheetProblem` re-tests the faces against
+ * `HIT_DIE_FACES`, because convex-test does not apply Convex's own value validation
+ * to stored documents and a limit only the client applies is a limit a client bug
+ * removes.
+ */
+export function HitDiceField({
+  id,
+  label,
+  hint,
+  value,
+  invalid,
+  disabled,
+  onChange,
+}: {
+  id: string
+  label: string
+  hint?: ReactNode
+  value: HitDice
+  /** Marks the count box, which is the only half of this that can be out of range. */
+  invalid?: boolean
+  disabled?: boolean
+  onChange: (hitDice: HitDice) => void
+}) {
+  return (
+    <SheetField id={id} label={label} hint={hint}>
+      <div className="flex items-center gap-2">
+        <NumberInput
+          id={id}
+          className="w-16"
+          value={value.count}
+          invalid={invalid}
+          disabled={disabled}
+          onChange={(count) => onChange({ ...value, count })}
+        />
+        <span className="text-muted-foreground">×</span>
+        <NativeSelect
+          aria-label="Hit die size"
+          value={String(value.faces)}
+          disabled={disabled}
+          onChange={(event) =>
+            onChange({ ...value, faces: Number(event.target.value) as HitDice['faces'] })
+          }
+        >
+          {HIT_DIE_FACES.map((faces) => (
+            <option key={faces} value={faces}>
+              d{faces}
+            </option>
+          ))}
+        </NativeSelect>
+      </div>
+    </SheetField>
+  )
 }
 
 /**

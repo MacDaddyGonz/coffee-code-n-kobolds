@@ -494,13 +494,15 @@ export function defaultSheetFor(kind: CharacterKind): CharacterSheet {
  * A sheet-less legacy character reads as a player character, which is what every
  * one of them is: NPCs could not be created before this milestone existed.
  */
-export function characterSheet(doc: { sheet?: CharacterSheet }): CharacterSheet {
-  return doc.sheet ?? defaultPcSheet()
-}
-
-export function characterKind(doc: { sheet?: CharacterSheet }): CharacterKind {
-  return characterSheet(doc).kind
-}
+// `characterSheet` and `characterKind` used to live here and are gone. Milestone 4
+// moved the job to `resolveSheet` and `kindOf` in lib/resolve.ts, which handle the
+// third stored shape this module cannot resolve on its own — a `preset` needs the
+// library, and the library must never be imported from here or it reaches the
+// browser.
+//
+// They are named rather than quietly deleted because they were the two most
+// plausible names for the job, and the next person wanting "give me this character's
+// sheet" will look for them here first. The answer is one file over.
 
 // ---------------------------------------------------------------------------
 // Derived numbers
@@ -972,24 +974,99 @@ export function normaliseStoredSheet(sheet: StoredSheet): StoredSheet {
     // override while the identical string in a feat list was accepted, and an id
     // stored as `" dm-2 "` sat on the sheet looking exactly like `"dm-2"` while being
     // a different React key and a different roll target.
-    ...(sheet.overrides === undefined
-      ? {}
-      : {
-          overrides: {
-            ...sheet.overrides,
-            ...(sheet.overrides.extraFeats === undefined
-              ? {}
-              : { extraFeats: sheet.overrides.extraFeats.map(normaliseEntry) }),
-            ...(sheet.overrides.extraSpells === undefined
-              ? {}
-              : { extraSpells: sheet.overrides.extraSpells.map(normaliseEntry) }),
-            ...(sheet.overrides.speed === undefined
-              ? {}
-              : { speed: Math.round(sheet.overrides.speed) }),
-          },
-        }),
+    ...(sheet.overrides === undefined ? {} : { overrides: normaliseOverrides(sheet.overrides) }),
     locked: sheet.locked,
   }
+}
+
+/**
+ * Lay the DM's overrides over a sheet. The last stage of resolution, **and it lives
+ * here rather than in lib/resolve.ts so that the browser can run the same one.**
+ *
+ * The override panel has to show every derived number moving as the DM types, which
+ * means applying overrides client-side — and the browser cannot call `resolveSheet`,
+ * because that reaches into `lib/library/` and 72 stat blocks must not enter the
+ * bundle. The obvious conclusion, which was drawn once, is that the browser needs its
+ * own copy of this merge. It does not: overrides land on an already-resolved sheet,
+ * and this function touches nothing but `PcSheet` and `PresetOverrides`, both of
+ * which are already shared. Only the *library lookup* is server-only, not the last
+ * third of the pipeline.
+ *
+ * The copy was real and so was its cost. This codebase has twice shipped a bug where
+ * a field was added to a validator and one of two field-by-field rebuilds was not
+ * updated — `skillProficiencies` and `speed`, silently dropped on every save. A
+ * second merge maintained by hand is the same trap with a subtler symptom: a preview
+ * that disagrees with the server for exactly one field.
+ *
+ * Entries are **appended** rather than replaced, so a plot item the DM handed out
+ * survives the next level's library lookup instead of being overwritten by it.
+ */
+export function withOverrides(sheet: PcSheet, overrides: PresetOverrides | undefined): PcSheet {
+  if (!overrides) return sheet
+
+  return {
+    ...sheet,
+    abilities: overrides.abilities ? { ...overrides.abilities } : sheet.abilities,
+    saveProficiencies: overrides.saveProficiencies
+      ? { ...overrides.saveProficiencies }
+      : sheet.saveProficiencies,
+    skillProficiencies: overrides.skillProficiencies
+      ? { ...overrides.skillProficiencies }
+      : sheet.skillProficiencies,
+    armourClass: overrides.armourClass ?? sheet.armourClass,
+    maxHp: overrides.maxHp ?? sheet.maxHp,
+    hitDice: overrides.hitDice ? { ...overrides.hitDice } : sheet.hitDice,
+    speed: overrides.speed ?? sheet.speed,
+    feats: [...sheet.feats, ...(overrides.extraFeats ?? [])],
+    spells: [...sheet.spells, ...(overrides.extraSpells ?? [])],
+  }
+}
+
+/**
+ * Drop the keys whose value is `undefined`.
+ *
+ * `undefined` is not a Convex value, so an object naming a field and giving it that
+ * is a different write from one omitting the field — which is why this rule appears
+ * everywhere a shape is built optionally. It was being spelled four different ways
+ * across eight sites (conditional spread, destructure-and-rest, a `delete` in a
+ * loop, a `delete` of a named key), each with its own paragraph re-explaining the
+ * same thing. One helper, one explanation, and the call sites go back to being
+ * ordinary object literals.
+ */
+export function withoutUndefined<T extends object>(value: T): T {
+  const out = { ...value }
+  for (const key of Object.keys(out) as (keyof T)[]) {
+    if (out[key] === undefined) delete out[key]
+  }
+  return out
+}
+
+/**
+ * The DM's overrides, tidied the same way the corresponding fields on a sheet are.
+ *
+ * **Every number, not just the ones that seemed to need it.** An earlier version
+ * rounded `speed` alone, which made a fractional armour class *refused* inside an
+ * override while the identical value on a hand-built sheet was rounded and accepted
+ * — the resolved sheet goes through `sheetProblem`, and `isWholeWithin` does not
+ * forgive a fraction that nothing rounded first. Two rules for one kind of value,
+ * decided by which field it happened to be.
+ */
+function normaliseOverrides(overrides: PresetOverrides): PresetOverrides {
+  const round = (value: number | undefined) => (value === undefined ? undefined : Math.round(value))
+
+  return withoutUndefined({
+    ...overrides,
+    armourClass: round(overrides.armourClass),
+    maxHp: round(overrides.maxHp),
+    speed: round(overrides.speed),
+    abilities: overrides.abilities && mapAbilities(overrides.abilities, Math.round),
+    hitDice: overrides.hitDice && {
+      ...overrides.hitDice,
+      count: Math.round(overrides.hitDice.count),
+    },
+    extraFeats: overrides.extraFeats?.map(normaliseEntry),
+    extraSpells: overrides.extraSpells?.map(normaliseEntry),
+  })
 }
 
 /**

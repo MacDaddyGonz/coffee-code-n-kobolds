@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'vitest'
 
+// The two accessors these cover moved to lib/resolve.ts in Milestone 4, because a
+// stored preset needs the library to resolve and lib/sheet.ts must never import it.
+import { kindOf, resolveSheet } from './resolve'
+
 import { CLASSES, SUBCLASS_LEVEL } from './classes'
 import { RACE_KEYS } from './races'
 import { SKILL_KEYS } from './skills'
@@ -27,8 +31,6 @@ import {
   ROLL_MODIFIER_TOKENS,
   ROLL_PATTERN,
   abilityModifier,
-  characterKind,
-  characterSheet,
   clampHp,
   defaultNpcSheet,
   defaultPcSheet,
@@ -989,21 +991,21 @@ describe('sheetProblem', () => {
   })
 })
 
-describe('characterSheet, characterKind and the defaults', () => {
+describe('resolveSheet, kindOf and the defaults', () => {
   test('a document with no sheet reads as a player character with defaults', () => {
-    expect(characterSheet({})).toEqual(defaultPcSheet())
-    expect(characterKind({})).toBe('pc')
-    expect(characterSheet({ sheet: undefined })).toEqual(defaultPcSheet())
+    expect(resolveSheet({})).toEqual(defaultPcSheet())
+    expect(kindOf({})).toBe('pc')
+    expect(resolveSheet({ sheet: undefined })).toEqual(defaultPcSheet())
   })
 
   test('a document with a sheet reads as that sheet', () => {
     const stored = npc({ maxHp: 33, notes: 'Hidden in the rafters.' })
-    expect(characterSheet({ sheet: stored })).toBe(stored)
-    expect(characterKind({ sheet: stored })).toBe('npc')
+    expect(resolveSheet({ sheet: stored })).toBe(stored)
+    expect(kindOf({ sheet: stored })).toBe('npc')
 
     const hero = pc({ level: 7 })
-    expect(characterSheet({ sheet: hero })).toBe(hero)
-    expect(characterKind({ sheet: hero })).toBe('pc')
+    expect(resolveSheet({ sheet: hero })).toBe(hero)
+    expect(kindOf({ sheet: hero })).toBe('pc')
   })
 
   /**
@@ -1053,10 +1055,10 @@ describe('characterSheet, characterKind and the defaults', () => {
 
   /** The same freshness through the accessor, which is where a legacy character gets one. */
   test('two sheet-less documents do not share a sheet', () => {
-    const a = characterSheet({}) as PcSheet
+    const a = resolveSheet({}) as PcSheet
     a.abilities.dex = 18
     a.feats.push(entry())
-    const b = characterSheet({}) as PcSheet
+    const b = resolveSheet({}) as PcSheet
     expect(b.abilities.dex).toBe(10)
     expect(b.feats).toHaveLength(0)
     expect(b).not.toBe(a)

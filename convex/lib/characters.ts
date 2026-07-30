@@ -30,7 +30,7 @@ import type { CharacterSheet, StoredSheet } from './sheet'
 // whole of what Milestone 4 changed in this file. Everything below still asks for a
 // `CharacterSheet` and still gets one; whether it was typed in by hand or assembled
 // from the library, a race and the DM's overrides is settled before it arrives.
-import { presetExtras, presetOf, resolveSheet } from './resolve'
+import { kindOf, presetExtras, presetOf, resolveSheet } from './resolve'
 import {
   characterKindValidator,
   clampHitDice,
@@ -80,7 +80,12 @@ function characterNotFound(): ConvexError<typeof CHARACTER_NOT_FOUND> {
  * the document.
  */
 export function maySeeCharacter(character: Doc<'characters'>, isDm: boolean): boolean {
-  return isDm || resolveSheet(character).kind === 'pc'
+  // `kindOf`, not `resolveSheet(...).kind`. The answer is one stored field, and a
+  // predicate that guards a secret should not be reaching through the whole premade
+  // library to find it — a content bug in any of 72 sheets would otherwise be able
+  // to take this down, and with it `characters.list` for the entire table. See the
+  // note on `kindOf`.
+  return isDm || kindOf(character) === 'pc'
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +242,7 @@ export async function publicCharacters(
       return {
         _id: character._id,
         name: character.name,
-        kind: resolveSheet(character).kind,
+        kind: kindOf(character),
         claimedByPlayerId: holder?._id ?? null,
         claimedByName: holder?.displayName ?? null,
         createdAt: character._creationTime,
@@ -269,7 +274,7 @@ export async function playerCharacterNames(
 
   const nameById = new Map<Id<'characters'>, string>()
   for (const character of held) {
-    if (character && resolveSheet(character).kind === 'pc') {
+    if (character && kindOf(character) === 'pc') {
       nameById.set(character._id, character.name)
     }
   }

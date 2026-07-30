@@ -3,17 +3,12 @@ import { AbilityTable } from '@/components/sheet/AbilityTable'
 import { DerivedStats } from '@/components/sheet/DerivedStats'
 import { SheetEntryList } from '@/components/sheet/SheetEntryList'
 import { SkillList } from '@/components/sheet/SkillList'
-import { NumberInput, SheetField } from '@/components/sheet/SheetFields'
+import { HitDiceField, NumberInput, SheetField } from '@/components/sheet/SheetFields'
 import { Input } from '@/components/ui/input'
-import { NativeSelect } from '@/components/ui/native-select'
 import { Separator } from '@/components/ui/separator'
 import { FEATS, SPELLS } from '@convex/lib/rules'
-import type { HitDice, PcSheet, SheetProblem } from '@convex/lib/sheet'
-import {
-  HIT_DIE_FACES,
-  MAX_CLASS_NAME_LENGTH,
-  messageAtField,
-} from '@convex/lib/sheet'
+import type { PcSheet, SheetProblem } from '@convex/lib/sheet'
+import { MAX_CLASS_NAME_LENGTH, messageAtField } from '@convex/lib/sheet'
 
 export type PcSheetFormProps = {
   sheet: PcSheet
@@ -147,47 +142,15 @@ export function PcSheetForm({ sheet, problem, disabled, onChange }: PcSheetFormP
           contradiction, so each of the two captions names what it is and points at
           the other. This one is part of the build and changes when the character
           levels; that one is state and changes when they rest. */}
-      <SheetField
+      <HitDiceField
         id="pc-hit-dice"
         label="Hit dice the character has"
         hint="What is left to spend is at the top of this panel."
-      >
-        <div className="flex items-center gap-2">
-          <NumberInput
-            id="pc-hit-dice"
-            className="w-16"
-            value={sheet.hitDice.count}
-            invalid={marks('hitDice.count')}
-            disabled={disabled}
-            onChange={(count) => set({ hitDice: { ...sheet.hitDice, count } })}
-          />
-          <span className="text-muted-foreground">×</span>
-          <NativeSelect
-            aria-label="Hit die size"
-            value={String(sheet.hitDice.faces)}
-            disabled={disabled}
-            onChange={(event) =>
-              set({
-                hitDice: {
-                  ...sheet.hitDice,
-                  // The union is four literals in the validator, so the cast is
-                  // narrowing a string back to what the options were built from
-                  // rather than asserting anything the list does not already
-                  // guarantee. `sheetProblem` checks the value regardless, because
-                  // convex-test does not apply Convex's own value validation.
-                  faces: Number(event.target.value) as HitDice['faces'],
-                },
-              })
-            }
-          >
-            {HIT_DIE_FACES.map((faces) => (
-              <option key={faces} value={faces}>
-                d{faces}
-              </option>
-            ))}
-          </NativeSelect>
-        </div>
-      </SheetField>
+        value={sheet.hitDice}
+        invalid={marks('hitDice.count')}
+        disabled={disabled}
+        onChange={(hitDice) => set({ hitDice })}
+      />
       <FieldError message={messageAtField(problem, 'armourClass', 'maxHp', 'hitDice')} />
 
       <Separator />

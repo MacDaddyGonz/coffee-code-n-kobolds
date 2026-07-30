@@ -8,7 +8,7 @@ import { HitDiceControls } from '@/components/sheet/HitDiceControls'
 import { NpcSheetForm } from '@/components/sheet/NpcSheetForm'
 import { PcSheetForm } from '@/components/sheet/PcSheetForm'
 import { PresetSheetView } from '@/components/sheet/PresetSheetView'
-import { previewOverrides } from '@/components/sheet/PresetNumbers'
+import { RestControls } from '@/components/sheet/RestControls'
 import { SheetField } from '@/components/sheet/SheetFields'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -17,8 +17,15 @@ import { Separator } from '@/components/ui/separator'
 import { SheetFooter } from '@/components/ui/sheet'
 import type { PublicSheet, PublicVitals } from '@convex/lib/characters'
 import { MAX_CHARACTER_NAME_LENGTH, collapseWhitespace } from '@convex/lib/codes'
+import { perRestAbilities } from '@convex/lib/races'
 import type { PcSheet, StoredSheet } from '@convex/lib/sheet'
-import { normaliseStoredSheet, sheetProblem, storedSheetProblem } from '@convex/lib/sheet'
+import {
+  normaliseStoredSheet,
+  sheetProblem,
+  storedSheetProblem,
+  withOverrides,
+  withoutUndefined,
+} from '@convex/lib/sheet'
 
 export type CharacterSheetEditorProps = {
   /** The sheet as the server last sent it. The draft below is edited against this. */
@@ -59,7 +66,7 @@ export type CharacterSheetEditorProps = {
  *
  * What `isDm` buys is therefore not access but *authorship*: a character built from the
  * library holds selections rather than numbers, and the rule about who may change which
- * part of one lives in `requirePresetChangeAllowed` on the server. Everything this
+ * part of one lives in `applyPresetPermissions` on the server. Everything this
  * component does with the flag is decide which controls to draw.
  *
  * ⚠️ **The draft is a `StoredSheet` and the thing it is compared against is not.**
@@ -114,16 +121,44 @@ export function CharacterSheetEditor({
   const normalised = useMemo(() => normaliseStoredSheet(draft), [draft])
 
   // The library's numbers with the *draft's* overrides laid over them, which is the
-  // closest a browser can get to what the server will resolve — see `previewOverrides`
-  // for why it cannot get closer and why that is fine. Null for anything that is not a
-  // library character, and for the impossible pairing of a preset draft against a
+  // closest a browser can get to what the server will resolve. Null for anything that is
+  // not a library character, and for the impossible pairing of a preset draft against a
   // resolved sheet that is somehow a monster.
+  //
+  // **`withOverrides` is the server's own last stage, not a copy of it.** The browser
+  // cannot re-resolve a sheet — that needs `lib/library/`, 72 stat blocks that must
+  // never reach `src/` — so it has to be handed one. But only the *library lookup* is
+  // server-only: overrides land on an already-resolved `PcSheet`, so the merge itself
+  // touches nothing the browser does not already have, and it lives in
+  // convex/lib/sheet.ts for exactly this. A hand-maintained second copy sat here until
+  // the reasoning was checked, and this codebase has twice shipped a bug where a field
+  // was added to a validator and one of two field-by-field rebuilds missed it.
+  //
+  // That buys two things. Every derived number on the panel moves as the DM types rather
+  // than after a round trip, and `sheetProblem` runs over the result, so Save goes dead
+  // with the same sentence `characters.updateSheet` would have thrown — which
+  // `storedSheetProblem` alone cannot manage, since a preset's stored form holds no
+  // armour class to be out of range.
+  //
+  // It stays an approximation in one direction and only while a draft is unsaved: a
+  // field whose override has just been *cleared* shows the old value until the server
+  // answers, because the library's own number never came over the wire. That moves a
+  // field towards a value the library guarantees is in range, so it can only be
+  // pessimistic about whether Save should be lit.
   const resolved: PcSheet | null = saved.sheet.kind === 'pc' ? saved.sheet : null
-  const preview = useMemo(
-    () =>
-      draft.kind === 'preset' && resolved ? previewOverrides(resolved, draft.overrides) : null,
-    [draft, resolved],
-  )
+  const preview = useMemo(() => {
+    if (draft.kind !== 'preset' || !resolved) return null
+    // The two appended lists are held back, and this is the one place the browser's
+    // input genuinely differs from the server's. `withOverrides` *appends* extraFeats
+    // and extraSpells rather than replacing anything — but the sheet being passed in
+    // has already been through resolution once, so it is carrying the saved override's
+    // entries already, and appending the draft's would show every one of them twice and
+    // trip `sheetProblem`'s duplicate-id check with a sentence nobody could act on.
+    // Nothing in this milestone's UI edits either list, so today the draft's are always
+    // absent; this is what stops the first control that does from being a bug report.
+    const { extraFeats: _feats, extraSpells: _spells, ...editable } = draft.overrides ?? {}
+    return withOverrides(resolved, editable)
+  }, [draft, resolved])
 
   // **Two checks, mirroring `requireUsableSheet` on the server.** `storedSheetProblem`
   // covers what the document holds, which for a preset is only the four selections; the
@@ -216,9 +251,10 @@ export function CharacterSheetEditor({
    *
    * Written here rather than in the builder because it has to merge with whatever else
    * the draft is carrying: a DM who has typed an armour class and *then* changed the
-   * class should not lose one to the other. Overrides are spread rather than assigned,
-   * because `undefined` is not a Convex value and a preset nobody has overridden must
-   * hold no `overrides` field at all.
+   * class should not lose one to the other. The result goes through `withoutUndefined`
+   * because a preset nobody has overridden must hold no `overrides` field at all —
+   * `undefined` is not a Convex value, so naming the key and giving it that is a
+   * different write from omitting it.
    *
    * The level comes from whatever the character already had — the preset's when there is
    * one, and a hand-built sheet's own level when this is the conversion from a typed
@@ -230,18 +266,16 @@ export function CharacterSheetEditor({
       return
     }
 
-    const overrides = draft.kind === 'preset' ? draft.overrides : undefined
-    void commit(
-      normaliseStoredSheet({
-        kind: 'preset',
-        race: selections.race,
-        classKey: selections.classKey,
-        subclassKey: selections.subclassKey,
-        level: levelOf(draft),
-        ...(overrides === undefined ? {} : { overrides }),
-        locked: true,
-      }),
-    )
+    const built: StoredSheet = {
+      kind: 'preset',
+      race: selections.race,
+      classKey: selections.classKey,
+      subclassKey: selections.subclassKey,
+      level: levelOf(draft),
+      overrides: draft.kind === 'preset' ? draft.overrides : undefined,
+      locked: true,
+    }
+    void commit(normaliseStoredSheet(withoutUndefined(built)))
   }
 
   return (
@@ -307,6 +341,35 @@ export function CharacterSheetEditor({
           ) : null}
         </div>
 
+        {/* Every player character, not only one built from the library — and the test is
+            the *resolved* kind, exactly as the badge above is, because a rest is
+            something a character does and not a property of how their sheet happens to
+            be stored. This lived inside `PresetSheetView` and so was unreachable for a
+            hand-built hero, which this milestone still supports on purpose, even though
+            `characters.longRest` has always worked on any character.
+
+            An NPC gets nothing, which is the same call `HitDiceControls` makes: the
+            reduced sheet has no hit dice to hand back and no race to have spent
+            anything, so there is no state to show rather than a permission being
+            applied.
+
+            Which abilities a character *has* comes from their race, which this client
+            looks up itself out of `lib/races.ts`; only which ones are gone has to
+            travel. A hand-built sheet stores no race and so has none to spend — the
+            empty list is a case `RestControls` already handles, because six of the eight
+            races have nothing either and the button belongs to all of them. A band
+            payload carries no spent keys, which is a state a hero's own sheet never
+            reaches: a player character is exact for everybody. */}
+        {resolved ? (
+          <RestControls
+            abilities={draft.kind === 'preset' ? perRestAbilities(draft.race) : []}
+            spent={vitals?.kind === 'exact' ? vitals.spentPerRest : null}
+            disabled={saving}
+            onSetPerRest={onSetPerRest}
+            onLongRest={onLongRest}
+          />
+        ) : null}
+
         {draft.kind === 'npc' ? (
           <NpcSheetForm sheet={draft} problem={problem} disabled={saving} onChange={setDraft} />
         ) : draft.kind === 'preset' && preview ? (
@@ -314,16 +377,14 @@ export function CharacterSheetEditor({
             draft={draft}
             saved={saved.preset}
             sheet={preview}
+            extras={saved.extras}
             problem={problem}
             isDm={isDm}
             disabled={saving}
-            vitals={vitals}
             onChange={setDraft}
             onConfirm={confirm}
             onSetLevel={onSetLevel}
             onSetLocked={onSetLocked}
-            onSetPerRest={onSetPerRest}
-            onLongRest={onLongRest}
           />
         ) : draft.kind === 'pc' ? (
           <>

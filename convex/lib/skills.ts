@@ -69,9 +69,12 @@ export function skill(key: SkillKey): Skill {
 /** Every skill keyed to whether the character is proficient. All thirteen, always. */
 export type SkillProficiencies = Record<SkillKey, boolean>
 
-export function noSkillProficiencies(): SkillProficiencies {
-  return Object.fromEntries(SKILL_KEYS.map((key) => [key, false])) as SkillProficiencies
-}
+// There is deliberately no `noSkillProficiencies` here. `noSkills` in lib/sheet.ts
+// is the one that everything uses, and it cannot be replaced by a version living
+// here: `sheet.ts` may import only *types* from this module, because this one imports
+// values from it. A second function for "thirteen falses" was written, went
+// uncalled, and has been removed rather than left as a choice nobody should have to
+// make.
 
 /**
  * Ability modifier, plus the proficiency bonus when trained.

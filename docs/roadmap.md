@@ -7,21 +7,39 @@ Two principles drive the ordering:
 
 1. **Risky things first.** The live token sync and the DM-layer security model are the parts most
    likely to force a redesign. Build them before there's a lot of code sitting on top of them.
-2. **Reach a playable session early.** Milestones 1–5 are the minimum to actually run a game.
+2. **Reach a playable session early.** Milestones 1–6 are the minimum to actually run a game.
    Everything after that makes it nicer. For a game played a few times a year, a rough playable
    version beats a polished half.
 
 Each milestone is a branch (or a few), merged to `dev`, then promoted to `main` when it's worth
 deploying. Acceptance criteria are written so you can tell "done" from "mostly done".
 
-**Numbering note.** Milestone 4 (the character library) was inserted after Milestone 3 shipped, and
-everything that followed moved down one — rolls and dice from 4 to 5, DM tooling from 5 to 6, tools
-and polish from 6 to 7, the game editor from 7 to 8. This file is renumbered throughout;
-[ADR 0004](adr/0004-board-authorisation-and-layers.md) and
-[ADR 0005](adr/0005-character-sheets-and-hit-point-secrecy.md) are **not**, because an ADR is not
-edited after the fact. Where those two say "Milestone 4" they mean rolls and dice, now 5; where they
-say "Milestone 5" they mean DM tooling, now 6; and their orphaned-blob sweeper in "Milestone 7" is
-now 8. Recorded in [ADR 0006](adr/0006-premade-character-library.md) as well.
+**Numbering note.** Two library milestones have been inserted after the milestone before them
+shipped, and each insertion pushed everything below it down one.
+
+- **Milestone 4, the character library**, inserted after Milestone 3 shipped.
+- **Milestone 5, the monster and NPC library**, inserted after Milestone 4 shipped — for the reason
+  that milestone gives: an NPC's sheet feeds the roll path as much as a hero's does, so the bestiary
+  gets written before the dice rather than retro-fitted to them.
+
+So rolls and dice went 4 → 5 → **6**, DM tooling 5 → 6 → **7**, tools and polish 6 → 7 → **8**, and
+the game editor 7 → 8 → **9**. This file is renumbered throughout. **The ADRs are not**, because an
+ADR is not edited after the fact — read them against this table:
+
+| Where the ADR says | It means | Read it as |
+| --- | --- | --- |
+| Milestone 4 — [0004](adr/0004-board-authorisation-and-layers.md), [0005](adr/0005-character-sheets-and-hit-point-secrecy.md) | rolls, feed and dice | 6 |
+| Milestone 5 — [0004](adr/0004-board-authorisation-and-layers.md), [0005](adr/0005-character-sheets-and-hit-point-secrecy.md) | DM tooling, layers, fog of war | 7 |
+| Milestone 5 — [0006](adr/0006-premade-character-library.md) | rolls, feed and dice | 6 |
+| Milestone 6 — [0006](adr/0006-premade-character-library.md) | DM tooling, layers, fog of war | 7 |
+| Milestone 7 — [0004](adr/0004-board-authorisation-and-layers.md) | orphaned-blob sweeper, admin view | 9 |
+| Milestone 8 — [0006](adr/0006-premade-character-library.md) | orphaned-blob sweeper | 9 |
+
+Source comments carry the same drift and have **not** been swept. A comment naming "Milestone 5's
+roll target" in `convex/lib/sheet.ts` means 6; one saying "Milestone 5 owns the real DM panel" in
+`src/components/board/dm/SceneSelect.tsx` means 7. They get corrected as those files are touched
+rather than in one pass, because a twenty-file rename is a diff nobody reviews properly and the
+mapping above is the authority either way.
 
 ---
 
@@ -126,7 +144,7 @@ it took are recorded in [ADR 0004](adr/0004-board-authorisation-and-layers.md).
   refusal cannot also delete the blob it refused, because a mutation is one transaction; the client's
   catch calls `files.discard` for that, and that call refuses a blob a scene or a token still points
   at so a mis-sequenced catch cannot strip the art off the board. The full library editor is still
-  Milestone 8.
+  Milestone 9.
 - **Grid calibration by squares-across**, with an arrow-key offset nudge against a live overlay.
   Changes **apply as they are made** rather than sitting behind a Save button: calibrating a grid is
   aiming at a target you can see, and a commit step between each adjustment and its overlay makes the
@@ -145,21 +163,22 @@ it took are recorded in [ADR 0004](adr/0004-board-authorisation-and-layers.md).
 
 **Deliberately not done here:**
 
-- **No layer toggle and no moving tokens between layers** — Milestone 6. The choke point supports
-  the move; the schema supports only two layers, and Milestone 6's third one is a union change.
-- **No tabbed DM panel and no polished scene-switch UX** — Milestone 6. `scenes.setActive` exists and
+- **No layer toggle and no moving tokens between layers** — Milestone 7. The choke point supports
+  the move; the schema supports only two layers, and Milestone 7's third one is a union change.
+- **No tabbed DM panel and no polished scene-switch UX** — Milestone 7. `scenes.setActive` exists and
   is DM-gated, driven by a bare `<select>` in the DM setup panel.
-- **No marker or ruler tools** — Milestone 7. `convex/lib/grid.ts` gives it the cell arithmetic to
+- **No marker or ruler tools** — Milestone 8. `convex/lib/grid.ts` gives it the cell arithmetic to
   build on (`cellOf`, `centreOfCell`), but nothing distance-related is written yet — a shared module
   is the most expensive place to park code nothing calls.
 - **No character sheets and no token health bars** — Milestone 3. `tokens.characterId` links a token
   to a character, and nothing else about a character is on the board yet.
-- **No token or map libraries** — Milestone 8. Uploads go straight onto the board.
-- **No orphaned-blob sweeper** — Milestone 8. A refused or abandoned upload can leave a file in
+- **No token or map libraries** — Milestone 9. Uploads go straight onto the board.
+- **No orphaned-blob sweeper** — Milestone 9. A refused or abandoned upload can leave a file in
   storage: the refusal cannot delete it, `files.discard` is the client's good-citizen path but a
   crashed tab never calls it, and `files.generateUploadUrl` can mint a blob nothing ever references.
   Bounded by needing the DM code, and recorded in
-  [ADR 0004](adr/0004-board-authorisation-and-layers.md).
+  [ADR 0004](adr/0004-board-authorisation-and-layers.md) — which calls it Milestone 7, see the
+  numbering note.
 
 **Acceptance:** the DM drags a token and the player sees it move smoothly, not in jumps. A player
 opening devtools and reading the network payload **cannot** see DM-layer tokens. Tokens land on grid
@@ -201,19 +220,19 @@ settle.
   shape of the Milestone 2 bug, and would fail in both directions.
 - **The reduced NPC sheet shares one `SheetEntry` type** with the full one, across a PC's feats, a
   PC's spells and a monster's actions — which is what stops "two shapes" becoming two of everything,
-  and gives Milestone 5 one roll path rather than a fork.
+  and gives Milestone 6 one roll path rather than a fork.
 - **The catalogue is content, and a character stores a copy.** `convex/lib/rules.ts` holds 24 spells,
   16 feats and 12 NPC actions; `catalogueKey` is a breadcrumb, not a foreign key, so retiring an
   entry leaves every sheet that has it working. Roll specs (`1d8+WIS`) are **validated in shape now
-  and evaluated in Milestone 5** — storing them unvalidated would be a migration over every sheet the
+  and evaluated in Milestone 6** — storing them unvalidated would be a migration over every sheet the
   moment something first parses one.
 - `ClaimCharacterNotice` is gone, subsumed by the sheet panel as Milestone 2 said it would be.
 
-**Deliberately not done here:** rolling anything (Milestone 5 — the roll specs are stored and
+**Deliberately not done here:** rolling anything (Milestone 6 — the roll specs are stored and
 validated but never evaluated), temporary hit points and death saves (absent from
 [requirements.md](requirements.md), so out of the rules subset by the same discipline as the
 exclusions), a read-only view of another player's sheet, and the five-section DM panel — the Sheets
-tab is deliberately the seam Milestone 6 grows from, not an attempt at it.
+tab is deliberately the seam Milestone 7 grows from, not an attempt at it.
 
 **Acceptance:** create a character, edit its HP from the sheet and from the token, and see both
 update everywhere at once. A player inspecting network traffic sees no exact NPC HP — asserted by
@@ -296,7 +315,7 @@ a character existed at all — and the audience for this app is beginners and ch
 
 **Deliberately not done here:**
 
-- **No rolling.** Still Milestone 5. The library's entries carry roll specs as validated strings and
+- **No rolling.** Still Milestone 6. The library's entries carry roll specs as validated strings and
   nothing evaluates one.
 - **No backgrounds, no inventory, no subraces, no multiclassing and no experience points** — see the
   amendment section in [requirements.md](requirements.md) for which of those are excluded by design
@@ -310,7 +329,8 @@ a character existed at all — and the audience for this app is beginners and ch
   is the part a table forgets, and adjudicates nothing — a rules engine is what D&D Lite exists to
   not be.
 - **No premade NPCs.** The library is player characters only; a monster is still the reduced sheet
-  from Milestone 3, and the NPC sheet library is Milestone 8.
+  from Milestone 3. The bestiary is **Milestone 5**, immediately next, and it was moved there from
+  the game editor precisely because a monster's sheet feeds the roll path as much as a hero's does.
 
 **Acceptance:** somebody who has never played D&D picks a race and a class and has a complete,
 playable sheet — abilities, saving throws, skills, armour class, hit points, hit dice, features,
@@ -321,7 +341,208 @@ speed reads 45 and a Dwarf's maximum hit points are one higher per level. No sta
 
 ---
 
-## Milestone 5 — Rolls, feed and dice
+## Milestone 5 — Monster, enemy and NPC library
+
+**The DM's half of Milestone 4.** A hero is now something you choose from a library of 72 premade
+sheets; a monster is still a blank reduced sheet somebody types an armour class, a hit point total and
+three actions into, at the rate of one per creature in the encounter. This milestone gives the DM the
+same thing the players got: a corpus of finished creatures, picked rather than typed.
+
+**Why it goes here and not in the game editor, where it started.** An NPC's actions carry the same
+roll specs a hero's spells do, and Milestone 6 evaluates all of them through one path. A bestiary
+written *after* the dice exist is a corpus retro-fitted to whatever the evaluator happened to accept;
+written before, it is 150 more entries that the evaluator has to satisfy on the day it lands — which
+is the same argument Milestone 3 made for validating roll specs it could not yet evaluate. The
+secrecy work is also already done: `maySeeCharacter` and the health bands do not care where a
+monster's numbers came from, so this milestone adds content and a picker, not a security surface.
+
+The source spec is [monster-library-spec.md](monster-library-spec.md), kept verbatim in the same way
+[requirements.md](requirements.md) is. **Three of its sections are overruled** — Library Linking,
+Output, and one design goal — and each gets its reasons below rather than an edit upstairs. The rest is
+taken as written. Whatever this milestone actually decides gets an ADR of its own when it lands, the
+way [ADR 0006](adr/0006-premade-character-library.md) records Milestone 4's.
+
+### Content
+
+- **Roughly 110–150 entries** in `convex/lib/bestiary/`: 60–80 monsters, 25–35 humanoid enemies,
+  25–35 social NPCs. Twice the character library's entry count and a fraction of its bulk, because
+  each one is a *reduced* sheet — no six ability scores, no saving throws, no spell progression.
+- **Five difficulty tiers, CR 0 to CR 6, and nothing above it.** Tier I (CR 0–¼) for a level 1 party
+  up to Tier V (CR 6) as a level 5 boss. The same ceiling the character library has, for the same
+  reason: the library stops at level 5, so a creature tuned for level 8 has nobody to fight.
+- **Balanced against `convex/lib/library/`, not copied from the Monster Manual.** This is the part
+  that would have been guesswork before Milestone 4 and is now arithmetic — the expected hit points,
+  armour class and damage output of a level 3 party are 72 hand-written sheets sitting in the next
+  directory. Official CR maths assumes a full 5e character; a D&D Lite one has a reduced spell list, no
+  inventory and an Extra Attack or 3rd-level spells at level 4, and the tuning follows that curve
+  rather than the published one.
+- **One role and a set of searchable tags per creature** — Brute, Tank, Skirmisher, Archer,
+  Controller, Spellcaster, Support, Boss; Undead, Beast, Dragon, Fiend, Forest, Cave, Urban, Boss.
+- **Loot as a line of text**, exactly as a premade hero's kit is. That is what keeps *"no inventory"*
+  true rather than sneaking an item model in behind a treasure table.
+- **DM notes**, one or two sentences on behaviour, tactics or habitat — the field the reduced sheet
+  already has.
+- **Spellcasters capped at 2 cantrips and 4 levelled spells**, combat-facing rather than utility. An
+  enemy has no use for Detect Magic; it has one fight to be interesting in.
+
+The spec's *"fits on a single mobile phone screen"* is taken as **"fits on one screen without
+scrolling"**, which is the useful half of it. There are no mobile layouts in this project
+([ADR 0001](adr/0001-platform-and-hosting.md)) and there will not be.
+
+### A stored link and an override diff — the spec's Library Linking section is overruled
+
+The spec asks for a **campaign copy** of each creature, plus `libraryVersion`, `isModified`,
+`modifiedFields[]`, and four features built on them: View Original, Compare Changes, Reset to Library
+Defaults, and detecting a newer library version.
+
+That is precisely the design [ADR 0006](adr/0006-premade-character-library.md) rejected for player
+characters, and `modifiedFields[]` is the tell. A stored copy **cannot tell the DM's numbers from the
+library's**, so it has to carry a hand-maintained list of which fields somebody touched — a diff
+reconstructed after the fact because the diff was thrown away at the moment of copying, and therefore
+a list that goes stale the first time a write forgets to append to it.
+
+Milestone 4 already keeps that distinction in the data, so the same shape is used again: a **fourth
+stored sheet kind** on `characters`, holding a bestiary key plus an optional override diff, resolved
+on read by `resolveSheet`. Every feature the spec wanted falls out of it rather than being built:
+
+| The spec wants | Where it comes from |
+| --- | --- |
+| View Original | resolve the entry with the overrides skipped |
+| Compare Changes | the override object **is** the change |
+| Reset to Library Defaults | delete the override |
+| `isModified`, `modifiedFields[]` | `overrides === undefined`, and its keys |
+| Detect newer library versions | nothing to detect — the library ships with the code, so there is exactly one version and it is the deployed one |
+
+The cost is the one ADR 0006 already accepted and is worth restating because it now applies to the
+DM's content too: **editing the library edits live creatures.** Correcting a goblin's damage die
+mid-campaign changes the goblins in every game that already has one. That is the feature and the
+hazard in the same sentence, and the two corpora now have opposite storage strategies for the third
+time — `lib/rules.ts` is copied onto a sheet and safe to edit, `lib/library/` and `lib/bestiary/` are
+linked and are not.
+
+### The numbers a reduced sheet has nothing to derive from
+
+The spec asks for skills (maximum four) and passive perception on every combat creature. A monster
+has no Dexterity, no Wisdom and no level, so neither can be calculated — `skillBonus` and
+`passivePerception` in `convex/lib/skills.ts` both need an ability score and a proficiency bonus.
+
+So both are **stored as pre-calculated bonuses**, which is the same trade `initiativeBonus` made in
+Milestone 3 and the same reasoning: that field is stored precisely because there is no Dexterity score
+to derive it from, and this is the second and third instance rather than a new decision. The
+consequence to be aware of is that a monster's skills are a **sparse map of skill → bonus**, not the
+thirteen booleans a hero carries, so the two are not interchangeable and the sheet renders them
+differently.
+
+**Only the thirteen D&D Lite skills**, from `SKILL_KEYS`. No fourteenth, no monster-only skill, and no
+second module — a creature with a talent the list has no name for gets an ability entry describing it
+instead.
+
+### Attacks and special abilities are `SheetEntry`s, and the caps are content rules
+
+Maximum three attacks and maximum three special abilities, per the spec. Both are lists of the
+existing `sheetEntryValidator` — the one shape shared across a hero's feats, a hero's spells and a
+monster's actions, which is what gives Milestone 6 one roll path instead of a fork
+([ADR 0005](adr/0005-character-sheets-and-hit-point-secrecy.md)).
+
+Those caps are enforced in the **bestiary's own test**, not in the schema. `MAX_SHEET_ENTRIES` is 40
+and stays 40: three is a rule about what makes a *library entry* fast to run at the table, and a DM
+hand-building a boss with five legendary actions is not doing anything wrong. A content rule checked
+against the content is a content rule; the same rule in the schema is a refusal aimed at the wrong
+person.
+
+### Social NPCs are a variant, not a third shape
+
+Occupation, three personality keywords, useful skills, what they know, and optional quest hooks.
+Combat statistics **only if the NPC is expected to fight** — so the combat block is optional on the
+entry rather than a separate `kind`. Milestone 3's whole discipline was that two sheet shapes cost
+one shared entry type and no more; a third shape for the innkeeper would spend that saving.
+
+The social sheet is **DM-only in its entirety**, and for a sharper reason than the combat one: what
+the innkeeper knows *is* the plot. It goes through `maySeeCharacter` with everything else and needs no
+new guard.
+
+### The picker is DM-gated, and a list of creature names is a spoiler
+
+The bestiary browser takes `dmCode` and re-verifies it server-side, like every DM-only query
+(invariant 7). The reasoning is the one `scenes.list` already uses: the *library* is not a secret — a
+Monster Manual is a book anyone can buy — but a list of what the DM has added to **this game** is
+twelve prepared monsters' worth of spoiler, which Milestone 3 established when it refused to publish a
+health band for every NPC in the game.
+
+The picker needs to show 150 creatures with a CR, a role and a set of tags to filter on, and the
+obvious way to do that is to import the corpus into the browser. It must not: **a DM-only index query
+returns the summary** — id, name, CR, tier, role, tags — and the stat block is only ever resolved
+server-side. Same reasoning as ADR 0006's bundle argument, and the same test holds it.
+
+### TypeScript, not JSON — the spec's Output section is overruled
+
+The spec says JSON is the single source of truth. The character library is **typed TypeScript
+modules**, and the type checker is doing real work there: a missing field, a malformed roll spec or a
+hit die that is not one of `6 | 8 | 10 | 12` fails `npm run lint` before anything runs. JSON gets none
+of that and would need a parser plus a runtime validator to arrive back at the same place, having lost
+editor completion on the way.
+
+So the corpus is `convex/lib/bestiary/*.ts` behind a `types.ts`, exactly like `convex/lib/library/`,
+and the spec's "generate Markdown from the JSON if required" becomes a script over the typed corpus if
+anybody ever wants a printable list.
+
+### Encounter metadata is stored and nothing consumes it yet
+
+`recommendedPartyLevelMin`, `recommendedPartyLevelMax`, `encounterRole`, `difficultyTier`,
+`challengeRating`, `environmentTags` — on the **library entry**, not on the character, because they
+describe the template and not the goblin currently standing on square F7.
+
+Stored now, unread until something wants them, which is the same bet Milestone 3 made on roll specs
+and for the same reason: adding a field to 150 hand-written entries later is 150 edits, and writing it
+while the entry is being written is free.
+
+### No exclusion in requirements.md is lifted by this
+
+Worth stating, because Milestone 4 lifted two and the discipline is what makes that meaningful. Every
+field this milestone adds — creature type, size, alignment, role, CR, tier, tags, loot, DM notes — is
+a **label on a DM-only sheet**, not a rule anything adjudicates. Loot is a line of text and not an
+inventory. Nothing is rolled that Milestone 3's grammar did not already describe.
+
+No amendment to [requirements.md](requirements.md) is therefore needed, and the test for whether that
+stays true is simple: the moment one of these fields changes a number a player rolls against, it needs
+one.
+
+**Deliberately not done here:**
+
+- **No encounter generator.** The metadata exists so one is possible; nothing builds an encounter,
+  budgets a fight or suggests a party-appropriate group.
+- **No rolling a monster's attack.** Milestone 6, along with everything else that touches dice.
+- **No CR arithmetic and no experience budget.** There are no experience points in D&D Lite, and CR is
+  a label the content author chose rather than a number the app computes.
+- **No campaign-copy version tracking**, for the reasons above. There is one library version and it is
+  the one that is deployed.
+- **No player-facing bestiary.** This is not a compendium players browse; it is the DM's shelf.
+- **No creature art and no token library.** A bestiary entry is numbers and words. Art still arrives
+  by upload, and the token library is Milestone 9.
+- **Nothing above CR 6 and nothing tuned past a level 5 party**, matching the character library's
+  ceiling exactly.
+- **No editable-in-app library.** Same call ADR 0006 made: content ships with the code, is reviewed
+  with it, and a table would mean seeding, migrating and eventually an editor nobody asked for.
+
+⚠️ **The one thing that decides what this milestone costs.** It is cheap if resolution stays
+**synchronous and pure** — a fourth branch in `resolveSheet`, a fourth member on
+`storedSheetValidator`, and every existing read path untouched, which is the whole reason Milestone 4
+was cheap. It is expensive the moment the bestiary becomes a Convex table, because then `resolveSheet`
+needs a `ctx`, and both of ADR 0005's choke points plus nine call sites become async. Widening the
+stored-sheet union is additive and safe; that is not true of every union in this schema — Milestone 7's
+third `layer` member is the counter-example.
+
+**Acceptance:** the DM filters the bestiary to Tier III, adds an Owlbear, and has a creature on the
+board with an armour class, hit points, an initiative bonus, two attacks and Keen Smell without typing
+a number. Dropping that Owlbear's hit points for tonight's fight leaves the library entry untouched and
+every other game's Owlbear unchanged, and clearing the override puts the library's number back. A
+player inspecting network traffic sees no bestiary entry, no list of creature names and no exact NPC
+hit point — Milestone 3's three assertions, extended to the new queries with the same positive
+controls. A social NPC has no combat block and offers no control to invent one.
+
+---
+
+## Milestone 6 — Rolls, feed and dice
 
 The bit that makes it feel like a game.
 
@@ -341,21 +562,22 @@ result lands in the feed. Rolling a 1 and a 20 each trigger their effect on ever
 
 ### 🎲 This is the first playable session
 
-With Milestones 1–5 you can run a real game: a map with tokens, characters built by choosing rather
-than by filling in a form, sheets that roll, shared dice, and a feed. The DM works around the missing
-tooling manually. **Consider actually playing here before building more** — a session will tell you
-what's genuinely missing faster than guessing.
+With Milestones 1–6 you can run a real game: a map with tokens, characters built by choosing rather
+than by filling in a form, monsters picked off a shelf rather than typed in, sheets that roll, shared
+dice, and a feed. The DM works around the missing tooling manually. **Consider actually playing here
+before building more** — a session will tell you what's genuinely missing faster than guessing.
 
 ---
 
-## Milestone 6 — DM tooling
+## Milestone 7 — DM tooling
 
 The four bold items at the end were **requested after playing Milestone 2**. The rest was always
 here.
 
 - DM panel, tabbed: all player sheets, all NPC sheets, token list, modal image library, music.
   Milestone 3 left the seam rather than the panel: `MapSetupOverlay` already holds `Tabs` with **Map**
-  and **Sheets**, so this is three more tabs and a rename, not a new component.
+  and **Sheets**, so this is three more tabs and a rename, not a new component. Milestone 5's bestiary
+  picker is the NPC tab's contents rather than something this milestone invents.
 - DM can click any sheet item to roll on a player's behalf.
 - Scene switching — changes the visible board for everyone in the game.
 - Modal image pop-up: DM opens an image for the whole group, and closes it for everyone.
@@ -403,7 +625,7 @@ a corridor is fogged has no position rows for what is standing in it.
 
 ---
 
-## Milestone 7 — Tools and polish
+## Milestone 8 — Tools and polish
 
 - Ruler tool, measuring in squares (1 square = 5 feet).
 - Multi-colour marker + eraser on the board. **DM only** — players must not have this.
@@ -415,9 +637,11 @@ marker tool available.
 
 ---
 
-## Milestone 8 — Game editor and admin
+## Milestone 9 — Game editor and admin
 
-- Libraries: maps/boards, modal images, tokens, NPC sheets, music.
+- Libraries: maps/boards, modal images, tokens and music. **NPC sheets are no longer on this list** —
+  the bestiary moved forward to Milestone 5, because a monster's sheet feeds the roll path as much as a
+  hero's does. What is left here is the upload-backed libraries.
 - Uploads for all of the above.
 - **Downscale images on upload.** The Convex free tier gives 1 GB of file storage total, and music
   is the thing most likely to eat it. See [ADR 0001](adr/0001-platform-and-hosting.md).
@@ -447,13 +671,18 @@ substantially smaller.
   background — and did it by **amending** that file rather than editing its lists, which is the only
   route by which another one ever moves. Backgrounds, inventory, multiclassing, experience points and
   movement-detriment status effects are all still out. See
-  [ADR 0006](adr/0006-premade-character-library.md).
+  [ADR 0006](adr/0006-premade-character-library.md). Milestone 5 lifts **none** of them: a creature's
+  loot is a line of text and its CR is a label, which is why the bestiary needs no amendment at all.
+- **An encounter generator, and CR arithmetic of any kind.** Milestone 5 stores the metadata one would
+  need and deliberately reads none of it. Budgeting a fight is the DM's judgement, and a generator is
+  the first step towards the rules engine D&D Lite exists to not be.
 
 ## Open questions
 
 Two of the original three were answered by Milestone 3 and recorded in
 [ADR 0005](adr/0005-character-sheets-and-hit-point-secrecy.md); Milestone 4 gave the first of them a
-second and opposite half, and raised two of its own.
+second and opposite half, and raised two of its own. Milestone 5 is planned against the second answer
+rather than reopening it, and raises two more.
 
 - ~~How much of the D&D Lite spell and feat lists to hard-code versus make editable.~~ **Both, and
   now the answer has two halves that behave differently.** The catalogue in `convex/lib/rules.ts` is
@@ -468,10 +697,23 @@ second and opposite half, and raised two of its own.
   sharing one `SheetEntry` type across both, which is where the duplication would otherwise have
   been. `initiativeBonus` is stored rather than derived precisely because there is no Dexterity score
   to derive it from. Milestone 4 did not disturb this: the library is player characters only, and a
-  monster is still hand-built.
-- Whether the initiative tracker belongs in Milestone 5 rather than 7 — a real session will answer
-  this. **Still open**, and Milestones 1–5 are now one milestone away from being playable enough to
-  ask it properly.
+  monster is still hand-built. **Milestone 5 tests the answer** rather than reopening it — a bestiary
+  entry adds a stored skill bonus and a stored passive perception, both for exactly the reason
+  `initiativeBonus` is stored, so the reduction now costs three fields instead of one. Three is still
+  cheaper than six ability scores that no monster's player would ever roll.
+- **Whether a DM's tweak to a creature should outlive the game it was made in.** An override is scoped
+  to one character in one game, so the Ogre somebody made tougher last month has to be made tougher
+  again. Fixing that means either a per-DM saved variant — with no accounts to hang it off
+  ([ADR 0002](adr/0002-defer-user-accounts.md)) — or copying a game's creatures into the next one,
+  which needs a game-to-game import nothing else wants yet.
+- **Whether 110–150 hand-written creatures is the right size**, or whether 40 good ones and a
+  reskinning habit would run a better table. The character library's 72 sheets are a fixed set the
+  rules demand; a bestiary's size is a judgement about how often a DM wants something new, and nobody
+  has run enough sessions to have an opinion.
+- Whether the initiative tracker belongs in Milestone 6 rather than 8 — a real session will answer
+  this. **Still open**, and now two milestones away from being playable enough to ask it properly
+  rather than one — which is the price of inserting Milestone 5 and is worth naming rather than
+  glossing.
 - **Whether the library should go past level 5.** It stops there, and a character the DM pushes
   beyond it keeps its level and its proficiency bonus while its sheet stands still. Extending it is
   24 more hand-written sheets per five levels, and nobody has yet played long enough to want them.

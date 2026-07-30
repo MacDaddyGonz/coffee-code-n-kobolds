@@ -1,12 +1,16 @@
 import { RotateCcw } from 'lucide-react'
 
 import { FieldError } from '@/components/FieldError'
-import { DerivedStat, NumberInput, SheetField } from '@/components/sheet/SheetFields'
+import {
+  DerivedStat,
+  HitDiceField,
+  NumberInput,
+  SheetField,
+} from '@/components/sheet/SheetFields'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { NativeSelect } from '@/components/ui/native-select'
-import type { HitDice, PcSheet, PresetOverrides, SheetProblem } from '@convex/lib/sheet'
-import { HIT_DIE_FACES, messageAtField, speedOf } from '@convex/lib/sheet'
+import type { PcSheet, PresetOverrides, SheetProblem } from '@convex/lib/sheet'
+import { messageAtField, speedOf, withoutUndefined } from '@convex/lib/sheet'
 
 export type PresetNumbersProps = {
   /**
@@ -141,7 +145,7 @@ export function PresetNumbers({
           />
         </SheetField>
 
-        <SheetField
+        <HitDiceField
           id="preset-hit-dice"
           label="Hit dice"
           hint={
@@ -151,41 +155,11 @@ export function PresetNumbers({
               onReset={() => set({ hitDice: undefined })}
             />
           }
-        >
-          <div className="flex items-center gap-2">
-            <NumberInput
-              id="preset-hit-dice"
-              className="w-14"
-              value={sheet.hitDice.count}
-              invalid={marks('hitDice.count')}
-              disabled={disabled}
-              onChange={(count) => set({ hitDice: { ...sheet.hitDice, count } })}
-            />
-            <span className="text-muted-foreground">×</span>
-            <NativeSelect
-              aria-label="Hit die size"
-              value={String(sheet.hitDice.faces)}
-              disabled={disabled}
-              onChange={(event) =>
-                set({
-                  hitDice: {
-                    ...sheet.hitDice,
-                    // Narrowing a string back to the four literals the options were
-                    // built from, rather than asserting anything the list does not
-                    // already guarantee. `sheetProblem` checks the value regardless.
-                    faces: Number(event.target.value) as HitDice['faces'],
-                  },
-                })
-              }
-            >
-              {HIT_DIE_FACES.map((faces) => (
-                <option key={faces} value={faces}>
-                  d{faces}
-                </option>
-              ))}
-            </NativeSelect>
-          </div>
-        </SheetField>
+          value={sheet.hitDice}
+          invalid={marks('hitDice.count')}
+          disabled={disabled}
+          onChange={(hitDice) => set({ hitDice })}
+        />
       </div>
 
       <FieldError message={messageAtField(problem, 'armourClass', 'maxHp', 'hitDice')} />
@@ -232,69 +206,35 @@ export function OverrideMark({
 }
 
 /**
- * The library's numbers with a set of overrides laid over them, worked out in the
- * browser.
+ * Merge a patch into an override set, dropping anything set back to absent — and the
+ * way a field is *reset*, since "use the library's" is a patch of `undefined`.
  *
- * A deliberate second implementation of the last third of `resolvePreset`, and the
- * duplication is the point rather than an oversight: the real resolution needs
- * `lib/library/`, which must never reach `src/` (72 stat blocks in a bundle already
- * near a megabyte), so the browser cannot re-resolve a sheet and has to be handed one.
- * What it *can* do is apply the DM's own overrides to the sheet it was last handed,
- * because overrides come last in the resolver — nothing downstream of them would change
- * the answer.
+ * Exported because `PresetSheetView` resets the ability scores, which are overridden
+ * through `AbilityTable` rather than through the block above. It had grown its own
+ * `without(overrides, key)` doing the identical two things, which is one drop-the-key
+ * rule in two places for a panel with exactly one of each.
  *
- * That buys two things worth the twenty lines. Every derived number on the panel moves
- * as the DM types rather than after a round trip, and `sheetProblem` can be run over
- * the result so Save goes dead with the same sentence `characters.updateSheet` would
- * have thrown — which `storedSheetProblem` alone cannot manage, since a preset's stored
- * form holds no armour class to be out of range.
+ * The dropping itself is `withoutUndefined`, shared with the server, and is not
+ * tidiness. `undefined` is not a Convex value, so an object carrying
+ * `armourClass: undefined` is a *different write* from one that omits the key — a
+ * class of bug convex-test does not catch, because it does not apply Convex's own
+ * value validation.
  *
- * It is an approximation in exactly one direction and only while a draft is unsaved:
- * a field whose override has just been *cleared* still shows the old value until the
- * server answers, because the library's own number never came over the wire. That
- * moves a field towards a value the library guarantees is in range, so it can only ever
- * be pessimistic about whether Save should be enabled.
+ * An empty result collapses to `undefined` rather than to `{}`, for that same reason
+ * and for one more. `applyPresetPermissions` does **not** compare the override set
+ * before against the override set after — an earlier version did, with
+ * `JSON.stringify`, and was removed because it refused a no-op edit — so nothing on
+ * the server depends on this. What does depend on it is `CharacterSheetEditor`'s
+ * dirty check, which serialises the draft against what the server last sent: a
+ * character nobody has overridden holds no `overrides` field at all, so a DM who sets
+ * an armour class and then presses "Use the library's" has to arrive back at a draft
+ * that is byte-identical to the saved one, or the footer reads "Unsaved changes"
+ * against a sheet that has none.
  */
-export function previewOverrides(
-  sheet: PcSheet,
-  overrides: PresetOverrides | undefined,
-): PcSheet {
-  if (!overrides) return sheet
-
-  return {
-    ...sheet,
-    abilities: overrides.abilities ?? sheet.abilities,
-    saveProficiencies: overrides.saveProficiencies ?? sheet.saveProficiencies,
-    skillProficiencies: overrides.skillProficiencies ?? sheet.skillProficiencies,
-    armourClass: overrides.armourClass ?? sheet.armourClass,
-    maxHp: overrides.maxHp ?? sheet.maxHp,
-    hitDice: overrides.hitDice ?? sheet.hitDice,
-    speed: overrides.speed ?? sheet.speed,
-    // The entry lists are left alone. `extraFeats` and `extraSpells` are appended by
-    // the resolver rather than replacing anything, and nothing in this milestone's UI
-    // edits them — so appending them here would show the DM's additions twice the
-    // moment something does.
-  }
-}
-
-/**
- * Merge a patch into an override set, dropping anything set back to absent.
- *
- * The stripping is not tidiness. `undefined` is not a Convex value, so an object
- * carrying `armourClass: undefined` is a *different write* from one that omits the key,
- * and the difference is the one `insertCharacter` in convex/lib/characters.ts spells
- * out — a class of bug convex-test does not catch, because it does not apply Convex's
- * own value validation. An empty result collapses to `undefined` for the same reason:
- * a character nobody has overridden should hold no `overrides` field at all, so that
- * `requirePresetChangeAllowed`'s comparison of before and after sees nothing changed.
- */
-function merge(
+export function merge(
   overrides: PresetOverrides | undefined,
   patch: Partial<PresetOverrides>,
 ): PresetOverrides | undefined {
-  const merged: Record<string, unknown> = { ...overrides, ...patch }
-  for (const key of Object.keys(merged)) {
-    if (merged[key] === undefined) delete merged[key]
-  }
-  return Object.keys(merged).length === 0 ? undefined : (merged as PresetOverrides)
+  const merged = withoutUndefined({ ...overrides, ...patch })
+  return Object.keys(merged).length === 0 ? undefined : merged
 }

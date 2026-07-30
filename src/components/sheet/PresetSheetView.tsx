@@ -2,35 +2,38 @@ import { AbilityTable } from '@/components/sheet/AbilityTable'
 import type { BuilderSelections } from '@/components/sheet/CharacterBuilder'
 import { CharacterBuilder } from '@/components/sheet/CharacterBuilder'
 import { DerivedStats } from '@/components/sheet/DerivedStats'
-import { OverrideMark, PresetNumbers } from '@/components/sheet/PresetNumbers'
-import { RestControls } from '@/components/sheet/RestControls'
+import { OverrideMark, PresetNumbers, merge } from '@/components/sheet/PresetNumbers'
 import { SheetEntryList } from '@/components/sheet/SheetEntryList'
 import { SkillList } from '@/components/sheet/SkillList'
 import { Separator } from '@/components/ui/separator'
 import { FEATS, SPELLS } from '@convex/lib/rules'
-import type { PublicVitals } from '@convex/lib/characters'
-import { perRestAbilities } from '@convex/lib/races'
 import type { PcSheet, PresetOverrides, PresetSheet, SheetProblem } from '@convex/lib/sheet'
+import { withoutUndefined } from '@convex/lib/sheet'
 
 export type PresetSheetViewProps = {
   /** The draft. Only the overrides on it are edited here; the selections are Confirm's. */
   draft: PresetSheet
   /** The selections as the server last sent them, or null while the first save lands. */
   saved: PresetSheet | null
-  /** The resolved sheet with the draft's overrides laid over it — see `previewOverrides`. */
+  /**
+   * The resolved sheet with the draft's overrides laid over it, by the same
+   * `withOverrides` the server finishes resolution with — see `CharacterSheetEditor`.
+   */
   sheet: PcSheet
+  /**
+   * The fixed kit and the note on what changed at this level, or null when the library
+   * has neither for these selections. Assembled server-side and sent beside the sheet:
+   * both are strings out of `lib/library/`, which the browser never sees.
+   */
+  extras: { equipment: string; levellingNotes: string } | null
   problem: SheetProblem | null
   /** Whether this browser holds the DM code. Decides what is offered, never what is permitted. */
   isDm: boolean
   disabled?: boolean
-  /** What this client was told about the character's hit points. Null while loading. */
-  vitals: PublicVitals | null
   onChange: (preset: PresetSheet) => void
   onConfirm: (selections: BuilderSelections) => void
   onSetLevel: (level: number) => void
   onSetLocked: (locked: boolean) => void
-  onSetPerRest: (key: string, spent: boolean) => void
-  onLongRest: () => void
 }
 
 /**
@@ -43,13 +46,20 @@ export type PresetSheetViewProps = {
  * number moving on the server and every one of them improves at once. A box a player
  * could type an armour class into would be a box whose contents the next level-up
  * silently discards — the only edit that survives resolution is an *override*, which is
- * the DM's by design (`requirePresetChangeAllowed`).
+ * the DM's by design (`applyPresetPermissions`).
  *
- * So the same sheet is drawn once and four things are handed a control: the three
- * selections behind `Confirm`, the level and the lock for the DM, the once-per-rest
- * abilities for whoever is playing, and the overrides for the DM. Everything else is
- * printed. There is no second read-only component and no `disabled` copy of the editor,
- * because a page that is mostly output is not an editor with the pens taken away.
+ * So the same sheet is drawn once and three things are handed a control: the three
+ * selections behind `Confirm`, the level and the lock for the DM, and the overrides for
+ * the DM. Everything else is printed. There is no second read-only component and no
+ * `disabled` copy of the editor, because a page that is mostly output is not an editor
+ * with the pens taken away.
+ *
+ * Rests are **not** among them, and used to be. `RestControls` sat here, which quietly
+ * made taking a long rest a property of how a character happens to be *stored* — a
+ * hand-built hero, which this milestone deliberately still supports, could never take
+ * one from the UI even though `characters.longRest` works on any character. It is drawn
+ * by `CharacterSheetEditor` for every resolved player character now, which is what the
+ * badge beside the name already does and for the same reason.
  *
  * The three-way split of *where* an edit goes is worth holding on to while reading
  * this: selections commit through `Confirm`, hit points and rests and the level write
@@ -61,24 +71,22 @@ export function PresetSheetView({
   draft,
   saved,
   sheet,
+  extras,
   problem,
   isDm,
   disabled,
-  vitals,
   onChange,
   onConfirm,
   onSetLevel,
   onSetLocked,
-  onSetPerRest,
-  onLongRest,
 }: PresetSheetViewProps) {
   const overrides = draft.overrides
   const setOverrides = (next: PresetOverrides | undefined) => {
-    // Spread rather than `overrides: next`, for the reason `merge` in PresetNumbers.tsx
-    // gives at length: `undefined` is not a Convex value, so a document naming the field
-    // and giving it that is a different write from one omitting it.
-    const { overrides: _dropped, ...rest } = draft
-    onChange(next === undefined ? rest : { ...rest, overrides: next })
+    // `withoutUndefined` rather than `overrides: next`, for the reason `merge` in
+    // PresetNumbers.tsx gives at length: `undefined` is not a Convex value, so a
+    // document naming the field and giving it that is a different write from one
+    // omitting it.
+    onChange(withoutUndefined({ ...draft, overrides: next }))
   }
 
   return (
@@ -95,17 +103,35 @@ export function PresetSheetView({
         onSetLocked={onSetLocked}
       />
 
-      <RestControls
-        abilities={perRestAbilities(draft.race)}
-        // Which abilities a character *has* comes from their race, which this client
-        // looks up itself; only which ones are gone has to travel. A band payload
-        // carries none, which is a state a hero's own sheet never reaches — a player
-        // character is exact for everybody.
-        spent={vitals?.kind === 'exact' ? vitals.spentPerRest : null}
-        disabled={disabled}
-        onSetPerRest={onSetPerRest}
-        onLongRest={onLongRest}
-      />
+      {/* Two sentences rather than a section, because neither of these is a rule:
+          nothing rolls a kit and nothing computes with a levelling note, so a heading, a
+          border and a row of tick boxes would give both the weight of the numbers below
+          and invite somebody to manage them. The kit is what requirements.md's "set
+          equipment per character" amounts to and is deliberately not an inventory —
+          requirements.md excludes those — and the levelling note is the sentence a
+          player reads at the one moment this whole milestone exists for, when the DM
+          has awarded a level and the sheet under it has silently changed.
+
+          Each line is dropped when its string is empty rather than printed as a bare
+          caption. `LibrarySheet` requires both fields but nothing asserts either is
+          non-blank across all 72 stat blocks, and "You carry" followed by nothing reads
+          as a character who lost their gear. */}
+      {extras && (extras.equipment || extras.levellingNotes) ? (
+        <div className="flex flex-col gap-1.5 text-xs">
+          {extras.equipment ? (
+            <p>
+              <span className="text-muted-foreground">You carry </span>
+              {extras.equipment}
+            </p>
+          ) : null}
+          {extras.levellingNotes ? (
+            <p>
+              <span className="text-muted-foreground">What changed at this level: </span>
+              {extras.levellingNotes}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       <Separator />
 
@@ -129,7 +155,7 @@ export function PresetSheetView({
             <OverrideMark
               overridden={overrides?.abilities !== undefined}
               disabled={disabled}
-              onReset={() => setOverrides(without(overrides, 'abilities'))}
+              onReset={() => setOverrides(merge(overrides, { abilities: undefined }))}
             />
           </span>
         ) : null}
@@ -180,14 +206,4 @@ export function PresetSheetView({
       />
     </div>
   )
-}
-
-/** An override set with one field dropped, collapsing to absent when it was the last. */
-function without(
-  overrides: PresetOverrides | undefined,
-  field: keyof PresetOverrides,
-): PresetOverrides | undefined {
-  if (!overrides) return undefined
-  const { [field]: _dropped, ...rest } = overrides
-  return Object.keys(rest).length === 0 ? undefined : rest
 }
