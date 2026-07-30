@@ -73,37 +73,75 @@ another seat without the DM code.
 
 ---
 
-## Milestone 2 — Map and tokens
+## ✅ Milestone 2 — Map and tokens
 
-The riskiest milestone. Do it carefully; everything visual sits on it.
+**Done.** A map on screen with tokens on it, moving live between browsers, with the DM layer absent
+from a player's payload rather than hidden in their client. The riskiest milestone, and the decisions
+it took are recorded in [ADR 0004](adr/0004-board-authorisation-and-layers.md).
 
-- `scenes` table: background image, grid size, grid offset. Add `games.activeSceneId` and a game
-  status field at the same time — they were left out of Milestone 1 because a `v.id('scenes')` field
-  needs this table to exist first.
-- **Two token tables**, deliberately split: stable data (art, name, size, layer, owning character)
-  separate from position. Convex rewrites a whole document on patch, so mixing high-churn position
-  into the stable document makes every drag contend with reads of all of it. See CLAUDE.md
-  invariant 2.
-- Layers: background / player / DM. **DM layer contents are filtered inside the Convex query** —
-  never sent to player clients. CLAUDE.md invariant 1.
+- `scenes` table: background image, the stored image's dimensions, grid size, grid offset and a
+  `gridVisible` flag for maps that already have a grid printed on them. `games.activeSceneId` and
+  `games.status` (`'lobby' | 'playing'`) landed with it, as Milestone 1 said they would — both
+  optional in the schema, because adding a required field to a table that already has rows fails the
+  push, and read through `gameStatus` so the default lives in one place.
+- **Two token tables**, deliberately split: `tokens` for the stable data (art, name, size, layer,
+  owning character) and `tokenPositions` for position alone. Convex rewrites a whole document on
+  patch, which is why a throttled drag write touches four fields and contends with nothing. CLAUDE.md
+  invariant 2. Placements are keyed per **(scene, token)**, so the row's existence is what puts a
+  token on a board, each scene remembers its own layout, and one token can stand on several.
+- **One choke point, not a validator.** `convex/lib/board.ts` is the only module in `convex/` that
+  reads either token table, and every read goes through one `maySee(token, isDm)` predicate fed by
+  `resolveDmAccess`. Two tests keep it honest: `leakGuard.test.ts` greps every Convex source and
+  fails if any other module queries those tables, and `board.test.ts` scans the serialised payload of
+  every public board and scene query fetched without a DM code for a DM-layer token's id, name or art
+  URL — with a positive control so it cannot pass on an empty fixture. The `returns:` validator that
+  guards the `games` document catches a leaked *field*; a DM-layer token is a leaked *row* of the same
+  shape, so it needed a structural guard instead.
+- **Refusals are indistinguishable.** `board.moveToken` on a DM-layer token without the DM code
+  returns the same `TokenNotFound` as a fabricated id — a distinct refusal is an existence oracle, and
+  an ambush is spoiled by knowing it exists.
+- **Two ways to move a token, one write path.** Drag and drop, or select and nudge with the arrow
+  keys, both commit through `board.moveToken` with a shared throttle at ~10 writes/sec and a Convex
+  optimistic update. `settle: true` makes the **server** snap, using `snapToGrid` from
+  `convex/lib/grid.ts` — the same function the client imports through `@convex`, so a dropped token
+  cannot rest between squares even if the client's arithmetic were wrong. Remote positions are
+  interpolated over ~120 ms, so the far screen glides rather than steps.
+- **Roll20-style pan and zoom** — wheel zoom about the pointer, presets, fit, and pan by empty-drag,
+  middle-drag, space-drag or arrow keys with nothing selected. The camera is **never written to
+  Convex**: it is a view, not shared state, so it costs zero database traffic and is remembered per
+  game and scene in local storage.
+- **Upload with a downscale on the client and a size guard on the server** — 2560 px long edge for
+  maps, 256 px for tokens, WebP, and `scenes.create` refuses an oversize blob outright — a
+  client-side cap the server does not check is a cap a bug removes. CLAUDE.md invariant 6. The
+  refusal cannot also delete the blob it refused, because a mutation is one transaction; the client's
+  catch calls `files.discard` for that. The full library editor is still Milestone 7.
+- **Grid calibration by squares-across**, with an arrow-key offset nudge against a live overlay.
+  `gridSize` is a float, so 2240 / 16 is exactly 140 rather than a rounded 139 that drifts a whole
+  square out by the far edge.
+- Scene names are DM-only: `scenes.list` requires the DM code because a list of names is a spoiler,
+  and players get only the active scene.
 
-  Milestone 1 left the seam for this, and it is worth using rather than rediscovering.
-  `resolveDmAccess` in `convex/lib/games.ts` answers "is this caller the DM?" from an optional `dmCode`
-  without throwing, which is what a query needs — `requireDm` is the throwing form, for mutations.
-  Never branch on `players.isDm`; it is a roster badge, not authority (invariant 7).
+**Deliberately not done here:**
 
-  Note what does **not** transfer: the `returns:` validator that guards the `games` document catches
-  a leaked *field*, and a DM-layer token is a leaked *row* of exactly the same shape. Put every token
-  read behind one reader function that takes `isDm` and returns only permitted rows, and write a test
-  asserting a player payload contains no DM-layer id. A validator will not catch this one.
-- react-konva stage: pan, grid overlay, round tokens, snap-to-grid.
-- Drag handling: render locally, throttle writes to ~10/sec, commit on drop, Convex optimistic
-  updates for instant feel.
-- Just enough upload to get one map and a few tokens in. The full library editor is Milestone 7.
+- **No layer toggle and no moving tokens between layers** — Milestone 5. The schema and the choke
+  point support it; what is missing is the UI and the mutation.
+- **No tabbed DM panel and no polished scene-switch UX** — Milestone 5. `scenes.setActive` exists and
+  is DM-gated, driven by a bare `<select>` in the DM setup panel.
+- **No marker or ruler tools** — Milestone 6. `cellDistance` in `convex/lib/grid.ts` is the ruler's
+  maths, written now because the grid module is where it belongs.
+- **No character sheets and no token health bars** — Milestone 3. `tokens.characterId` links a token
+  to a character, and nothing else about a character is on the board yet.
+- **No token or map libraries** — Milestone 7. Uploads go straight onto the board.
+- **No orphaned-blob sweeper** — Milestone 7. A refused or abandoned upload can leave a file in
+  storage: the refusal cannot delete it, `files.discard` is the client's good-citizen path but a
+  crashed tab never calls it, and `files.generateUploadUrl` can mint a blob nothing ever references.
+  Bounded by needing the DM code, and recorded in
+  [ADR 0004](adr/0004-board-authorisation-and-layers.md).
 
 **Acceptance:** the DM drags a token and the player sees it move smoothly, not in jumps. A player
 opening devtools and reading the network payload **cannot** see DM-layer tokens. Tokens land on grid
-squares, not between them.
+squares, not between them — by mouse and by arrow key, at any zoom level, because the server snaps on
+settle.
 
 ---
 
@@ -185,6 +223,10 @@ marker tool available.
 - Uploads for all of the above.
 - **Downscale images on upload.** The Convex free tier gives 1 GB of file storage total, and music
   is the thing most likely to eat it. See [ADR 0001](adr/0001-platform-and-hosting.md).
+- **Orphaned-blob sweeper.** `_storage` rows with no referencing scene, token or library entry, left
+  behind by uploads that were refused or abandoned — a refusing mutation cannot delete its own blob,
+  so the residue needs a pass that runs outside it. See
+  [ADR 0004](adr/0004-board-authorisation-and-layers.md).
 - Admin view: delete old games. Small, because there are no user accounts to manage
   ([ADR 0002](adr/0002-defer-user-accounts.md)).
 
@@ -202,10 +244,13 @@ substantially smaller.
 
 ## Open questions
 
+None of the three blocked Milestone 2, and all three are still open.
+
 - How much of the D&D Lite spell and feat lists to hard-code versus make editable. Hard-coding is
-  faster; editable avoids a code change every time you want a new spell.
+  faster; editable avoids a code change every time you want a new spell. Milestone 3.
 - Whether NPC sheets need the full character schema or a reduced one. Reduced is less work but means
-  two shapes to maintain. Milestone 1's `characters` table holds only `gameId` and `name`, so nothing
-  built so far constrains the answer.
+  two shapes to maintain. Milestone 1's `characters` table holds only `gameId` and `name`, and
+  Milestone 2 made `tokens.characterId` **optional** — an NPC token needs no character document at
+  all — so nothing built so far constrains the answer and the question is genuinely still open.
 - Whether the initiative tracker belongs in Milestone 4 rather than 6 — a real session will answer
   this.

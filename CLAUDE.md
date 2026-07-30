@@ -39,10 +39,13 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    either in the client is not security.
 2. **Don't write token positions to the database on every mouse-move.** Render drags locally,
    throttle writes to ~10/sec, commit on drop. Use Convex optimistic updates so it feels instant.
-   Relatedly, keep **token position in its own table**, separate from the token's stable data
-   (art, name, size). Convex rewrites the whole document on every patch, so mixing high-churn
-   position data into a document that also holds rarely-changing fields makes every drag contend
-   with reads of all of it.
+   Relatedly, **token position lives in `tokenPositions`**, separate from `tokens`, which holds the
+   stable data (art, name, size, layer). Convex rewrites the whole document on every patch, so
+   mixing high-churn position data into a document that also holds rarely-changing fields makes
+   every drag contend with reads of all of it. Both ways of moving a token — mouse drag and arrow
+   keys — commit through the one `board.moveToken` mutation, which **snaps server-side** on the
+   settling write using `snapToGrid` in `convex/lib/grid.ts`, so no client bug can leave a token
+   resting between squares. See [ADR 0004](docs/adr/0004-board-authorisation-and-layers.md).
 3. **Hash routing only** (`/#/game/ABC123`). GitHub Pages has no rewrite rules, so a browser-path
    deep link 404s on refresh.
 4. **Vite needs `base: '/coffee-code-n-kobolds/'`.** The site is served from a subpath; omitting
@@ -64,11 +67,14 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    DM code and recovery hash out of player payloads mechanically rather than by memory.
 
    It does **nothing** for a leaked *row*. A DM-layer token has the same shape as a player-layer
-   token, so a validator would happily approve a payload full of them. Milestone 2's real guard has
-   to be a single reader function every token query goes through — one place that takes "is this
-   caller the DM?" and returns only the rows that caller may see — plus a test asserting a player
-   payload contains no DM-layer id. Use `resolveDmAccess` in `convex/lib/games.ts` for the boolean;
-   never `players.isDm` (invariant 7). The same shape applies to exact NPC hit points in Milestone 3.
+   token, so a validator would happily approve a payload full of them. The real guard is therefore
+   structural: `convex/lib/board.ts` is the **only** module in `convex/` that reads `tokens` or
+   `tokenPositions`, every read goes through its one `maySee(token, isDm)` predicate, and `isDm` comes
+   from `resolveDmAccess` in `convex/lib/games.ts` — never `players.isDm` (invariant 7). Two tests
+   hold it there: `leakGuard.test.ts` greps the sources for reads outside that module, and
+   `board.test.ts` scans a player payload for a DM-layer token's id. Exact NPC hit points in
+   Milestone 3 are the same shape of problem — see
+   [ADR 0004](docs/adr/0004-board-authorisation-and-layers.md).
 
 ## Rules scope
 

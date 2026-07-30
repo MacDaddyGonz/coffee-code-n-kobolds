@@ -1,0 +1,84 @@
+import { useMemo } from 'react'
+import { Shape } from 'react-konva'
+
+import { gridLines } from '@convex/lib/grid'
+import type { PublicScene } from '@convex/lib/scenes'
+
+/**
+ * The grid, drawn twice: a pale wide stroke with a dark narrow one on top of it.
+ *
+ * One colour cannot work. A single dark line disappears into a black cave and a
+ * single pale one disappears into a sunlit tavern floor, and the DM picks the map,
+ * not us. Two passes over the same path give every line its own halo, so it reads
+ * against whatever art is underneath at the cost of one extra stroke of an
+ * already-built path.
+ */
+const HALO_COLOUR = 'rgba(255, 255, 255, 0.3)'
+const LINE_COLOUR = 'rgba(0, 0, 0, 0.42)'
+
+/** Both widths are screen pixels, divided by the scale on the way in. */
+const HALO_WIDTH = 3
+const LINE_WIDTH = 1
+
+export type GridOverlayProps = {
+  scene: PublicScene
+  scale: number
+}
+
+/**
+ * The grid squares, in image space so they sit on the map rather than on the
+ * viewport — pan and zoom then move the grid with the wall it was lined up
+ * against, which is the entire point of calibrating one.
+ *
+ * Drawing in image space is also what makes `scale` a required prop rather than a
+ * detail: a stroke width is in the same units as the coordinates, so a `1` here is
+ * one *image* pixel, which is four screen pixels at 400% zoom and a grid of slabs.
+ * Every width below is therefore a screen-pixel figure divided by the scale, which
+ * keeps a hairline a hairline at every zoom level.
+ *
+ * One `Shape` with a hand-written `sceneFunc`, not a `Line` per line. A 5320×7840
+ * map at 140 px squares is 38 verticals and 56 horizontals, and this component
+ * re-renders on every wheel notch and every frame of a pan; ninety-odd Konva nodes
+ * each with their own transform and hit region is real work to do sixty times a
+ * second, where one path is not.
+ */
+export function GridOverlay({ scene, scale }: GridOverlayProps) {
+  const { imageWidth, imageHeight, gridSize, gridOffsetX, gridOffsetY } = scene
+
+  const lines = useMemo(
+    () => gridLines({ gridSize, gridOffsetX, gridOffsetY }, imageWidth, imageHeight),
+    [gridSize, gridOffsetX, gridOffsetY, imageWidth, imageHeight],
+  )
+
+  // The DM's switch, honoured here rather than by the caller so that every board —
+  // the played one and any preview — obeys it without being asked to.
+  if (!scene.gridVisible) return null
+
+  return (
+    <Shape
+      listening={false}
+      perfectDrawEnabled={false}
+      sceneFunc={(context) => {
+        // Built once and stroked twice. A path survives `stroke()`, so the halo and
+        // the line share it and the coordinates are only walked once.
+        context.beginPath()
+        for (const x of lines.vertical) {
+          context.moveTo(x, 0)
+          context.lineTo(x, imageHeight)
+        }
+        for (const y of lines.horizontal) {
+          context.moveTo(0, y)
+          context.lineTo(imageWidth, y)
+        }
+
+        context.lineWidth = HALO_WIDTH / scale
+        context.strokeStyle = HALO_COLOUR
+        context.stroke()
+
+        context.lineWidth = LINE_WIDTH / scale
+        context.strokeStyle = LINE_COLOUR
+        context.stroke()
+      }}
+    />
+  )
+}

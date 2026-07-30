@@ -14,6 +14,22 @@ export const MAX_SEATS_PER_GAME = 50
 export const MAX_CHARACTERS_PER_GAME = 200
 export const MAX_SCENES_PER_GAME = 25
 export const MAX_TOKENS_PER_GAME = 200
+
+/**
+ * A read bound only, and never a write check — which is why `board.addToken`
+ * enforces MAX_TOKENS_PER_GAME and nothing else.
+ *
+ * A token holds at most one placement per scene, so the placements on one scene
+ * can never outnumber the tokens in the game, and that count is already capped.
+ * The bound is structural, so a per-scene guard could not fire: it would imply a
+ * risk that is not there and cost a read on every `addToken` to say so.
+ *
+ * It is still the correct and necessary bound on the `visiblePositions` read.
+ * Placements per scene is the axis that query iterates, so bounding it by the
+ * per-game token count would be bounding it by the wrong thing even though the
+ * two numbers happen to agree. It simply can never truncate — and anyone raising
+ * MAX_TOKENS_PER_GAME has to raise this with it to keep that true.
+ */
 export const MAX_PLACEMENTS_PER_SCENE = 200
 
 /**

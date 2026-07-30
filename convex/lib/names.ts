@@ -4,6 +4,7 @@ import {
   MAX_CHARACTER_NAME_LENGTH,
   MAX_DISPLAY_NAME_LENGTH,
   MAX_GAME_NAME_LENGTH,
+  MAX_SCENE_NAME_LENGTH,
   collapseWhitespace,
 } from './codes'
 
@@ -45,9 +46,8 @@ export function requireText(
 }
 
 /**
- * Every user-facing name in the app goes through one of these three, so the
- * limit and the wording live in one place rather than being re-inlined at each
- * call site.
+ * Every user-facing name in the app goes through one of these, so the limit and
+ * the wording live in one place rather than being re-inlined at each call site.
  *
  * `blank` is overridable only because creating your own game says "your display
  * name" where joining someone else's says "a display name".
@@ -73,5 +73,18 @@ export function requireCharacterName(raw: string): string {
     max: MAX_CHARACTER_NAME_LENGTH,
     blank: 'Give the character a name.',
     tooLong: `Keep the character name to ${MAX_CHARACTER_NAME_LENGTH} characters or fewer.`,
+  })
+}
+
+/**
+ * Insisting on a name for a board is not bureaucracy: the DM picks between scenes
+ * by name in a list nobody else can see, and "Untitled" three times over is a
+ * list that cannot be used.
+ */
+export function requireSceneName(raw: string): string {
+  return requireText(raw, {
+    max: MAX_SCENE_NAME_LENGTH,
+    blank: 'Give the scene a name.',
+    tooLong: `Keep the scene name to ${MAX_SCENE_NAME_LENGTH} characters or fewer.`,
   })
 }
