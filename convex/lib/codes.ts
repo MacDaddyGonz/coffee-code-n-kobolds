@@ -17,6 +17,7 @@ export const MAX_RECOVERY_PHRASE_LENGTH = 200
 export const MAX_DISPLAY_NAME_LENGTH = 40
 export const MAX_GAME_NAME_LENGTH = 60
 export const MAX_CHARACTER_NAME_LENGTH = 40
+export const MAX_SCENE_NAME_LENGTH = 60
 
 /**
  * Drawn from `crypto.getRandomValues`, not `Math.random`.

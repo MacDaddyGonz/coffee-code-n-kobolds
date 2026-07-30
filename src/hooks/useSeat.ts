@@ -30,6 +30,14 @@ export type Seat = {
   status: SeatStatus
   game: PublicGame | null
   playerId: Id<'players'> | null
+  /**
+   * The character this seat is playing, or null. Read from the roster rather than
+   * kept here: the seat → character pointer runs one way (ADR 0003), so the roster
+   * is the authority and a claim made in another browser shows up with nothing to
+   * keep in sync. The board uses it only to decide which tokens to *offer* as
+   * draggable; the server re-checks every move.
+   */
+  characterId: Id<'characters'> | null
   error: string | null
   /** Join or rejoin under this name. Idempotent server-side. */
   takeSeat: (displayName: string) => Promise<void>
@@ -52,9 +60,15 @@ export type Seat = {
  * to be missing. A browser with no remembered name simply asks for one, and
  * typing the same name as last time lands on the same seat with the same
  * character still claimed. See ADR 0003.
+ *
+ * "Which seat is this browser" and "what is that seat playing" are one question
+ * with one answer, so both are resolved here. A caller deriving the character from
+ * its own `players.list` subscription was a third subscription re-deriving what
+ * this hook had already looked up.
  */
 export function useSeat(code: string): Seat {
   const game = useQuery(api.games.getByCode, { code })
+  const seats = useQuery(api.players.list, { code })
   const join = useMutation(api.players.join)
   const rename = useMutation(api.players.rename)
   const leave = useMutation(api.players.leave)
@@ -139,5 +153,18 @@ export function useSeat(code: string): Seat {
     return 'needsName'
   })()
 
-  return { status, game: game ?? null, playerId, error, takeSeat, renameSeat, leaveSeat }
+  // `players.list` is public and the lobby subscribes to it with these very
+  // arguments, so Convex serves both from one cache entry and one socket.
+  const characterId = seats?.find((row) => row._id === playerId)?.characterId ?? null
+
+  return {
+    status,
+    game: game ?? null,
+    playerId,
+    characterId,
+    error,
+    takeSeat,
+    renameSeat,
+    leaveSeat,
+  }
 }

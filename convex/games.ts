@@ -86,6 +86,9 @@ export const create = mutation({
       dmCode,
       dmRecoverySalt,
       dmRecoveryHash: await hashRecoveryPhrase(dmRecoverySalt, args.recoveryPhrase),
+      // Written explicitly rather than left to `gameStatus`'s default, so the
+      // default only ever covers games created before Milestone 2.
+      status: 'lobby',
     })
 
     // The creator gets a seat straight away, so the lobby is never empty and the
@@ -180,6 +183,52 @@ export const rename = mutation({
   handler: async (ctx, args) => {
     const game = await requireDm(ctx, args.code, args.dmCode)
     await ctx.db.patch('games', game._id, { name: requireGameName(args.name) })
+    return null
+  },
+})
+
+/**
+ * Moves the whole table from the lobby to the board. `status` is on the game
+ * document precisely so this is one write rather than a message to each client:
+ * everyone is already subscribed to `getByCode`, so they all turn over together
+ * on the DM's click.
+ *
+ * Refused when there is no active scene. The DM would otherwise flip six people
+ * to a blank canvas with no way back except finding the button again, and the
+ * fault would look like a broken app rather than a missing map. A refusal names
+ * the thing to do instead.
+ */
+export const start = mutation({
+  args: { code: v.string(), dmCode: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const game = await requireDm(ctx, args.code, args.dmCode)
+    if (!game.activeSceneId) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message: 'Upload a map and make it the active scene before starting.',
+      })
+    }
+    await ctx.db.patch('games', game._id, { status: 'playing' })
+    return null
+  },
+})
+
+/**
+ * The way back, and unconditional — unlike `start`, which has a precondition. The
+ * lobby renders from the roster alone, so there is no state in which returning to
+ * it shows nothing, and it is also the escape hatch from a board that has gone
+ * wrong. A guard here would be a guard on the recovery path.
+ *
+ * Nothing about the board is touched: scenes, tokens and their positions all
+ * survive, so this is a view for the group rather than a reset of the game.
+ */
+export const returnToLobby = mutation({
+  args: { code: v.string(), dmCode: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const game = await requireDm(ctx, args.code, args.dmCode)
+    await ctx.db.patch('games', game._id, { status: 'lobby' })
     return null
   },
 })

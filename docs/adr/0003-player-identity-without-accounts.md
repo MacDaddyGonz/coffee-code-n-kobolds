@@ -38,8 +38,8 @@ character claim is still attached to the seat it lands on.
 
 ### What browser storage holds
 
-Only four things, and every one of them is recomputable by typing — the first three from memory, the
-fourth by way of the recovery phrase below:
+Only five things, and every one of them is recomputable — the first three by typing them from memory,
+the fourth by way of the recovery phrase below, the fifth with one scroll gesture:
 
 | Key | Purpose |
 | --- | ------- |
@@ -47,6 +47,7 @@ fourth by way of the recovery phrase below:
 | `ccnk.lastGameCode` | Prefill for the join code field |
 | `ccnk.displayName.<code>` | Which seat this browser is, in one game |
 | `ccnk.dmCode.<code>` | The DM's bearer credential for one game |
+| `ccnk.camera.<code>.<sceneId>` | Where this browser last had the board panned and zoomed, per scene |
 
 The per-game display name is deliberate rather than one global name. A single global name would
 bleed the name used in one game into another and silently create a second seat there — you would

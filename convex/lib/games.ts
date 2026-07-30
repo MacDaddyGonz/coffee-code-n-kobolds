@@ -1,4 +1,4 @@
-import { ConvexError, v } from 'convex/values'
+import { ConvexError, v, type Infer } from 'convex/values'
 
 import type { Doc } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
@@ -12,6 +12,36 @@ import { normaliseDmCode, normaliseJoinCode, normaliseRecoveryPhrase } from './c
  */
 export const MAX_SEATS_PER_GAME = 50
 export const MAX_CHARACTERS_PER_GAME = 200
+export const MAX_SCENES_PER_GAME = 25
+export const MAX_TOKENS_PER_GAME = 200
+
+/**
+ * A read bound only, and never a write check — which is why `board.addToken`
+ * enforces MAX_TOKENS_PER_GAME and nothing else.
+ *
+ * A token holds at most one placement per scene, so the placements on one scene
+ * can never outnumber the tokens in the game, and that count is already capped.
+ * The bound is structural, so a per-scene guard could not fire: it would imply a
+ * risk that is not there and cost a read on every `addToken` to say so.
+ *
+ * It is still the correct and necessary bound on the `visiblePositions` read.
+ * Placements per scene is the axis that query iterates, so bounding it by the
+ * per-game token count would be bounding it by the wrong thing even though the
+ * two numbers happen to agree. It simply can never truncate — and anyone raising
+ * MAX_TOKENS_PER_GAME has to raise this with it to keep that true.
+ */
+export const MAX_PLACEMENTS_PER_SCENE = 200
+
+/**
+ * Whether the group is still gathering or already on the board, spelled once.
+ *
+ * The schema, the public projection and `gameStatus` below all need this union, and
+ * three copies of a two-member union is three places to forget the third member a
+ * later milestone adds. `GameStatus` is the same statement as a TypeScript type, so
+ * the two cannot drift either.
+ */
+export const gameStatusValidator = v.union(v.literal('lobby'), v.literal('playing'))
+export type GameStatus = Infer<typeof gameStatusValidator>
 
 /**
  * The only shape of a game a public query may return.
@@ -27,6 +57,12 @@ export const publicGameValidator = v.object({
   name: v.string(),
   code: v.string(),
   createdByName: v.string(),
+  // Which board everyone is on, and whether the game has started. Neither is a
+  // secret — every client needs both to know what to render — and note what they
+  // are not: the *contents* of that scene still go through lib/board.ts, which is
+  // where the DM layer is filtered out. Naming a scene reveals nothing.
+  activeSceneId: v.union(v.id('scenes'), v.null()),
+  status: gameStatusValidator,
 })
 
 export function publicGame(game: Doc<'games'>) {
@@ -36,7 +72,24 @@ export function publicGame(game: Doc<'games'>) {
     name: game.name,
     code: game.code,
     createdByName: game.createdByName,
+    // Normalised to null rather than left undefined: `undefined` is not a Convex
+    // value, so an optional field has to become something on the way out.
+    activeSceneId: game.activeSceneId ?? null,
+    status: gameStatus(game),
   }
+}
+
+/**
+ * The only place the stored `status` is read.
+ *
+ * The field is optional in the schema because adding a required one to a table
+ * that already has rows fails the schema push, and widen–migrate–narrow costs two
+ * deploys to delete one `??` from a game with three players. `games.create` has
+ * written it since Milestone 2, so the default only ever applies to games made
+ * before then.
+ */
+export function gameStatus(game: Doc<'games'>): GameStatus {
+  return game.status ?? 'lobby'
 }
 
 /** Returns null for an unknown code — for queries that render "no such game". */

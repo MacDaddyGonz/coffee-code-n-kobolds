@@ -1,7 +1,10 @@
 import { useQuery } from 'convex/react'
 
+import { MapSetupPanel } from '@/components/board/dm/MapSetupPanel'
+import { StartGameButton } from '@/components/board/dm/StartGameButton'
 import { DmBar } from '@/components/lobby/dm/DmBar'
 import type { Dm } from '@/hooks/useDm'
+import type { PublicGame } from '@/hooks/useSeat'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import { LobbyCharacters } from './LobbyCharacters'
@@ -10,6 +13,8 @@ import { LobbyRoster } from './LobbyRoster'
 export type LobbyProps = {
   code: string
   playerId: Id<'players'>
+  /** Taken whole rather than as two derived props: the Start button needs both. */
+  game: PublicGame
   dm: Dm
   /** Rename this seat, storage included. Owned by useSeat. */
   onRenameSeat: (displayName: string) => Promise<void>
@@ -28,8 +33,13 @@ export type LobbyProps = {
  * a seat, remove a seat, delete a character), shown only when this browser holds
  * a `dm.dmCode`, and passing it to the mutations that require it. Renders
  * <DmBar> for the game-level DM controls.
+ *
+ * Map setup lives here rather than on the board because this is where setup
+ * happens: the DM arrives before anybody else, gets a map in and calibrates it,
+ * and only then starts the game. Both are shown on `dm.dmCode` being present and
+ * both pass it — a display gate is not authorisation (invariant 7).
  */
-export function Lobby({ code, playerId, dm, onRenameSeat, onLeaveSeat }: LobbyProps) {
+export function Lobby({ code, playerId, game, dm, onRenameSeat, onLeaveSeat }: LobbyProps) {
   const seats = useQuery(api.players.list, { code })
   const characters = useQuery(api.characters.list, { code })
 
@@ -38,6 +48,19 @@ export function Lobby({ code, playerId, dm, onRenameSeat, onLeaveSeat }: LobbyPr
   return (
     <div className="flex flex-col gap-6">
       <DmBar code={code} dm={dm} />
+      {dm.dmCode !== null ? (
+        <div className="flex flex-col gap-3">
+          <MapSetupPanel code={code} dmCode={dm.dmCode} />
+          <div className="flex justify-end">
+            <StartGameButton
+              code={code}
+              dmCode={dm.dmCode}
+              status={game.status}
+              hasScene={game.activeSceneId !== null}
+            />
+          </div>
+        </div>
+      ) : null}
       <LobbyRoster
         code={code}
         playerId={playerId}

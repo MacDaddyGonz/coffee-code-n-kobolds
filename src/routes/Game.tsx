@@ -4,6 +4,8 @@ import { toast } from 'sonner'
 
 import { CopyButton } from '@/components/CopyButton'
 import { Shell } from '@/components/Shell'
+import { Board } from '@/components/board/Board'
+import { MapSetupOverlay } from '@/components/board/dm/MapSetupOverlay'
 import { Lobby } from '@/components/lobby/Lobby'
 import { NameGate } from '@/components/lobby/NameGate'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -14,13 +16,17 @@ import { useSeat } from '@/hooks/useSeat'
 import { normaliseJoinCode } from '@convex/lib/codes'
 
 /**
- * Resolves the game and this browser's seat, then hands off to the lobby. The
- * seat resolution is the interesting part and lives in useSeat — see ADR 0003.
+ * Resolves the game and this browser's seat, then hands off to the lobby or the
+ * board. The seat resolution is the interesting part and lives in useSeat — see
+ * ADR 0003.
  */
 export default function Game() {
   const params = useParams<{ code: string }>()
   const code = normaliseJoinCode(params.code ?? '')
 
+  // The seat, the character it holds and whether this browser is the DM. All three
+  // are resolved by their own hook — this route wires them together and decides
+  // between the lobby and the board, which is all it should be doing.
   const seat = useSeat(code)
   const dm = useDm(code, seat.playerId)
 
@@ -77,13 +83,37 @@ export default function Game() {
       </header>
 
       {seat.status === 'seated' ? (
-        <Lobby
-          code={code}
-          playerId={seat.playerId!}
-          dm={dm}
-          onRenameSeat={seat.renameSeat}
-          onLeaveSeat={seat.leaveSeat}
-        />
+        // The DM's click on Start patches `games.status`, and every client is
+        // already subscribed here — so the whole table turns over on this one
+        // condition rather than on a message each. `activeSceneId` is required as
+        // well as the status: `games.start` refuses without one, but a scene
+        // deleted mid-game would otherwise leave everybody on a blank canvas with
+        // the way back three clicks deep in a panel only the DM can see.
+        game.status === 'playing' && game.activeSceneId !== null ? (
+          <Board
+            code={code}
+            dm={dm}
+            playerId={seat.playerId!}
+            myCharacterId={seat.characterId}
+          >
+            {/* The board's DM slot. Nothing was ever passed into it, which left the
+                grid calibrator reachable only from the lobby — so a grid found to be
+                a fraction out mid-fight cost the whole table a trip off the board to
+                fix. A player is given nothing here, and that is not the guard: the
+                panel's own queries and mutations all take the DM code and re-verify
+                it server-side (invariant 7). */}
+            {dm.dmCode !== null ? <MapSetupOverlay code={code} dmCode={dm.dmCode} /> : null}
+          </Board>
+        ) : (
+          <Lobby
+            code={code}
+            playerId={seat.playerId!}
+            game={game}
+            dm={dm}
+            onRenameSeat={seat.renameSeat}
+            onLeaveSeat={seat.leaveSeat}
+          />
+        )
       ) : (
         <NameGate
           code={code}
