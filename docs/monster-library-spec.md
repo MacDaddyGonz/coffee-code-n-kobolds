@@ -5,7 +5,9 @@
 > [requirements.md](requirements.md) follows: a spec quietly rewritten to agree with the build can no
 > longer catch the build being wrong. **Three of its sections are overruled** — Library Linking,
 > Output, and the mobile-screen design goal — and the reasons live in the Milestone 5 section of
-> [roadmap.md](roadmap.md), not in edits to the text below. Read this for what was asked for; read the
+> [roadmap.md](roadmap.md), not in edits to the text below. **One feature has been added** since it
+> was written, and is recorded in [Additions to this spec](#additions-to-this-spec) at the bottom
+> rather than folded into the sheet definitions above. Read this for what was asked for; read the
 > roadmap for what is being built and why the difference.
 
 ## Purpose
@@ -367,3 +369,42 @@ Every entry must:
 - Use pre-calculated values only
 - Be written for beginners
 - Avoid unnecessary D&D 5e complexity
+
+------------------------------------------------------------------------
+
+## Additions to this spec
+
+> **Not part of the original.** Everything above is the spec as it arrived. A feature added afterwards
+> is recorded here with a date behind it, on the same principle the sections above are left alone: a
+> spec edited in place to match what was built can no longer be used to check what was built. The
+> design and its reasoning live in the Milestone 5 section of [roadmap.md](roadmap.md); this is the
+> statement of what was asked for.
+
+### 2026-07-31 — CR scaling on an assigned creature
+
+**In addition to editing an assigned creature's NPC sheet field by field, the DM can shift its
+Challenge Rating up and down, and the sheet's statistics scale to match.**
+
+The purpose is to make the tier structure above a starting point rather than a constraint. A DM who
+wants a Troll — Tier IV, CR 5 — in front of a level 2 party should be able to drop it on the board and
+step its CR down to 2, rather than recalculating hit points, armour class, attack bonus, damage,
+initiative and four skill bonuses by hand and getting one of them wrong. The same in reverse: a Goblin
+that has been the party's problem since level 1 can follow them up to CR 4 and still be a Goblin.
+
+What is required of it:
+
+- **A CR stepper on the assigned creature's sheet**, DM-only like the rest of that sheet, bounded by
+  the CR 0–6 ceiling this spec already sets.
+- **Scaling covers the numbers only** — HP, AC, attack bonus, damage, initiative, passive perception
+  and skill bonuses. Name, creature type, size, alignment, role, tags, speed, loot, DM notes, special
+  abilities and the number of attacks are unchanged by a shift.
+- **A creature keeps its character across the shift.** A Tank scaled up is still unusually hard to hit;
+  a Brute scaled down is still fragile for its rating. Scaling must not flatten every creature at a
+  given CR into the same statline.
+- **Reversible and non-compounding.** Shifting up and back down returns the original numbers exactly.
+- **It does not overwrite the DM's own edits.** A field the DM has deliberately changed stays changed
+  through a shift.
+- **The shift is visible on the sheet**, alongside the creature's library CR, and can be reset.
+
+Deliberately *not* asked for: automatic scaling to match the party, computing a creature's CR from its
+statistics, encounter budgeting, or scaling the abilities and attack count rather than the numbers.

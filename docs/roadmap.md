@@ -358,9 +358,10 @@ monster's numbers came from, so this milestone adds content and a picker, not a 
 
 The source spec is [monster-library-spec.md](monster-library-spec.md), kept verbatim in the same way
 [requirements.md](requirements.md) is. **Three of its sections are overruled** — Library Linking,
-Output, and one design goal — and each gets its reasons below rather than an edit upstairs. The rest is
-taken as written. Whatever this milestone actually decides gets an ADR of its own when it lands, the
-way [ADR 0006](adr/0006-premade-character-library.md) records Milestone 4's.
+Output, and one design goal — and each gets its reasons below rather than an edit upstairs; **one
+feature is added to it**, CR scaling, recorded in that file's additions section for the same reason. The
+rest is taken as written. Whatever this milestone actually decides gets an ADR of its own when it lands,
+the way [ADR 0006](adr/0006-premade-character-library.md) records Milestone 4's.
 
 ### Content
 
@@ -402,14 +403,15 @@ reconstructed after the fact because the diff was thrown away at the moment of c
 a list that goes stale the first time a write forgets to append to it.
 
 Milestone 4 already keeps that distinction in the data, so the same shape is used again: a **fourth
-stored sheet kind** on `characters`, holding a bestiary key plus an optional override diff, resolved
-on read by `resolveSheet`. Every feature the spec wanted falls out of it rather than being built:
+stored sheet kind** on `characters`, holding a bestiary key, a CR, and an optional override diff,
+resolved on read by `resolveSheet`. Every feature the spec wanted falls out of it rather than being
+built:
 
 | The spec wants | Where it comes from |
 | --- | --- |
-| View Original | resolve the entry with the overrides skipped |
-| Compare Changes | the override object **is** the change |
-| Reset to Library Defaults | delete the override |
+| View Original | resolve the entry at its own CR with the overrides skipped |
+| Compare Changes | the CR shift and the override object **are** the change |
+| Reset to Library Defaults | return the CR, delete the override |
 | `isModified`, `modifiedFields[]` | `overrides === undefined`, and its keys |
 | Detect newer library versions | nothing to detect — the library ships with the code, so there is exactly one version and it is the deployed one |
 
@@ -419,6 +421,93 @@ mid-campaign changes the goblins in every game that already has one. That is the
 hazard in the same sentence, and the two corpora now have opposite storage strategies for the third
 time — `lib/rules.ts` is copied onto a sheet and safe to edit, `lib/library/` and `lib/bestiary/` are
 linked and are not.
+
+### Shifting a creature's CR, and why that is a selection rather than an override
+
+**The DM can move an assigned creature's CR up and down, and every number on the sheet scales with
+it.** A Troll is Tier IV; a level 2 party wants one anyway; the DM drops it on the board and steps its
+CR from 5 down to 2 rather than retuning eight fields by hand and getting one of them wrong. That is
+the feature, and it is what makes ~130 entries behave like several hundred — every creature covers a
+range of party levels instead of one.
+
+**A shifted CR is a *selection*, stored beside the bestiary key, not a field in the override diff.**
+This is [ADR 0006](adr/0006-premade-character-library.md)'s rule applied to the thing it was written
+for: level, class, archetype and race are selections and are changed by changing them, and putting one
+in the override object as well is two ways to say the same thing and two places for them to disagree.
+CR is to a bestiary creature exactly what level is to a preset hero — the index the library is looked
+up at — so it is stored the same way and shifting it is one number changing.
+
+**Resolution becomes three layers, and none of them can move.**
+
+```
+bestiary entry  →  CR scale  →  the DM's overrides
+```
+
+- **The scale reads the entry's own baseline every time, never the previously scaled result.** So
+  3 → 6 → 3 returns the original sheet byte for byte. Compounding is the bug this ordering exists to
+  make impossible, and idempotence is the test that proves it: scaling to the entry's own CR must be
+  the identity function.
+- **Overrides come last, so a shift never undoes the DM's thumb on the scale.** Same reason an
+  override survives a level-up. A boss-fight armour class somebody bumped stays bumped through a CR
+  shift, and a shift after an override changes every number *except* the one that was pinned.
+
+**Scaling is a benchmark table, not a multiplier.** `CR_BENCHMARKS` in `convex/lib/bestiary/` holds one
+row per CR — 0, ⅛, ¼, ½, 1, 2, 3, 4, 5, 6 — carrying the target hit points, armour class, attack
+bonus, damage per round, save DC and skill/initiative/perception bonus for a creature at that rating.
+A percentage applied to the numbers already on the sheet is the obvious implementation and is wrong
+twice over: it compounds across repeated shifts, and it cannot express that hit points roughly
+quadruple from CR 1 to CR 6 while armour class moves by three. Ten readable rows of tunable content
+can.
+
+**The creature's offset from its own row is carried across, which is what stops scaling from
+homogenising the bestiary.** A Tank sits above its row on armour class and below it on damage; a Brute
+is the reverse. The scaler moves the creature between rows and **preserves its deviation**, so a
+scaled-up Tank is still tanky and a scaled-down Brute is still glassy. Reading absolute values off the
+target row instead would turn every CR 4 creature in the game into the same statline wearing a
+different name, which is a worse outcome than not having the feature.
+
+**Most of the sheet does not scale, and that is deliberate.** Name, creature type, size, alignment,
+role, tags, speed, loot, DM notes, every special ability's text, and the *number* of attacks all stay
+exactly as written. A CR 6 goblin is a goblin who has been lifting — it is not a goblin that has grown
+a second head. Anything made of words is content; the ten or so numbers move.
+
+**Damage scales inside the existing roll grammar.** `1d6+2` becomes `2d6+4`, not a bare number the
+evaluator would have to special-case: the scaler's output has to satisfy `isValidRoll` from
+`convex/lib/sheet.ts`, which is a constraint worth having rather than one to work around. It keeps a
+scaled attack rollable by Milestone 6 through the one path everything else uses, and it means the die
+count stays inside the cap that stops a client asking the physics engine for 99,999 dice.
+
+**Clamped at both ends, to CR 0 and CR 6.** Pressing the button eight times does not produce a CR 14
+creature, for the same reason `librarySheet` clamps a level to the library's range: the ceiling is
+where the content stops being balanced against anything.
+
+**The shift is shown, never silent.** The sheet and the picker both read `Owlbear · CR 3 → 5`, because
+a DM who has forgotten they scaled something is a DM whose encounter maths is quietly wrong. *Reset to
+library defaults* clears the shift and the override together, and *View Original* has to say which of
+the two it is showing — the one genuine cost of a third layer is that "original" now means two things.
+
+**Current hit points are reconciled in the same mutation, and this edge is not theoretical.** `maxHp`
+is on the sheet and current hit points are in `characterVitals` ([ADR 0005](adr/0005-character-sheets-and-hit-point-secrecy.md)), so
+the obvious use — scaling a creature mid-session — would otherwise leave current above the new maximum
+or leave a full-health creature reading `critical` the instant it was scaled up. **The fraction is
+preserved rather than the number**, then put through `clampHp`: a creature on half its hit points is on
+half of the new maximum, and an untouched one stays untouched.
+
+**Scaling needs a library baseline, so it is offered on a bestiary-linked creature and not on a
+hand-built one.** A hand-typed NPC sheet has no CR row to deviate from, and inventing one by
+guessing at its rating would be a worse answer than the greyed-out control. The escape hatch is the
+same one-way door ADR 0006 gave a preset hero: save it as a plain `npc` sheet and it stops scaling,
+because it has stopped being linked.
+
+**Only the DM ever sees any of this**, and it needs no new guard. The whole NPC sheet is refused to
+players by `maySeeCharacter`, and the fact that a creature *was* scaled is itself a spoiler about how
+hard the fight is meant to be — so it lives on a document that never reaches a player payload.
+
+⚠️ **The benchmark table is content, and content drifts.** It gets the treatment the library already
+gets, and the test is worth naming because it is cheap and catches the whole failure class: **every
+entry, scaled to every CR in range, must still pass `sheetProblem`.** That is roughly 1,300 resolved
+sheets checked in one loop, and it is what catches a table row that lifts an armour class past 40,
+produces a fractional hit point total, or emits a damage expression the roll grammar refuses.
 
 ### The numbers a reduced sheet has nothing to derive from
 
@@ -503,17 +592,32 @@ field this milestone adds — creature type, size, alignment, role, CR, tier, ta
 a **label on a DM-only sheet**, not a rule anything adjudicates. Loot is a line of text and not an
 inventory. Nothing is rolled that Milestone 3's grammar did not already describe.
 
+CR scaling is the one thing here that deserves a second look, because it *does* move numbers a player
+rolls against. It is still not a rule: it is arithmetic the DM performs on the DM's own sheet, with a
+visible before and after, and the app adjudicates nothing with it — a stepper that changes eight fields
+at once is the same act as typing into eight fields, done in one motion. Compare the DM override in
+Milestone 4, which has exactly this character and needed no amendment either.
+
 No amendment to [requirements.md](requirements.md) is therefore needed, and the test for whether that
-stays true is simple: the moment one of these fields changes a number a player rolls against, it needs
-one.
+stays true is simple: the moment one of these fields changes a number a player rolls against **without
+the DM asking it to**, it needs one.
 
 **Deliberately not done here:**
 
 - **No encounter generator.** The metadata exists so one is possible; nothing builds an encounter,
   budgets a fight or suggests a party-appropriate group.
 - **No rolling a monster's attack.** Milestone 6, along with everything else that touches dice.
-- **No CR arithmetic and no experience budget.** There are no experience points in D&D Lite, and CR is
-  a label the content author chose rather than a number the app computes.
+- **No experience budget and no computed CR.** There are no experience points in D&D Lite. Note the
+  line this draws against the feature above: the app **scales a creature to a CR the DM picks** and
+  never **works out what CR a creature is**. The first is a lookup in a benchmark table; the second is
+  the encounter-budget maths that CR exists for in 5e, and it is the DM's judgement.
+- **No "scale to match my party" button.** It would have to read the party's levels out of the
+  character library and decide what a fair fight is, which is an encounter generator with one control.
+  The DM knows what their party can take; the stepper is for acting on that, not for replacing it.
+- **No scaling of the number of attacks or the abilities themselves.** A CR 6 version of a CR 1
+  creature does not acquire Multiattack, and a scaled Wolf does not lose Pack Tactics. Deciding which
+  abilities a rating deserves is a rules engine, and the numbers are the part that actually needed
+  automating.
 - **No campaign-copy version tracking**, for the reasons above. There is one library version and it is
   the one that is deployed.
 - **No player-facing bestiary.** This is not a compendium players browse; it is the DM's shelf.
@@ -535,10 +639,19 @@ third `layer` member is the counter-example.
 **Acceptance:** the DM filters the bestiary to Tier III, adds an Owlbear, and has a creature on the
 board with an armour class, hit points, an initiative bonus, two attacks and Keen Smell without typing
 a number. Dropping that Owlbear's hit points for tonight's fight leaves the library entry untouched and
-every other game's Owlbear unchanged, and clearing the override puts the library's number back. A
-player inspecting network traffic sees no bestiary entry, no list of creature names and no exact NPC
-hit point — Milestone 3's three assertions, extended to the new queries with the same positive
-controls. A social NPC has no combat block and offers no control to invent one.
+every other game's Owlbear unchanged, and clearing the override puts the library's number back.
+
+**The DM steps a Tier IV Troll down to CR 2 and puts it in front of a level 2 party**, and its hit
+points, armour class, attack bonus, damage, initiative and skill bonuses all move together while its
+name, its speed, its Regeneration and its two claw attacks do not. Stepping it back to CR 5 returns the
+sheet it started with, exactly — not approximately. Doing that to a Troll already on half its hit points
+leaves it on half of the new maximum rather than dead or fully healed. An armour class the DM had
+overridden survives both shifts unchanged.
+
+A player inspecting network traffic sees no bestiary entry, no list of creature names, no exact NPC hit
+point and no sign that anything was scaled — Milestone 3's assertions, extended to the new queries with
+the same positive controls. A social NPC has no combat block and offers no control to invent one, and a
+hand-built NPC offers no CR stepper.
 
 ---
 
@@ -709,7 +822,15 @@ rather than reopening it, and raises two more.
 - **Whether 110–150 hand-written creatures is the right size**, or whether 40 good ones and a
   reskinning habit would run a better table. The character library's 72 sheets are a fixed set the
   rules demand; a bestiary's size is a judgement about how often a DM wants something new, and nobody
-  has run enough sessions to have an opinion.
+  has run enough sessions to have an opinion. **CR scaling pushes the answer down rather than up** —
+  one Owlbear that covers CR 1 to CR 6 is worth more at the table than six Owlbears, so the number to
+  aim at is however many creatures are genuinely *different*, and the spec's targets may be measuring
+  the wrong thing.
+- **Whether the benchmark table should be per-role rather than global.** Scaling preserves a creature's
+  offset from its own CR row, which keeps a Tank tanky — but it assumes every role's numbers grow along
+  the same curve, and a Spellcaster's probably does not grow like a Brute's. Ten rows is content that
+  can be tuned in place; ten rows per role is eighty, and nobody has yet scaled enough creatures to know
+  whether the single curve reads wrong.
 - Whether the initiative tracker belongs in Milestone 6 rather than 8 — a real session will answer
   this. **Still open**, and now two milestones away from being playable enough to ask it properly
   rather than one — which is the price of inserting Milestone 5 and is worth naming rather than
