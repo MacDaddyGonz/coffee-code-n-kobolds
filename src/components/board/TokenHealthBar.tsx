@@ -1,8 +1,9 @@
 import { memo } from 'react'
 import { Rect, Text } from 'react-konva'
 
-import { healthColour, healthFraction, healthLabel } from '@/lib/health'
+import { BAND_COLOUR, healthFraction, healthLabel } from '@/lib/health'
 import type { PublicVitals } from '@convex/lib/characters'
+import { healthBand } from '@convex/lib/sheet'
 
 /** Screen-pixel weights, divided by the scale so they hold at any zoom — as `TokenCoin` does. */
 const BAR_HEIGHT = 12
@@ -32,6 +33,7 @@ export const COIN_DETAIL_MIN_DIAMETER = 26
 /** Dark enough that the four band colours all read against it on any map art. */
 const TRACK_FILL = 'rgba(15, 23, 42, 0.85)'
 const TRACK_STROKE = 'rgba(0, 0, 0, 0.6)'
+/** One ink for all four bands. See the note beside the label for why not four. */
 const LABEL_INK = '#ffffff'
 
 export type TokenHealthBarProps = {
@@ -86,6 +88,13 @@ export const TokenHealthBar = memo(function TokenHealthBar({
   const fontSize = LABEL_FONT_SIZE / scale
 
   const fraction = healthFraction(vitals)
+  // The band, worked out once and indexed twice — the bar's colour and the ink on
+  // top of it have to be the same creature's answer, and `healthColour` would take
+  // the same payload and arrive at the same band a second time to give back one of
+  // them. `healthBand` is the server's own function rather than its two thresholds
+  // copied into a canvas component; `@/lib/health` says at length why a second copy
+  // of them is worse than a mismatched yellow.
+  const band = vitals.kind === 'band' ? vitals.band : healthBand(vitals.current, vitals.max)
 
   return (
     <>
@@ -116,7 +125,7 @@ export const TokenHealthBar = memo(function TokenHealthBar({
           width={width * fraction}
           height={height}
           cornerRadius={corner}
-          fill={healthColour(vitals)}
+          fill={BAND_COLOUR[band]}
           listening={false}
           perfectDrawEnabled={false}
         />
@@ -142,9 +151,26 @@ export const TokenHealthBar = memo(function TokenHealthBar({
         fill={LABEL_INK}
         wrap="none"
         ellipsis
-        // White on green is fine and white on yellow is not, so the ink carries its
-        // own dark halo instead of the bar's four colours each needing a matching
-        // pair of inks maintained alongside them.
+        // White with a dark halo, and the halo stays — an optimisation to remove it
+        // was tried here and is recorded because the reasoning was tempting and
+        // wrong.
+        //
+        // A blurred canvas shadow is the most expensive primitive on the board, and
+        // `BoardStage` pans by dragging the stage itself, so every layer is
+        // re-rasterised on every frame and this is paid once per creature per frame.
+        // The coin's *name* has no way out of that charge because it sits on whatever
+        // map art happens to be beneath it — but this label looked like it did, since
+        // it sits on a track and a fill this file draws itself in one of exactly four
+        // known colours. So the shadow came off and the ink was chosen per band.
+        //
+        // It sits on **both** of them at once. The label is centred across the whole
+        // bar while the fill covers only `width * fraction` from the left, so at half
+        // health the right-hand half of the word is over the dark track. The one band
+        // light enough to need dark ink is the one where that puts near-black text on
+        // a near-black background: half a word, invisible, exactly when somebody is
+        // reading it to decide whether to keep attacking. A per-band ink cannot work
+        // while there are two backdrops, and making the backdrop uniform costs more
+        // than the blur it saves.
         shadowColor="#000000"
         shadowBlur={fontSize * 0.5}
         shadowOpacity={0.95}

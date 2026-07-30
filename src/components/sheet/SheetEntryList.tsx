@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { CatalogueEntry } from '@convex/lib/rules'
 import type { SheetEntry, SheetProblem } from '@convex/lib/sheet'
-import { MAX_SHEET_ENTRIES, isValidRoll, normaliseRoll } from '@convex/lib/sheet'
+import { MAX_SHEET_ENTRIES, isValidRoll, normaliseRoll, problemAtEntry } from '@convex/lib/sheet'
 
 export type SheetEntryListProps = {
   title: string
@@ -94,7 +94,10 @@ export function SheetEntryList({
       ) : (
         <ul className="flex flex-col gap-1.5">
           {entries.map((entry, index) => {
-            const rowProblem = problem?.path.startsWith(`${path}[${index}]`) ? problem : null
+            // `problemAtEntry` rather than a `startsWith` written out here, and the
+            // reason is on the function: the obvious spelling of this test matches
+            // `feats[10].name` against row 1, so a long list lights up the wrong row.
+            const rowProblem = problemAtEntry(problem, path, index) ? problem : null
             const roll = entry.roll
             const rollProblem = roll !== null && !isValidRoll(roll)
 

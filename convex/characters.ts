@@ -5,6 +5,8 @@ import type { QueryCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { detachCharacterFromTokens, visibleCharacterIds } from './lib/board'
 import {
+  changeCurrentHp,
+  changeHitDiceRemaining,
   countCharactersInGame,
   deleteCharacter,
   findVisibleCharacter,
@@ -15,13 +17,9 @@ import {
   publicSheet,
   publicSheetValidator,
   publicVitalsValidator,
-  readCurrentHp,
-  readHitDiceRemaining,
   renameCharacter,
   requireVisibleCharacter,
   visibleVitals,
-  writeCurrentHp,
-  writeHitDiceRemaining,
   writeSheet,
 } from './lib/characters'
 import {
@@ -32,7 +30,13 @@ import {
   resolveDmAccess,
 } from './lib/games'
 import { requireCharacterName } from './lib/names'
-import { findClaimHolder, getSeatInGame, listSeats, releaseClaimOn } from './lib/players'
+import {
+  findClaimHolder,
+  getSeatInGame,
+  listSeats,
+  releaseClaimOn,
+  setSeatCharacter,
+} from './lib/players'
 import type { CharacterSheet } from './lib/sheet'
 import {
   MAX_MAX_HP,
@@ -139,8 +143,13 @@ export const list = query({
     const game = await findGameByCode(ctx, args.code)
     if (!game) return []
 
-    const { isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
-    const seats = await listSeats(ctx, game._id)
+    // Concurrent: whether this caller holds the DM code and who is sitting at the
+    // table are independent questions, and this query re-runs whenever either the
+    // roster or the character list changes.
+    const [{ isDm }, seats] = await Promise.all([
+      resolveDmAccess(ctx, args.code, args.dmCode),
+      listSeats(ctx, game._id),
+    ])
     return await publicCharacters(ctx, game._id, isDm, seats)
   },
 })
@@ -371,12 +380,22 @@ export const adjustHp = mutation({
       args.playerId,
     )
 
-    const current = await readCurrentHp(ctx, character)
-    return { currentHp: await writeCurrentHp(ctx, character, current + args.delta) }
+    return {
+      currentHp: await changeCurrentHp(ctx, character, (current) => current + args.delta),
+    }
   },
 })
 
-/** For typing a number straight into the sheet. Same clamp, same permission rule. */
+/**
+ * Set hit points outright, rather than by a delta. Same clamp, same permission rule.
+ *
+ * **No UI reaches this yet**, and that is worth saying rather than leaving a reader
+ * to search for the caller: every control on screen is `−`, an amount and `+`, which
+ * `adjustHp` serves and serves better, because two people clicking at once compose
+ * instead of clobbering. This is here for the case a delta cannot express — a DM
+ * typing a monster's hit points straight in, which Milestone 5's panel will want —
+ * and it is exercised by the suite and by `npm run test:smoke` in the meantime.
+ */
 export const setHp = mutation({
   args: {
     code: v.string(),
@@ -400,7 +419,7 @@ export const setHp = mutation({
       args.playerId,
     )
 
-    return { currentHp: await writeCurrentHp(ctx, character, args.currentHp) }
+    return { currentHp: await changeCurrentHp(ctx, character, () => args.currentHp) }
   },
 })
 
@@ -432,9 +451,12 @@ export const adjustHitDice = mutation({
       args.playerId,
     )
 
-    const remaining = await readHitDiceRemaining(ctx, character)
     return {
-      hitDiceRemaining: await writeHitDiceRemaining(ctx, character, remaining + args.delta),
+      hitDiceRemaining: await changeHitDiceRemaining(
+        ctx,
+        character,
+        (remaining) => remaining + args.delta,
+      ),
     }
   },
 })
@@ -468,7 +490,7 @@ export const claim = mutation({
     }
 
     // A seat holds at most one character, so claiming a second releases the first.
-    await ctx.db.patch('players', seat._id, { characterId: character._id })
+    await setSeatCharacter(ctx, seat._id, character._id)
     return null
   },
 })
@@ -479,7 +501,7 @@ export const release = mutation({
   handler: async (ctx, args) => {
     const game = await getGameByCode(ctx, args.code)
     const seat = await getSeatInGame(ctx, game._id, args.playerId)
-    await ctx.db.patch('players', seat._id, { characterId: undefined })
+    await setSeatCharacter(ctx, seat._id, null)
     return null
   },
 })
@@ -505,13 +527,13 @@ export const assign = mutation({
     const seat = await getSeatInGame(ctx, game._id, args.playerId)
 
     if (args.characterId === null) {
-      await ctx.db.patch('players', seat._id, { characterId: undefined })
+      await setSeatCharacter(ctx, seat._id, null)
       return null
     }
 
     const character = await requireVisibleCharacter(ctx, game._id, args.characterId, false)
     await releaseClaimOn(ctx, character._id)
-    await ctx.db.patch('players', seat._id, { characterId: character._id })
+    await setSeatCharacter(ctx, seat._id, character._id)
     return null
   },
 })

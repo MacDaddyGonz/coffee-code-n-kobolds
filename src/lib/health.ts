@@ -6,6 +6,7 @@
 
 import type { PublicVitals } from '@convex/lib/characters'
 import type { HealthBand } from '@convex/lib/sheet'
+import { healthBand } from '@convex/lib/sheet'
 
 /**
  * What a player is told about a creature they may not have the numbers for.
@@ -27,6 +28,12 @@ export const BAND_COLOUR: Record<HealthBand, string> = {
   critical: '#ef4444',
   down: '#6b7280',
 }
+
+// There is deliberately no per-band ink here. One was added, to let the token
+// health bar drop the blurred shadow behind its label, and removed again once it
+// turned out the label sits on the fill and the track at the same time — see the
+// note beside that label in `TokenHealthBar.tsx`, which is where the reasoning is
+// worth reading.
 
 /**
  * How full to draw the bar for a band.
@@ -54,15 +61,20 @@ export function healthFraction(vitals: PublicVitals): number {
  * The colour of the bar. Exact numbers get the same four colours as the bands, at
  * the same thresholds, so the DM's view of a goblin and a player's view of it are
  * recognisably the same creature in the same state.
+ *
+ * `healthBand` does the deciding rather than a second copy of its two thresholds.
+ * This module's own header objects to a colour being defined twice; re-deriving the
+ * bands here from literal `0.5` and `0.25` was the same fault one level up, and its
+ * failure mode is worse than a mismatched yellow — move a threshold server-side and
+ * the DM's exact bar and a player's band would describe the same goblin
+ * differently, which nobody notices until two people compare screens mid-fight.
+ * Reusing the function also inherits its guarantee that a creature with hit points
+ * left is never drawn as `down`.
  */
 export function healthColour(vitals: PublicVitals): string {
-  if (vitals.kind === 'band') return BAND_COLOUR[vitals.band]
-
-  const fraction = healthFraction(vitals)
-  if (vitals.current <= 0) return BAND_COLOUR.down
-  if (fraction > 0.5) return BAND_COLOUR.healthy
-  if (fraction > 0.25) return BAND_COLOUR.bloodied
-  return BAND_COLOUR.critical
+  return BAND_COLOUR[
+    vitals.kind === 'band' ? vitals.band : healthBand(vitals.current, vitals.max)
+  ]
 }
 
 /**

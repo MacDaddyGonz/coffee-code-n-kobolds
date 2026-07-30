@@ -99,10 +99,29 @@ export async function findClaimHolder(
     .unique()
 }
 
+/**
+ * Point a seat at a character, or at nothing.
+ *
+ * The one place the claim pointer is written, so `characters.claim`, `release`,
+ * `assign` and this module's own `releaseClaimOn` all say it the same way — they
+ * had four direct `ctx.db.patch('players', …)` calls between them, two of which
+ * were byte-identical. This table belongs to this module the way `tokens` belongs
+ * to lib/board.ts, and the pointer running seat → character and never the reverse
+ * (ADR 0002) is the sort of rule that is easier to keep when there is one writer.
+ *
+ * `undefined` clears the field rather than storing one: that is what `patch` does
+ * with it, and it is why a released character has no dangling holder to find.
+ */
+export async function setSeatCharacter(
+  ctx: MutationCtx,
+  seatId: Id<'players'>,
+  characterId: Id<'characters'> | null,
+) {
+  await ctx.db.patch('players', seatId, { characterId: characterId ?? undefined })
+}
+
 /** Clears the claim on `characterId` from whichever seat holds it, if any. */
 export async function releaseClaimOn(ctx: MutationCtx, characterId: Id<'characters'>) {
   const holder = await findClaimHolder(ctx, characterId)
-  if (holder) {
-    await ctx.db.patch('players', holder._id, { characterId: undefined })
-  }
+  if (holder) await setSeatCharacter(ctx, holder._id, null)
 }

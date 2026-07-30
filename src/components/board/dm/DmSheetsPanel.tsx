@@ -4,7 +4,7 @@ import { FieldError } from '@/components/FieldError'
 import { HpControls } from '@/components/HpControls'
 import { ConfirmDialog } from '@/components/lobby/ConfirmDialog'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
-import { CharacterSheetView } from '@/components/sheet/CharacterSheetView'
+import { CharacterSheetDrawer } from '@/components/sheet/CharacterSheetDrawer'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -15,14 +15,6 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useHpActions, useVitals } from '@/hooks/useVitals'
 import { cn } from '@/lib/utils'
@@ -216,7 +208,7 @@ function CharacterRow({ code, dmCode, character, vitals, onAdjust, actions }: Ch
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <CharacterSheetDrawer code={code} dmCode={dmCode} character={character} />
+          <DmCharacterSheet code={code} dmCode={dmCode} character={character} />
           {actions}
         </div>
       </div>
@@ -270,7 +262,7 @@ function CharacterRow({ code, dmCode, character, vitals, onAdjust, actions }: Ch
  * `characters.updateSheet` writes through. Naming a seat here would add nothing but
  * the appearance of authority.
  */
-function CharacterSheetDrawer({
+function DmCharacterSheet({
   code,
   dmCode,
   character,
@@ -280,34 +272,27 @@ function CharacterSheetDrawer({
   character: PublicCharacter
 }) {
   return (
-    <Sheet>
-      <SheetTrigger asChild>
+    <CharacterSheetDrawer
+      trigger={
         <Button type="button" size="sm" variant="outline">
           Sheet
         </Button>
-      </SheetTrigger>
-
-      {/* Wider than the primitive's default, and the same width as the player's own
-          panel: six abilities with a save column and a derived bonus beside each will
-          not fold into a phone-width drawer, and this application is desktop-only by
-          requirement. */}
-      <SheetContent side="left" className="w-full sm:max-w-xl">
-        <SheetHeader>
-          <SheetTitle>{character.name}</SheetTitle>
-          <SheetDescription>
-            {character.kind === 'npc'
-              ? 'A monster, so this stat block reaches no other screen. Changes are saved when you press Save; hit points save straight away.'
-              : 'Changes are saved when you press Save; hit points save straight away.'}
-          </SheetDescription>
-        </SheetHeader>
-
-        <CharacterSheetView
-          code={code}
-          characterId={character._id}
-          playerId={null}
-          dmCode={dmCode}
-        />
-      </SheetContent>
-    </Sheet>
+      }
+      title={character.name}
+      description={
+        character.kind === 'npc'
+          ? 'A monster, so this stat block reaches no other screen. Changes are saved when you press Save; hit points save straight away.'
+          : 'Changes are saved when you press Save; hit points save straight away.'
+      }
+      code={code}
+      characterId={character._id}
+      // No seat id, for the reason the panel above gives: a seat id is routing rather
+      // than proof of anything (ADR 0003), and it is the DM code that
+      // `characters.sheet` re-checks before answering — through the same
+      // `requireEditableCharacter` gate `characters.updateSheet` writes through.
+      // Naming a seat here would add nothing but the appearance of authority.
+      playerId={null}
+      dmCode={dmCode}
+    />
   )
 }

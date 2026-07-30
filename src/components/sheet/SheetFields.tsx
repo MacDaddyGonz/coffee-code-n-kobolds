@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { cn } from '@/lib/utils'
+import { cn, parseNumber } from '@/lib/utils'
 
 // The small controls the two sheet forms are built out of.
 //
@@ -149,20 +149,6 @@ export function NumberInput({ value, onChange, invalid, className, ...rest }: Nu
 
 function formatNumber(value: number): string {
   return Number.isFinite(value) ? String(value) : ''
-}
-
-/**
- * Text to a number, where anything that is not one becomes `NaN`.
- *
- * `NaN` rather than zero or a thrown error, because `NaN` is the value the shared
- * validator already refuses with a sentence a person can act on. A lone `-` is on
- * its way to being a negative number — the NPC initiative bonus is the one field
- * that takes one — so it parses the same way rather than being rejected as a typo.
- */
-function parseNumber(text: string): number {
-  const trimmed = text.trim().replace('−', '-')
-  if (trimmed === '' || trimmed === '-') return Number.NaN
-  return Number(trimmed)
 }
 
 /**

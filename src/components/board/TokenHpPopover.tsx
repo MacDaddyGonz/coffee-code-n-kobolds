@@ -1,10 +1,11 @@
-import { useCallback } from 'react'
+import { memo, useCallback } from 'react'
 
 import { HpControls } from '@/components/HpControls'
 import type { BoardToken } from '@/hooks/useBoard'
 import type { Camera } from '@/lib/camera'
 import { toScreenSpace } from '@/lib/camera'
 import type { Id } from '@convex/_generated/dataModel'
+import type { PublicVitals } from '@convex/lib/characters'
 import type { PublicScene } from '@convex/lib/scenes'
 
 /**
@@ -55,6 +56,14 @@ export type TokenHpPopoverProps = {
  * a composite; a `left` is a layout of the board's whole subtree, sixty times a
  * second, to slide one small box.
  *
+ * That leaves the *other* half of the same cost, which is why the card below is a
+ * separate memoised component rather than the markup it looks like it wants to be.
+ * Cheap layout is not the same as no work: reconciling the card means two shadcn
+ * `Button`s and an `Input` each resolving their variants and running `cn()` — clsx
+ * plus tailwind-merge, over the whole class string — and two lucide icon trees, all
+ * of it to arrive at exactly the markup already on screen. Only the wrapper's
+ * transform actually changes during a pan, so only the wrapper re-renders.
+ *
  * Nothing here authorises anything. The caller decides whether to render it from
  * `canEditHp`, which is an affordance mirroring `requireEditableCharacter`, and the
  * mutation behind `onAdjust` re-checks the same question on every click.
@@ -100,9 +109,39 @@ export function TokenHpPopover({ token, scene, camera, onAdjust }: TokenHpPopove
         transform: `translate(${centre.x}px, ${centre.y + radius + GAP_BELOW_COIN}px) translate(-50%, 0)`,
       }}
     >
-      <div className="bg-background/95 pointer-events-auto w-64 rounded-lg border px-2 py-1.5 shadow-lg backdrop-blur">
-        <HpControls vitals={token.vitals} onAdjust={adjust} />
-      </div>
+      <HpCard vitals={token.vitals} onAdjust={adjust} />
     </div>
   )
 }
+
+/**
+ * The card itself, held still while the wrapper above it moves.
+ *
+ * Two props, and both are identities somebody upstream keeps on purpose — which is
+ * the whole of whether this memo is worth having, because a single fresh arrow or
+ * object literal at the call site would turn it into a comparison that always fails
+ * plus the cost of making it. `vitals` arrives by reference from the vitals
+ * subscription, through the join in `useBoard` and the spread in
+ * `useSmoothPositions`, so it changes when somebody's hit points do and not before.
+ * `onAdjust` is `TokenHpPopover`'s own `useCallback` over `useHpActions.adjust`,
+ * which is built once and held for the same reason — a mutation re-wrapped with an
+ * optimistic update in a render body is a new function every render, and `Board`
+ * renders on every camera commit.
+ *
+ * `HpControls` keeps the stepper's typed amount in its own state. It survives this,
+ * because a memo that skips a render leaves the tree exactly as it was — a number
+ * half typed into the field is not lost by panning the map away from the token.
+ */
+const HpCard = memo(function HpCard({
+  vitals,
+  onAdjust,
+}: {
+  vitals: PublicVitals | null
+  onAdjust: (delta: number) => void
+}) {
+  return (
+    <div className="bg-background/95 pointer-events-auto w-64 rounded-lg border px-2 py-1.5 shadow-lg backdrop-blur">
+      <HpControls vitals={vitals} onAdjust={onAdjust} />
+    </div>
+  )
+})

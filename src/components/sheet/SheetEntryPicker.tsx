@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
 
 import { FieldError } from '@/components/FieldError'
@@ -22,8 +22,8 @@ import {
   MAX_ENTRY_ID_LENGTH,
   MAX_ENTRY_NAME_LENGTH,
   MAX_ENTRY_TEXT_LENGTH,
-  isValidRoll,
   normaliseRoll,
+  rollProblem,
 } from '@convex/lib/sheet'
 
 export type SheetEntryPickerProps = {
@@ -72,6 +72,11 @@ export function SheetEntryPicker({
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
 
+  // `useId` rather than fixed ids, for the reason `NpcSheetFields` gives: two of
+  // these are mounted at once on a hero's sheet — one for feats and one for spells —
+  // and two labels pointing at the same input is a label that focuses the wrong box.
+  const fieldId = useId()
+
   const [customName, setCustomName] = useState('')
   const [customText, setCustomText] = useState('')
   const [customRoll, setCustomRoll] = useState('')
@@ -91,8 +96,14 @@ export function SheetEntryPicker({
   // Empty means "no roll", which is a perfectly ordinary entry — Mage Hand and
   // Action Surge both have one. Anything else has to satisfy the grammar, checked
   // here so the button is disabled rather than the save being refused later.
-  const rollProblem = customRoll !== '' && !isValidRoll(customRoll)
-  const canAddCustom = customName.trim() !== '' && !rollProblem
+  //
+  // The sentence comes from `rollProblem` rather than being written out beside the
+  // field, because it is the sentence `sheetProblem` throws for the same value: the
+  // form and the mutation are not allowed to disagree about what is wrong with a
+  // roll, and a hand copy of a message is a copy that stops matching the moment the
+  // grammar grows a term.
+  const rollRefusal = customRoll === '' ? null : rollProblem(customRoll)
+  const canAddCustom = customName.trim() !== '' && rollRefusal === null
 
   const addCustom = () => {
     if (!canAddCustom) return
@@ -137,11 +148,11 @@ export function SheetEntryPicker({
           </TabsList>
 
           <TabsContent value="catalogue" className="flex flex-col gap-2">
-            <Label htmlFor="entry-search" className="sr-only">
+            <Label htmlFor={`${fieldId}-search`} className="sr-only">
               Search
             </Label>
             <Input
-              id="entry-search"
+              id={`${fieldId}-search`}
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder={`Search ${catalogue.length} ${noun}s…`}
@@ -198,9 +209,9 @@ export function SheetEntryPicker({
 
           <TabsContent value="custom" className="flex flex-col gap-3">
             <div className="flex flex-col gap-1">
-              <Label htmlFor="custom-name">Name</Label>
+              <Label htmlFor={`${fieldId}-name`}>Name</Label>
               <Input
-                id="custom-name"
+                id={`${fieldId}-name`}
                 value={customName}
                 onChange={(event) => setCustomName(event.target.value)}
                 maxLength={MAX_ENTRY_NAME_LENGTH}
@@ -209,9 +220,9 @@ export function SheetEntryPicker({
             </div>
 
             <div className="flex flex-col gap-1">
-              <Label htmlFor="custom-text">What it does</Label>
+              <Label htmlFor={`${fieldId}-text`}>What it does</Label>
               <SheetTextArea
-                id="custom-text"
+                id={`${fieldId}-text`}
                 value={customText}
                 onChange={(event) => setCustomText(event.target.value)}
                 maxLength={MAX_ENTRY_TEXT_LENGTH}
@@ -220,30 +231,21 @@ export function SheetEntryPicker({
             </div>
 
             <div className="flex flex-col gap-1">
-              <Label htmlFor="custom-roll">Roll (optional)</Label>
+              <Label htmlFor={`${fieldId}-roll`}>Roll (optional)</Label>
               <Input
-                id="custom-roll"
+                id={`${fieldId}-roll`}
                 value={customRoll}
                 // Normalised on every keystroke, which is what `normaliseRoll` is
                 // written for — it cannot throw, and applying it here rather than at
                 // submit is what makes a typed `2d6 + wis` and a picked `2d6+WIS`
                 // byte-identical rather than merely equivalent.
                 onChange={(event) => setCustomRoll(normaliseRoll(event.target.value))}
-                aria-invalid={rollProblem || undefined}
+                aria-invalid={rollRefusal !== null || undefined}
                 placeholder="1d8+WIS"
                 className="font-mono"
                 autoComplete="off"
               />
-              <FieldError
-                message={
-                  rollProblem
-                    ? // The same sentence `sheetProblem` would throw, because the
-                      // form and the mutation are not allowed to disagree about what
-                      // is wrong with a value.
-                      `"${customRoll}" is not a roll. Try something like 1d8+WIS, 2d6 or 1d20+PROF.`
-                    : null
-                }
-              />
+              <FieldError message={rollRefusal} />
               <span className="text-muted-foreground text-xs">
                 Leave it empty if there is nothing to roll. STR, DEX, CON, INT, WIS, CHA and PROF
                 all work as terms — they are worked out from the sheet when the roll is made, so

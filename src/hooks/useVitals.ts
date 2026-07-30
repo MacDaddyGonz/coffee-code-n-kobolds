@@ -67,8 +67,12 @@ export function useVitals(code: string, dmCode: string | null): VitalsByCharacte
 export type HpActions = {
   /** Damage is negative, healing positive. Clamped server-side against max HP. */
   adjust: (characterId: Id<'characters'>, delta: number) => Promise<void>
-  /** For typing a number straight in. Same clamp. */
-  set: (characterId: Id<'characters'>, currentHp: number) => Promise<void>
+  /**
+   * Deliberately no `set`. `characters.setHp` exists and is tested, but nothing on
+   * screen types an absolute number — the controls are `−`, an amount and `+` — and
+   * a method nobody calls still costs a `useMutation` on every mount of every
+   * component that takes these actions. It goes back in when something needs it.
+   */
   /** Spend a hit die on a rest, or hand them back. */
   adjustHitDice: (characterId: Id<'characters'>, delta: number) => Promise<void>
   /** The last refusal, for the caller to toast. Cleared on the next successful call. */
@@ -96,30 +100,46 @@ export function useHpActions(args: {
 }): HpActions {
   const { code, dmCode, playerId } = args
 
-  const adjustHp = useMutation(api.characters.adjustHp).withOptimisticUpdate(
-    (store, mutationArgs) => {
-      const key = vitalsArgs(code, dmCode)
-      const current = store.getQuery(api.characters.vitals, key)
-      if (!current) return
+  const rawAdjustHp = useMutation(api.characters.adjustHp)
 
-      store.setQuery(
-        api.characters.vitals,
-        key,
-        current.map((row) => {
-          if (row.characterId !== mutationArgs.characterId) return row
-          // Only an `exact` row can be moved locally, and that is not a limitation
-          // worth working around: a band is computed from a maximum this client was
-          // never sent, so guessing which band the new value falls in would be
-          // inventing the very number the server refused to disclose. A band simply
-          // updates when the server answers, a tenth of a second later.
-          if (row.kind !== 'exact') return row
-          const next = Math.min(row.max, Math.max(0, row.current + mutationArgs.delta))
-          return { ...row, current: next }
-        }),
-      )
-    },
+  /**
+   * Built once and held, not rebuilt on every render.
+   *
+   * `useMutation` is memoised inside convex/react, but `.withOptimisticUpdate` runs
+   * `createMutation` again and hands back a *new* function — so calling it in the
+   * render body allocates a fresh mutation and a fresh closure over `code` and
+   * `dmCode` every time. This hook is called from `Board`, which re-renders on every
+   * camera commit, so that was sixty allocations a second through a pan. Worse than
+   * the garbage: the identity changed every render, which made `adjust` and its
+   * siblings unstable and defeated memoisation everywhere downstream of them.
+   * `useTokenMove` wraps its commit for exactly this reason.
+   */
+  const adjustHp = useMemo(
+    () =>
+      rawAdjustHp.withOptimisticUpdate((store, mutationArgs) => {
+        const key = vitalsArgs(code, dmCode)
+        const current = store.getQuery(api.characters.vitals, key)
+        if (!current) return
+
+        store.setQuery(
+          api.characters.vitals,
+          key,
+          current.map((row) => {
+            if (row.characterId !== mutationArgs.characterId) return row
+            // Only an `exact` row can be moved locally, and that is not a limitation
+            // worth working around: a band is computed from a maximum this client
+            // was never sent, so guessing which band the new value falls in would be
+            // inventing the very number the server refused to disclose. A band
+            // simply updates when the server answers, a tenth of a second later.
+            if (row.kind !== 'exact') return row
+            const next = Math.min(row.max, Math.max(0, row.current + mutationArgs.delta))
+            return { ...row, current: next }
+          }),
+        )
+      }),
+    [rawAdjustHp, code, dmCode],
   )
-  const setHp = useMutation(api.characters.setHp)
+
   const adjustHitDiceMutation = useMutation(api.characters.adjustHitDice)
 
   const [error, setError] = useState<string | null>(null)
@@ -160,14 +180,6 @@ export function useHpActions(args: {
     [adjustHp, caller, code, run],
   )
 
-  const set = useCallback(
-    (characterId: Id<'characters'>, currentHp: number) =>
-      run('Could not change those hit points.', () =>
-        setHp({ code, characterId, currentHp, ...caller }),
-      ),
-    [setHp, caller, code, run],
-  )
-
   const adjustHitDice = useCallback(
     (characterId: Id<'characters'>, delta: number) =>
       run('Could not change those hit dice.', () =>
@@ -176,5 +188,5 @@ export function useHpActions(args: {
     [adjustHitDiceMutation, caller, code, run],
   )
 
-  return { adjust, set, adjustHitDice, error }
+  return { adjust, adjustHitDice, error }
 }

@@ -86,7 +86,6 @@ export const MAX_NPC_NOTES_LENGTH = 1000
  * instead of leaving twenty stale `+3`s behind.
  */
 export const ROLL_MODIFIER_TOKENS = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA', 'PROF'] as const
-export type RollModifierToken = (typeof ROLL_MODIFIER_TOKENS)[number]
 
 /**
  * `NdM` followed by any number of `±term`, where a term is a small integer or one
@@ -432,6 +431,22 @@ export function clampHp(current: number, max: number): number {
   return clamp(Math.round(current), 0, ceiling)
 }
 
+/**
+ * Hit dice left to spend, normalised the same way `clampHp` normalises hit points.
+ *
+ * It exists because the arithmetic was written out four times and the fourth had
+ * already drifted — `writeSheet` capped at the sheet's complement but neither
+ * floored at zero nor rounded, so a negative or fractional value was repaired by
+ * three paths and preserved by the one that runs when somebody shortens their hit
+ * dice. That is the ordinary way this kind of duplication fails: not all at once,
+ * but in whichever copy was edited last.
+ */
+export function clampHitDice(remaining: number, count: number): number {
+  if (!Number.isFinite(remaining)) return 0
+  const ceiling = Number.isFinite(count) && count > 0 ? Math.round(count) : 0
+  return clamp(Math.round(remaining), 0, ceiling)
+}
+
 function clamp(value: number, low: number, high: number): number {
   return Math.min(high, Math.max(low, value))
 }
@@ -450,6 +465,58 @@ function clamp(value: number, low: number, high: number): number {
  * error line can ignore it and show the message.
  */
 export type SheetProblem = { path: string; message: string }
+
+/**
+ * Does this problem belong to entry `index` of `list`?
+ *
+ * Exported so that no consumer has to take `path` apart itself, and that is not
+ * tidiness — the obvious hand-written test is
+ * `path.startsWith(`${list}[${index}]`)`, which is **wrong** in a way nothing
+ * reveals until a sheet is long: `'feats[10].name'.startsWith('feats[1]')` is true,
+ * so an error on the eleventh feat also lights up the second. With
+ * `MAX_SHEET_ENTRIES` at 40, rows 1, 2 and 3 alias a third of the list between
+ * them. It was written that way once already.
+ *
+ * The trailing separator is the whole fix, and it belongs here rather than in each
+ * form, next to the code that builds the string.
+ */
+export function problemAtEntry(
+  problem: SheetProblem | null,
+  list: string,
+  index: number,
+): boolean {
+  return problem !== null && problem.path.startsWith(`${list}[${index}].`)
+}
+
+/**
+ * The message for one of these fields, or null — matching a nested path too, so
+ * asking about `hitDice` also catches `hitDice.count`.
+ *
+ * Both sheet forms wrote their own version of this and the two had already
+ * diverged: one matched nested paths and the other did not, so the first nested
+ * field added to the NPC form would silently have shown no message at all.
+ */
+export function messageAtField(
+  problem: SheetProblem | null,
+  ...fields: string[]
+): string | null {
+  if (problem === null) return null
+  const hit = fields.some(
+    (field) => problem.path === field || problem.path.startsWith(`${field}.`),
+  )
+  return hit ? problem.message : null
+}
+
+/**
+ * What is wrong with a roll, or null. The picker's custom-entry field and
+ * `entriesProblem` both ask, so they cannot disagree about what a roll is or about
+ * how to say so.
+ */
+export function rollProblem(roll: string): string | null {
+  return isValidRoll(roll)
+    ? null
+    : `"${roll}" is not a roll. Try something like 1d8+WIS, 2d6 or 1d20+PROF.`
+}
 
 /**
  * Trim, collapse and round a sheet into the form that gets stored.
@@ -655,11 +722,9 @@ function entriesProblem(
         ? null
         : textProblem(entry.catalogueKey, `${path}.catalogueKey`))
     if (text) return text
-    if (entry.roll !== null && !isValidRoll(entry.roll)) {
-      return {
-        path: `${path}.roll`,
-        message: `"${entry.roll}" is not a roll. Try something like 1d8+WIS, 2d6 or 1d20+PROF.`,
-      }
+    if (entry.roll !== null) {
+      const roll = rollProblem(entry.roll)
+      if (roll) return { path: `${path}.roll`, message: roll }
     }
     if (
       entry.level !== null &&

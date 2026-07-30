@@ -9,7 +9,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { NPC_ACTIONS } from '@convex/lib/rules'
 import type { NpcSheet, SheetProblem } from '@convex/lib/sheet'
-import { MAX_NPC_NOTES_LENGTH, SPEED_FEET } from '@convex/lib/sheet'
+import { MAX_NPC_NOTES_LENGTH, SPEED_FEET, messageAtField } from '@convex/lib/sheet'
 
 export type NpcSheetFormProps = {
   sheet: NpcSheet
@@ -38,9 +38,11 @@ export type NpcSheetFormProps = {
 export function NpcSheetForm({ sheet, problem, disabled, onChange }: NpcSheetFormProps) {
   const set = (patch: Partial<NpcSheet>) => onChange({ ...sheet, ...patch })
 
+  // The same pair the hero's form uses, and `messageAtField` is shared with it — see
+  // the note there. This form's own copy of that matcher tested for an exact path
+  // only, so the first nested field the reduced sheet ever grew would have reddened
+  // a box and printed nothing beside it.
   const marks = (path: string) => problem?.path === path
-  const messageFor = (...paths: string[]) =>
-    problem && paths.some((path) => problem.path === path) ? problem.message : null
 
   return (
     <div className="flex flex-col gap-5">
@@ -75,7 +77,7 @@ export function NpcSheetForm({ sheet, problem, disabled, onChange }: NpcSheetFor
           />
         </SheetField>
       </div>
-      <FieldError message={messageFor('armourClass', 'maxHp', 'initiativeBonus')} />
+      <FieldError message={messageAtField(problem, 'armourClass', 'maxHp', 'initiativeBonus')} />
 
       {/* A monster moves 35 feet like everybody else. Shown rather than left out, so
           the DM does not have to remember whether the reduced sheet dropped it. */}
@@ -98,7 +100,7 @@ export function NpcSheetForm({ sheet, problem, disabled, onChange }: NpcSheetFor
           onChange={(event) => set({ notes: event.target.value })}
         />
       </SheetField>
-      <FieldError message={messageFor('notes')} />
+      <FieldError message={messageAtField(problem, 'notes')} />
 
       <Separator />
 

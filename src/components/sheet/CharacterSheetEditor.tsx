@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import { FieldError } from '@/components/FieldError'
 import { HpControls } from '@/components/HpControls'
@@ -62,6 +62,39 @@ export function CharacterSheetEditor({
   const [failure, setFailure] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
+  // Normalised first and then checked, always and on both sides — the order
+  // `normaliseSheet`'s own comment insists on. A class name of "  Fire  Mage " is a
+  // value that needs tidying rather than a validation failure, and tidying it in the
+  // shared module is what stops this form's idea of "already valid" drifting away
+  // from the mutation's.
+  //
+  // Memoised because every one of these runs on every render, and a render here is a
+  // keystroke. `normaliseSheet` clones every entry on the sheet, so a hero at the
+  // forty-feat, forty-spell ceiling was cloning eighty of them and serialising the
+  // result several times over per character typed — once to validate, twice more to
+  // ask whether anything had changed. Nothing below depends on a fresh object
+  // identity, so the whole chain hangs off `draft` and recomputes exactly when the
+  // draft actually moves.
+  const normalised = useMemo(() => normaliseSheet(draft), [draft])
+  const problem = useMemo(() => sheetProblem(normalised), [normalised])
+
+  // Whether the draft would store identically to what the server last sent.
+  //
+  // Both sides are normalised before being serialised, and that is about key order
+  // rather than about values: `JSON.stringify` is only a fair comparison when one
+  // constructor wrote both objects, and resting a "you have unsaved changes"
+  // indicator on Convex having preserved the order a document was written in is not
+  // something to do. The saved side is keyed on `echoed`, which moves only when the
+  // server pushes an edit — so the expensive half of this happens a handful of times
+  // a session rather than on every keystroke alongside the draft.
+  const draftJson = useMemo(() => JSON.stringify(normalised), [normalised])
+  const savedJson = useMemo(() => JSON.stringify(normaliseSheet(echoed.sheet)), [echoed])
+
+  const sheetDirty = draftJson !== savedJson
+  const nameDirty = collapseWhitespace(name) !== echoed.name
+  const dirty = sheetDirty || nameDirty
+  const nameProblem = collapseWhitespace(name) === '' ? 'Give the character a name.' : null
+
   // Somebody else edited this character while the panel was open — the DM fixing a
   // player's armour class, most likely. Follow the server, but only when there is
   // nothing local to lose: overwriting half-typed edits with a push nobody asked for
@@ -69,30 +102,24 @@ export function CharacterSheetEditor({
   // draft stands and Save will overwrite theirs, which is the same last-write-wins
   // the rest of the app has and is the right answer for a table of colleagues.
   //
+  // `dirty` is read here rather than recomputed, and it is the right value to read:
+  // it was worked out against `echoed`, which at this point is still the *previous*
+  // payload, so it answers "has anything been typed since that one arrived" — which
+  // is exactly the question. It also means the comparison is the one already paid for
+  // above rather than a second pass over the sheet.
+  //
   // Adjusting state during render is React's documented alternative to an effect for
   // deriving state from a prop, and it re-renders before anything reaches the screen
-  // rather than showing the stale value for a frame.
+  // rather than showing the stale value for a frame. The locals in this pass keep the
+  // values they were given, which is why this sits after them and not before: React
+  // re-runs the whole function with the new state before anything is committed.
   if (echoed !== saved) {
-    const untouched = sameSheet(draft, echoed.sheet) && collapseWhitespace(name) === echoed.name
     setEchoed(saved)
-    if (untouched) {
+    if (!dirty) {
       setDraft(saved.sheet)
       setName(saved.name)
     }
   }
-
-  // Normalised first and then checked, always and on both sides — the order
-  // `normaliseSheet`'s own comment insists on. A class name of "  Fire  Mage " is a
-  // value that needs tidying rather than a validation failure, and tidying it in the
-  // shared module is what stops this form's idea of "already valid" drifting away
-  // from the mutation's.
-  const normalised = normaliseSheet(draft)
-  const problem = sheetProblem(normalised)
-
-  const nameProblem = collapseWhitespace(name) === '' ? 'Give the character a name.' : null
-  const sheetDirty = !sameSheet(draft, echoed.sheet)
-  const nameDirty = collapseWhitespace(name) !== echoed.name
-  const dirty = sheetDirty || nameDirty
 
   const save = async () => {
     if (problem || nameProblem || !dirty || saving) return
@@ -216,17 +243,4 @@ export function CharacterSheetEditor({
       </SheetFooter>
     </>
   )
-}
-
-/**
- * Whether two sheets would store identically.
- *
- * Both sides are put through `normaliseSheet` before comparing, so the keys are in
- * the order that one constructor writes them and `JSON.stringify` is a fair test —
- * comparing a stored document against a draft directly would depend on Convex having
- * preserved key order, which is not something to rest a "you have unsaved changes"
- * indicator on.
- */
-function sameSheet(a: CharacterSheet, b: CharacterSheet): boolean {
-  return JSON.stringify(normaliseSheet(a)) === JSON.stringify(normaliseSheet(b))
 }

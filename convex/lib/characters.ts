@@ -26,7 +26,14 @@ import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import { MAX_CHARACTERS_PER_GAME } from './games'
 import type { CharacterSheet } from './sheet'
-import { characterSheet, clampHp, healthBand, sheetValidator } from './sheet'
+import {
+  characterKindValidator,
+  characterSheet,
+  clampHitDice,
+  clampHp,
+  healthBand,
+  sheetValidator,
+} from './sheet'
 
 /**
  * Deliberately indistinguishable from "no such character" and "character in
@@ -79,7 +86,10 @@ export function maySeeCharacter(character: Doc<'characters'>, isDm: boolean): bo
 export const publicCharacterValidator = v.object({
   _id: v.id('characters'),
   name: v.string(),
-  kind: v.union(v.literal('pc'), v.literal('npc')),
+  // The union spelled once, in lib/sheet.ts, rather than re-typed here. It is the
+  // field that decides what a caller is allowed to know a character even is, and
+  // two copies of it is one place for a third member to be added to only one.
+  kind: characterKindValidator,
   claimedByPlayerId: v.union(v.id('players'), v.null()),
   claimedByName: v.union(v.string(), v.null()),
   createdAt: v.number(),
@@ -350,15 +360,21 @@ export async function visibleVitals(
   isDm: boolean,
   visibleNpcIds: Set<Id<'characters'>>,
 ): Promise<PublicVitals[]> {
-  const characters = await allCharacters(ctx, gameId)
-
-  // One bounded range read rather than a point get per character — this is what
-  // `gameId` is on the vitals row for. A character holds at most one row, so the
-  // per-game character bound is the right one.
-  const rows = await ctx.db
-    .query('characterVitals')
-    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
-    .take(MAX_CHARACTERS_PER_GAME)
+  // Concurrent, because neither read depends on the other. This is the health-bar
+  // subscription and it re-runs on every point of damage, for each distinct
+  // argument set — the DM's and the players' are different cache entries — so one
+  // avoidable round trip here is one on every hit at the table.
+  //
+  // The vitals side is a bounded range read rather than a point get per character:
+  // that is what `gameId` is on the row for. A character holds at most one row, so
+  // the per-game character bound is the right one for both.
+  const [characters, rows] = await Promise.all([
+    allCharacters(ctx, gameId),
+    ctx.db
+      .query('characterVitals')
+      .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+      .take(MAX_CHARACTERS_PER_GAME),
+  ])
   const byCharacter = new Map(rows.map((row) => [row.characterId, row]))
 
   const out: PublicVitals[] = []
@@ -381,21 +397,18 @@ export async function visibleVitals(
         band: healthBand(current, sheet.maxHp),
       })
     } else {
-      const hitDice = sheet.kind === 'pc' ? sheet.hitDice.count : null
+      const isPc = sheet.kind === 'pc'
       out.push({
         kind: 'exact',
         characterId: character._id,
         current,
         max: sheet.maxHp,
-        hitDiceCount: hitDice,
-        // Absent means none have been spent, for the same reason a missing row
-        // means undamaged: the row is written with every character created from
-        // this milestone on, so the fallback only ever reaches a Milestone 1
-        // character.
-        hitDiceRemaining:
-          hitDice === null
-            ? null
-            : Math.min(Math.max(0, Math.round(vitals?.hitDiceRemaining ?? hitDice)), hitDice),
+        hitDiceCount: isPc ? sheet.hitDice.count : null,
+        // Through the same helper the mutations use, so the number a player reads
+        // off the panel and the number a spend starts from cannot disagree. An
+        // absent value means none have been spent, for the same reason a missing
+        // row means undamaged.
+        hitDiceRemaining: isPc ? hitDiceRemainingOf(vitals, sheet) : null,
       })
     }
   }
@@ -403,83 +416,106 @@ export async function visibleVitals(
   return out
 }
 
-/** Reads current hit points for one character. For the mutations that change them. */
-export async function readCurrentHp(
-  ctx: QueryCtx,
-  character: Doc<'characters'>,
-): Promise<number> {
-  return currentHpOf(await vitalsFor(ctx, character._id), characterSheet(character))
+/** Hit dice left to spend, defaulting to the full complement on a sheet that has them. */
+export function hitDiceRemainingOf(
+  vitals: Doc<'characterVitals'> | null,
+  sheet: CharacterSheet,
+): number {
+  if (sheet.kind !== 'pc') return 0
+  return clampHitDice(vitals?.hitDiceRemaining ?? sheet.hitDice.count, sheet.hitDice.count)
 }
 
 /**
- * Writes current hit points, clamped to the sheet's maximum. Upserts, because a
- * Milestone 1 character has no row until something first damages or heals it.
+ * Insert or update a character's vitals row. **The only writer**, and the only
+ * place that knows what a fresh one looks like.
  *
- * Returns the value actually stored, so a caller can report the clamped number
- * rather than the one it asked for.
+ * It is one function because it was briefly two, and the two had already drifted:
+ * writing hit points seeded a new row without hit dice, writing hit dice seeded one
+ * at full health, and neither had chosen to differ from the other. A table this
+ * small should not have two ideas of what a new row is.
+ *
+ * The row is written with every character created from this milestone on, so the
+ * insert branch is reached only by a Milestone 1 character taking its first damage
+ * — which is also why the defaults have to be the undamaged ones rather than
+ * anything derived from the caller's patch.
  */
-export async function writeCurrentHp(
+async function upsertVitals(
   ctx: MutationCtx,
   character: Doc<'characters'>,
-  currentHp: number,
-): Promise<number> {
-  const sheet = characterSheet(character)
-  const next = clampHp(currentHp, sheet.maxHp)
-
+  patch: { currentHp?: number; hitDiceRemaining?: number },
+): Promise<void> {
   const existing = await vitalsFor(ctx, character._id)
   if (existing) {
-    await ctx.db.patch('characterVitals', existing._id, { currentHp: next })
+    await ctx.db.patch('characterVitals', existing._id, patch)
+    return
+  }
+
+  const sheet = characterSheet(character)
+  await ctx.db.insert('characterVitals', {
+    gameId: character.gameId,
+    characterId: character._id,
+    currentHp: patch.currentHp ?? sheet.maxHp,
+    // Spread, never `hitDiceRemaining: undefined` — `undefined` is not a Convex
+    // value, so naming the field and giving it that is a different write from
+    // omitting it. See the note on `insertCharacter`.
+    ...(sheet.kind === 'pc'
+      ? { hitDiceRemaining: patch.hitDiceRemaining ?? sheet.hitDice.count }
+      : {}),
+  })
+}
+
+/**
+ * Apply a change to current hit points and return what was actually stored.
+ *
+ * `change` is given the value now and returns the value wanted, which is what lets
+ * a delta and an absolute set share one path — and, more usefully, lets both read
+ * and write the row **once**. Reading through a separate `readCurrentHp` and then
+ * writing through a separate `writeCurrentHp` cost two index lookups of the same
+ * document on the mutation a DM fires most often during a fight, and widened the
+ * transaction's read set for nothing.
+ *
+ * The clamp is applied here rather than trusted from the caller, so no client can
+ * heal something past full or beat it below zero.
+ */
+export async function changeCurrentHp(
+  ctx: MutationCtx,
+  character: Doc<'characters'>,
+  change: (current: number) => number,
+): Promise<number> {
+  const sheet = characterSheet(character)
+  const vitals = await vitalsFor(ctx, character._id)
+
+  const next = clampHp(change(currentHpOf(vitals, sheet)), sheet.maxHp)
+  if (vitals) {
+    await ctx.db.patch('characterVitals', vitals._id, { currentHp: next })
   } else {
-    await ctx.db.insert('characterVitals', {
-      gameId: character.gameId,
-      characterId: character._id,
-      currentHp: next,
-    })
+    await upsertVitals(ctx, character, { currentHp: next })
   }
   return next
 }
 
-/** Hit dice left to spend, defaulting to the full complement on a sheet that has them. */
-export async function readHitDiceRemaining(
-  ctx: QueryCtx,
+/**
+ * The same for hit dice. A monster has none, so there is nothing to write and the
+ * answer is zero — returning early rather than clamping to a ceiling of zero and
+ * patching anyway, because schema.ts says the field is player characters only and a
+ * write that put `hitDiceRemaining: 0` on every NPC the DM ever prodded would make
+ * that comment quietly false. A field documented as absent should be absent.
+ */
+export async function changeHitDiceRemaining(
+  ctx: MutationCtx,
   character: Doc<'characters'>,
+  change: (remaining: number) => number,
 ): Promise<number> {
   const sheet = characterSheet(character)
   if (sheet.kind !== 'pc') return 0
 
   const vitals = await vitalsFor(ctx, character._id)
-  const stored = vitals?.hitDiceRemaining
-  if (stored === undefined) return sheet.hitDice.count
-  return Math.min(Math.max(0, Math.round(stored)), sheet.hitDice.count)
-}
+  const next = clampHitDice(change(hitDiceRemainingOf(vitals, sheet)), sheet.hitDice.count)
 
-export async function writeHitDiceRemaining(
-  ctx: MutationCtx,
-  character: Doc<'characters'>,
-  remaining: number,
-): Promise<number> {
-  const sheet = characterSheet(character)
-
-  // A monster has no hit dice, so there is nothing to write and the answer is zero.
-  // Returning early rather than clamping to a ceiling of zero and patching anyway:
-  // schema.ts says this field is player characters only, and a write that stores a
-  // `hitDiceRemaining: 0` on every NPC the DM ever prods makes that comment false —
-  // quietly, since nothing reads it back. A field documented as absent should be
-  // absent.
-  if (sheet.kind !== 'pc') return 0
-
-  const next = Math.min(Math.max(0, Math.round(remaining)), sheet.hitDice.count)
-
-  const existing = await vitalsFor(ctx, character._id)
-  if (existing) {
-    await ctx.db.patch('characterVitals', existing._id, { hitDiceRemaining: next })
+  if (vitals) {
+    await ctx.db.patch('characterVitals', vitals._id, { hitDiceRemaining: next })
   } else {
-    await ctx.db.insert('characterVitals', {
-      gameId: character.gameId,
-      characterId: character._id,
-      currentHp: sheet.maxHp,
-      hitDiceRemaining: next,
-    })
+    await upsertVitals(ctx, character, { hitDiceRemaining: next })
   }
   return next
 }
@@ -545,8 +581,14 @@ export async function writeSheet(
   const patch: { currentHp: number; hitDiceRemaining?: number } = {
     currentHp: clampHp(vitals.currentHp, sheet.maxHp),
   }
+  // Through `clampHitDice`, like every other path. This branch used to cap at the
+  // new complement without flooring at zero or rounding — so the one write whose
+  // entire job is re-normalising a row against a changed sheet was the one that
+  // would preserve a value the other three repaired. That is the ordinary way
+  // copied arithmetic fails: not everywhere at once, but in whichever copy was
+  // edited last.
   if (sheet.kind === 'pc' && vitals.hitDiceRemaining !== undefined) {
-    patch.hitDiceRemaining = Math.min(vitals.hitDiceRemaining, sheet.hitDice.count)
+    patch.hitDiceRemaining = clampHitDice(vitals.hitDiceRemaining, sheet.hitDice.count)
   }
   await ctx.db.patch('characterVitals', vitals._id, patch)
 }

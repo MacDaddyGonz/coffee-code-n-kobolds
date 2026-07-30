@@ -20,6 +20,7 @@ import {
   SPEED_FEET,
   abilityModifier,
   initiativeBonusOf,
+  messageAtField,
   proficiencyBonus,
   savingThrowBonus,
 } from '@convex/lib/sheet'
@@ -55,13 +56,16 @@ export function PcSheetForm({ sheet, problem, disabled, onChange }: PcSheetFormP
   // `sheetProblem` returns the *first* problem and names it with a path, so the form
   // marks one field at a time and prints one sentence — the server's own sentence,
   // since the mutation calls the same function to decide whether to throw. `marks`
-  // reddens the box; `messageFor` puts the wording beside the group it belongs to,
-  // rather than at the bottom of a column the offending field has scrolled off.
+  // reddens the box; `messageAtField` puts the wording beside the group it belongs
+  // to, rather than at the bottom of a column the offending field has scrolled off.
+  //
+  // The two match differently on purpose. `messageAtField` catches a nested path, so
+  // asking about `hitDice` also prints what is wrong with `hitDice.count`; `marks`
+  // stays exact, because the group's message goes under the whole group but only the
+  // one control that is actually wrong should turn red. Both forms used to carry
+  // their own copy of the message matcher and the two had already drifted apart,
+  // which is why it now lives beside `sheetProblem` and not here.
   const marks = (path: string) => problem?.path === path
-  const messageFor = (...paths: string[]) =>
-    problem && paths.some((path) => problem.path === path || problem.path.startsWith(`${path}.`))
-      ? problem.message
-      : null
 
   const proficiency = proficiencyBonus(sheet.level)
 
@@ -90,7 +94,7 @@ export function PcSheetForm({ sheet, problem, disabled, onChange }: PcSheetFormP
           />
         </SheetField>
       </div>
-      <FieldError message={messageFor('level', 'className')} />
+      <FieldError message={messageAtField(problem, 'level', 'className')} />
 
       {/* Read-only, all three, and each for its own reason. Proficiency and
           initiative are worked out from what is above; speed is a constant, because
@@ -131,7 +135,7 @@ export function PcSheetForm({ sheet, problem, disabled, onChange }: PcSheetFormP
           ))}
         </div>
 
-        <FieldError message={messageFor('abilities')} />
+        <FieldError message={messageAtField(problem, 'abilities')} />
       </section>
 
       <Separator />
@@ -205,7 +209,7 @@ export function PcSheetForm({ sheet, problem, disabled, onChange }: PcSheetFormP
           </NativeSelect>
         </div>
       </SheetField>
-      <FieldError message={messageFor('armourClass', 'maxHp', 'hitDice')} />
+      <FieldError message={messageAtField(problem, 'armourClass', 'maxHp', 'hitDice')} />
 
       <Separator />
 

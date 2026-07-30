@@ -195,6 +195,28 @@ grammar while there is nothing to migrate costs one regular expression.
   why `rules.test.ts` validates every catalogue roll against `isValidRoll` itself rather than
   against a copy of the pattern.
 
+### Two things Milestone 5 has to change here, named so it does not rediscover them
+
+Neither is a defect now. Both are places where this milestone's shape is correct only
+because Milestone 5 has not landed yet, and both were found by reviewing the finished
+work rather than by writing it.
+
+- **The crossing between the two choke points is scene-blind.** `visibleCharacterIds`
+  takes `(gameId, isDm)`, and fog of war hides tokens by rectangle on a *scene* — a
+  question `maySee` cannot answer from `isDm` alone, and one `characters.vitals` has
+  no `sceneId` to pass down. Fog and this seam are the same change: the query gains a
+  scene argument the way `board.positions` already has one, and `visibleCharacterIds`
+  scopes to placements on it. That also closes the limit recorded in `vitals.test.ts`
+  — a player-layer NPC pre-placed on a map the party has not reached is in their
+  vitals payload today, because `board.tokens` is game-scoped and this inherits it.
+- **`canMove` and `canEditHp` re-walk the server's rule in the browser.** They are
+  honest affordances and say so, but they derive control by walking token → character
+  → my character, which Milestone 5's many-to-many relation makes *structurally*
+  wrong rather than merely stale: a pet the party shares has no claimed character at
+  all. The fix is to stop deriving it and ship it — a controllers field on the token
+  payload reduces both rules to `isDm || controllers.includes(playerId)`, which cannot
+  drift because it reads the same fact the server refuses on.
+
 ## Alternatives considered
 
 ### A percentage instead of four bands — rejected
