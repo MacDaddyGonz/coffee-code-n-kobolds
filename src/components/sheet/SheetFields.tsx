@@ -55,8 +55,13 @@ export function SheetField({
  * Rendered as text and not as a disabled input, deliberately. A greyed-out box reads
  * as "you may not edit this yet", which invites somebody to go looking for the
  * permission that would unlock it; there is none, because there is nothing stored to
- * change. `abilityModifier`, `savingThrowBonus` and `SPEED_FEET` in convex/lib/sheet.ts
- * are the definitions, and this only prints what they return.
+ * change. `abilityModifier`, `savingThrowBonus`, `speedOf` and `passivePerception` in
+ * convex/lib/ are the definitions, and this only prints what they return.
+ *
+ * It also draws a number that *is* stored but that this reader has no way to change —
+ * a library character's armour class on a player's screen. The rendering argument
+ * carries across unchanged: there is no control to grey out, because for that reader
+ * there is no control. `AbilityTable` makes the same choice one field at a time.
  */
 export function DerivedStat({
   label,

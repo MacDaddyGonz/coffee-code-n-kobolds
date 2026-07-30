@@ -1,28 +1,18 @@
 import { FieldError } from '@/components/FieldError'
+import { AbilityTable } from '@/components/sheet/AbilityTable'
+import { DerivedStats } from '@/components/sheet/DerivedStats'
 import { SheetEntryList } from '@/components/sheet/SheetEntryList'
-import {
-  DerivedStat,
-  NumberInput,
-  SheetCheckbox,
-  SheetField,
-  signed,
-} from '@/components/sheet/SheetFields'
+import { SkillList } from '@/components/sheet/SkillList'
+import { NumberInput, SheetField } from '@/components/sheet/SheetFields'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Separator } from '@/components/ui/separator'
 import { FEATS, SPELLS } from '@convex/lib/rules'
-import type { AbilityKey, HitDice, PcSheet, SheetProblem } from '@convex/lib/sheet'
+import type { HitDice, PcSheet, SheetProblem } from '@convex/lib/sheet'
 import {
-  ABILITY_KEYS,
-  ABILITY_NAMES,
   HIT_DIE_FACES,
   MAX_CLASS_NAME_LENGTH,
-  SPEED_FEET,
-  abilityModifier,
-  initiativeBonusOf,
   messageAtField,
-  proficiencyBonus,
-  savingThrowBonus,
 } from '@convex/lib/sheet'
 
 export type PcSheetFormProps = {
@@ -45,10 +35,20 @@ export type PcSheetFormProps = {
  * would drift. The same goes for the bounds — the form does not know that a level
  * stops at 20, it asks `sheetProblem`.
  *
- * What is *not* here is as deliberate as what is. No racial abilities, no background
- * skills or proficiencies, no inventory, no conditions: requirements.md excludes all
- * four by design rather than by omission, and a field for one of them here is how
- * the reduced rule set stops being reduced.
+ * **This is now the second way to make a character rather than the only one.** A
+ * character built from the library gets `PresetSheetView` instead, and everything on it
+ * is read live rather than typed. What this form is still for is the hand-built case
+ * the library cannot cover — a hero somebody has brought from another table, or an
+ * old character made before the library existed — so it stays a form, and the builder
+ * sits above it offering the other route.
+ *
+ * What is *not* here is as deliberate as what is. No inventory and no conditions:
+ * requirements.md excludes both by design rather than by omission, and a field for one
+ * of them here is how the reduced rule set stops being reduced. Skills and racial
+ * abilities *were* on that list and were taken off it for Milestone 4 (ADR 0006), which
+ * is why thirteen skills now appear below and a race does not — a race is a selection
+ * made in the builder, and there is no coherent thing for it to mean on a sheet whose
+ * numbers were all typed in by hand.
  */
 export function PcSheetForm({ sheet, problem, disabled, onChange }: PcSheetFormProps) {
   const set = (patch: Partial<PcSheet>) => onChange({ ...sheet, ...patch })
@@ -66,8 +66,6 @@ export function PcSheetForm({ sheet, problem, disabled, onChange }: PcSheetFormP
   // their own copy of the message matcher and the two had already drifted apart,
   // which is why it now lives beside `sheetProblem` and not here.
   const marks = (path: string) => problem?.path === path
-
-  const proficiency = proficiencyBonus(sheet.level)
 
   return (
     <div className="flex flex-col gap-5">
@@ -96,47 +94,28 @@ export function PcSheetForm({ sheet, problem, disabled, onChange }: PcSheetFormP
       </div>
       <FieldError message={messageAtField(problem, 'level', 'className')} />
 
-      {/* Read-only, all three, and each for its own reason. Proficiency and
-          initiative are worked out from what is above; speed is a constant, because
-          every character in D&D Lite moves 35 feet and a box to change it in would
-          invite a character the rules say cannot exist. See `SPEED_FEET`. */}
-      <div className="bg-muted/40 grid grid-cols-3 gap-3 rounded-lg border p-3">
-        <DerivedStat label="Proficiency" value={signed(proficiency)} />
-        <DerivedStat label="Initiative" value={signed(initiativeBonusOf(sheet))} hint="Dexterity" />
-        <DerivedStat label="Speed" value={`${SPEED_FEET} ft`} hint="everyone, always" />
-      </div>
+      {/* Shared with the panel a library character gets, so a derived number cannot be
+          worked out one way here and another way there — and so that Passive Perception,
+          which arrived with the skills below, could not land on only one of them. */}
+      <DerivedStats sheet={sheet} />
 
-      <section className="flex flex-col gap-2">
-        <h3 className="font-heading text-sm font-medium">Abilities and saving throws</h3>
+      <AbilityTable
+        sheet={sheet}
+        problem={problem}
+        disabled={disabled}
+        onScores={(abilities) => set({ abilities })}
+        onSaves={(saveProficiencies) => set({ saveProficiencies })}
+      />
 
-        <div className="grid grid-cols-[1fr_4.5rem_2.5rem_2.5rem_3rem] items-center gap-x-2 gap-y-1">
-          <span className="text-muted-foreground text-xs font-medium">Ability</span>
-          <span className="text-muted-foreground text-center text-xs font-medium">Score</span>
-          <span className="text-muted-foreground text-center text-xs font-medium">Mod</span>
-          <span className="text-muted-foreground text-center text-xs font-medium">Save</span>
-          <span className="text-muted-foreground text-center text-xs font-medium">Bonus</span>
-
-          {ABILITY_KEYS.map((ability) => (
-            <AbilityRow
-              key={ability}
-              ability={ability}
-              sheet={sheet}
-              invalid={marks(`abilities.${ability}`)}
-              disabled={disabled}
-              onScore={(score) =>
-                set({ abilities: { ...sheet.abilities, [ability]: score } })
-              }
-              onProficient={(proficient) =>
-                set({
-                  saveProficiencies: { ...sheet.saveProficiencies, [ability]: proficient },
-                })
-              }
-            />
-          ))}
-        </div>
-
-        <FieldError message={messageAtField(problem, 'abilities')} />
-      </section>
+      {/* Ticked by hand, exactly like the saves, and drawn to match them because a
+          skill is a saving throw with a different name on it. A library character's
+          come from their class and are printed instead. */}
+      <SkillList
+        sheet={sheet}
+        disabled={disabled}
+        note="Tick whatever this character is trained in."
+        onChange={(skillProficiencies) => set({ skillProficiencies })}
+      />
 
       <Separator />
 
@@ -237,59 +216,5 @@ export function PcSheetForm({ sheet, problem, disabled, onChange }: PcSheetFormP
         onChange={(spells) => set({ spells })}
       />
     </div>
-  )
-}
-
-/**
- * One ability: its score, the modifier that falls out of it, whether the character
- * is proficient in its saving throw, and what that throw comes to.
- *
- * The modifier and the bonus are shown side by side rather than one being inferred
- * from the other, because they differ by the proficiency bonus exactly when the box
- * is ticked — and seeing both is how somebody checks they ticked the right ones.
- */
-function AbilityRow({
-  ability,
-  sheet,
-  invalid,
-  disabled,
-  onScore,
-  onProficient,
-}: {
-  ability: AbilityKey
-  sheet: PcSheet
-  invalid?: boolean
-  disabled?: boolean
-  onScore: (score: number) => void
-  onProficient: (proficient: boolean) => void
-}) {
-  const score = sheet.abilities[ability]
-
-  return (
-    <>
-      <label htmlFor={`ability-${ability}`} className="truncate text-sm">
-        {ABILITY_NAMES[ability]}
-      </label>
-      <NumberInput
-        id={`ability-${ability}`}
-        value={score}
-        invalid={invalid}
-        disabled={disabled}
-        onChange={onScore}
-      />
-      <span className="text-center text-sm tabular-nums">{signed(abilityModifier(score))}</span>
-      <span className="flex justify-center">
-        <SheetCheckbox
-          id={`save-${ability}`}
-          label={`Proficient in ${ABILITY_NAMES[ability]} saving throws`}
-          checked={sheet.saveProficiencies[ability]}
-          disabled={disabled}
-          onChange={onProficient}
-        />
-      </span>
-      <span className="text-center text-sm font-medium tabular-nums">
-        {signed(savingThrowBonus(sheet, ability))}
-      </span>
-    </>
   )
 }

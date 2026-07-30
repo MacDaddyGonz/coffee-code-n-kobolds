@@ -75,6 +75,15 @@ export type HpActions = {
    */
   /** Spend a hit die on a rest, or hand them back. */
   adjustHitDice: (characterId: Id<'characters'>, delta: number) => Promise<void>
+  /**
+   * A long rest: hit points to full, every hit die back, every once-per-rest ability
+   * unspent. All three in one call because they are one thing that happens at the
+   * table, and a rest that restored two of the three would be a rules bug somebody has
+   * to notice.
+   */
+  longRest: (characterId: Id<'characters'>) => Promise<void>
+  /** Mark a once-per-long-rest ability spent, or hand it back if it was a misclick. */
+  setPerRest: (characterId: Id<'characters'>, key: string, spent: boolean) => Promise<void>
   /** The last refusal, for the caller to toast. Cleared on the next successful call. */
   error: string | null
 }
@@ -141,6 +150,15 @@ export function useHpActions(args: {
   )
 
   const adjustHitDiceMutation = useMutation(api.characters.adjustHitDice)
+  // Neither of these gets an optimistic update, and the reason is the same for both:
+  // what they move is a whole row rather than one number a client can predict. A long
+  // rest sets hit points to a maximum this client holds only for a character it can see
+  // exactly, and clears a list; a per-rest toggle returns the resulting set. Guessing
+  // either would be inventing a value to be corrected a tenth of a second later, which
+  // is a flicker rather than a saving — the reason `adjustHp` earns one is that a
+  // health bar moves on every hit of every round.
+  const longRestMutation = useMutation(api.characters.longRest)
+  const setPerRestMutation = useMutation(api.characters.setPerRest)
 
   const [error, setError] = useState<string | null>(null)
 
@@ -188,5 +206,19 @@ export function useHpActions(args: {
     [adjustHitDiceMutation, caller, code, run],
   )
 
-  return { adjust, adjustHitDice, error }
+  const longRest = useCallback(
+    (characterId: Id<'characters'>) =>
+      run('Could not take that rest.', () => longRestMutation({ code, characterId, ...caller })),
+    [longRestMutation, caller, code, run],
+  )
+
+  const setPerRest = useCallback(
+    (characterId: Id<'characters'>, key: string, spent: boolean) =>
+      run('Could not change that ability.', () =>
+        setPerRestMutation({ code, characterId, key, spent, ...caller }),
+      ),
+    [setPerRestMutation, caller, code, run],
+  )
+
+  return { adjust, adjustHitDice, longRest, setPerRest, error }
 }

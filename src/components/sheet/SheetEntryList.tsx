@@ -24,7 +24,16 @@ export type SheetEntryListProps = {
   /** The whole sheet's first problem, or null. Only the one that names a row is shown. */
   problem: SheetProblem | null
   disabled?: boolean
-  onChange: (entries: SheetEntry[]) => void
+  /**
+   * Show the list and nothing that changes it: no picker, no bin, and the roll as text.
+   *
+   * This is what a character built from the library gets. Their feats and spells are
+   * read live out of `lib/library/` and reassembled on every level-up, so a box to edit
+   * one in would be a box whose contents the next level silently discards — the
+   * override that *does* survive is `extraFeats`, which is the DM's and is not this.
+   */
+  readOnly?: boolean
+  onChange?: (entries: SheetEntry[]) => void
 }
 
 /**
@@ -49,6 +58,7 @@ export function SheetEntryList({
   path,
   problem,
   disabled,
+  readOnly,
   onChange,
 }: SheetEntryListProps) {
   const taken = new Set(
@@ -56,9 +66,9 @@ export function SheetEntryList({
   )
 
   const replace = (index: number, entry: SheetEntry) =>
-    onChange(entries.map((existing, at) => (at === index ? entry : existing)))
+    onChange?.(entries.map((existing, at) => (at === index ? entry : existing)))
 
-  const remove = (index: number) => onChange(entries.filter((_, at) => at !== index))
+  const remove = (index: number) => onChange?.(entries.filter((_, at) => at !== index))
 
   return (
     <section className="flex flex-col gap-2">
@@ -67,19 +77,24 @@ export function SheetEntryList({
           <h3 className="font-heading text-sm font-medium">
             {title}{' '}
             <span className="text-muted-foreground font-normal tabular-nums">
-              {entries.length}/{MAX_SHEET_ENTRIES}
+              {/* The ceiling is only worth showing to somebody who can add to the
+                  list. On a library character it is a limit on a number nobody here
+                  controls, which reads as a warning about nothing. */}
+              {readOnly ? entries.length : `${entries.length}/${MAX_SHEET_ENTRIES}`}
             </span>
           </h3>
           <p className="text-muted-foreground text-xs">{description}</p>
         </div>
-        <SheetEntryPicker
-          noun={noun}
-          catalogue={catalogue}
-          taken={taken}
-          full={entries.length >= MAX_SHEET_ENTRIES}
-          disabled={disabled}
-          onAdd={(entry) => onChange([...entries, entry])}
-        />
+        {readOnly ? null : (
+          <SheetEntryPicker
+            noun={noun}
+            catalogue={catalogue}
+            taken={taken}
+            full={entries.length >= MAX_SHEET_ENTRIES}
+            disabled={disabled}
+            onAdd={(entry) => onChange?.([...entries, entry])}
+          />
+        )}
       </header>
 
       {/* The list-level problem — too many entries — as opposed to one belonging to
@@ -113,7 +128,10 @@ export function SheetEntryList({
                       {/* What `catalogueKey` is actually for. It is a breadcrumb
                           recording where the copy came from, not a pointer — see the
                           header of convex/lib/rules.ts. */}
-                      {entry.catalogueKey === null ? (
+                      {/* Meaningless on a library character: every line there arrived
+                          from somewhere other than the picker, so the badge would sit
+                          on all of them and distinguish nothing. */}
+                      {entry.catalogueKey === null && !readOnly ? (
                         <Badge variant="outline">yours</Badge>
                       ) : null}
                     </span>
@@ -124,16 +142,18 @@ export function SheetEntryList({
                     ) : null}
                   </div>
 
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    disabled={disabled}
-                    aria-label={`Remove ${entry.name}`}
-                    onClick={() => remove(index)}
-                  >
-                    <Trash2 />
-                  </Button>
+                  {readOnly ? null : (
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      disabled={disabled}
+                      aria-label={`Remove ${entry.name}`}
+                      onClick={() => remove(index)}
+                    >
+                      <Trash2 />
+                    </Button>
+                  )}
                 </div>
 
                 {/* The one part of a copied entry that stays editable, and the
@@ -143,30 +163,39 @@ export function SheetEntryList({
                     ability token, so neither can be written down once in rules.ts.
                     Without a box to change the dice in, those entries would be
                     instructions nobody could follow. */}
-                <div className="flex items-center gap-2">
-                  <label
-                    htmlFor={`roll-${entry.id}`}
-                    className="text-muted-foreground text-xs font-medium"
-                  >
-                    Roll
-                  </label>
-                  <Input
-                    id={`roll-${entry.id}`}
-                    value={roll ?? ''}
-                    // Normalised on every keystroke, which `normaliseRoll` is
-                    // written for — it cannot throw, and it is what makes a typed
-                    // `2d6 + wis` and a picked `2d6+WIS` byte-identical.
-                    onChange={(event) => {
-                      const next = normaliseRoll(event.target.value)
-                      replace(index, { ...entry, roll: next === '' ? null : next })
-                    }}
-                    aria-invalid={rollProblem || undefined}
-                    disabled={disabled}
-                    placeholder="nothing to roll"
-                    className="h-7 max-w-40 font-mono"
-                    autoComplete="off"
-                  />
-                </div>
+                {readOnly ? (
+                  roll === null ? null : (
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground text-xs font-medium">Roll</span>
+                      <span className="font-mono text-sm">{roll}</span>
+                    </div>
+                  )
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <label
+                      htmlFor={`roll-${entry.id}`}
+                      className="text-muted-foreground text-xs font-medium"
+                    >
+                      Roll
+                    </label>
+                    <Input
+                      id={`roll-${entry.id}`}
+                      value={roll ?? ''}
+                      // Normalised on every keystroke, which `normaliseRoll` is
+                      // written for — it cannot throw, and it is what makes a typed
+                      // `2d6 + wis` and a picked `2d6+WIS` byte-identical.
+                      onChange={(event) => {
+                        const next = normaliseRoll(event.target.value)
+                        replace(index, { ...entry, roll: next === '' ? null : next })
+                      }}
+                      aria-invalid={rollProblem || undefined}
+                      disabled={disabled}
+                      placeholder="nothing to roll"
+                      className="h-7 max-w-40 font-mono"
+                      autoComplete="off"
+                    />
+                  </div>
+                )}
 
                 <FieldError message={rowProblem?.message} />
               </li>

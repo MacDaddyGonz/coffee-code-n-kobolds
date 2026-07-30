@@ -79,10 +79,13 @@ export function NpcSheetForm({ sheet, problem, disabled, onChange }: NpcSheetFor
       </div>
       <FieldError message={messageAtField(problem, 'armourClass', 'maxHp', 'initiativeBonus')} />
 
-      {/* A monster moves 35 feet like everybody else. Shown rather than left out, so
-          the DM does not have to remember whether the reduced sheet dropped it. */}
+      {/* Shown rather than left out, so the DM does not have to remember whether the
+          reduced sheet dropped it. It is still a constant here where it is no longer one
+          on a hero's sheet: `speed` is a field a *race* can move (ADR 0006), and the
+          reduced sheet has no race — a monster that needs to be faster gets an action
+          saying so, which is the same escape hatch `initiativeBonus` relies on. */}
       <div className="bg-muted/40 rounded-lg border p-3">
-        <DerivedStat label="Speed" value={`${SPEED_FEET} ft`} hint="everyone, always" />
+        <DerivedStat label="Speed" value={`${SPEED_FEET} ft`} hint="the usual" />
       </div>
 
       <SheetField

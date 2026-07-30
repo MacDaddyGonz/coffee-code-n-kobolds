@@ -34,7 +34,7 @@ export function CharacterSheetView({
   playerId,
   dmCode,
 }: CharacterSheetViewProps) {
-  const { sheet, loading, save, rename } = useCharacterSheet({
+  const { sheet, loading, save, rename, setLevel, setLocked } = useCharacterSheet({
     code,
     characterId,
     playerId,
@@ -50,6 +50,15 @@ export function CharacterSheetView({
   useEffect(() => {
     if (hp.error) toast.error(hp.error)
   }, [hp.error])
+
+  // The level and the lock report the same way, and for the same reason the hit-point
+  // controls do: both are written the instant a button is pressed, so a refusal has no
+  // half-filled form left on screen to attach a message to. The panel's own footer is
+  // for the things that wait for Save.
+  const announce = (refusal: Promise<string | null>) =>
+    void refusal.then((message) => {
+      if (message) toast.error(message)
+    })
 
   if (loading) {
     return (
@@ -84,6 +93,10 @@ export function CharacterSheetView({
       key={sheet._id}
       saved={sheet}
       vitals={vitals.of(characterId)}
+      // Whether this browser holds the DM code, which decides what the panel offers and
+      // nothing more — every mutation behind those controls re-verifies the code
+      // server-side (CLAUDE.md invariant 7).
+      isDm={dmCode !== null}
       onAdjustHp={(delta) => void hp.adjust(characterId, delta)}
       // Reported through the same `hp.error`, and so through the same toast above.
       // `useHpActions` clears and sets one error for all of its writes precisely so a
@@ -91,6 +104,10 @@ export function CharacterSheetView({
       onAdjustHitDice={(delta) => void hp.adjustHitDice(characterId, delta)}
       onSave={save}
       onRename={rename}
+      onSetLevel={(level) => announce(setLevel(level))}
+      onSetLocked={(locked) => announce(setLocked(locked))}
+      onSetPerRest={(key, spent) => void hp.setPerRest(characterId, key, spent)}
+      onLongRest={() => void hp.longRest(characterId)}
     />
   )
 }

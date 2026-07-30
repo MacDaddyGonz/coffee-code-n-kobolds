@@ -13,3 +13,4 @@ being overwritten.
 | [0003](0003-player-identity-without-accounts.md) | Player identity without accounts: a seat is a name | Accepted |
 | [0004](0004-board-authorisation-and-layers.md) | Board authorisation, layers and where a token's position lives | Accepted |
 | [0005](0005-character-sheets-and-hit-point-secrecy.md) | Character sheets, where current hit points live, and two shapes of secret | Accepted |
+| [0006](0006-premade-character-library.md) | A premade character library, and resolving a sheet from stored selections | Accepted |

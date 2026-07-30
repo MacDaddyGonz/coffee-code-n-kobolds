@@ -553,6 +553,10 @@ describe('the vitals union is doing real work', () => {
       // with the sheet because a rest changes them and an edit does not.
       hitDiceCount: 3,
       hitDiceRemaining: 3,
+      // Milestone 4 adds the once-per-long-rest abilities already spent, on the same
+      // row and for the same reason: it is state a rest clears, not something the
+      // character is. Empty here, and empty is the common case.
+      spentPerRest: [],
     }
 
     const asPlayer = await t.query(api.characters.vitals, { code: fixture.code })
@@ -563,6 +567,7 @@ describe('the vitals union is doing real work', () => {
       'hitDiceRemaining',
       'kind',
       'max',
+      'spentPerRest',
     ])
     expect(rowFor(asPlayer, fixture.pc)).toEqual(exact)
 
@@ -580,6 +585,7 @@ describe('the vitals union is doing real work', () => {
       max: NPC_MAX_HP,
       hitDiceCount: null,
       hitDiceRemaining: null,
+      spentPerRest: [],
     })
   })
 })
@@ -647,6 +653,7 @@ describe('the bands a player is told, through characters.vitals', () => {
         // a monster carries no hit dice to spend on a rest it will never take.
         hitDiceCount: null,
         hitDiceRemaining: null,
+        spentPerRest: [],
       })
     }
   })
@@ -998,6 +1005,7 @@ describe('refusing an NPC is indistinguishable from it not existing', () => {
       max: NPC_MAX_HP,
       hitDiceCount: null,
       hitDiceRemaining: null,
+      spentPerRest: [],
     })
   })
 })
@@ -1148,5 +1156,275 @@ describe('the advisory ceiling is real, and is not more than claimed', () => {
         playerId: ben,
       }),
     ).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (h) Milestone 4: the same guarantee, now that a sheet is assembled server-side
+// ---------------------------------------------------------------------------
+//
+// RE-PROVEN RATHER THAN ASSUMED, and it is worth saying why the re-proof is not
+// ceremony. Milestone 3's guarantee rested on a stored `sheet` field whose `kind`
+// decided everything. Milestone 4 puts a *resolver* between the document and every
+// consumer of it: `maySeeCharacter`, `visibleVitals` and the health bands all now
+// read a sheet that was built out of a static library, a race and the DM's
+// overrides a moment ago rather than one that was read off the row.
+//
+// That is exactly the sort of change that quietly moves a discriminator. So the
+// three questions are asked again against the new machinery: a premade character
+// cannot be a monster, a premade hero's numbers are still exact for the whole
+// party, and a monster's are still a band with a resolver in the path.
+
+/** The selections a premade character stores. A level 3 Human Fighter by default. */
+function presetSheet(
+  overrides: Partial<{
+    race: 'human' | 'elf' | 'dwarf' | 'halfling' | 'half-orc' | 'tiefling' | 'dragonborn' | 'goliath'
+    classKey: 'barbarian' | 'bard' | 'cleric' | 'fighter' | 'paladin' | 'ranger' | 'rogue' | 'wizard'
+    subclassKey: string | null
+    level: number
+    locked: boolean
+  }> = {},
+) {
+  return {
+    kind: 'preset' as const,
+    race: 'human' as const,
+    classKey: 'fighter' as const,
+    subclassKey: 'champion' as string | null,
+    level: 3,
+    locked: false,
+    ...overrides,
+  }
+}
+
+/** A level 3 Champion Fighter out of the library: 28 hit points on 3d10. */
+const PRESET_MAX_HP = 28
+const PRESET_HIT_DICE = 3
+const PRESET_NAME = 'Brannoc Emberhand'
+
+describe('Milestone 4: resolution runs server-side, and Milestone 3’s guarantee holds', () => {
+  /**
+   * A PREMADE CHARACTER CANNOT BE A MONSTER, and there is no route to one.
+   *
+   * The stored union has three members and only two of them resolve: `preset` is a
+   * set of selections over the *player-character* library, so `resolveSheet` returns
+   * `kind: 'pc'` for every one of them. Which means the reduced NPC sheet — the
+   * thing `maySeeCharacter` keys off — is unreachable from a preset by construction
+   * rather than by a check somebody has to remember.
+   *
+   * Asserted through the API in all four directions: creating one, creating one
+   * while holding the DM code, converting a monster into one, and converting one
+   * into a monster.
+   */
+  test('a preset NPC is impossible: every route to one is refused or resolves to a hero', async () => {
+    const t = harness()
+    const fixture = await vitalsFixture(t)
+    const { code, dmCode } = fixture
+
+    // (1) Creating one needs no DM code — because it is not a monster — and it is a
+    // hero to a caller who has none.
+    const { characterId: hero } = await t.mutation(api.characters.create, {
+      code,
+      name: PRESET_NAME,
+      sheet: presetSheet(),
+    })
+    expect(
+      (await t.query(api.characters.list, { code })).find((row) => row._id === hero)?.kind,
+    ).toBe('pc')
+
+    // (2) The DM code does not change what it is. Passing it to `create` builds the
+    // same hero, visible to everybody, rather than a hidden one.
+    const { characterId: alsoHero } = await t.mutation(api.characters.create, {
+      code,
+      name: 'Second Opinion',
+      sheet: presetSheet({ race: 'dwarf' }),
+      dmCode,
+    })
+    const asPlayer = await t.query(api.characters.list, { code })
+    expect(asPlayer.map((row) => row._id).sort()).toEqual([fixture.pc, hero, alsoHero].sort())
+    expect(asPlayer.every((row) => row.kind === 'pc')).toBe(true)
+
+    // (3) The monster cannot become one, so a spoiler cannot be published by an
+    // edit — and (4) the hero cannot become a monster, so a hero's numbers cannot
+    // be taken away from the party by one either.
+    for (const [characterId, sheet] of [
+      [fixture.npc, presetSheet()],
+      [hero, npcSheet({ maxHp: 9, notes: '', actions: [] })],
+    ] as const) {
+      const refusal = await refusalOf(
+        t.mutation(api.characters.updateSheet, { code, characterId, sheet, dmCode }),
+      )
+      expect(refusal.kind).toBe('BadInput')
+      expect(refusal.message).toBe(
+        'A character cannot change between a player character and an NPC.',
+      )
+    }
+
+    // Nothing moved: the monster is still hidden and still exact only to the DM.
+    expect(await t.query(api.characters.list, { code })).toHaveLength(3)
+    expect(rowFor(await t.query(api.characters.vitals, { code }), fixture.npc)?.kind).toBe('band')
+
+    // And the two mutations that only a premade character has refuse the monster
+    // outright, rather than treating it as one.
+    for (const call of [
+      t.mutation(api.characters.setLevel, { code, dmCode, characterId: fixture.npc, level: 4 }),
+      t.mutation(api.characters.setUnlocked, {
+        code,
+        dmCode,
+        characterId: fixture.npc,
+        locked: false,
+      }),
+    ]) {
+      await expectKind(call, 'BadInput')
+    }
+  })
+
+  /**
+   * requirements.md asks for `20/45` above a hero's token for everybody at the
+   * table, and a hero assembled out of the library is no different — the party
+   * knowing its own hit points is not a secret in any edition.
+   *
+   * The numbers are the library's, so this also proves the vitals row was seeded
+   * from the *resolved* sheet at insert time. A `preset` document holds no maximum
+   * at all, so a row written from the stored shape would have had nothing to read.
+   */
+  test('a premade hero’s exact hit points are exact for the player, the party and the DM', async () => {
+    const t = harness()
+    const fixture = await vitalsFixture(t)
+    const { code, dmCode } = fixture
+    const ben = await makeSeat(t, code, 'Ben')
+
+    const { characterId: hero } = await t.mutation(api.characters.create, {
+      code,
+      name: PRESET_NAME,
+      sheet: presetSheet(),
+    })
+    await t.mutation(api.characters.claim, { code, playerId: ben, characterId: hero })
+    await t.mutation(api.characters.adjustHp, { code, characterId: hero, delta: -9, playerId: ben })
+
+    const expected = {
+      kind: 'exact',
+      characterId: hero,
+      current: PRESET_MAX_HP - 9,
+      max: PRESET_MAX_HP,
+      hitDiceCount: PRESET_HIT_DICE,
+      hitDiceRemaining: PRESET_HIT_DICE,
+      spentPerRest: [],
+    }
+
+    // The player playing them, another seat entirely, a caller with no seat at all,
+    // and the DM: one answer, and it is the exact one.
+    for (const who of [{}, { dmCode }, { dmCode: twiddle(dmCode) }]) {
+      const rows = await t.query(api.characters.vitals, { code, ...who })
+      expect(rowFor(rows, hero), JSON.stringify(who)).toEqual(expected)
+    }
+
+    // And the monster in the same payload is still a band, so the two rules are
+    // being applied per character rather than per request.
+    const mixed = await t.query(api.characters.vitals, { code })
+    expect(rowFor(mixed, fixture.npc)?.kind).toBe('band')
+    expect(rowFor(mixed, hero)?.kind).toBe('exact')
+  })
+
+  /**
+   * The payload scan again, with a premade character in the game.
+   *
+   * The point is not that a hero could leak a monster — it is that resolution now
+   * runs inside every one of these queries, over a library that holds seventy-two
+   * stat blocks, and a resolver that reached for the wrong document or spread a raw
+   * row into a payload would show up here and nowhere else.
+   */
+  test('no player payload leaks the monster once a premade hero shares the game', async () => {
+    const t = harness()
+    const fixture = await vitalsFixture(t)
+
+    await t.mutation(api.characters.create, {
+      code: fixture.code,
+      name: PRESET_NAME,
+      sheet: presetSheet({ race: 'goliath', classKey: 'wizard', subclassKey: 'evocation' }),
+    })
+    await t.mutation(api.characters.create, {
+      code: fixture.code,
+      name: 'Second Opinion',
+      sheet: presetSheet({ race: 'dwarf', level: 1, subclassKey: null }),
+      dmCode: fixture.dmCode,
+    })
+
+    for (const [name, payload] of Object.entries(await playerPayloads(t, fixture))) {
+      const serialised = JSON.stringify(payload) ?? ''
+      expect(containsNumber(serialised, NPC_MAX_HP), `${name} leaked the NPC's maximum`).toBe(false)
+      expect(
+        containsNumber(serialised, NPC_CURRENT_HP),
+        `${name} leaked the NPC's current hit points`,
+      ).toBe(false)
+      expect(serialised, `${name} leaked the NPC's name`).not.toContain(NPC_NAME)
+      expect(serialised, `${name} leaked the NPC's notes`).not.toContain(NPC_NOTES)
+      expect(serialised, `${name} leaked an NPC action`).not.toContain(NPC_ACTION_NAME)
+      expect(serialised, `${name} leaked an NPC action's roll`).not.toContain(NPC_ACTION_ROLL)
+      expect(serialised, `${name} leaked the npc discriminator`).not.toContain('"npc"')
+    }
+
+    // The positive control, so the sweep above is running against a game that has
+    // something in it: the premade hero really is in the player's payload.
+    const listed = await t.query(api.characters.list, { code: fixture.code })
+    expect(listed.map((row) => row.name)).toContain(PRESET_NAME)
+    expect(listed.every((row) => row.kind === 'pc')).toBe(true)
+  })
+
+  /**
+   * The bands, once more, with the resolver in the path on the other side of the
+   * payload. A monster's `maxHp` still comes off its own stored sheet — resolution
+   * passes an `npc` sheet through untouched — so the ratio the band is computed from
+   * has not moved.
+   */
+  test('a monster is still a band, and the band still tracks its stored hit points', async () => {
+    const t = harness()
+    const fixture = await vitalsFixture(t)
+    await t.mutation(api.characters.create, {
+      code: fixture.code,
+      name: PRESET_NAME,
+      sheet: presetSheet(),
+    })
+
+    for (const [currentHp, band] of [
+      [NPC_MAX_HP, 'healthy'],
+      [Math.floor(NPC_MAX_HP / 2), 'bloodied'],
+      [Math.floor(NPC_MAX_HP / 5), 'critical'],
+      [0, 'down'],
+    ] as [number, HealthBand][]) {
+      await setHp(t, fixture.code, fixture.dmCode, fixture.npc, currentHp)
+      expect(await bandOf(t, fixture.code, fixture.npc), `${currentHp}/${NPC_MAX_HP}`).toBe(band)
+    }
+  })
+
+  /**
+   * A premade character's *sheet* is a hero's sheet, so the ordinary rule applies:
+   * the seat playing them sees it, another seat does not, and the DM sees any of
+   * them. Worth restating with a preset because the sheet a player receives is now
+   * assembled rather than stored — the refusal happens before the assembly, and has
+   * to keep happening there.
+   */
+  test('a premade hero’s sheet is still only for the seat playing it and the DM', async () => {
+    const t = harness()
+    const fixture = await vitalsFixture(t)
+    const { code, dmCode } = fixture
+    const ben = await makeSeat(t, code, 'Ben')
+
+    const { characterId: hero } = await t.mutation(api.characters.create, {
+      code,
+      name: PRESET_NAME,
+      sheet: presetSheet(),
+    })
+    await t.mutation(api.characters.claim, { code, playerId: ben, characterId: hero })
+
+    expect(
+      (await t.query(api.characters.sheet, { code, characterId: hero, playerId: ben }))?.sheet.kind,
+    ).toBe('pc')
+    expect(
+      await t.query(api.characters.sheet, { code, characterId: hero, playerId: fixture.seat }),
+    ).toBeNull()
+    expect(await t.query(api.characters.sheet, { code, characterId: hero })).toBeNull()
+    expect(
+      (await t.query(api.characters.sheet, { code, characterId: hero, dmCode }))?.preset,
+    ).toMatchObject({ kind: 'preset', classKey: 'fighter' })
   })
 })

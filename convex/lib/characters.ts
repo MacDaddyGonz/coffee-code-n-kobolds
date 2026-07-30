@@ -25,13 +25,18 @@ import { ConvexError, v, type Infer } from 'convex/values'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import { MAX_CHARACTERS_PER_GAME } from './games'
-import type { CharacterSheet } from './sheet'
+import type { CharacterSheet, StoredSheet } from './sheet'
+// `resolveSheet` rather than `characterSheet`, and that one substitution is the
+// whole of what Milestone 4 changed in this file. Everything below still asks for a
+// `CharacterSheet` and still gets one; whether it was typed in by hand or assembled
+// from the library, a race and the DM's overrides is settled before it arrives.
+import { presetExtras, presetOf, resolveSheet } from './resolve'
 import {
   characterKindValidator,
-  characterSheet,
   clampHitDice,
   clampHp,
   healthBand,
+  presetSheetValidator,
   sheetValidator,
 } from './sheet'
 
@@ -75,7 +80,7 @@ function characterNotFound(): ConvexError<typeof CHARACTER_NOT_FOUND> {
  * the document.
  */
 export function maySeeCharacter(character: Doc<'characters'>, isDm: boolean): boolean {
-  return isDm || characterSheet(character).kind === 'pc'
+  return isDm || resolveSheet(character).kind === 'pc'
 }
 
 // ---------------------------------------------------------------------------
@@ -107,7 +112,36 @@ export type PublicCharacter = Infer<typeof publicCharacterValidator>
 export const publicSheetValidator = v.object({
   _id: v.id('characters'),
   name: v.string(),
+  /**
+   * The **resolved** sheet — what to display and what Milestone 5 will roll. For a
+   * character built from the library this is the library's numbers with the race
+   * applied and the DM's overrides on top; the client never sees the library itself
+   * and never has to assemble anything.
+   */
   sheet: sheetValidator,
+  /**
+   * The stored selections, or null for a hand-built character or an NPC.
+   *
+   * Sent *alongside* the resolved sheet rather than instead of it, because the two
+   * answer different questions: the sheet says what the character can do, and this
+   * says which four dropdowns to fill in and whether they are locked. Deriving the
+   * selections back out of a resolved sheet would be impossible — that is the whole
+   * point of resolving — and sending only the selections would put the library in
+   * the browser.
+   */
+  preset: v.union(presetSheetValidator, v.null()),
+  /**
+   * The premade sheet's fixed kit and its note on what changed at this level. Null
+   * for a hand-built character or an NPC, which have neither.
+   *
+   * Sent from here rather than carried on the sheet because neither is a rule — see
+   * `presetExtras`. The kit is what requirements.md's "set equipment per character"
+   * amounts to, and it is not an inventory: nothing manages it, nothing counts it.
+   */
+  extras: v.union(
+    v.object({ equipment: v.string(), levellingNotes: v.string() }),
+    v.null(),
+  ),
 })
 export type PublicSheet = Infer<typeof publicSheetValidator>
 
@@ -139,6 +173,10 @@ export const publicVitalsValidator = v.union(
     // short rest rewriting a spell list.
     hitDiceRemaining: v.union(v.number(), v.null()),
     hitDiceCount: v.union(v.number(), v.null()),
+    // Keys of once-per-long-rest abilities already spent. Which abilities a character
+    // *has* comes from their race, which the client can look up itself from
+    // lib/races.ts — only which ones are gone has to travel.
+    spentPerRest: v.array(v.string()),
   }),
   v.object({
     kind: v.literal('band'),
@@ -199,7 +237,7 @@ export async function publicCharacters(
       return {
         _id: character._id,
         name: character.name,
-        kind: characterSheet(character).kind,
+        kind: resolveSheet(character).kind,
         claimedByPlayerId: holder?._id ?? null,
         claimedByName: holder?.displayName ?? null,
         createdAt: character._creationTime,
@@ -231,7 +269,7 @@ export async function playerCharacterNames(
 
   const nameById = new Map<Id<'characters'>, string>()
   for (const character of held) {
-    if (character && characterSheet(character).kind === 'pc') {
+    if (character && resolveSheet(character).kind === 'pc') {
       nameById.set(character._id, character.name)
     }
   }
@@ -293,7 +331,9 @@ export function publicSheet(character: Doc<'characters'>): PublicSheet {
   return {
     _id: character._id,
     name: character.name,
-    sheet: characterSheet(character),
+    sheet: resolveSheet(character),
+    preset: presetOf(character),
+    extras: presetExtras(character),
   }
 }
 
@@ -379,7 +419,7 @@ export async function visibleVitals(
 
   const out: PublicVitals[] = []
   for (const character of characters) {
-    const sheet = characterSheet(character)
+    const sheet = resolveSheet(character)
     const isNpc = sheet.kind === 'npc'
     if (isNpc && !isDm && !visibleNpcIds.has(character._id)) continue
 
@@ -404,6 +444,7 @@ export async function visibleVitals(
         current,
         max: sheet.maxHp,
         hitDiceCount: isPc ? sheet.hitDice.count : null,
+        spentPerRest: vitals?.spentPerRest ?? [],
         // Through the same helper the mutations use, so the number a player reads
         // off the panel and the number a spend starts from cannot disagree. An
         // absent value means none have been spent, for the same reason a missing
@@ -442,7 +483,7 @@ export function hitDiceRemainingOf(
 async function upsertVitals(
   ctx: MutationCtx,
   character: Doc<'characters'>,
-  patch: { currentHp?: number; hitDiceRemaining?: number },
+  patch: { currentHp?: number; hitDiceRemaining?: number; spentPerRest?: string[] },
 ): Promise<void> {
   const existing = await vitalsFor(ctx, character._id)
   if (existing) {
@@ -450,7 +491,7 @@ async function upsertVitals(
     return
   }
 
-  const sheet = characterSheet(character)
+  const sheet = resolveSheet(character)
   await ctx.db.insert('characterVitals', {
     gameId: character.gameId,
     characterId: character._id,
@@ -482,7 +523,7 @@ export async function changeCurrentHp(
   character: Doc<'characters'>,
   change: (current: number) => number,
 ): Promise<number> {
-  const sheet = characterSheet(character)
+  const sheet = resolveSheet(character)
   const vitals = await vitalsFor(ctx, character._id)
 
   const next = clampHp(change(currentHpOf(vitals, sheet)), sheet.maxHp)
@@ -506,7 +547,7 @@ export async function changeHitDiceRemaining(
   character: Doc<'characters'>,
   change: (remaining: number) => number,
 ): Promise<number> {
-  const sheet = characterSheet(character)
+  const sheet = resolveSheet(character)
   if (sheet.kind !== 'pc') return 0
 
   const vitals = await vitalsFor(ctx, character._id)
@@ -520,6 +561,72 @@ export async function changeHitDiceRemaining(
   return next
 }
 
+/**
+ * Mark a once-per-long-rest ability spent, or hand it back.
+ *
+ * Keys are stored rather than counted, so a race with two of them tracks both
+ * independently and a race that gains one later needs no migration — an absent key
+ * is simply unspent. The set is bounded by what a race defines, which is at most a
+ * couple, so there is no growth to worry about.
+ *
+ * The app never enforces the effect of any of these. It remembers whether one has
+ * been used, which is the part a table actually forgets.
+ */
+export async function setPerRestSpent(
+  ctx: MutationCtx,
+  character: Doc<'characters'>,
+  key: string,
+  spent: boolean,
+): Promise<string[]> {
+  const vitals = await vitalsFor(ctx, character._id)
+  const current = new Set(vitals?.spentPerRest ?? [])
+  if (spent) current.add(key)
+  else current.delete(key)
+
+  const next = [...current]
+  if (vitals) {
+    await ctx.db.patch('characterVitals', vitals._id, { spentPerRest: next })
+  } else {
+    await upsertVitals(ctx, character, { spentPerRest: next })
+  }
+  return next
+}
+
+/**
+ * A long rest: hit points back to full, every hit die returned, every once-per-rest
+ * ability unspent.
+ *
+ * All three in one transaction and one button, because they are one thing that
+ * happens at the table — a rest that restored hit points but left the hit dice spent
+ * would be a rules bug somebody has to notice. Deliberately generous compared with
+ * 5e, which returns only half a character's hit dice: the library spec asks for fast
+ * levelling, minimal resource tracking and no edge cases, and "you get everything
+ * back" is a rule a child can hold.
+ */
+export async function longRest(
+  ctx: MutationCtx,
+  character: Doc<'characters'>,
+): Promise<void> {
+  const sheet = resolveSheet(character)
+  const vitals = await vitalsFor(ctx, character._id)
+
+  const patch = {
+    currentHp: sheet.maxHp,
+    ...(sheet.kind === 'pc' ? { hitDiceRemaining: sheet.hitDice.count } : {}),
+    spentPerRest: [],
+  }
+
+  if (vitals) {
+    await ctx.db.patch('characterVitals', vitals._id, patch)
+  } else {
+    await ctx.db.insert('characterVitals', {
+      gameId: character.gameId,
+      characterId: character._id,
+      ...patch,
+    })
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Writes to the character document itself
 // ---------------------------------------------------------------------------
@@ -528,9 +635,12 @@ export async function insertCharacter(
   ctx: MutationCtx,
   gameId: Id<'games'>,
   name: string,
-  sheet: CharacterSheet,
+  sheet: StoredSheet,
 ): Promise<Id<'characters'>> {
   const characterId = await ctx.db.insert('characters', { gameId, name, sheet })
+  // Resolved before the hit points are read off it, because a `preset` stores no
+  // maximum — it stores a class and a level, and the number comes from the library.
+  const resolved = resolveSheet({ sheet })
 
   // In the same transaction, so a character can never exist without somewhere to
   // record its hit points.
@@ -545,8 +655,8 @@ export async function insertCharacter(
   await ctx.db.insert('characterVitals', {
     gameId,
     characterId,
-    currentHp: sheet.maxHp,
-    ...(sheet.kind === 'pc' ? { hitDiceRemaining: sheet.hitDice.count } : {}),
+    currentHp: resolved.maxHp,
+    ...(resolved.kind === 'pc' ? { hitDiceRemaining: resolved.hitDice.count } : {}),
   })
   return characterId
 }
@@ -571,15 +681,19 @@ export async function renameCharacter(
 export async function writeSheet(
   ctx: MutationCtx,
   character: Doc<'characters'>,
-  sheet: CharacterSheet,
+  sheet: StoredSheet,
 ): Promise<void> {
   await ctx.db.patch('characters', character._id, { sheet })
 
   const vitals = await vitalsFor(ctx, character._id)
   if (!vitals) return
 
+  // Resolved, because a level-up is a `preset` whose stored form has no maximum on
+  // it at all — and levelling up is precisely when the maximum moves. Without this
+  // the re-clamp below would be reading a number that is not there.
+  const resolved = resolveSheet({ sheet })
   const patch: { currentHp: number; hitDiceRemaining?: number } = {
-    currentHp: clampHp(vitals.currentHp, sheet.maxHp),
+    currentHp: clampHp(vitals.currentHp, resolved.maxHp),
   }
   // Through `clampHitDice`, like every other path. This branch used to cap at the
   // new complement without flooring at zero or rounding — so the one write whose
@@ -587,8 +701,8 @@ export async function writeSheet(
   // would preserve a value the other three repaired. That is the ordinary way
   // copied arithmetic fails: not everywhere at once, but in whichever copy was
   // edited last.
-  if (sheet.kind === 'pc' && vitals.hitDiceRemaining !== undefined) {
-    patch.hitDiceRemaining = clampHitDice(vitals.hitDiceRemaining, sheet.hitDice.count)
+  if (resolved.kind === 'pc' && vitals.hitDiceRemaining !== undefined) {
+    patch.hitDiceRemaining = clampHitDice(vitals.hitDiceRemaining, resolved.hitDice.count)
   }
   await ctx.db.patch('characterVitals', vitals._id, patch)
 }
