@@ -37,6 +37,12 @@ coverage/
 /uploads/
 /storage/
 
+# Local test fixtures: realistic maps and token art, 100+ MB. Useful for exercising
+# grid calibration against maps with a known square count, and the downscaler
+# against a 21 MB source (CLAUDE.md invariant 6). Not repo content — this repo is
+# public and Git is the wrong place for a folder of battlemaps.
+docs/sample-images/
+
 # Editors
 .vscode/*
 !.vscode/extensions.json
