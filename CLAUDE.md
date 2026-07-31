@@ -102,6 +102,47 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
      point, and Convex throws if anyone ever adds one. That is the stronger guarantee, and it is
      available only because this particular secret happens to be a field.
 
+   **There is a third shape, and it is a leaked *module*.** The two premade corpora —
+   `convex/lib/library/` and `convex/lib/bestiary/` — are content nothing outside resolution has any
+   business reading, and two different guards hold that:
+
+   | Guard | Rule |
+   | --- | --- |
+   | `bundleGuard.test.ts` | nothing under `src/` may import either corpus, or `lib/resolve.ts`, which pulls both in behind it |
+   | `corpusGuard.test.ts` | inside `convex/`, only `lib/resolve.ts`, `bestiary.ts` and `characters.ts` may import them |
+
+   The first is about bytes: ~450 KB of stat blocks in a bundle already near a megabyte, for data no
+   client reads. The second is about the choke point — it is what keeps `resolveSheet` the only door
+   to a stat block, so a future module cannot read a creature's numbers around `maySeeCharacter`. Both
+   match a **quoted module specifier** rather than a bare path, deliberately: several components
+   legitimately explain in prose why the corpora are server-side, and a guard that fails on the code
+   most carefully written to respect it is a guard that gets deleted.
+
+   **The third entry on that allow-list is narrower than the other two, and the difference is the
+   point.** `characters.ts` imports `bestiaryEntry` and nothing else: `requireUsableSheet` has to
+   answer "is this the key of a creature that exists?" before a write, and `lib/sheet.ts` — where
+   every other stored-sheet check lives — can never ask, because every function in that file also runs
+   in the browser. So the rule is not "three modules may read a stat block"; it is **one module may
+   read a stat block, one may resolve a summary, and one may ask whether a key exists.**
+   `corpusGuard.test.ts` pins that by asserting the *imported names*, not just the importer — so
+   `characters.ts` reaching for the scaler or a content file fails the build.
+
+9. **A fourth stored sheet kind is one predicate away from publishing every monster in the game.**
+   `characters.sheet` holds a union — `pc`, `npc`, `preset`, `bestiary` — and whether a document is a
+   monster is decided by `isMonsterSheet` in `convex/lib/sheet.ts` and nowhere else.
+
+   It is an **allow-list of the kinds that may be published, not a deny-list of the ones that must
+   not be**, and that inversion is the whole reason it exists. The formulation it replaced was
+   `sheet?.kind === 'npc'`, written in three places, and it was the only kind-test in the codebase
+   whose wrongness was invisible to the compiler: add a member to the union and it keeps compiling,
+   keeps passing, and answers `false` — publishing the new kind to every player at the table. Of all
+   the tests that could have had that property, it was the one guarding the secret.
+
+   Two properties to preserve if you ever add a fifth member. The `never` assignment in the default
+   branch makes `npm run lint` fail until the question is answered, and the **runtime** default is
+   `true`, which is fail-closed: a schema push is not atomic, so a document written by a newer
+   deployment can be read by an older one, and in that window a secret must read as a secret.
+
 ### Threat model — what the invariants above are for, and where the line is
 
 The audience is a small group of trusted colleagues. That **scopes** the invariants rather than
@@ -149,6 +190,19 @@ for.
 Everything else on those lists is **excluded by design, not missing.** Lifting one is a spec
 amendment with an ADR behind it — see [ADR 0006](docs/adr/0006-premade-character-library.md) — not
 something a feature branch does on the way past.
+
+**The monster bestiary lifted none of them, and that is worth stating** because it is the discipline
+that makes Milestone 4's two amendments mean something. Every field it added — creature type, size,
+alignment, role, challenge rating, tier, tags, loot, DM notes — is a **label on a DM-only sheet**, not
+a rule anything adjudicates. Loot is a line of text and not an inventory. Nothing is rolled that the
+existing grammar did not already describe.
+
+CR scaling deserves the second look, because it *does* move numbers a player rolls against. It is
+still not a rule: it is arithmetic the DM performs on the DM's own sheet, with a visible before and
+after, and the app adjudicates nothing with it — a stepper that changes eight fields at once is the
+same act as typing into eight fields, done in one motion. The DM override has exactly this character
+and needed no amendment either. The test for whether that stays true is simple: **the moment one of
+these fields changes a number a player rolls against without the DM asking it to, it needs one.**
 
 ## Commands
 

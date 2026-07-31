@@ -305,7 +305,7 @@ describe('the DM layer never reaches a player', () => {
    * query added in a later milestone that forgets the gate fails here without
    * anyone remembering to extend anything.
    */
-  test('every exported query of board and scenes is swept for the DM-layer id', async () => {
+  test('every exported query of board, scenes and bestiary is swept for the DM-layer id', async () => {
     const t = harness()
     const fixture = await boardFixture(t)
     const wrongDmCode = twiddle(fixture.dmCode)
@@ -315,15 +315,25 @@ describe('the DM layer never reaches a player', () => {
 
     // The same shapes a player's client could actually send: never a valid DM
     // code, and only arguments a board screen already has.
+    //
+    // `bestiary` is swept here rather than in a suite of its own because the property
+    // is this one — every public query in the module either refuses a player or hands
+    // back something with no secret in it — and the enumeration is what makes it
+    // self-extending. The last two shapes are for it: both its queries take a
+    // **required** `dmCode`, and `entry` also takes a `key`, so without them the
+    // `reached` assertion below would fail rather than passing vacuously. That is the
+    // whole point of that assertion.
     const argSets: Record<string, unknown>[] = [
       { code: fixture.code },
       { code: fixture.code, dmCode: wrongDmCode },
       { code: fixture.code, sceneId: fixture.sceneId },
       { code: fixture.code, sceneId: fixture.sceneId, dmCode: wrongDmCode },
+      { code: fixture.code, dmCode: wrongDmCode, key: 'dire-wolf' },
+      { code: fixture.code, dmCode: wrongDmCode, key: 'dire-wolf', cr: 4 },
     ]
 
     const swept: string[] = []
-    for (const moduleName of ['board', 'scenes']) {
+    for (const moduleName of ['board', 'scenes', 'bestiary']) {
       const loader = modules[`./${moduleName}.ts`]
       expect(loader, `convex/${moduleName}.ts is missing`).toBeTypeOf('function')
       const exports = (await loader()) as Record<string, unknown>
@@ -370,6 +380,8 @@ describe('the DM layer never reaches a player', () => {
     expect(swept).toContain('board.tokens')
     expect(swept).toContain('board.positions')
     expect(swept).toContain('scenes.active')
+    expect(swept).toContain('bestiary.index')
+    expect(swept).toContain('bestiary.entry')
   })
 
   /**

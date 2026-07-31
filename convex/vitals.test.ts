@@ -85,6 +85,49 @@ const PC_NAME = 'Thorin Ironfist'
 const PC_MAX_HP = 45
 const PC_CURRENT_HP = 20
 
+// ---------------------------------------------------------------------------
+// Milestone 5's fixtures: two creatures off the DM's shelf
+//
+// Declared beside the others because `playerPayloads` below reaches the two bestiary
+// queries, and those take a **required** `dmCode` — so the keys are needed before the
+// section that scans for them.
+//
+// ⚠️ **Every string is hand-copied out of the corpus**, and the numbers out of the
+// benchmark table with the arithmetic written beside them. Reading either through
+// `bestiaryEntry` here would make the scan agree with a mangled corpus exactly as
+// readily as with a correct one.
+// ---------------------------------------------------------------------------
+
+/** A monster, scaled — three ratings above where the corpus writes it. */
+const CREATURE_KEY = 'dire-wolf'
+const CREATURE_ENTRY_NAME = 'Dire Wolf'
+/** The character document's own name, which is not the entry's and not the token's. */
+const CREATURE_NAME = 'Wyrmshadow at the Ford'
+/** 31 × 120/26 = 143.07… → 143, the maximum at CR 6. Distinctive on purpose. */
+const CREATURE_MAX_HP = 143
+const CREATURE_CURRENT_HP = 89
+const CREATURE_BLURB = 'Horse-sized wolf that hunts in twos and does not tire.'
+const CREATURE_LOOT = 'Nothing carried and nothing hidden. A beast owns only itself.'
+
+/**
+ * A social NPC, whose `knows` string **is the plot** — and the one creature in this
+ * fixture whose shifted rating is a number worth scanning for.
+ *
+ * CR ⅛ is the only rating in the ten that a payload could not produce by coincidence:
+ * `4` and `6` occur in an ability score, a die face and a grid offset, so a scan for
+ * either fires on everything. `0.125` occurs nowhere else in this fixture, which is
+ * the same reasoning `NPC_MAX_HP` is 271 for.
+ */
+const PERSON_KEY = 'innkeeper'
+const PERSON_ENTRY_NAME = 'Innkeeper'
+const PERSON_NAME = 'Maergan Tolt'
+const PERSON_SHIFTED_CR = 0.125
+const PERSON_BLURB = 'The village inn — beds, gossip and a jar of coin she should not have.'
+const PERSON_LOOT =
+  "A jar of thin old silver under the bar, the week's takings in a locked box and a very good bread knife."
+const PERSON_KNOWS =
+  'Three of her regulars have been paying in thin old silver of the Verrow mint, coin nobody has struck in four generations, and all three of them work the deep shift at the Hallow Delve. She keeps a jar of it under the bar and has told nobody, because the Ledger House in Greyhallow would want to know where it came from and so would the revenue.'
+
 type ErrorData = { kind: string; message: string }
 
 /** The `{ kind, message }` a refusal carried, for tests that compare two refusals. */
@@ -295,6 +338,46 @@ async function vitalsFixture(t: Harness) {
 }
 
 /**
+ * A payload, or a marker for the refusal that came instead.
+ *
+ * `bestiary.index` and `bestiary.entry` take a **required** `dmCode`, so a player's
+ * client has three shapes available and only two of them reach a handler: a wrong
+ * code and an empty one are refused by `requireDm`, and no code at all is refused by
+ * Convex's own argument validation before the handler runs.
+ *
+ * All three belong in the scan, because **the error channel is a read channel too** —
+ * a refusal that named the creature would be as much of a leak as a payload carrying
+ * it, which is the reasoning `CHARACTER_NOT_FOUND` is one shared constant for.
+ *
+ * A `ConvexError`'s `data` is swept; anything else is reduced to a marker rather than
+ * having its message swept, and that is deliberate. Convex's argument-validation
+ * message quotes the arguments it was sent — including the entry key this file asks
+ * about — so scanning it would find the test's own request and report it as a leak.
+ */
+async function attempt(call: Promise<unknown>): Promise<unknown> {
+  return await call.then(
+    (value) => value,
+    (error: unknown) =>
+      error instanceof ConvexError ? { refused: error.data } : { refused: 'argument validation' },
+  )
+}
+
+/**
+ * Bestiary arguments as a client could actually send them, past the type system.
+ *
+ * "Sent no `dmCode` at all" is not expressible in the generated types, because the
+ * field is required — and it is exactly the case that has to be swept, since it is
+ * what a player's client would produce if the picker leaked into the player build.
+ */
+function asBestiaryArgs(args: Record<string, unknown>): {
+  code: string
+  dmCode: string
+  key: string
+} {
+  return args as unknown as { code: string; dmCode: string; key: string }
+}
+
+/**
  * Every payload a player's client can fetch, keyed by name so a failure says
  * which query leaked rather than which array index did.
  *
@@ -310,6 +393,27 @@ async function playerPayloads(
   const wrong = twiddle(fixture.dmCode)
 
   return {
+    'bestiary.index (no dm code)': await attempt(
+      t.query(api.bestiary.index, asBestiaryArgs({ code })),
+    ),
+    'bestiary.index (empty dm code)': await attempt(
+      t.query(api.bestiary.index, { code, dmCode: '' }),
+    ),
+    'bestiary.index (wrong dm code)': await attempt(
+      t.query(api.bestiary.index, { code, dmCode: wrong }),
+    ),
+    'bestiary.entry (no dm code)': await attempt(
+      t.query(api.bestiary.entry, asBestiaryArgs({ code, key: CREATURE_KEY })),
+    ),
+    'bestiary.entry (empty dm code)': await attempt(
+      t.query(api.bestiary.entry, { code, dmCode: '', key: CREATURE_KEY }),
+    ),
+    'bestiary.entry (wrong dm code)': await attempt(
+      t.query(api.bestiary.entry, { code, dmCode: wrong, key: CREATURE_KEY }),
+    ),
+    'bestiary.entry (wrong dm code, the social one)': await attempt(
+      t.query(api.bestiary.entry, { code, dmCode: wrong, key: PERSON_KEY }),
+    ),
     'characters.vitals': await t.query(api.characters.vitals, { code }),
     'characters.vitals (wrong dm code)': await t.query(api.characters.vitals, {
       code,
@@ -1426,5 +1530,344 @@ describe('Milestone 4: resolution runs server-side, and Milestone 3’s guarante
     expect(
       (await t.query(api.characters.sheet, { code, characterId: hero, dmCode }))?.preset,
     ).toMatchObject({ kind: 'preset', classKey: 'fighter' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (i) Milestone 5: the same guarantee, with a creature read live out of a corpus
+// ---------------------------------------------------------------------------
+//
+// RE-PROVEN RATHER THAN ASSUMED, and this time there is a second secret in the payload
+// rather than a second route to the first one.
+//
+// Milestone 4 put a resolver between the document and every consumer. Milestone 5 puts a
+// *corpus* behind the resolver, and a creature carries far more than a statline: a loot
+// line, a blurb, an alignment, a recommended party level, and — for the thirty social
+// entries — an occupation, three personality keywords and a `knows` string which **is
+// the plot**. Every one of those travels in `creaturePayload`, inside the same
+// `characters.sheet` payload a hero's own sheet uses, and CLAUDE.md is explicit that the
+// mechanical guard does not reach it: a bestiary payload and a preset payload are both
+// legitimately shaped, so Convex would approve either against `publicSheetValidator`
+// without comment. What keeps a creature away from a player is the structural guard, and
+// this is where that gets proved rather than asserted.
+//
+// It also adds the first two DM-only queries that are not about a table at all. The
+// corpus is a static module, so `bestiary.index` and `bestiary.entry` read nothing the
+// leak guard sweeps — `requireDm` on the first line of each is the whole of the gate, and
+// a `dmCode` that is merely *present* is what `twiddle` exists to rule out.
+
+/**
+ * The vitals fixture with the DM's shelf drawn on: one scaled monster and one person,
+ * both with a coin on the **player** layer.
+ *
+ * The player layer is what makes this worth writing, exactly as it was for the NPC in
+ * `vitalsFixture`. A creature hidden on the DM layer would make every assertion below
+ * pass for the wrong reason — the token choke point would already have dropped it, and
+ * neither the vitals union nor `maySeeCharacter` would ever be asked a hard question. A
+ * creature the party can see is precisely the creature whose stat block the DM is still
+ * keeping.
+ *
+ * Built alongside `vitalsFixture` rather than inside it, so that the count tests in
+ * section (d) keep asserting the lengths they were written against.
+ */
+async function bestiaryFixture(t: Harness) {
+  const fixture = await vitalsFixture(t)
+  const { code, dmCode, sceneId } = fixture
+
+  const { characterId: creature } = await t.mutation(api.characters.create, {
+    code,
+    dmCode,
+    name: CREATURE_NAME,
+    sheet: { kind: 'bestiary', entryKey: CREATURE_KEY, cr: 1 },
+  })
+  // Scaled three ratings up, which is what makes 143 a number nobody sent.
+  await t.mutation(api.characters.setCreatureCr, { code, dmCode, characterId: creature, cr: 6 })
+  await setHp(t, code, dmCode, creature, CREATURE_CURRENT_HP)
+  // The coin's name is deliberately neither the entry's nor the character's: a player is
+  // *supposed* to see what is written on a token, so reusing either string would make the
+  // scan below unable to tell a leak from the thing it is meant to allow.
+  await addToken(t, code, dmCode, sceneId, {
+    name: 'Shape in the Reeds',
+    layer: 'player',
+    characterId: creature,
+    x: 1100,
+    y: 700,
+  })
+
+  const { characterId: person } = await t.mutation(api.characters.create, {
+    code,
+    dmCode,
+    name: PERSON_NAME,
+    sheet: { kind: 'bestiary', entryKey: PERSON_KEY, cr: 0 },
+  })
+  await t.mutation(api.characters.setCreatureCr, {
+    code,
+    dmCode,
+    characterId: person,
+    cr: PERSON_SHIFTED_CR,
+  })
+  await addToken(t, code, dmCode, sceneId, {
+    name: 'Someone Behind the Bar',
+    layer: 'player',
+    characterId: person,
+    x: 1500,
+    y: 300,
+  })
+
+  return { ...fixture, creature, person }
+}
+
+describe('a player inspecting network traffic sees nothing off the DM’s shelf', () => {
+  test('no payload fetched without the DM code carries a creature’s numbers, labels or plot', async () => {
+    const t = harness()
+    const fixture = await bestiaryFixture(t)
+    const payloads = await playerPayloads(t, fixture)
+
+    for (const [name, payload] of Object.entries(payloads)) {
+      const serialised = JSON.stringify(payload) ?? ''
+
+      // Milestone 3's needles first, because a creature in the game is a new way for the
+      // old secret to travel: `characters.vitals` now resolves two more sheets.
+      expect(containsNumber(serialised, NPC_MAX_HP), `${name} leaked the NPC's maximum`).toBe(false)
+      expect(
+        containsNumber(serialised, NPC_CURRENT_HP),
+        `${name} leaked the NPC's current hit points`,
+      ).toBe(false)
+      expect(serialised, `${name} leaked the NPC's name`).not.toContain(NPC_NAME)
+      expect(serialised, `${name} leaked the NPC's notes`).not.toContain(NPC_NOTES)
+      expect(serialised, `${name} leaked the npc discriminator`).not.toContain('"npc"')
+
+      // And Milestone 5's. The discriminator beside the old one: `characters.list` drops
+      // a creature's row and `characters.sheet` refuses one, so no player payload has a
+      // reason to carry the word at all.
+      expect(serialised, `${name} leaked the bestiary discriminator`).not.toContain('"bestiary"')
+      expect(serialised, `${name} leaked the entry key`).not.toContain(CREATURE_KEY)
+      expect(serialised, `${name} leaked the social entry key`).not.toContain(PERSON_KEY)
+      expect(serialised, `${name} leaked the creature's name`).not.toContain(CREATURE_NAME)
+      expect(serialised, `${name} leaked the monster entry's name`).not.toContain(
+        CREATURE_ENTRY_NAME,
+      )
+      expect(serialised, `${name} leaked the person's name`).not.toContain(PERSON_NAME)
+      expect(serialised, `${name} leaked the social entry's name`).not.toContain(PERSON_ENTRY_NAME)
+      expect(serialised, `${name} leaked the creature's loot`).not.toContain(CREATURE_LOOT)
+      expect(serialised, `${name} leaked the person's loot`).not.toContain(PERSON_LOOT)
+      expect(serialised, `${name} leaked the creature's blurb`).not.toContain(CREATURE_BLURB)
+      expect(serialised, `${name} leaked the person's blurb`).not.toContain(PERSON_BLURB)
+      // The one that is not a statistic and matters most. What the innkeeper knows is the
+      // plot, and the whole social block is DM-only for that reason.
+      expect(serialised, `${name} leaked what the innkeeper knows`).not.toContain(PERSON_KNOWS)
+
+      // The scaled creature's numbers, and the *rating* the DM chose — through
+      // `containsNumber` rather than `toContain`, because both are numbers and a bare
+      // substring search fires on a thirteen-digit `_creationTime`.
+      expect(
+        containsNumber(serialised, CREATURE_MAX_HP),
+        `${name} leaked the creature's maximum`,
+      ).toBe(false)
+      expect(
+        containsNumber(serialised, CREATURE_CURRENT_HP),
+        `${name} leaked the creature's current hit points`,
+      ).toBe(false)
+      expect(
+        containsNumber(serialised, PERSON_SHIFTED_CR),
+        `${name} leaked the rating the DM shifted a creature to`,
+      ).toBe(false)
+    }
+  })
+
+  /**
+   * THE OTHER HALF, GROWN TO MATCH — and this is the half this repo has written down
+   * twice, because without it the loop above passes on a game with no creature in it.
+   *
+   * Two claims, and both have to hold. The player really is being served: they can see
+   * both coins and they do get a band for each. And every needle the loop hunted for is
+   * genuinely in the database and genuinely reachable — with the DM code, from these
+   * three queries, and from nowhere else.
+   */
+  test('positive control: the player sees two coins and two bands, and the DM sees everything', async () => {
+    const t = harness()
+    const fixture = await bestiaryFixture(t)
+    const { code, dmCode } = fixture
+
+    // Half one — the party really is looking at these two creatures.
+    const tokens = await t.query(api.board.tokens, { code })
+    expect(tokens.map((token) => token.name).sort()).toEqual(
+      [NPC_TOKEN_NAME, PC_NAME, 'Shape in the Reeds', 'Someone Behind the Bar'].sort(),
+    )
+    const asPlayer = await t.query(api.characters.vitals, { code })
+    expect(rowFor(asPlayer, fixture.creature)?.kind).toBe('band')
+    expect(rowFor(asPlayer, fixture.person)?.kind).toBe('band')
+    // A band that tracks the stored number rather than a constant: 89 of 143 is 62%.
+    expect(await bandOf(t, code, fixture.creature)).toBe('healthy')
+
+    // Half two — the shelf, which is where the keys, the names and the blurbs live.
+    const index = JSON.stringify(await t.query(api.bestiary.index, { code, dmCode })) ?? ''
+    for (const needle of [
+      CREATURE_KEY,
+      CREATURE_ENTRY_NAME,
+      CREATURE_BLURB,
+      PERSON_KEY,
+      PERSON_ENTRY_NAME,
+      PERSON_BLURB,
+    ]) {
+      expect(index, `bestiary.index does not carry ${needle}`).toContain(needle)
+    }
+
+    // The library's own copy of each, which is where the loot and the plot live. The
+    // index deliberately carries neither — a summary is not a stat block — so a control
+    // that looked only there would leave two needles unproven.
+    const wolf =
+      JSON.stringify(
+        await t.query(api.bestiary.entry, { code, dmCode, key: CREATURE_KEY, cr: 6 }),
+      ) ?? ''
+    expect(wolf).toContain(CREATURE_ENTRY_NAME)
+    expect(wolf).toContain(CREATURE_LOOT)
+    expect(wolf).toContain(CREATURE_BLURB)
+    expect(containsNumber(wolf, CREATURE_MAX_HP)).toBe(true)
+
+    const innkeeper =
+      JSON.stringify(await t.query(api.bestiary.entry, { code, dmCode, key: PERSON_KEY })) ?? ''
+    expect(innkeeper).toContain(PERSON_ENTRY_NAME)
+    expect(innkeeper).toContain(PERSON_LOOT)
+    expect(innkeeper).toContain(PERSON_KNOWS)
+
+    // And the assigned creatures' own sheets, which is where the character's name, the
+    // stored key and the shifted rating live.
+    const creatureSheet =
+      JSON.stringify(
+        await t.query(api.characters.sheet, { code, dmCode, characterId: fixture.creature }),
+      ) ?? ''
+    expect(creatureSheet).toContain(CREATURE_NAME)
+    expect(creatureSheet).toContain(CREATURE_KEY)
+    expect(creatureSheet).toContain(CREATURE_LOOT)
+    expect(creatureSheet).toContain('"npc"')
+    expect(containsNumber(creatureSheet, CREATURE_MAX_HP)).toBe(true)
+
+    /**
+     * ⚠️ **`"bestiary"` is the one needle in the loop above that no query can control,
+     * and that is a fact about the payloads rather than a gap in this test.**
+     *
+     * The word appears in the *database* and travels to nobody, not even the DM:
+     * `creaturePayload` rebuilds the labels and the two selections field by field and
+     * never names a `kind`, and the resolved sheet says `npc` because that is what it
+     * is. Contrast `preset`, whose stored shape *is* sent to the DM verbatim — which is
+     * why `"preset"` would positively control and this does not.
+     *
+     * So the needle is a tripwire for a raw stored document being spread into a payload
+     * — the one thing that would put it on the wire — and the honest positive control is
+     * the row itself, read with `t.run`. Asserting it against a query instead is how a
+     * needle silently becomes decoration.
+     */
+    const storedSheet = await t.run(
+      async (ctx) => (await ctx.db.get('characters', fixture.creature))?.sheet,
+    )
+    expect(JSON.stringify(storedSheet) ?? '').toContain('"bestiary"')
+    expect(storedSheet).toStrictEqual({ kind: 'bestiary', entryKey: CREATURE_KEY, cr: 6 })
+
+    const personSheet =
+      JSON.stringify(
+        await t.query(api.characters.sheet, { code, dmCode, characterId: fixture.person }),
+      ) ?? ''
+    expect(personSheet).toContain(PERSON_NAME)
+    expect(personSheet).toContain(PERSON_KEY)
+    expect(personSheet).toContain(PERSON_KNOWS)
+    expect(personSheet).toContain(PERSON_LOOT)
+    expect(
+      containsNumber(personSheet, PERSON_SHIFTED_CR),
+      'the DM cannot see the rating they shifted a creature to',
+    ).toBe(true)
+
+    // The exact hit points, which only `characters.vitals` carries.
+    const dmVitals = JSON.stringify(await t.query(api.characters.vitals, { code, dmCode })) ?? ''
+    expect(containsNumber(dmVitals, CREATURE_CURRENT_HP)).toBe(true)
+    expect(containsNumber(dmVitals, CREATURE_MAX_HP)).toBe(true)
+  })
+
+  /**
+   * The number scan's own instrument, checked against the one value in this fixture that
+   * is not a whole number. It is worth pinning that `containsNumber` handles a decimal at
+   * all rather than assuming it, because CR ⅛ is the only rating a scan can look for
+   * without firing on an ability score.
+   */
+  test('the number scan matches a fractional challenge rating and not a longer number', () => {
+    expect(containsNumber('{"cr":0.125}', 0.125)).toBe(true)
+    expect(containsNumber('[0.125,4]', 0.125)).toBe(true)
+    expect(containsNumber('{"x":10.125}', 0.125)).toBe(false)
+    expect(containsNumber('{"x":0.1255}', 0.125)).toBe(false)
+    expect(containsNumber('{"cr":0.25}', 0.125)).toBe(false)
+  })
+
+  /**
+   * The count leak, restated for the shelf — and it is a different count from the one
+   * section (d) is about.
+   *
+   * Section (d) holds that a player cannot count the DM's prepared monsters. This holds
+   * that a player cannot tell **which** of ~130 creatures the DM has picked, which is the
+   * spoiler the whole corpus is gated for: the library is not a secret, and which twelve
+   * of it are in tonight's game is.
+   */
+  test('preparing eight creatures off the shelf does not change the player’s payload at all', async () => {
+    const t = harness()
+    const fixture = await bestiaryFixture(t)
+    const before = JSON.stringify(await t.query(api.characters.vitals, { code: fixture.code })) ?? ''
+    const listBefore =
+      JSON.stringify(await t.query(api.characters.list, { code: fixture.code })) ?? ''
+
+    // Eight more, none of them placed on the player layer — half unplaced, half hidden.
+    for (let i = 0; i < 8; i += 1) {
+      const { characterId } = await t.mutation(api.characters.create, {
+        code: fixture.code,
+        dmCode: fixture.dmCode,
+        name: `Ambusher ${i}`,
+        sheet: { kind: 'bestiary', entryKey: CREATURE_KEY, cr: 2 },
+      })
+      if (i % 2 === 0) {
+        await addToken(t, fixture.code, fixture.dmCode, fixture.sceneId, {
+          name: `Ambusher ${i}`,
+          layer: 'dm',
+          characterId,
+          x: 200 + i * 60,
+          y: 1400,
+        })
+      }
+    }
+
+    expect(JSON.stringify(await t.query(api.characters.vitals, { code: fixture.code })) ?? '').toBe(
+      before,
+    )
+    expect(JSON.stringify(await t.query(api.characters.list, { code: fixture.code })) ?? '').toBe(
+      listBefore,
+    )
+    // And the DM's own view did move, or the loop above did nothing.
+    expect(
+      await t.query(api.characters.vitals, { code: fixture.code, dmCode: fixture.dmCode }),
+    ).toHaveLength(12)
+  })
+
+  /**
+   * `playerId` is routing rather than identity, so a player can pass any seat's id —
+   * including the DM's, whose badge is in the public roster. None of it opens a creature,
+   * because the refusal that guards a secret keys off the DM code alone.
+   */
+  test('no seat id, badge or otherwise, opens a creature’s sheet', async () => {
+    const t = harness()
+    const fixture = await bestiaryFixture(t)
+    const ben = await makeSeat(t, fixture.code, 'Ben')
+    const roster = await t.query(api.players.list, { code: fixture.code })
+    const dmSeat = roster.find((row) => row.isDm)!._id
+
+    for (const playerId of [ben, fixture.seat, dmSeat]) {
+      for (const characterId of [fixture.creature, fixture.person]) {
+        expect(
+          await t.query(api.characters.sheet, { code: fixture.code, characterId, playerId }),
+          'a seat id opened a creature sheet',
+        ).toBeNull()
+      }
+    }
+
+    // Nor does the badge move the vitals payload off a band.
+    const vitals = await t.query(api.characters.vitals, { code: fixture.code })
+    expect(rowFor(vitals, fixture.creature)?.kind).toBe('band')
+    expect(rowFor(vitals, fixture.person)?.kind).toBe('band')
   })
 })

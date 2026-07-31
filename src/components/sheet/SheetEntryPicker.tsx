@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PickerRow } from '@/components/ui/picker-row'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { CatalogueEntry } from '@convex/lib/rules'
 import type { SheetEntry } from '@convex/lib/sheet'
@@ -171,11 +172,9 @@ export function SheetEntryPicker({
                 matches.map((entry) => {
                   const already = taken.has(entry.key)
                   return (
-                    <button
+                    <PickerRow
                       key={entry.key}
-                      type="button"
                       disabled={already}
-                      className="hover:bg-muted focus-visible:ring-ring/50 flex flex-col items-start gap-0.5 rounded-lg border p-2 text-left transition-colors focus-visible:ring-3 focus-visible:outline-none disabled:opacity-50 disabled:hover:bg-transparent"
                       onClick={() =>
                         onAdd({
                           id: newEntryId(),
@@ -200,7 +199,7 @@ export function SheetEntryPicker({
                         {already ? <Badge variant="ghost">already on the sheet</Badge> : null}
                       </span>
                       <span className="text-muted-foreground text-xs">{entry.text}</span>
-                    </button>
+                    </PickerRow>
                   )
                 })
               )}

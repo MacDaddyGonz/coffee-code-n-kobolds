@@ -408,3 +408,43 @@ What is required of it:
 
 Deliberately *not* asked for: automatic scaling to match the party, computing a creature's CR from its
 statistics, encounter budgeting, or scaling the abilities and attack count rather than the numbers.
+
+### 2026-07-31 — one exception to "special abilities are unchanged by a shift"
+
+**An ability may opt in to scaling, and one that carries most of a creature's damage has to.**
+
+The clause above says a shift leaves special abilities alone, and for almost every ability that is
+right: a Troll's Regeneration is a *pace* rather than a payload, and doubling it on the way up would
+make a scaled Troll unkillable instead of harder.
+
+It is wrong for the case the corpus turns out to be full of. A dragon's breath weapon is most of what
+the dragon does. Freezing it while the claws scale produces a CR 6 creature stepped down to CR 2 whose
+statline reads as a tier-III threat and whose first action still kills a level 2 party outright — which
+is not a scaled creature, it is a mis-labelled one. The feature above exists so that a DM can put a
+Troll in front of a level 2 party *safely*; an exception that silently makes it unsafe for dragons
+defeats it at exactly the creatures most worth scaling.
+
+So a bestiary ability carries a `scalesWithCr` flag which **defaults to off**, leaving the rule above
+as what happens when nobody thinks about it, and the corpus's own test **refuses** an ability whose
+average damage exceeds its challenge rating's benchmark unless the flag is set. The rule is therefore
+not "abilities never scale" but "an ability that is a payload scales; an ability that is a rule does
+not", and which of the two an ability is, is checked by machine rather than remembered.
+
+Nothing else in that clause moves: name, creature type, size, alignment, role, tags, speed, loot, DM
+notes, every ability's *text*, and the number of attacks are all still untouched by a shift.
+
+### 2026-07-31 — one attack bonus per creature, not one per attack
+
+**The Combat Creature Sheet above lists Attack Bonus as a field on each attack. It is stored once for
+the whole creature instead.**
+
+The reduction is not about the bestiary. An attack on a resolved sheet is a `SheetEntry`, which is the
+single shape shared by a hero's feats, a hero's spells and a monster's actions — the saving that kept
+two sheet variants from becoming two of everything, and the reason the dice work will have one roll
+path rather than a fork. Adding a per-attack field to it would widen that shared shape for a
+monster-only concern, and it would widen it in a type whose field-by-field rebuilds have twice
+silently discarded a newly added field.
+
+The cost, stated rather than hidden: a creature whose bite is more accurate than its claws cannot say
+so. In practice almost no creature in the corpus wanted to, and the DM can express the difference by
+overriding the sheet if one ever does.

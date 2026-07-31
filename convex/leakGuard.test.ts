@@ -96,6 +96,33 @@ for (const guard of GUARDS) {
       expect(paths).toContain('./schema.ts')
       expect(paths).toContain('./lib/games.ts')
       expect(paths).toContain(guard.reader)
+      /**
+       * ⚠️ **`convex/bestiary.ts` is named here rather than given a `GUARDS` entry of
+       * its own**, and the distinction is the point.
+       *
+       * The sweep below is already over *every* module but the declared reader, so
+       * Milestone 5's two picker queries are checked against `characters` and
+       * `characterVitals` — and against `tokens` and `tokenPositions` — with no edit at
+       * all. That is the arrangement working as designed: the guard is a deny-list of
+       * readers rather than an allow-list of files to remember.
+       *
+       * What the sweep cannot notice is a module that is not in the glob. So the one
+       * thing worth asserting is that this file *is* being swept, because
+       * `convex/bestiary.ts` is the module where a leak would be least visible: it
+       * reads no table today, so nothing about it looks like a reader, and the obvious
+       * future feature — an "already in this game" marker beside a picker row — is a
+       * read of `characters` that a reviewer would wave straight through. Its own
+       * header says that read has to go through `lib/characters.ts` and come back as a
+       * set of keys.
+       *
+       * It deliberately gets no `GUARDS` entry: the corpus is a static module, nothing
+       * anywhere does `.query('bestiary')`, and the "is genuinely the reader" test
+       * below would then fail by construction. `corpusGuard.test.ts` is the guard for
+       * the corpus, and it is a guard about imports rather than about queries.
+       */
+      expect(paths, 'convex/bestiary.ts is not being swept for table reads').toContain(
+        './bestiary.ts',
+      )
       for (const [path, text] of scanned) {
         expect(typeof text, `${path} did not load as text`).toBe('string')
         expect(text.length, `${path} loaded empty`).toBeGreaterThan(0)

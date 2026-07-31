@@ -341,9 +341,34 @@ speed reads 45 and a Dwarf's maximum hit points are one higher per level. No sta
 
 ---
 
-## Milestone 5 — Monster, enemy and NPC library
+## ✅ Milestone 5 — Monster, enemy and NPC library
 
-**The DM's half of Milestone 4.** A hero is now something you choose from a library of 72 premade
+**Done.** The decisions are recorded in
+[ADR 0007](adr/0007-monster-bestiary-and-cr-scaling.md). Four things it settled that the section below
+planned differently or did not plan at all, so read them together:
+
+- **An ability may opt in to scaling.** The source spec's "special abilities are unchanged by a shift"
+  is right for a Troll's Regeneration and wrong for a dragon's breath weapon, which is most of what the
+  dragon does — frozen, a CR 6 dragon stepped down to CR 2 still kills a level 2 party with its first
+  action. `scalesWithCr` defaults to off so the spec's rule is what happens by default, and the corpus
+  test refuses an ability whose average damage exceeds its rating's benchmark without it. Recorded as a
+  **fourth overrule** in the spec's additions section.
+- **One attack bonus per creature, not one per attack.** `sheetEntryValidator` is the shape shared with
+  a hero's feats and spells, and widening it for a monster-only concern would fork the single roll path
+  the dice milestone depends on. Also an addition to the spec.
+- **The union widening was the dangerous part, and it was not free.** The section below calls widening
+  `storedSheetValidator` "additive and safe". It is — *provided the compiler names every site that
+  switches on it*, which it did not: an audit found three critical holes, all invisible to `tsc`, all
+  the same fact spelled three times. `kindOf` failing open published every creature in the game to every
+  player. See invariant 9 in [CLAUDE.md](../CLAUDE.md) and the ADR.
+- **The 1,300-sheet loop below is necessary and not sufficient.** A clamp turns an out-of-range value
+  into an in-range one, so a CR 6 Tank whose armour class wants to be 43 is pinned at 40 and the loop
+  goes green while the content is wrong. A second loop recomputes every field unclamped and asserts it
+  equals the clamped result.
+
+Two of its open questions are answered below rather than left open.
+
+**The original plan follows.** A hero is now something you choose from a library of 72 premade
 sheets; a monster is still a blank reduced sheet somebody types an armour class, a hit point total and
 three actions into, at the rate of one per creature in the encounter. This milestone gives the DM the
 same thing the players got: a corpus of finished creatures, picked rather than typed.

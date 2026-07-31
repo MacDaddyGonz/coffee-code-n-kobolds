@@ -5,11 +5,13 @@ import {
   NumberInput,
   SheetField,
   SheetTextArea,
+  marksField,
+  speedHint,
 } from '@/components/sheet/SheetFields'
 import { Separator } from '@/components/ui/separator'
 import { NPC_ACTIONS } from '@convex/lib/rules'
 import type { NpcSheet, SheetProblem } from '@convex/lib/sheet'
-import { MAX_NPC_NOTES_LENGTH, SPEED_FEET, messageAtField } from '@convex/lib/sheet'
+import { MAX_NPC_NOTES_LENGTH, messageAtField, speedOf } from '@convex/lib/sheet'
 
 export type NpcSheetFormProps = {
   sheet: NpcSheet
@@ -38,11 +40,13 @@ export type NpcSheetFormProps = {
 export function NpcSheetForm({ sheet, problem, disabled, onChange }: NpcSheetFormProps) {
   const set = (patch: Partial<NpcSheet>) => onChange({ ...sheet, ...patch })
 
-  // The same pair the hero's form uses, and `messageAtField` is shared with it — see
-  // the note there. This form's own copy of that matcher tested for an exact path
-  // only, so the first nested field the reduced sheet ever grew would have reddened
-  // a box and printed nothing beside it.
-  const marks = (path: string) => problem?.path === path
+  // The same pair the hero's form uses, and both are shared with it — see the note on
+  // `marksField`. This form's own copy of the *message* matcher tested for an exact path
+  // only, so the first nested field the reduced sheet ever grew would have reddened a box
+  // and printed nothing beside it.
+  const marks = (path: string) => marksField(problem, path)
+
+  const speed = speedOf(sheet)
 
   return (
     <div className="flex flex-col gap-5">
@@ -80,12 +84,22 @@ export function NpcSheetForm({ sheet, problem, disabled, onChange }: NpcSheetFor
       <FieldError message={messageAtField(problem, 'armourClass', 'maxHp', 'initiativeBonus')} />
 
       {/* Shown rather than left out, so the DM does not have to remember whether the
-          reduced sheet dropped it. It is still a constant here where it is no longer one
-          on a hero's sheet: `speed` is a field a *race* can move (ADR 0006), and the
-          reduced sheet has no race — a monster that needs to be faster gets an action
-          saying so, which is the same escape hatch `initiativeBonus` relies on. */}
+          reduced sheet dropped it.
+
+          **Read through `speedOf` rather than printed as `SPEED_FEET`.** It was the
+          constant, with a comment saying a monster has no race to move it and gets an
+          action saying it is fast instead. That stopped being true when the bestiary gave
+          every creature a stored speed — a Dire Wolf moves 50 and a Zombie moves 20, and
+          the difference is most of what makes them feel unlike each other on a grid — so
+          the number was on the document and this form was quietly discarding it on display.
+          The hint is `speedHint`, shared with the hero's derived row and the creature
+          statline, because 20 with no explanation beside it reads as a bug on a page where
+          every other creature says 35.
+
+          Still printed rather than typed: a hand-built monster's speed is not a field this
+          form offers, and one taken from the shelf is overridden on its own sheet. */}
       <div className="bg-muted/40 rounded-lg border p-3">
-        <DerivedStat label="Speed" value={`${SPEED_FEET} ft`} hint="the usual" />
+        <DerivedStat label="Speed" value={`${speed} ft`} hint={speedHint(speed)} />
       </div>
 
       <SheetField

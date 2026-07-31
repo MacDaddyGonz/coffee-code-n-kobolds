@@ -4,8 +4,33 @@ import { useMutation, useQuery } from 'convex/react'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicSheet } from '@convex/lib/characters'
+import type { ChallengeRating } from '@convex/lib/creatures'
 import type { StoredSheet } from '@convex/lib/sheet'
 import { errorMessage } from '@/lib/errors'
+
+/**
+ * Run a mutation, and turn a refusal into the sentence the panel prints.
+ *
+ * ⚠️ **The try/catch and nothing else.** The four DM-gated callbacks below each check for a
+ * character, check for a code, call one mutation and translate the throw — and it is only
+ * the last of those four steps that is genuinely the same every time. So the guards stay
+ * written out at each call site, because *which* guard and *what it says* is the part that
+ * differs and the part somebody reading one of them needs to see; the `useCallback`
+ * dependencies stay explicit for the same reason, since the lint rule cannot follow them
+ * through a helper.
+ *
+ * `errorMessage` is what makes the fallback a fallback: a `ConvexError` thrown by
+ * `requireDm` or `sheetProblem` already carries the server's own wording, and the string
+ * passed here is for the case where something else went wrong entirely.
+ */
+async function attempt(run: () => Promise<unknown>, failure: string): Promise<string | null> {
+  try {
+    await run()
+    return null
+  } catch (thrown) {
+    return errorMessage(thrown, failure)
+  }
+}
 
 export type CharacterSheetArgs = {
   code: string
@@ -77,6 +102,22 @@ export type CharacterSheetHandle = {
    */
   setLevel: (level: number) => Promise<string | null>
   setLocked: (locked: boolean) => Promise<string | null>
+  /**
+   * A creature's challenge rating, and the way back to the bestiary's own numbers.
+   *
+   * The same shape and the same reasoning as the two above, applied to the DM's corpus. A
+   * rating is a *selection* rather than a field of the sheet — it is what a level is to a
+   * premade hero — so it is stepped through its own mutation and lands the instant the
+   * button is pressed rather than waiting for Save. `resetCreature` throws the DM's
+   * overrides away as well as the shift, which is why the panel puts a confirmation in
+   * front of it and not in front of the stepper.
+   *
+   * Both refuse here without a DM code rather than sending a call that cannot succeed,
+   * which is a courtesy and not a check: `requireDm` re-verifies the code server-side on
+   * every call regardless.
+   */
+  setCreatureCr: (cr: ChallengeRating) => Promise<string | null>
+  resetCreature: () => Promise<string | null>
 }
 
 /**
@@ -105,6 +146,8 @@ export function useCharacterSheet(args: CharacterSheetArgs): CharacterSheetHandl
   const renameCharacter = useMutation(api.characters.rename)
   const setCharacterLevel = useMutation(api.characters.setLevel)
   const setCharacterUnlocked = useMutation(api.characters.setUnlocked)
+  const setCharacterCreatureCr = useMutation(api.characters.setCreatureCr)
+  const resetCharacterCreature = useMutation(api.characters.resetCreature)
 
   const seat = playerId === null ? {} : { playerId }
   const dm = dmCode === null ? {} : { dmCode }
@@ -144,12 +187,10 @@ export function useCharacterSheet(args: CharacterSheetArgs): CharacterSheetHandl
     async (level: number) => {
       if (characterId === null) return 'There is no character to level up.'
       if (dmCode === null) return 'Only the DM can change a character’s level.'
-      try {
-        await setCharacterLevel({ code, dmCode, characterId, level })
-        return null
-      } catch (thrown) {
-        return errorMessage(thrown, 'Could not change that level.')
-      }
+      return attempt(
+        () => setCharacterLevel({ code, dmCode, characterId, level }),
+        'Could not change that level.',
+      )
     },
     [setCharacterLevel, code, characterId, dmCode],
   )
@@ -158,14 +199,36 @@ export function useCharacterSheet(args: CharacterSheetArgs): CharacterSheetHandl
     async (locked: boolean) => {
       if (characterId === null) return 'There is no character to unlock.'
       if (dmCode === null) return 'Only the DM can unlock a character.'
-      try {
-        await setCharacterUnlocked({ code, dmCode, characterId, locked })
-        return null
-      } catch (thrown) {
-        return errorMessage(thrown, 'Could not unlock that character.')
-      }
+      return attempt(
+        () => setCharacterUnlocked({ code, dmCode, characterId, locked }),
+        'Could not unlock that character.',
+      )
     },
     [setCharacterUnlocked, code, characterId, dmCode],
+  )
+
+  const setCreatureCr = useCallback(
+    async (cr: ChallengeRating) => {
+      if (characterId === null) return 'There is no creature to scale.'
+      if (dmCode === null) return 'Only the DM can change a creature’s challenge rating.'
+      return attempt(
+        () => setCharacterCreatureCr({ code, dmCode, characterId, cr }),
+        'Could not change that challenge rating.',
+      )
+    },
+    [setCharacterCreatureCr, code, characterId, dmCode],
+  )
+
+  const resetCreature = useCallback(
+    async () => {
+      if (characterId === null) return 'There is no creature to reset.'
+      if (dmCode === null) return 'Only the DM can reset a creature.'
+      return attempt(
+        () => resetCharacterCreature({ code, dmCode, characterId }),
+        'Could not put the bestiary’s numbers back.',
+      )
+    },
+    [resetCharacterCreature, code, characterId, dmCode],
   )
 
   return {
@@ -177,5 +240,7 @@ export function useCharacterSheet(args: CharacterSheetArgs): CharacterSheetHandl
     rename,
     setLevel,
     setLocked,
+    setCreatureCr,
+    resetCreature,
   }
 }

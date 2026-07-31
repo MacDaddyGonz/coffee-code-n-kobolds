@@ -6,6 +6,7 @@ import {
   HitDiceField,
   NumberInput,
   SheetField,
+  marksField,
 } from '@/components/sheet/SheetFields'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -67,7 +68,7 @@ export function PresetNumbers({
   }
 
   const set = (patch: Partial<PresetOverrides>) => onChange(merge(overrides, patch))
-  const marks = (path: string) => problem?.path === path
+  const marks = (path: string) => marksField(problem, path)
 
   return (
     <section className="flex flex-col gap-3 rounded-lg border p-3">
@@ -168,24 +169,33 @@ export function PresetNumbers({
 }
 
 /**
- * Whether a field is the library's or the DM's, and the way back.
+ * Whether a field is the corpus's or the DM's, and the way back.
  *
  * Exported because the ability scores are overridden through `AbilityTable` — they are
  * shown to everybody and merely become editable for the DM, rather than living in the
  * block above — and one mark drawn two ways is one mark that could come to mean two
- * things.
+ * things. A creature's statline draws it seven times, through `OverrideNumberField`
+ * below.
+ *
+ * `source` names where the unoverridden value came from, because there are two shelves
+ * now: a hero's numbers come from the premade library and a creature's from the bestiary,
+ * and a DM told "from the library" about an Owlbear would reasonably go looking for the
+ * Owlbear in the character builder. It is a word rather than a flag so the two call sites
+ * read as the sentences they produce.
  */
 export function OverrideMark({
   overridden,
   disabled,
+  source = 'library',
   onReset,
 }: {
   overridden: boolean
   disabled?: boolean
+  source?: string
   onReset: () => void
 }) {
   if (!overridden) {
-    return <span className="text-muted-foreground text-xs">from the library</span>
+    return <span className="text-muted-foreground text-xs">from the {source}</span>
   }
 
   return (
@@ -199,9 +209,78 @@ export function OverrideMark({
         onClick={onReset}
       >
         <RotateCcw />
-        Use the library’s
+        Use the {source}’s
       </Button>
     </span>
+  )
+}
+
+/**
+ * One overridable number: the caption, the box, the mark and the way back.
+ *
+ * **Written for the creature statline, where seven of these are identical**, and
+ * deliberately not used by the four fields above it. That is not inconsistency; it is
+ * where the line falls. Each of the hero's four genuinely differs — speed's `onChange`
+ * drops the override rather than storing the `NaN` an empty box produces, hit dice is a
+ * different control altogether — so folding them into a table would mean a table with an
+ * exception per row. The creature's seven get *identical* treatment, and seven uniform
+ * repeats is well past the point where writing each one out stops being clearer than
+ * writing it once.
+ *
+ * What the table buys is the thing longhand cannot: each of those seven named its
+ * override key **three** times, in the mark's test, the reset patch and the change patch,
+ * plus once more for the error path and twice for the element ids, with nothing checking
+ * that the six agreed. Pairing the save-DC key with the passive-perception row compiled,
+ * rendered, and reset the wrong field. Driven from one row of a table, they cannot
+ * disagree.
+ *
+ * `value` takes the null a genuinely absent number arrives as and passes `NaN` to the
+ * box, which `NumberInput` draws as empty — see the note on the statline about why an
+ * emptied box drops the override rather than storing that `NaN`.
+ */
+export function OverrideNumberField({
+  id,
+  label,
+  value,
+  overridden,
+  invalid,
+  disabled,
+  source,
+  onChange,
+  onReset,
+}: {
+  id: string
+  label: string
+  /** Null for a number the corpus never recorded. Drawn as an empty box. */
+  value: number | null
+  overridden: boolean
+  invalid?: boolean
+  disabled?: boolean
+  source?: string
+  onChange: (value: number) => void
+  onReset: () => void
+}) {
+  return (
+    <SheetField
+      id={id}
+      label={label}
+      hint={
+        <OverrideMark
+          overridden={overridden}
+          disabled={disabled}
+          onReset={onReset}
+          source={source}
+        />
+      }
+    >
+      <NumberInput
+        id={id}
+        value={value ?? Number.NaN}
+        invalid={invalid}
+        disabled={disabled}
+        onChange={onChange}
+      />
+    </SheetField>
   )
 }
 
@@ -213,6 +292,13 @@ export function OverrideMark({
  * through `AbilityTable` rather than through the block above. It had grown its own
  * `without(overrides, key)` doing the identical two things, which is one drop-the-key
  * rule in two places for a panel with exactly one of each.
+ *
+ * **Generic over the override set rather than tied to a hero's**, because a creature
+ * taken from the bestiary has one of its own — a different list of fields, and the
+ * identical two rules about absence. `CreatureSheetView` calls this with a
+ * `BestiaryOverrides`. Nothing in here reads a field name, so there was never anything
+ * to specialise; a second copy would only have been a second place for the collapse
+ * below to be forgotten.
  *
  * The dropping itself is `withoutUndefined`, shared with the server, and is not
  * tidiness. `undefined` is not a Convex value, so an object carrying
@@ -231,10 +317,7 @@ export function OverrideMark({
  * that is byte-identical to the saved one, or the footer reads "Unsaved changes"
  * against a sheet that has none.
  */
-export function merge(
-  overrides: PresetOverrides | undefined,
-  patch: Partial<PresetOverrides>,
-): PresetOverrides | undefined {
-  const merged = withoutUndefined({ ...overrides, ...patch })
+export function merge<T extends object>(overrides: T | undefined, patch: Partial<T>): T | undefined {
+  const merged = withoutUndefined({ ...overrides, ...patch } as T)
   return Object.keys(merged).length === 0 ? undefined : merged
 }

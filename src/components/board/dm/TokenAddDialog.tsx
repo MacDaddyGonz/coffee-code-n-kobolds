@@ -7,6 +7,7 @@ import { FieldError } from '@/components/FieldError'
 import { ImagePicker } from '@/components/ImagePicker'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -27,6 +28,9 @@ import type { PublicToken } from '@convex/lib/board'
 import { MAX_CHARACTER_NAME_LENGTH } from '@convex/lib/codes'
 import { MAX_TOKEN_SQUARES, MIN_TOKEN_SQUARES, isUsableTokenSize } from '@convex/lib/grid'
 import type { PublicScene } from '@convex/lib/scenes'
+import { crLabel } from '@convex/lib/creatures'
+import type { CreatureChoice } from './BestiaryPicker'
+import { BestiaryPicker } from './BestiaryPicker'
 import { NpcSheetFields, defaultNpcStats, npcSheetFrom, npcStatsProblem } from './NpcSheetFields'
 
 export type TokenAddDialogProps = {
@@ -46,16 +50,18 @@ type Layer = PublicToken['layer']
 const DEFAULT_TINT = '#8b5cf6'
 
 /**
- * The character select's third answer: make a sheet for this token as it is added.
+ * The character select's third and fourth answers: make a sheet for this token as it is
+ * added, either by typing two numbers or by taking a creature off the bestiary shelf.
  *
- * A sentinel in the same `<select>` rather than a separate mode switch, because
- * "who is this?" has exactly one answer and three shapes of it — nobody, somebody
- * who exists, somebody who does not yet. A select value is a string, so this is
- * compared *before* the value is ever treated as an id; the empty string keeps its
- * existing meaning of nothing attached. The leading underscores are not decoration:
- * a Convex id is base-32-ish and can never collide with this.
+ * Sentinels in the same `<select>` rather than a separate mode switch, because "who is
+ * this?" has exactly one answer and four shapes of it — nobody, somebody who exists,
+ * somebody who does not yet, and something on the shelf. A select value is a string, so
+ * these are compared *before* the value is ever treated as an id; the empty string keeps
+ * its existing meaning of nothing attached. The leading underscores are not decoration:
+ * a Convex id is base-32-ish and can never collide with either.
  */
 const NEW_NPC = '__new-npc'
+const FROM_BESTIARY = '__from-bestiary'
 
 /**
  * Put a creature on the board.
@@ -74,6 +80,12 @@ const NEW_NPC = '__new-npc'
  * with no character attached has no health bar, cannot be moved by anybody but the
  * DM, and is exactly the right thing for a barrel, a door marker or a crowd of
  * villagers nobody is going to hit. Only creatures that take damage need a sheet.
+ *
+ * When one does, the bestiary is reachable from here as well as from the NPCs tab, and that
+ * is not duplication of the shelf but of the *route to it*: a DM who is halfway through
+ * adding a coin and realises it needs a stat block should not have to abandon the layer, the
+ * size and the art they have already set to go and fetch one. `NpcSheetFields` makes the
+ * same argument for the two-number form.
  */
 export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
   const addToken = useMutation(api.board.addToken)
@@ -94,6 +106,7 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
   const [characterId, setCharacterId] = useState('')
   const [npcName, setNpcName] = useState('')
   const [npcStats, setNpcStats] = useState(defaultNpcStats)
+  const [creature, setCreature] = useState<CreatureChoice | null>(null)
 
   function changeOpen(next: boolean) {
     setOpen(next)
@@ -105,6 +118,7 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
       setCharacterId('')
       setNpcName('')
       setNpcStats(defaultNpcStats())
+      setCreature(null)
       action.clearError()
       upload.reset()
     }
@@ -112,6 +126,7 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
 
   const sizeSquares = parseNumber(size)
   const makingNpc = characterId === NEW_NPC
+  const fromBestiary = characterId === FROM_BESTIARY
   // Only asked of the fields that are on screen. A blank armour class in a section
   // nobody opened is not a reason to refuse a barrel.
   const npcProblem = makingNpc ? npcStatsProblem(npcStats) : null
@@ -128,24 +143,47 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
         // the character has to exist before the token can point at it. The failure
         // that leaves is honest and small — a refused token (an oversize image, a
         // full game) can leave a sheet behind with nothing standing on it, and the
-        // Sheets tab deletes it in two clicks. The alternative is a combined
-        // mutation that knows about both tables, which buys atomicity for the one
-        // path in three and couples the board's writes to the character editor's.
-        const attachTo = makingNpc
-          ? (
-              await createCharacter({
-                code,
-                dmCode,
-                // The token's own name unless the DM typed a different one — a coin
-                // reading `Goblin archer` over a sheet called something else is a
-                // confusion nobody asked for.
-                name: npcName.trim() === '' ? name : npcName,
-                sheet: npcSheetFrom(npcStats),
-              })
-            ).characterId
-          : characterId === ''
-            ? undefined
-            : (characterId as Id<'characters'>)
+        // NPCs tab deletes it in two clicks. The alternative is a combined
+        // mutation that knows about both tables, which buys atomicity for two
+        // paths in four and couples the board's writes to the character editor's.
+        //
+        // **The bestiary path keeps that ordering rather than adding a third shape**,
+        // which is why `BestiaryPicker` is asked to *report* a choice here instead of
+        // creating the creature itself: the character is still written first, from this
+        // one call, and a DM who changes their mind about the token leaves nothing
+        // behind. The picker creating eagerly would have left a creature per cancelled
+        // dialog.
+        //
+        // Four cases, one per line, and the select's value decides between them: a sheet
+        // to be written from the shelf, a sheet to be written from two typed numbers, an
+        // existing character to point at, or nothing at all. This was a three-deep ternary
+        // that evaluated `fromBestiary && creature !== null` twice and disagreed with
+        // itself about what the second `fromBestiary` was for.
+        const chosenCreature = fromBestiary ? creature : null
+
+        let attachTo: Id<'characters'> | undefined
+        if (chosenCreature !== null || makingNpc) {
+          const created = await createCharacter({
+            code,
+            dmCode,
+            // The token's own name unless the DM typed a different one — a coin reading
+            // `Goblin archer` over a sheet called something else is a confusion nobody
+            // asked for. It holds for a creature off the shelf too, and buys something
+            // extra there: three goblins from one entry want three names, and the sheet
+            // still says which entry it is reading in its own banner.
+            name: npcName.trim() === '' ? name : npcName,
+            sheet:
+              chosenCreature === null
+                ? npcSheetFrom(npcStats)
+                : { kind: 'bestiary', entryKey: chosenCreature.entryKey, cr: chosenCreature.cr },
+          })
+          attachTo = created.characterId
+        } else if (characterId !== '' && !fromBestiary) {
+          // A real id, which is the only value of the select that is one — the two
+          // sentinels are compared before this and the empty string means nothing
+          // attached.
+          attachTo = characterId as Id<'characters'>
+        }
 
         // Dropped in the middle of the map, because that is the one place guaranteed
         // to be on it. The server snaps this to a square on the way in, so the token
@@ -303,6 +341,7 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
             >
               <option value="">Nothing — no sheet, no health bar</option>
               <option value={NEW_NPC}>New NPC sheet…</option>
+              <option value={FROM_BESTIARY}>From the bestiary…</option>
               {/* Grouped, because the two kinds are chosen for different reasons: a
                   hero is picked so its player can move the coin, a monster so the DM
                   can hit it. Both lists come from one query — and the monsters are in
@@ -355,12 +394,82 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
             </div>
           ) : null}
 
+          {/* The coin and the creature in one flow, which is what a DM is actually doing when
+              the party opens the door. The picker is asked to report a choice rather than
+              create one — see the ordering note in `submit` — so nothing exists until this
+              form is submitted and cancelling here leaves nothing behind.
+
+              A dialog inside a dialog, which is unusual enough to be worth naming: both are
+              Radix portals, so the picker sits over this one and hands focus back on close.
+              The alternative was a mode switch that replaced this form, which would have
+              thrown away the layer, the size and the art the DM had already set. */}
+          {fromBestiary ? (
+            <div className="flex flex-col gap-3 rounded-lg border p-3">
+              {creature === null ? (
+                <p className="text-muted-foreground text-xs">
+                  Nothing chosen yet. The shelf is filtered by difficulty tier, by what a
+                  creature does in a fight, and by search.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-0.5">
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-medium">{creature.name}</span>
+                    <Badge variant="secondary" className="tabular-nums">
+                      CR {crLabel(creature.cr)}
+                    </Badge>
+                  </span>
+                  <span className="text-muted-foreground text-xs">
+                    Its sheet stays linked to the bestiary, so the rating is a control on it
+                    rather than a number somebody typed.
+                  </span>
+                </div>
+              )}
+
+              <BestiaryPicker
+                code={code}
+                dmCode={dmCode}
+                trigger={
+                  <Button type="button" size="sm" variant="outline" disabled={busy}>
+                    {creature === null ? 'Choose a creature' : 'Choose a different one'}
+                  </Button>
+                }
+                onPick={(choice) => {
+                  setCreature(choice)
+                  // The token's name filled in from the creature, but only while it is still
+                  // empty — a DM who has already typed `Guard #3` meant it, and three coins
+                  // from one entry wanting three names is the normal case rather than the
+                  // exception.
+                  setName((was) => (was.trim() === '' ? choice.name : was))
+                }}
+              />
+
+              <div className="flex flex-col gap-2">
+                <Label htmlFor={`${fieldId}-creature-name`}>Sheet name (optional)</Label>
+                <Input
+                  id={`${fieldId}-creature-name`}
+                  value={npcName}
+                  onChange={(event) => setNpcName(event.target.value)}
+                  maxLength={MAX_CHARACTER_NAME_LENGTH}
+                  autoComplete="off"
+                  placeholder={name.trim() === '' ? 'Same as the token' : name}
+                  disabled={busy}
+                />
+              </div>
+            </div>
+          ) : null}
+
           <FieldError message={action.error ?? npcProblem} />
 
           <DialogFormFooter
             busy={busy}
             canSubmit={
-              name.trim() !== '' && isUsableTokenSize(sizeSquares) && npcProblem === null
+              name.trim() !== '' &&
+              isUsableTokenSize(sizeSquares) &&
+              npcProblem === null &&
+              // A shelf entry chosen, when the shelf is the answer. Refused rather than
+              // silently adding a coin with no sheet, which is what the select's own empty
+              // option is for and is not what was asked for here.
+              (!fromBestiary || creature !== null)
             }
             submitLabel={upload.stage === 'uploading' ? 'Uploading…' : 'Add the token'}
             onCancel={() => changeOpen(false)}
