@@ -14,32 +14,44 @@ Two principles drive the ordering:
 Each milestone is a branch (or a few), merged to `dev`, then promoted to `main` when it's worth
 deploying. Acceptance criteria are written so you can tell "done" from "mostly done".
 
-**Numbering note.** Two library milestones have been inserted after the milestone before them
-shipped, and each insertion pushed everything below it down one.
+**Numbering note.** Three milestones have been inserted after the one before them shipped, and each
+insertion pushed everything below it down one.
 
 - **Milestone 4, the character library**, inserted after Milestone 3 shipped.
 - **Milestone 5, the monster and NPC library**, inserted after Milestone 4 shipped — for the reason
   that milestone gives: an NPC's sheet feeds the roll path as much as a hero's does, so the bestiary
   gets written before the dice rather than retro-fitted to them.
+- **Milestone 6, the screen and the sheet taxonomy**, inserted after Milestone 5 shipped and after
+  the first look at the deployed app. It is the same argument a third time: **the feed needs a home
+  and the roll path needs to know what kind of thing it is rolling**, and both are cheap to settle
+  before the dice exist and expensive to retrofit afterwards.
 
-So rolls and dice went 4 → 5 → **6**, DM tooling 5 → 6 → **7**, tools and polish 6 → 7 → **8**, and
-the game editor 7 → 8 → **9**. This file is renumbered throughout. **The ADRs are not**, because an
-ADR is not edited after the fact — read them against this table:
+So rolls and dice went 4 → 5 → 6 → **7**, DM tooling 5 → 6 → 7 → **8**, tools and polish
+6 → 7 → 8 → **9**, and the game editor 7 → 8 → 9 → **10**. This file is renumbered throughout. **The
+ADRs are not**, because an ADR is not edited after the fact — read them against this table:
 
 | Where the ADR says | It means | Read it as |
 | --- | --- | --- |
-| Milestone 4 — [0004](adr/0004-board-authorisation-and-layers.md), [0005](adr/0005-character-sheets-and-hit-point-secrecy.md) | rolls, feed and dice | 6 |
-| Milestone 5 — [0004](adr/0004-board-authorisation-and-layers.md), [0005](adr/0005-character-sheets-and-hit-point-secrecy.md) | DM tooling, layers, fog of war | 7 |
-| Milestone 5 — [0006](adr/0006-premade-character-library.md) | rolls, feed and dice | 6 |
-| Milestone 6 — [0006](adr/0006-premade-character-library.md) | DM tooling, layers, fog of war | 7 |
-| Milestone 7 — [0004](adr/0004-board-authorisation-and-layers.md) | orphaned-blob sweeper, admin view | 9 |
-| Milestone 8 — [0006](adr/0006-premade-character-library.md) | orphaned-blob sweeper | 9 |
+| Milestone 4 — [0004](adr/0004-board-authorisation-and-layers.md), [0005](adr/0005-character-sheets-and-hit-point-secrecy.md) | rolls, feed and dice | 7 |
+| Milestone 5 — [0004](adr/0004-board-authorisation-and-layers.md), [0005](adr/0005-character-sheets-and-hit-point-secrecy.md) | DM tooling, layers, fog of war | 8 |
+| Milestone 5 — [0006](adr/0006-premade-character-library.md) | rolls, feed and dice | 7 |
+| Milestone 6 — [0006](adr/0006-premade-character-library.md) | DM tooling, layers, fog of war | 8 |
+| Milestone 6 — [0007](adr/0007-monster-bestiary-and-cr-scaling.md) | rolls, feed and dice | 7 |
+| Milestone 7 — [0004](adr/0004-board-authorisation-and-layers.md) | orphaned-blob sweeper, admin view | 10 |
+| Milestone 7 — [0007](adr/0007-monster-bestiary-and-cr-scaling.md) | DM tooling, layers, fog of war | 8 |
+| Milestone 8 — [0006](adr/0006-premade-character-library.md) | orphaned-blob sweeper | 10 |
 
-Source comments carry the same drift and have **not** been swept. A comment naming "Milestone 5's
-roll target" in `convex/lib/sheet.ts` means 6; one saying "Milestone 5 owns the real DM panel" in
-`src/components/board/dm/SceneSelect.tsx` means 7. They get corrected as those files are touched
-rather than in one pass, because a twenty-file rename is a diff nobody reviews properly and the
-mapping above is the authority either way.
+**This file no longer contains a forward reference by number, and that is the fix rather than a
+tidy-up.** Three renumberings taught the lesson [ADR 0006](adr/0006-premade-character-library.md)
+wrote down — *a comment that names a milestone number dates badly, and naming the feature survives* —
+so every "still Milestone 6" in a completed section above now reads "still the rolls milestone", and
+the same for the DM-tooling, tools and game-editor milestones. A fourth insertion costs a heading
+renumber and nothing else.
+
+Source comments carry the same drift and have **not** been swept, though Milestone 5 stopped adding to
+it: nothing written in that milestone names a number. Older comments naming one are read against the
+table above and get corrected as those files are touched, because a twenty-file rename is a diff
+nobody reviews properly.
 
 ---
 
@@ -144,7 +156,7 @@ it took are recorded in [ADR 0004](adr/0004-board-authorisation-and-layers.md).
   refusal cannot also delete the blob it refused, because a mutation is one transaction; the client's
   catch calls `files.discard` for that, and that call refuses a blob a scene or a token still points
   at so a mis-sequenced catch cannot strip the art off the board. The full library editor is still
-  Milestone 9.
+  the game-editor milestone.
 - **Grid calibration by squares-across**, with an arrow-key offset nudge against a live overlay.
   Changes **apply as they are made** rather than sitting behind a Save button: calibrating a grid is
   aiming at a target you can see, and a commit step between each adjustment and its overlay makes the
@@ -163,17 +175,17 @@ it took are recorded in [ADR 0004](adr/0004-board-authorisation-and-layers.md).
 
 **Deliberately not done here:**
 
-- **No layer toggle and no moving tokens between layers** — Milestone 7. The choke point supports
-  the move; the schema supports only two layers, and Milestone 7's third one is a union change.
-- **No tabbed DM panel and no polished scene-switch UX** — Milestone 7. `scenes.setActive` exists and
+- **No layer toggle and no moving tokens between layers** — the DM-tooling milestone. The choke point supports
+  the move; the schema supports only two layers, and that milestone's third one is a union change.
+- **No tabbed DM panel and no polished scene-switch UX** — the DM-tooling milestone. `scenes.setActive` exists and
   is DM-gated, driven by a bare `<select>` in the DM setup panel.
-- **No marker or ruler tools** — Milestone 8. `convex/lib/grid.ts` gives it the cell arithmetic to
+- **No marker or ruler tools** — the tools milestone. `convex/lib/grid.ts` gives it the cell arithmetic to
   build on (`cellOf`, `centreOfCell`), but nothing distance-related is written yet — a shared module
   is the most expensive place to park code nothing calls.
 - **No character sheets and no token health bars** — Milestone 3. `tokens.characterId` links a token
   to a character, and nothing else about a character is on the board yet.
-- **No token or map libraries** — Milestone 9. Uploads go straight onto the board.
-- **No orphaned-blob sweeper** — Milestone 9. A refused or abandoned upload can leave a file in
+- **No token or map libraries** — the game-editor milestone. Uploads go straight onto the board.
+- **No orphaned-blob sweeper** — the game-editor milestone. A refused or abandoned upload can leave a file in
   storage: the refusal cannot delete it, `files.discard` is the client's good-citizen path but a
   crashed tab never calls it, and `files.generateUploadUrl` can mint a blob nothing ever references.
   Bounded by needing the DM code, and recorded in
@@ -220,19 +232,19 @@ settle.
   shape of the Milestone 2 bug, and would fail in both directions.
 - **The reduced NPC sheet shares one `SheetEntry` type** with the full one, across a PC's feats, a
   PC's spells and a monster's actions — which is what stops "two shapes" becoming two of everything,
-  and gives Milestone 6 one roll path rather than a fork.
+  and gives the rolls milestone one roll path rather than a fork.
 - **The catalogue is content, and a character stores a copy.** `convex/lib/rules.ts` holds 24 spells,
   16 feats and 12 NPC actions; `catalogueKey` is a breadcrumb, not a foreign key, so retiring an
   entry leaves every sheet that has it working. Roll specs (`1d8+WIS`) are **validated in shape now
-  and evaluated in Milestone 6** — storing them unvalidated would be a migration over every sheet the
+  and evaluated when rolling lands** — storing them unvalidated would be a migration over every sheet the
   moment something first parses one.
 - `ClaimCharacterNotice` is gone, subsumed by the sheet panel as Milestone 2 said it would be.
 
-**Deliberately not done here:** rolling anything (Milestone 6 — the roll specs are stored and
+**Deliberately not done here:** rolling anything (the rolls milestone — the roll specs are stored and
 validated but never evaluated), temporary hit points and death saves (absent from
 [requirements.md](requirements.md), so out of the rules subset by the same discipline as the
 exclusions), a read-only view of another player's sheet, and the five-section DM panel — the Sheets
-tab is deliberately the seam Milestone 7 grows from, not an attempt at it.
+tab is deliberately the seam the DM-tooling milestone grows from, not an attempt at it.
 
 **Acceptance:** create a character, edit its HP from the sheet and from the token, and see both
 update everywhere at once. A player inspecting network traffic sees no exact NPC HP — asserted by
@@ -315,7 +327,7 @@ a character existed at all — and the audience for this app is beginners and ch
 
 **Deliberately not done here:**
 
-- **No rolling.** Still Milestone 6. The library's entries carry roll specs as validated strings and
+- **No rolling.** Still the rolls milestone. The library's entries carry roll specs as validated strings and
   nothing evaluates one.
 - **No backgrounds, no inventory, no subraces, no multiclassing and no experience points** — see the
   amendment section in [requirements.md](requirements.md) for which of those are excluded by design
@@ -374,7 +386,7 @@ three actions into, at the rate of one per creature in the encounter. This miles
 same thing the players got: a corpus of finished creatures, picked rather than typed.
 
 **Why it goes here and not in the game editor, where it started.** An NPC's actions carry the same
-roll specs a hero's spells do, and Milestone 6 evaluates all of them through one path. A bestiary
+roll specs a hero's spells do, and the rolls milestone evaluates all of them through one path. A bestiary
 written *after* the dice exist is a corpus retro-fitted to whatever the evaluator happened to accept;
 written before, it is 150 more entries that the evaluator has to satisfy on the day it lands — which
 is the same argument Milestone 3 made for validating roll specs it could not yet evaluate. The
@@ -499,7 +511,7 @@ a second head. Anything made of words is content; the ten or so numbers move.
 **Damage scales inside the existing roll grammar.** `1d6+2` becomes `2d6+4`, not a bare number the
 evaluator would have to special-case: the scaler's output has to satisfy `isValidRoll` from
 `convex/lib/sheet.ts`, which is a constraint worth having rather than one to work around. It keeps a
-scaled attack rollable by Milestone 6 through the one path everything else uses, and it means the die
+scaled attack rollable through the one path everything else uses, and it means the die
 count stays inside the cap that stops a client asking the physics engine for 99,999 dice.
 
 **Clamped at both ends, to CR 0 and CR 6.** Pressing the button eight times does not produce a CR 14
@@ -555,7 +567,7 @@ instead.
 
 Maximum three attacks and maximum three special abilities, per the spec. Both are lists of the
 existing `sheetEntryValidator` — the one shape shared across a hero's feats, a hero's spells and a
-monster's actions, which is what gives Milestone 6 one roll path instead of a fork
+monster's actions, which is what gives the rolls milestone one roll path instead of a fork
 ([ADR 0005](adr/0005-character-sheets-and-hit-point-secrecy.md)).
 
 Those caps are enforced in the **bestiary's own test**, not in the schema. `MAX_SHEET_ENTRIES` is 40
@@ -631,7 +643,7 @@ the DM asking it to**, it needs one.
 
 - **No encounter generator.** The metadata exists so one is possible; nothing builds an encounter,
   budgets a fight or suggests a party-appropriate group.
-- **No rolling a monster's attack.** Milestone 6, along with everything else that touches dice.
+- **No rolling a monster's attack.** The rolls milestone, along with everything else that touches dice.
 - **No experience budget and no computed CR.** There are no experience points in D&D Lite. Note the
   line this draws against the feature above: the app **scales a creature to a CR the DM picks** and
   never **works out what CR a creature is**. The first is a lookup in a benchmark table; the second is
@@ -647,7 +659,7 @@ the DM asking it to**, it needs one.
   the one that is deployed.
 - **No player-facing bestiary.** This is not a compendium players browse; it is the DM's shelf.
 - **No creature art and no token library.** A bestiary entry is numbers and words. Art still arrives
-  by upload, and the token library is Milestone 9.
+  by upload, and the token library is the game-editor milestone.
 - **Nothing above CR 6 and nothing tuned past a level 5 party**, matching the character library's
   ceiling exactly.
 - **No editable-in-app library.** Same call ADR 0006 made: content ships with the code, is reviewed
@@ -658,7 +670,7 @@ the DM asking it to**, it needs one.
 `storedSheetValidator`, and every existing read path untouched, which is the whole reason Milestone 4
 was cheap. It is expensive the moment the bestiary becomes a Convex table, because then `resolveSheet`
 needs a `ctx`, and both of ADR 0005's choke points plus nine call sites become async. Widening the
-stored-sheet union is additive and safe; that is not true of every union in this schema — Milestone 7's
+stored-sheet union is additive and safe; that is not true of every union in this schema — the DM-tooling milestone's
 third `layer` member is the counter-example.
 
 **Acceptance:** the DM filters the bestiary to Tier III, adds an Owlbear, and has a creature on the
@@ -680,42 +692,163 @@ hand-built NPC offers no CR stepper.
 
 ---
 
-## Milestone 6 — Rolls, feed and dice
+## Milestone 6 — The screen, and what a sheet entry is
+
+**Inserted after the first look at the deployed app**, and it is two jobs in one milestone because
+both are prerequisites for the dice rather than polish that could follow them.
+
+The tell that these are not cosmetics: **the game feed has nowhere to live, and the roll path cannot
+tell a sword from a prayer.** Build the feed into a panel of its own and the layout change moves it
+afterwards. Let the evaluator land against today's `SheetEntry` and it learns a shape where a
+greatsword has one roll, when a weapon needs two — a to-hit *and* a damage — and where nothing
+distinguishes "casts Cure Wounds" from "attacks with their Greatsword" from "uses Divine Smite",
+which is exactly the wording the roll announcement has to produce. Both are cheap now and a rewrite
+later.
+
+### The screen
+
+One shell, replacing the current stack of overlay panels.
+
+- **A top header bar**: game title, *Run by …*, the join code, the signed-in display name, the
+  character that seat is playing, and a profile icon.
+- **A left panel holding the map**, its zoom and fit controls, and — when it lands in the tools
+  milestone — the DM's marker and ruler palette. **The map fills the panel**, which is what the
+  current fixed-aspect board does not do.
+- **A right tabbed panel**: Game feed · Character sheet · DM tools (itself several tabs) · settings
+  and whatever else earns a tab. The existing `MapSetupOverlay` tabs move here wholesale rather than
+  being rebuilt — Map, Sheets and NPCs become DM-tools tabs.
+- **A vertical resizer** between the two, remembered per game in local storage. The camera is already
+  a view rather than shared state and is stored the same way ([ADR 0004](adr/0004-board-authorisation-and-layers.md));
+  a pane width is the same kind of fact and gets the same treatment, so it costs no database traffic.
+- **A bottom-right roster**: a profile icon per seat including the DM, with the character's name
+  underneath and the real display name on hover. That inversion is deliberate — at the table you
+  address the character and need the person's name only occasionally.
+
+**Profile icons come from the display name, not from an upload.** `TokenCoin` already draws a tinted
+coin with initials when a token has no art, so a seat's icon is that same function of `nameKey` — a
+colour and one or two letters, deterministic, identical on every screen, costing nothing against the
+1 GB storage ceiling (invariant 6) and needing no upload UI, no cropping and no moderation. Real
+uploaded pictures are a library feature and belong with the other upload-backed libraries in the
+game-editor milestone, where the orphaned-blob sweeper already has to exist.
+
+One board behaviour changes with it: **the health-bar editor stops appearing on token select and
+appears when the floating health bar itself is clicked.** Selecting a token to move it is not asking
+to edit its hit points, and the controls currently cover the squares you are trying to drag to.
+
+### What a sheet entry is
+
+`SheetEntry` is the one shape shared by a hero's feats, a hero's spells and a monster's actions —
+the saving [ADR 0005](adr/0005-character-sheets-and-hit-point-secrecy.md) made so that two sheet
+variants did not become two of everything. It grows **one discriminator and one field**, and the
+milestone's whole risk is that this is that shared type.
+
+- **A category**: `weapon` | `action` | `passive`.
+  - A **weapon** is a sword or an axe: a **to-hit roll paired with a damage roll**. Two rolls, which
+    is why `roll: string | null` cannot express one.
+  - An **action** is Divine Smite: something that rolls dice when you use it. One roll.
+  - A **passive** is Lay on Hands or Giant's Might: you declare it and do it. No roll.
+- **A second roll on a weapon**, so a to-hit and a damage are separate targets rather than one string
+  a parser has to split.
+
+Then the content, which is the bulk of it: **recategorise every entry in `convex/lib/rules.ts` (24
+spells, 16 feats, 12 NPC actions), every entry across the 72 sheets in `convex/lib/library/`, and
+every attack and ability across the 129 entries in `convex/lib/bestiary/`.** The bestiary is already
+half-done — it separates `attacks` from `abilities` and its attacks already carry a damage roll and a
+per-creature attack bonus, so `weapon` is close to the shape it has. A hero's greatsword is the one
+that genuinely gains a field.
+
+The sheet also stops grouping skills by ability. **Thirteen skills listed alphabetically, each
+annotated with its ability — `Athletics (STR)`.** The grouping was there so a player could find "what
+do I roll for sneaking" by scanning the Dexterity block; alphabetical with the ability in brackets
+answers the same question without making the reader know the grouping first.
+
+⚠️ **The field-by-field rebuild trap, for the fourth time.** `normaliseEntry`, `entriesProblem` and
+every projection that touches a `SheetEntry` rebuild it field by field, and this codebase has twice
+shipped a field added to a validator and not added to the rebuild — silently discarded on every
+write, invisible to the local suite, found by `npm run test:smoke`. Two new fields on the most widely
+shared type in the schema is the largest exposure that trap has had. The category must also be
+**optional** in the schema, because the `characters` table already holds entries without it, and read
+through one accessor that defaults it.
+
+**Deliberately not done here:** no rolling — the second roll is stored and validated and nothing
+evaluates it, which is the same split the roll grammar itself took a milestone before anything could
+parse one. No marker or ruler tools, only the panel they will live in. No uploaded profile pictures.
+No fog of war and no layer rework. No feed — the *tab* exists and is empty until the next milestone
+fills it.
+
+**Acceptance:** the board fills its panel at any window size, the resizer holds its position across a
+reload, and every seat appears bottom-right with its character's name under a coloured initial that
+is the same colour on every screen. A character sheet lists thirteen skills alphabetically and splits
+its entries under Weapons, Actions and Passives, with a greatsword showing a to-hit and a damage
+separately. No stat block or entry lost a field on save — asserted by `npm run test:smoke` against
+the real deployment, because that is the only thing that has ever caught this.
+
+**Amend [requirements.md](requirements.md)** on the way: that file describes the character sheet and
+DM panels as *slide-out* panels, and they become tabs in a persistent right-hand panel. Recorded as
+an amendment rather than an edit, like the two before it.
+
+---
+
+## Milestone 7 — Rolls, feed and dice
 
 The bit that makes it feel like a game.
 
-- `feed` table + game feed panel showing roll and ability history.
+- `feed` table + game feed panel, filling the tab the previous milestone left empty.
 - Click a sheet item → roll pushed to the feed. **Alt-click** → the item's text description instead.
 - Advantage / disadvantage toggle, for both sheet rolls and ad-hoc dice.
 - Ad-hoc dice roller in the game tools.
 - 3D dice via `@3d-dice/dice-box`, visible to everyone, with the roller's token shown on screen.
 - d20 crit handling: screen shake + red alarm on a 1, celebration + fireworks on a 20.
+- **A weapon rolls twice** — a to-hit and a damage — which is the shape the previous milestone put on
+  `SheetEntry` for exactly this reason. An action rolls once. A passive is declared and rolls nothing,
+  so clicking one announces it and pushes to the feed without any dice.
+
+### The roll announcement over the map, and why it is not decoration
+
+**A floating glowing line naming who rolled and what they did, then the result under it a beat later.**
+`Chadius casts Cure Wounds` · `Chadius attacks with their Greatsword` · `Chadius uses Divine Smite` ·
+`Chadius performs a STR check` · `Chadius performs a STR saving throw` · `Chadius performs an
+Athletics roll`.
+
+This exists because of a consequence of the layout milestone that is easy to miss: **the feed and the
+character sheet now share one panel**, so the person who clicked the roll is looking at their sheet and
+cannot see the feed entry they just created. Without the announcement, the one player who most needs
+confirmation that their click landed is the only player who gets none. It goes over the map, where
+everybody is already looking, and it plays for every screen rather than only the roller's.
+
+The wording is generated from the entry's **category**, which is why that field had to exist first: a
+`weapon` announces "attacks with their", an `action` "uses", a spell "casts", and an ability check or
+a saving throw has its own phrasing with no entry behind it at all. One category, one sentence
+template, no per-entry copy to write.
 
 ⚠️ **Known risk:** `dice-box` loads its physics WASM and dice assets at runtime, which interacts
 badly with a non-root `base` path. Budget time to configure its asset path against
 `/coffee-code-n-kobolds/`. This will not "just work".
 
-**Acceptance:** a player clicks a saving throw; everyone sees the same 3D dice roll and the same
-result lands in the feed. Rolling a 1 and a 20 each trigger their effect on every screen.
+**Acceptance:** a player clicks a saving throw; everyone sees the same 3D dice roll, the same floating
+announcement, and the same result in the feed. The roller sees the announcement **without switching
+tabs away from their sheet**. Rolling a 1 and a 20 each trigger their effect on every screen. Clicking
+a passive announces it and adds a feed line with no dice.
 
 ### 🎲 This is the first playable session
 
-With Milestones 1–6 you can run a real game: a map with tokens, characters built by choosing rather
+With Milestones 1–7 you can run a real game: a map with tokens, characters built by choosing rather
 than by filling in a form, monsters picked off a shelf rather than typed in, sheets that roll, shared
 dice, and a feed. The DM works around the missing tooling manually. **Consider actually playing here
 before building more** — a session will tell you what's genuinely missing faster than guessing.
 
 ---
 
-## Milestone 7 — DM tooling
+## Milestone 8 — DM tooling
 
 The four bold items at the end were **requested after playing Milestone 2**. The rest was always
 here.
 
-- DM panel, tabbed: all player sheets, all NPC sheets, token list, modal image library, music.
-  Milestone 3 left the seam rather than the panel: `MapSetupOverlay` already holds `Tabs` with **Map**
-  and **Sheets**, so this is three more tabs and a rename, not a new component. Milestone 5's bestiary
-  picker is the NPC tab's contents rather than something this milestone invents.
+- DM panel: the token list, the modal image library and the music selector. **Most of this bullet has
+  already been built by the two milestones that grew into it**, and what is left is smaller than it
+  reads. Milestone 3 left `Tabs` as a seam rather than a panel; Milestone 5 filled the NPC tab with the
+  bestiary picker; the layout milestone moved the whole thing into the right-hand panel and split it
+  into DM-tools tabs. So this is three more tabs inside a panel that exists, not a panel.
 - DM can click any sheet item to roll on a player's behalf.
 - Scene switching — changes the visible board for everyone in the game.
 - Modal image pop-up: DM opens an image for the whole group, and closes it for everyone.
@@ -763,7 +896,7 @@ a corridor is fogged has no position rows for what is standing in it.
 
 ---
 
-## Milestone 8 — Tools and polish
+## Milestone 9 — Tools and polish
 
 - Ruler tool, measuring in squares (1 square = 5 feet).
 - Multi-colour marker + eraser on the board. **DM only** — players must not have this.
@@ -775,7 +908,7 @@ marker tool available.
 
 ---
 
-## Milestone 9 — Game editor and admin
+## Milestone 10 — Game editor and admin
 
 - Libraries: maps/boards, modal images, tokens and music. **NPC sheets are no longer on this list** —
   the bestiary moved forward to Milestone 5, because a monster's sheet feeds the roll path as much as a
@@ -856,10 +989,18 @@ rather than reopening it, and raises two more.
   the same curve, and a Spellcaster's probably does not grow like a Brute's. Ten rows is content that
   can be tuned in place; ten rows per role is eighty, and nobody has yet scaled enough creatures to know
   whether the single curve reads wrong.
-- Whether the initiative tracker belongs in Milestone 6 rather than 8 — a real session will answer
-  this. **Still open**, and now two milestones away from being playable enough to ask it properly
-  rather than one — which is the price of inserting Milestone 5 and is worth naming rather than
-  glossing.
+- Whether the initiative tracker belongs with the rolls rather than in tools and polish — a real
+  session will answer this. **Still open**, and now three milestones away from being playable enough to
+  ask it properly rather than one, which is the compounding price of three insertions and is worth
+  naming rather than glossing. Written without numbers deliberately: this entry has been renumbered
+  twice already.
+- **Whether the layout should have come before the character library rather than after two libraries.**
+  Worth recording as a judgement to check rather than a decision to defend. Building the shell first
+  would have meant the sheet panel, the bestiary picker and the DM tabs each landing in their final home
+  the first time, instead of being moved once. Against that: the shell's requirements were not knowable
+  until there was something to put in it, and the markup that specifies it came from looking at a
+  deployed app with two libraries in it. The cost paid is one move of panels that already worked; the
+  cost avoided is designing a screen around features that did not exist yet.
 - **Whether the library should go past level 5.** It stops there, and a character the DM pushes
   beyond it keeps its level and its proficiency bonus while its sheet stands still. Extending it is
   24 more hand-written sheets per five levels, and nobody has yet played long enough to want them.
