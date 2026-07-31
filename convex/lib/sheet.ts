@@ -15,7 +15,13 @@
 
 import { v, type Infer } from 'convex/values'
 
+import { SUBCLASS_LEVEL, classKeyValidator, subclassOf } from './classes'
 import { collapseWhitespace, hasLoneSurrogate } from './codes'
+import { raceKeyValidator } from './races'
+// Type-only, and it has to stay that way: skills.ts imports `abilityModifier` and
+// `proficiencyBonus` from this module at runtime, so a value import back would close
+// a cycle. See the note on `skillProficienciesValidator`.
+import type { SkillProficiencies } from './skills'
 
 // ---------------------------------------------------------------------------
 // Bounds
@@ -38,14 +44,33 @@ export const HIT_DIE_FACES = [6, 8, 10, 12] as const
 
 export const MAX_INITIATIVE_BONUS = 20
 
+/**
+ * Bounds on a character's speed, in feet.
+ *
+ * Zero is allowed and the ceiling is generous, because this is not the rules
+ * policing themselves — it is the guard that stops a non-finite float64 reaching a
+ * stored document and a player-facing payload. `speed` arrived in Milestone 4 as the
+ * one numeric field on the sheet with no range check at all, so `NaN` and `Infinity`
+ * both stored cleanly and came back out on the wire; `speedOf` guarded them on read,
+ * which is exactly why nobody noticed. `npm run test:smoke` did.
+ */
+export const MIN_SPEED = 0
+export const MAX_SPEED = 200
+
 export const MIN_SPELL_LEVEL = 0
 export const MAX_SPELL_LEVEL = 9
 
 /**
- * Every character moves 35 feet, per requirements.md, and that is why speed is a
- * constant here rather than a field on the sheet. Storing a number nobody may
- * change would invite a form control for it, and then a character with a speed of
- * 30 that the rules say cannot exist.
+ * The speed every character has unless something says otherwise — **a default now,
+ * not a rule.**
+ *
+ * requirements.md fixed this at 35 for everyone and this was a constant with no
+ * field behind it, on the reasoning that storing a number nobody may change would
+ * invite a form control and then a character the rules say cannot exist. Milestone 4
+ * lifted that exclusion for one race: the Goliath is Large and moves 45. So `speed`
+ * is a field on the PC sheet, optional because the table already held sheets without
+ * it, and read through `speedOf` — which returns this whenever nothing has said
+ * otherwise, which is seven races out of eight. See ADR 0006.
  */
 export const SPEED_FEET = 35
 
@@ -91,7 +116,7 @@ export const ROLL_MODIFIER_TOKENS = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA', '
  * `NdM` followed by any number of `±term`, where a term is a small integer or one
  * of the tokens above. `1d8+WIS`, `2d6`, `1d20+PROF`, `3d6-1`, `1d10+STR+PROF`.
  *
- * Milestone 3 validates the shape and Milestone 4 evaluates it, and that split is
+ * Milestone 3 validates the shape and Milestone 5 evaluates it, and that split is
  * deliberate rather than half a feature. A roll string stored unvalidated today is
  * a migration over every sheet in every game the moment something tries to parse
  * one — so the grammar is fixed now, while there is nothing to migrate, and the
@@ -99,7 +124,7 @@ export const ROLL_MODIFIER_TOKENS = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA', '
  *
  * Die faces are an allow-list because `1d7` is a typo rather than a house rule, and
  * the count is capped at twenty because the alternative is a client asking for
- * 99999 dice to be rendered in Milestone 4's physics engine.
+ * 99999 dice to be rendered in Milestone 5's physics engine.
  */
 export const ROLL_PATTERN =
   /^(?:[1-9]|1\d|20)d(?:4|6|8|10|12|20|100)(?:[+-](?:\d{1,3}|STR|DEX|CON|INT|WIS|CHA|PROF))*$/
@@ -170,6 +195,35 @@ export const saveProficienciesValidator = v.object({
 })
 export type SaveProficiencies = Infer<typeof saveProficienciesValidator>
 
+/**
+ * The thirteen skills, as a flag each.
+ *
+ * The names, the ability behind each one and the arithmetic all live in
+ * lib/skills.ts; only the validator is here, and the split is about import
+ * direction rather than taste. `skillBonus` needs `abilityModifier` and
+ * `proficiencyBonus` from this module, so skills.ts imports values from sheet.ts —
+ * and a validator here that imported values back would close a runtime cycle at
+ * module scope, where both sides are evaluated eagerly and one of them would see an
+ * empty object. `SKILL_KEYS` and these thirteen fields are asserted to agree by a
+ * test, so the one thing the split costs is checked by machine rather than by
+ * memory.
+ */
+export const skillProficienciesValidator = v.object({
+  athletics: v.boolean(),
+  acrobatics: v.boolean(),
+  sleightOfHand: v.boolean(),
+  stealth: v.boolean(),
+  arcana: v.boolean(),
+  investigation: v.boolean(),
+  animalHandling: v.boolean(),
+  insight: v.boolean(),
+  perception: v.boolean(),
+  deception: v.boolean(),
+  intimidation: v.boolean(),
+  performance: v.boolean(),
+  persuasion: v.boolean(),
+})
+
 export const hitDiceValidator = v.object({
   count: v.number(),
   faces: v.union(v.literal(6), v.literal(8), v.literal(10), v.literal(12)),
@@ -181,7 +235,7 @@ export type HitDice = Infer<typeof hitDiceValidator>
  *
  * **One shape for all three**, and that is the decision that keeps a reduced NPC
  * sheet from becoming a second copy of everything. The two sheet variants differ in
- * what they hold; they do not differ in what a *line* is, so Milestone 4 gets one
+ * what they hold; they do not differ in what a *line* is, so Milestone 5 gets one
  * roll path rather than a fork, and the picker, the list and the editor are each
  * written once.
  *
@@ -223,6 +277,17 @@ export const pcSheetValidator = v.object({
   hitDice: hitDiceValidator,
   feats: v.array(sheetEntryValidator),
   spells: v.array(sheetEntryValidator),
+  // ⚠️ BOTH OPTIONAL BECAUSE THE TABLE ALREADY HOLDS SHEETS WITHOUT THEM.
+  //
+  // Milestone 3 wrote `kind: 'pc'` sheets with neither field, and adding a required
+  // one to an object that already has stored instances fails the schema push — the
+  // same trap `games.status` and the `sheet` field itself each hit in turn. Read
+  // them through `skillProficienciesOf` and `speedOf`, never directly, so the
+  // default lives in exactly one place. A resolved sheet always carries both.
+  skillProficiencies: v.optional(skillProficienciesValidator),
+  // Feet. Absent means the D&D Lite default of 35, which was a constant with no
+  // field behind it until the Goliath needed to be 10 feet faster.
+  speed: v.optional(v.number()),
 })
 export type PcSheet = Infer<typeof pcSheetValidator>
 
@@ -266,6 +331,119 @@ export type CharacterSheet = Infer<typeof sheetValidator>
 export type CharacterKind = CharacterSheet['kind']
 
 export const characterKindValidator = v.union(v.literal('pc'), v.literal('npc'))
+
+/**
+ * What the DM has typed over the top of a premade sheet.
+ *
+ * Every field optional, and absent is overwhelmingly the common case — this exists
+ * so that "the DM can always change a player's sheet" stays literally true against a
+ * character whose stats are read live from the library. An override survives a
+ * level-up, which is the point: bumping a boss-fight armour class should not be
+ * undone by the DM awarding a level five minutes later.
+ *
+ * Deliberately **not** every field of `PcSheet`. Level, class and race are the
+ * *selections* and are changed by changing them; overriding them here would give two
+ * ways to say the same thing and two places for them to disagree.
+ */
+export const presetOverridesValidator = v.object({
+  armourClass: v.optional(v.number()),
+  maxHp: v.optional(v.number()),
+  abilities: v.optional(abilityScoresValidator),
+  saveProficiencies: v.optional(saveProficienciesValidator),
+  skillProficiencies: v.optional(skillProficienciesValidator),
+  speed: v.optional(v.number()),
+  hitDice: v.optional(hitDiceValidator),
+  /** Appended to what the library and the race already gave, never replacing them. */
+  extraFeats: v.optional(v.array(sheetEntryValidator)),
+  extraSpells: v.optional(v.array(sheetEntryValidator)),
+})
+export type PresetOverrides = Infer<typeof presetOverridesValidator>
+
+/**
+ * A character built by choosing rather than by filling in a form.
+ *
+ * **This stores the choices, not the sheet.** Ability scores, armour class, hit
+ * points, skills, feats and spells are all read live out of `lib/library/` at
+ * resolution time, so awarding a level is one number changing and every character in
+ * the game improves the moment the library does.
+ *
+ * `locked` is a courtesy rather than a defence, and worth being honest about: it
+ * stops a player rebuilding their character by accident mid-session, and the DM
+ * clears it when somebody genuinely wants to change. `playerId` is routing and not
+ * identity (ADR 0004), so it does not survive the network tab — but nothing behind
+ * it is a secret, and the worst outcome is a rude change everybody can see.
+ */
+export const presetSheetValidator = v.object({
+  kind: v.literal('preset'),
+  race: raceKeyValidator,
+  classKey: classKeyValidator,
+  /** Null below level 2, when no archetype has been chosen yet. */
+  subclassKey: v.union(v.string(), v.null()),
+  level: v.number(),
+  overrides: v.optional(presetOverridesValidator),
+  locked: v.boolean(),
+})
+export type PresetSheet = Infer<typeof presetSheetValidator>
+
+/**
+ * WHAT THE DATABASE HOLDS, as opposed to what the rest of the application reads.
+ *
+ * The distinction is the whole of Milestone 4's design. A `preset` is a set of
+ * selections that `resolveSheet` in lib/resolve.ts turns into an ordinary
+ * `PcSheet` — so every consumer downstream of that one function keeps the type it
+ * already had, and `maySeeCharacter`, `visibleVitals`, the health bands and
+ * `publicSheet` needed no change at all.
+ *
+ * If you are reading a character to *display or roll* it, you want `CharacterSheet`.
+ * This type appears only where the stored document is being written or validated.
+ */
+export const storedSheetValidator = v.union(
+  pcSheetValidator,
+  npcSheetValidator,
+  presetSheetValidator,
+)
+export type StoredSheet = Infer<typeof storedSheetValidator>
+
+// ---------------------------------------------------------------------------
+// The two optional fields, read through accessors
+// ---------------------------------------------------------------------------
+
+/** All thirteen false. A fresh object each call — see the note on `defaultPcSheet`. */
+export function noSkills(): SkillProficiencies {
+  return {
+    athletics: false,
+    acrobatics: false,
+    sleightOfHand: false,
+    stealth: false,
+    arcana: false,
+    investigation: false,
+    animalHandling: false,
+    insight: false,
+    perception: false,
+    deception: false,
+    intimidation: false,
+    performance: false,
+    persuasion: false,
+  }
+}
+
+/** The only place the optional `skillProficiencies` is read. */
+export function skillProficienciesOf(sheet: CharacterSheet): SkillProficiencies {
+  return sheet.kind === 'pc' ? sheet.skillProficiencies ?? noSkills() : noSkills()
+}
+
+/**
+ * The only place the optional `speed` is read.
+ *
+ * `SPEED_FEET` used to be the whole answer and is now merely the default. The
+ * comment it carried — that a character with a different speed is one the rules say
+ * cannot exist — was true until the Goliath, and is why that constant is still the
+ * number every other character gets.
+ */
+export function speedOf(sheet: CharacterSheet): number {
+  const stored = sheet.kind === 'pc' ? sheet.speed : undefined
+  return stored === undefined || !Number.isFinite(stored) ? SPEED_FEET : stored
+}
 
 // ---------------------------------------------------------------------------
 // Defaults, and the one place the optional field is read
@@ -316,13 +494,15 @@ export function defaultSheetFor(kind: CharacterKind): CharacterSheet {
  * A sheet-less legacy character reads as a player character, which is what every
  * one of them is: NPCs could not be created before this milestone existed.
  */
-export function characterSheet(doc: { sheet?: CharacterSheet }): CharacterSheet {
-  return doc.sheet ?? defaultPcSheet()
-}
-
-export function characterKind(doc: { sheet?: CharacterSheet }): CharacterKind {
-  return characterSheet(doc).kind
-}
+// `characterSheet` and `characterKind` used to live here and are gone. Milestone 4
+// moved the job to `resolveSheet` and `kindOf` in lib/resolve.ts, which handle the
+// third stored shape this module cannot resolve on its own — a `preset` needs the
+// library, and the library must never be imported from here or it reaches the
+// browser.
+//
+// They are named rather than quietly deleted because they were the two most
+// plausible names for the job, and the next person wanting "give me this character's
+// sheet" will look for them here first. The answer is one file over.
 
 // ---------------------------------------------------------------------------
 // Derived numbers
@@ -368,7 +548,7 @@ export function maxHpOf(sheet: CharacterSheet): number {
   return sheet.maxHp
 }
 
-/** Every line on a sheet, whichever list it is in. For validation and for Milestone 4. */
+/** Every line on a sheet, whichever list it is in. For validation and for Milestone 5. */
 export function sheetEntriesOf(sheet: CharacterSheet): SheetEntry[] {
   return sheet.kind === 'pc' ? [...sheet.feats, ...sheet.spells] : [...sheet.actions]
 }
@@ -552,6 +732,22 @@ export function normaliseSheet(sheet: CharacterSheet): CharacterSheet {
     hitDice: { count: Math.round(sheet.hitDice.count), faces: sheet.hitDice.faces },
     feats: sheet.feats.map(normaliseEntry),
     spells: sheet.spells.map(normaliseEntry),
+    // **Both of these were being dropped.** This function rebuilds the sheet field
+    // by field rather than spreading it, which is deliberate — it is what stops an
+    // unknown field riding into the database — but it means a field added to
+    // `pcSheetValidator` and not added here is silently discarded on every write.
+    // Milestone 4 added both, and every hand-built character's skill ticks went in
+    // the bin on Save while the form showed them ticked. `npm run test:smoke` found
+    // it; nothing in the local suite could have, because the value round-tripped
+    // through a validator that permits it to be absent.
+    //
+    // Spread conditionally rather than written as `undefined`: `undefined` is not a
+    // Convex value, so naming the key and giving it that is a different write from
+    // omitting the key.
+    ...(sheet.skillProficiencies === undefined
+      ? {}
+      : { skillProficiencies: { ...sheet.skillProficiencies } }),
+    ...(sheet.speed === undefined ? {} : { speed: Math.round(sheet.speed) }),
   }
 }
 
@@ -632,6 +828,13 @@ export function sheetProblem(sheet: CharacterSheet): SheetProblem | null {
   }
   const className = textProblem(sheet.className, 'className')
   if (className) return className
+
+  if (sheet.speed !== undefined && !isWholeWithin(sheet.speed, MIN_SPEED, MAX_SPEED)) {
+    return {
+      path: 'speed',
+      message: `Speed has to be a whole number of feet from ${MIN_SPEED} to ${MAX_SPEED}.`,
+    }
+  }
   for (const ability of ABILITY_KEYS) {
     if (!isWholeWithin(sheet.abilities[ability], MIN_ABILITY_SCORE, MAX_ABILITY_SCORE)) {
       return {
@@ -664,7 +867,7 @@ export function sheetProblem(sheet: CharacterSheet): SheetProblem | null {
 
   // One `seen` set across both lists, not one per list. `sheetEntriesOf` merges
   // feats and spells into a single array — which is a React key set, and is what
-  // Milestone 4 will aim a roll at — so an id checked only within its own list is
+  // Milestone 5 will aim a roll at — so an id checked only within its own list is
   // an id that can still collide in the merged one. Checking per list would have
   // enforced exactly the half of the guarantee that does not matter.
   const seen = new Set<string>()
@@ -685,7 +888,7 @@ function entriesProblem(
   for (const [index, entry] of entries.entries()) {
     const path = `${list}[${index}]`
 
-    // The id is a React key and Milestone 4's roll target. A duplicate would make
+    // The id is a React key and Milestone 5's roll target. A duplicate would make
     // rolling one entry roll another, and an empty one would make the list
     // unaddressable — neither is something a user can see to fix, so it is checked
     // rather than trusted.
@@ -740,6 +943,177 @@ function entriesProblem(
     }
   }
 
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// The stored shapes, which include the one this module cannot resolve
+// ---------------------------------------------------------------------------
+
+/**
+ * Tidy a stored sheet, whichever of the three it is.
+ *
+ * A `preset` normalises to its selections and nothing else — there is no maximum to
+ * round or spell list to trim, because it holds none. What it *resolves* to is
+ * validated separately by the caller, which is the only place that can, since
+ * resolution needs the library and this module deliberately never imports it.
+ */
+export function normaliseStoredSheet(sheet: StoredSheet): StoredSheet {
+  if (sheet.kind !== 'preset') return normaliseSheet(sheet)
+
+  return {
+    kind: 'preset',
+    race: sheet.race,
+    classKey: sheet.classKey,
+    subclassKey: sheet.subclassKey,
+    level: Math.round(sheet.level),
+    // **The override's entries get the same tidying as any other entry**, which they
+    // were not getting. `storedSheetProblem` runs `entriesProblem` over them, so they
+    // were being *validated* as though they had been normalised while being stored
+    // raw: a roll typed the way a person types it, `2d6 + wis`, was refused inside an
+    // override while the identical string in a feat list was accepted, and an id
+    // stored as `" dm-2 "` sat on the sheet looking exactly like `"dm-2"` while being
+    // a different React key and a different roll target.
+    ...(sheet.overrides === undefined ? {} : { overrides: normaliseOverrides(sheet.overrides) }),
+    locked: sheet.locked,
+  }
+}
+
+/**
+ * Lay the DM's overrides over a sheet. The last stage of resolution, **and it lives
+ * here rather than in lib/resolve.ts so that the browser can run the same one.**
+ *
+ * The override panel has to show every derived number moving as the DM types, which
+ * means applying overrides client-side — and the browser cannot call `resolveSheet`,
+ * because that reaches into `lib/library/` and 72 stat blocks must not enter the
+ * bundle. The obvious conclusion, which was drawn once, is that the browser needs its
+ * own copy of this merge. It does not: overrides land on an already-resolved sheet,
+ * and this function touches nothing but `PcSheet` and `PresetOverrides`, both of
+ * which are already shared. Only the *library lookup* is server-only, not the last
+ * third of the pipeline.
+ *
+ * The copy was real and so was its cost. This codebase has twice shipped a bug where
+ * a field was added to a validator and one of two field-by-field rebuilds was not
+ * updated — `skillProficiencies` and `speed`, silently dropped on every save. A
+ * second merge maintained by hand is the same trap with a subtler symptom: a preview
+ * that disagrees with the server for exactly one field.
+ *
+ * Entries are **appended** rather than replaced, so a plot item the DM handed out
+ * survives the next level's library lookup instead of being overwritten by it.
+ */
+export function withOverrides(sheet: PcSheet, overrides: PresetOverrides | undefined): PcSheet {
+  if (!overrides) return sheet
+
+  return {
+    ...sheet,
+    abilities: overrides.abilities ? { ...overrides.abilities } : sheet.abilities,
+    saveProficiencies: overrides.saveProficiencies
+      ? { ...overrides.saveProficiencies }
+      : sheet.saveProficiencies,
+    skillProficiencies: overrides.skillProficiencies
+      ? { ...overrides.skillProficiencies }
+      : sheet.skillProficiencies,
+    armourClass: overrides.armourClass ?? sheet.armourClass,
+    maxHp: overrides.maxHp ?? sheet.maxHp,
+    hitDice: overrides.hitDice ? { ...overrides.hitDice } : sheet.hitDice,
+    speed: overrides.speed ?? sheet.speed,
+    feats: [...sheet.feats, ...(overrides.extraFeats ?? [])],
+    spells: [...sheet.spells, ...(overrides.extraSpells ?? [])],
+  }
+}
+
+/**
+ * Drop the keys whose value is `undefined`.
+ *
+ * `undefined` is not a Convex value, so an object naming a field and giving it that
+ * is a different write from one omitting the field — which is why this rule appears
+ * everywhere a shape is built optionally. It was being spelled four different ways
+ * across eight sites (conditional spread, destructure-and-rest, a `delete` in a
+ * loop, a `delete` of a named key), each with its own paragraph re-explaining the
+ * same thing. One helper, one explanation, and the call sites go back to being
+ * ordinary object literals.
+ */
+export function withoutUndefined<T extends object>(value: T): T {
+  const out = { ...value }
+  for (const key of Object.keys(out) as (keyof T)[]) {
+    if (out[key] === undefined) delete out[key]
+  }
+  return out
+}
+
+/**
+ * The DM's overrides, tidied the same way the corresponding fields on a sheet are.
+ *
+ * **Every number, not just the ones that seemed to need it.** An earlier version
+ * rounded `speed` alone, which made a fractional armour class *refused* inside an
+ * override while the identical value on a hand-built sheet was rounded and accepted
+ * — the resolved sheet goes through `sheetProblem`, and `isWholeWithin` does not
+ * forgive a fraction that nothing rounded first. Two rules for one kind of value,
+ * decided by which field it happened to be.
+ */
+function normaliseOverrides(overrides: PresetOverrides): PresetOverrides {
+  const round = (value: number | undefined) => (value === undefined ? undefined : Math.round(value))
+
+  return withoutUndefined({
+    ...overrides,
+    armourClass: round(overrides.armourClass),
+    maxHp: round(overrides.maxHp),
+    speed: round(overrides.speed),
+    abilities: overrides.abilities && mapAbilities(overrides.abilities, Math.round),
+    hitDice: overrides.hitDice && {
+      ...overrides.hitDice,
+      count: Math.round(overrides.hitDice.count),
+    },
+    extraFeats: overrides.extraFeats?.map(normaliseEntry),
+    extraSpells: overrides.extraSpells?.map(normaliseEntry),
+  })
+}
+
+/**
+ * The first thing wrong with a stored sheet's own fields, or null.
+ *
+ * For a `preset` this checks the **selections** — a level in range, an archetype
+ * that belongs to the chosen class, an archetype not chosen before level 2. It
+ * cannot check the numbers, because a preset has none until it is resolved; the
+ * caller runs `sheetProblem` over the resolved sheet as well, which is what catches
+ * a library entry or an override that lands out of bounds.
+ *
+ * Refusing an unknown archetype on **write** while `librarySheet` tolerates one on
+ * **read** is deliberate rather than inconsistent: a character that already chose a
+ * since-retired archetype must stay readable, and nobody should be able to choose
+ * one now.
+ */
+export function storedSheetProblem(sheet: StoredSheet): SheetProblem | null {
+  if (sheet.kind !== 'preset') return sheetProblem(sheet)
+
+  if (!isWholeWithin(sheet.level, MIN_LEVEL, MAX_LEVEL)) {
+    return {
+      path: 'level',
+      message: `Level has to be a whole number from ${MIN_LEVEL} to ${MAX_LEVEL}.`,
+    }
+  }
+  if (sheet.subclassKey !== null) {
+    if (sheet.level < SUBCLASS_LEVEL) {
+      return {
+        path: 'subclassKey',
+        message: `An archetype is chosen at level ${SUBCLASS_LEVEL}, not before.`,
+      }
+    }
+    if (!subclassOf(sheet.classKey, sheet.subclassKey)) {
+      return { path: 'subclassKey', message: 'That is not an archetype of that class.' }
+    }
+  }
+
+  // The DM's extra entries are ordinary sheet entries and get the ordinary checks —
+  // an override is a place a bad roll spec can enter just as easily as a feat list.
+  const overrides = sheet.overrides
+  if (overrides) {
+    const seen = new Set<string>()
+    return (
+      entriesProblem(overrides.extraFeats ?? [], 'overrides.extraFeats', seen) ??
+      entriesProblem(overrides.extraSpells ?? [], 'overrides.extraSpells', seen)
+    )
+  }
   return null
 }
 

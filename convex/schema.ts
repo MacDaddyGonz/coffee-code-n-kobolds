@@ -7,7 +7,7 @@ import { v } from 'convex/values'
 // members exist — see the notes beside each field below.
 import { tokenLayerValidator } from './lib/board'
 import { gameStatusValidator } from './lib/games'
-import { sheetValidator } from './lib/sheet'
+import { storedSheetValidator } from './lib/sheet'
 
 export default defineSchema({
   games: defineTable({
@@ -71,10 +71,18 @@ export default defineSchema({
     name: v.string(),
     // Optional ONLY because this table has held rows since Milestone 1 and adding a
     // required field to a populated table fails the schema push. Never read
-    // directly — go through `characterSheet` in lib/sheet.ts, so the default that
+    // directly — go through `resolveSheet` in lib/resolve.ts, so the default that
     // makes a legacy row a player character lives in exactly one place. This is the
     // same treatment `games.status` gets through `gameStatus`, for the same reason.
-    sheet: v.optional(sheetValidator),
+    //
+    // **What is stored here is not what the application reads.** Milestone 4 added a
+    // third member, `preset`, which holds a race, a class, an archetype and a level
+    // and nothing else — the stats come out of `lib/library/` at resolution time, so
+    // awarding a level is one number changing rather than a sheet being rewritten.
+    // `resolveSheet` turns any of the three into the ordinary `CharacterSheet` every
+    // consumer already expected, which is why adding a whole character-building
+    // system changed no read path.
+    sheet: v.optional(storedSheetValidator),
   }).index('by_gameId', ['gameId']),
 
   // HOW A CHARACTER IS DOING RIGHT NOW, split from the sheet that says what it is.
@@ -105,6 +113,15 @@ export default defineSchema({
     currentHp: v.number(),
     // Player characters only, and optional because a monster has none to spend.
     hitDiceRemaining: v.optional(v.number()),
+    // Keys of once-per-long-rest abilities that have been spent — a Human's Heroic
+    // Inspiration, a Half-Orc's Relentless Endurance. Belongs here for the same
+    // reason hit points do: it is what changes during play, not what the character
+    // is. A rest clears it; an edit does not touch it.
+    //
+    // The app never enforces the effect, only remembers whether it has been used,
+    // which is the part a table forgets. Optional because most races have nothing to
+    // spend and a row for one of them should not carry an empty array.
+    spentPerRest: v.optional(v.array(v.string())),
   })
     .index('by_gameId', ['gameId'])
     .index('by_characterId', ['characterId']),

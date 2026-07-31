@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'vitest'
 
+// The two accessors these cover moved to lib/resolve.ts in Milestone 4, because a
+// stored preset needs the library to resolve and lib/sheet.ts must never import it.
+import { kindOf, resolveSheet } from './resolve'
+
+import { CLASSES, SUBCLASS_LEVEL } from './classes'
+import { RACE_KEYS } from './races'
+import { SKILL_KEYS } from './skills'
 import {
   HEALTH_BANDS,
   HIT_DIE_FACES,
@@ -24,8 +31,6 @@ import {
   ROLL_MODIFIER_TOKENS,
   ROLL_PATTERN,
   abilityModifier,
-  characterKind,
-  characterSheet,
   clampHp,
   defaultNpcSheet,
   defaultPcSheet,
@@ -36,12 +41,27 @@ import {
   maxHpOf,
   normaliseRoll,
   normaliseSheet,
+  noSkills,
+  normaliseStoredSheet,
   proficiencyBonus,
   savingThrowBonus,
   sheetEntriesOf,
   sheetProblem,
+  skillProficienciesOf,
+  skillProficienciesValidator,
+  speedOf,
+  storedSheetProblem,
+  SPEED_FEET,
 } from './sheet'
-import type { CharacterSheet, HealthBand, NpcSheet, PcSheet, SheetEntry } from './sheet'
+import type {
+  CharacterSheet,
+  HealthBand,
+  NpcSheet,
+  PcSheet,
+  PresetSheet,
+  SheetEntry,
+  StoredSheet,
+} from './sheet'
 
 // ---------------------------------------------------------------------------
 // Builders. Every test starts from a sheet that is known-good, so an assertion
@@ -971,21 +991,21 @@ describe('sheetProblem', () => {
   })
 })
 
-describe('characterSheet, characterKind and the defaults', () => {
+describe('resolveSheet, kindOf and the defaults', () => {
   test('a document with no sheet reads as a player character with defaults', () => {
-    expect(characterSheet({})).toEqual(defaultPcSheet())
-    expect(characterKind({})).toBe('pc')
-    expect(characterSheet({ sheet: undefined })).toEqual(defaultPcSheet())
+    expect(resolveSheet({})).toEqual(defaultPcSheet())
+    expect(kindOf({})).toBe('pc')
+    expect(resolveSheet({ sheet: undefined })).toEqual(defaultPcSheet())
   })
 
   test('a document with a sheet reads as that sheet', () => {
     const stored = npc({ maxHp: 33, notes: 'Hidden in the rafters.' })
-    expect(characterSheet({ sheet: stored })).toBe(stored)
-    expect(characterKind({ sheet: stored })).toBe('npc')
+    expect(resolveSheet({ sheet: stored })).toBe(stored)
+    expect(kindOf({ sheet: stored })).toBe('npc')
 
     const hero = pc({ level: 7 })
-    expect(characterSheet({ sheet: hero })).toBe(hero)
-    expect(characterKind({ sheet: hero })).toBe('pc')
+    expect(resolveSheet({ sheet: hero })).toBe(hero)
+    expect(kindOf({ sheet: hero })).toBe('pc')
   })
 
   /**
@@ -1035,10 +1055,10 @@ describe('characterSheet, characterKind and the defaults', () => {
 
   /** The same freshness through the accessor, which is where a legacy character gets one. */
   test('two sheet-less documents do not share a sheet', () => {
-    const a = characterSheet({}) as PcSheet
+    const a = resolveSheet({}) as PcSheet
     a.abilities.dex = 18
     a.feats.push(entry())
-    const b = characterSheet({}) as PcSheet
+    const b = resolveSheet({}) as PcSheet
     expect(b.abilities.dex).toBe(10)
     expect(b.feats).toHaveLength(0)
     expect(b).not.toBe(a)
@@ -1051,5 +1071,281 @@ describe('characterSheet, characterKind and the defaults', () => {
       expect(normaliseSheet(sheet)).toEqual(sheet)
       expect(sheetProblem(normaliseSheet(sheet))).toBeNull()
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Milestone 4: the two optional fields, the thirteen skills, and the preset
+// ---------------------------------------------------------------------------
+
+describe('skillProficienciesValidator', () => {
+  /**
+   * **The test lib/sheet.ts promises in a comment.** The thirteen skill names
+   * are written out here and again in `SKILL_KEYS` in lib/skills.ts, and the
+   * duplication is deliberate rather than lazy: `skillBonus` needs
+   * `abilityModifier` and `proficiencyBonus` from this module, so skills.ts
+   * imports values from sheet.ts, and a validator here that imported values
+   * back would close a runtime cycle at module scope — where both sides are
+   * evaluated eagerly and one of them would see an empty object.
+   *
+   * What the split costs is that the two lists can drift, and the comment on
+   * the validator says the cost is "checked by machine rather than by memory".
+   * This is the machine. Both directions matter and neither is theoretical: a
+   * skill in `SKILL_KEYS` but not the validator is a flag Convex refuses to
+   * store, and a skill in the validator but not `SKILL_KEYS` is a flag the
+   * sheet never shows and `noSkillProficiencies` never sets.
+   */
+  test('has exactly the thirteen fields of SKILL_KEYS', () => {
+    const fields = Object.keys(skillProficienciesValidator.fields)
+    expect([...fields].sort()).toEqual([...SKILL_KEYS].sort())
+    expect(fields).toHaveLength(13)
+    expect(SKILL_KEYS).toHaveLength(13)
+  })
+
+  /** Every one of them a required boolean — an optional flag would be a fourth state. */
+  test('declares every skill as a required boolean', () => {
+    for (const [key, field] of Object.entries(skillProficienciesValidator.fields)) {
+      expect(field.kind, key).toBe('boolean')
+      expect(field.isOptional, key).toBe('required')
+    }
+  })
+
+  /** And `noSkills` fills every field the validator declares, with nothing left over. */
+  test('agrees with noSkills, which is what a defaulted sheet gets', () => {
+    expect(Object.keys(noSkills()).sort()).toEqual([...SKILL_KEYS].sort())
+    expect(Object.values(noSkills()).every((flag) => flag === false)).toBe(true)
+  })
+})
+
+describe('skillProficienciesOf and speedOf', () => {
+  /**
+   * The two fields Milestone 3 shipped without, and the accessors that exist so
+   * their default lives in exactly one place. Adding a required field to a
+   * table that already has rows fails the schema push, so both are optional in
+   * the validator for ever — which makes reading one directly a bug waiting for
+   * the first legacy character to be opened.
+   */
+  test('a sheet with neither field reads as untrained and 35 feet', () => {
+    const legacy = defaultPcSheet()
+    expect(legacy.skillProficiencies).toBeUndefined()
+    expect(legacy.speed).toBeUndefined()
+    expect(skillProficienciesOf(legacy)).toEqual(noSkills())
+    expect(speedOf(legacy)).toBe(SPEED_FEET)
+  })
+
+  test('a sheet with the fields reads them back', () => {
+    const trained = { ...noSkills(), stealth: true, perception: true }
+    const sheet = pc({ skillProficiencies: trained, speed: 45 })
+    expect(skillProficienciesOf(sheet)).toEqual(trained)
+    expect(speedOf(sheet)).toBe(45)
+  })
+
+  /**
+   * A monster has no skills and no speed of its own — the reduced sheet is an
+   * armour class, hit points, an initiative bonus and a list of things it does.
+   * Asking anyway must give the defaults rather than throwing or reading a
+   * field that is not there.
+   */
+  test('an NPC reads as untrained and at the default speed', () => {
+    expect(skillProficienciesOf(npc())).toEqual(noSkills())
+    expect(speedOf(npc())).toBe(SPEED_FEET)
+  })
+
+  /**
+   * `speedOf` guards non-finite as well as absent, which the `??` written out
+   * by hand at a call site would not: a stored NaN is a perfectly valid Convex
+   * float64, and `35` is a better answer on screen than `NaN ft`.
+   */
+  test('speedOf repairs a nonsense stored speed', () => {
+    for (const speed of NOT_A_NUMBER) {
+      expect(speedOf(pc({ speed }))).toBe(SPEED_FEET)
+    }
+    // A zero or a negative is not repaired, and should not be: those are
+    // numbers a DM can mean, and the override field exists to let them.
+    expect(speedOf(pc({ speed: 0 }))).toBe(0)
+    expect(speedOf(pc({ speed: -5 }))).toBe(-5)
+  })
+
+  /** A fresh object per call, like `defaultPcSheet` — two sheets must not share one. */
+  test('two defaulted sheets do not share a skills object', () => {
+    const first = skillProficienciesOf(defaultPcSheet())
+    first.stealth = true
+    expect(skillProficienciesOf(defaultPcSheet()).stealth).toBe(false)
+  })
+})
+
+describe('storedSheetProblem on a preset', () => {
+  function preset(overrides: Partial<PresetSheet> = {}): PresetSheet {
+    return {
+      kind: 'preset',
+      race: 'human',
+      classKey: 'fighter',
+      subclassKey: 'champion',
+      level: 3,
+      locked: false,
+      ...overrides,
+    }
+  }
+
+  test('accepts a plain set of selections, and every class and archetype', () => {
+    expect(storedSheetProblem(preset())).toBeNull()
+    for (const definition of CLASSES) {
+      expect(
+        storedSheetProblem(preset({ classKey: definition.key, subclassKey: null, level: 1 })),
+        definition.key,
+      ).toBeNull()
+      for (const subclass of definition.subclasses) {
+        expect(
+          storedSheetProblem(
+            preset({ classKey: definition.key, subclassKey: subclass.key, level: 5 }),
+          ),
+          `${definition.key}/${subclass.key}`,
+        ).toBeNull()
+      }
+    }
+    for (const race of RACE_KEYS) {
+      expect(storedSheetProblem(preset({ race })), race).toBeNull()
+    }
+  })
+
+  test('bounds the level from both sides, and refuses a fraction or a NaN', () => {
+    expect(storedSheetProblem(preset({ level: MIN_LEVEL, subclassKey: null }))).toBeNull()
+    expect(storedSheetProblem(preset({ level: MAX_LEVEL }))).toBeNull()
+    for (const level of [MIN_LEVEL - 1, MAX_LEVEL + 1, 2.5, ...NOT_A_NUMBER]) {
+      expect(storedSheetProblem(preset({ level }))?.path, String(level)).toBe('level')
+    }
+  })
+
+  /**
+   * An archetype belongs to exactly one class, and the two are stored in
+   * separate fields — so nothing but this check stops a fighter being saved as
+   * a Thief. It matters more than it looks: `librarySheet` would find no path
+   * for the key and the character would silently resolve to a level 1 sheet
+   * with the wrong name, which reads as "levelling up did nothing" rather than
+   * as an error.
+   */
+  test("refuses an archetype that belongs to another class, naming every class's own", () => {
+    for (const definition of CLASSES) {
+      for (const other of CLASSES) {
+        if (other.key === definition.key) continue
+        for (const subclass of other.subclasses) {
+          const problem = storedSheetProblem(
+            preset({ classKey: definition.key, subclassKey: subclass.key, level: 3 }),
+          )
+          expect(problem?.path, `${definition.key} + ${subclass.key}`).toBe('subclassKey')
+        }
+      }
+    }
+    expect(storedSheetProblem(preset({ subclassKey: 'not-an-archetype' }))?.path).toBe('subclassKey')
+    // The empty string is not "no archetype" — null is. An empty key would be a
+    // lookup miss dressed up as a choice.
+    expect(storedSheetProblem(preset({ subclassKey: '' }))?.path).toBe('subclassKey')
+  })
+
+  /**
+   * An archetype is chosen at level 2 and this refuses one before then, which
+   * is the write-side half of a deliberately asymmetric pair: `librarySheet`
+   * *tolerates* an unknown archetype on read so a character that chose a
+   * since-retired one stays readable, while nothing may choose one now.
+   */
+  test('refuses an archetype chosen below level 2, and allows null at any level', () => {
+    const early = storedSheetProblem(preset({ level: 1 }))
+    expect(early?.path).toBe('subclassKey')
+    expect(early?.message).toContain(String(SUBCLASS_LEVEL))
+    for (const level of [MIN_LEVEL, SUBCLASS_LEVEL, 5, MAX_LEVEL]) {
+      // No archetype is always fine, at every level — a character can sit at
+      // level 5 undecided, and the library shows them level 1 until they choose.
+      expect(storedSheetProblem(preset({ subclassKey: null, level })), `level ${level}`).toBeNull()
+    }
+    // And level 2 is the first at which one may be chosen — the boundary from
+    // both sides, so a `<` written as `<=` fails on one half of the pair.
+    expect(storedSheetProblem(preset({ level: SUBCLASS_LEVEL }))).toBeNull()
+    expect(storedSheetProblem(preset({ level: SUBCLASS_LEVEL - 1 }))?.path).toBe('subclassKey')
+  })
+
+  /**
+   * The DM's extra entries get the ordinary entry checks, because an override
+   * is a place a bad roll spec or a missing id can enter just as easily as a
+   * feat list — and it is the place least likely to be looked at, since it is
+   * typed once and then read live for ever.
+   */
+  test('checks the entries inside the overrides', () => {
+    const good = entry({ id: 'dm-1' })
+    expect(storedSheetProblem(preset({ overrides: { extraFeats: [good] } }))).toBeNull()
+    expect(storedSheetProblem(preset({ overrides: { extraSpells: [good] } }))).toBeNull()
+    expect(storedSheetProblem(preset({ overrides: {} }))).toBeNull()
+
+    expect(
+      storedSheetProblem(preset({ overrides: { extraFeats: [entry({ id: '' })] } }))?.path,
+    ).toBe('overrides.extraFeats[0].id')
+    expect(
+      storedSheetProblem(preset({ overrides: { extraFeats: [entry({ name: '' })] } }))?.path,
+    ).toBe('overrides.extraFeats[0].name')
+    expect(
+      storedSheetProblem(preset({ overrides: { extraSpells: [entry({ roll: '1d7' })] } }))?.path,
+    ).toBe('overrides.extraSpells[0].roll')
+    expect(
+      storedSheetProblem(preset({ overrides: { extraSpells: [entry({ level: 10 })] } }))?.path,
+    ).toBe('overrides.extraSpells[0].level')
+    expect(
+      storedSheetProblem(
+        preset({ overrides: { extraFeats: entries(MAX_SHEET_ENTRIES + 1) } }),
+      )?.path,
+    ).toBe('overrides.extraFeats')
+  })
+
+  /**
+   * One `seen` set across both override lists, matching what `sheetProblem`
+   * does for feats and spells — and for the same reason, since the two are
+   * appended to one sheet and then merged into one React key set.
+   */
+  test('catches an id shared between extraFeats and extraSpells', () => {
+    const problem = storedSheetProblem(
+      preset({
+        overrides: { extraFeats: [entry({ id: 'same' })], extraSpells: [entry({ id: 'same' })] },
+      }),
+    )
+    expect(problem).toEqual({
+      path: 'overrides.extraSpells[0].id',
+      message: 'Two entries on this sheet share an id.',
+    })
+  })
+
+  /**
+   * A preset holds no numbers, so there is nothing here to round but the level
+   * — and the selections have to survive the trip byte for byte, or a
+   * normalised sheet would be a different character from the one that was
+   * typed.
+   */
+  test('normaliseStoredSheet rounds only the level and keeps every selection', () => {
+    const messy = preset({ level: 3.6, overrides: { armourClass: 21 } })
+    const tidied = normaliseStoredSheet(messy) as PresetSheet
+    expect(tidied.level).toBe(4)
+    expect(tidied.race).toBe(messy.race)
+    expect(tidied.classKey).toBe(messy.classKey)
+    expect(tidied.subclassKey).toBe(messy.subclassKey)
+    expect(tidied.locked).toBe(messy.locked)
+    expect(tidied.overrides).toEqual(messy.overrides)
+    expect(normaliseStoredSheet(tidied)).toEqual(tidied)
+  })
+
+  /** The other two stored shapes still go through `sheetProblem` untouched. */
+  test('delegates to sheetProblem for a pc or npc sheet', () => {
+    const shapes: CharacterSheet[] = [defaultPcSheet(), defaultNpcSheet()]
+    for (const sheet of shapes) {
+      const stored: StoredSheet = sheet
+      expect(storedSheetProblem(stored)).toBeNull()
+      expect(normaliseStoredSheet(stored)).toEqual(normaliseSheet(sheet))
+    }
+    expect(storedSheetProblem(pc({ armourClass: 99 }))?.path).toBe('armourClass')
+    expect(storedSheetProblem(npc({ initiativeBonus: 99 }))?.path).toBe('initiativeBonus')
+  })
+
+  /** Validation must not quietly repair the selections it is inspecting. */
+  test('does not mutate the preset it inspects', () => {
+    const stored = preset({ overrides: { extraFeats: [entry()], maxHp: 40 } })
+    const snapshot = structuredClone(stored)
+    storedSheetProblem(stored)
+    expect(stored).toEqual(snapshot)
   })
 })

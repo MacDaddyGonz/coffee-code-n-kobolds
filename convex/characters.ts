@@ -1,7 +1,7 @@
 import { ConvexError, v } from 'convex/values'
 
 import type { Doc, Id } from './_generated/dataModel'
-import type { QueryCtx } from './_generated/server'
+import type { MutationCtx, QueryCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import { detachCharacterFromTokens, visibleCharacterIds } from './lib/board'
 import {
@@ -9,6 +9,8 @@ import {
   changeHitDiceRemaining,
   countCharactersInGame,
   deleteCharacter,
+  longRest as takeLongRest,
+  setPerRestSpent,
   findVisibleCharacter,
   getCharacterInGame,
   insertCharacter,
@@ -37,14 +39,17 @@ import {
   releaseClaimOn,
   setSeatCharacter,
 } from './lib/players'
-import type { CharacterSheet } from './lib/sheet'
+import { SUBCLASS_LEVEL } from './lib/classes'
+import { perRestAbilities } from './lib/races'
+import { presetOf, resolveSheet } from './lib/resolve'
+import type { PresetSheet, StoredSheet } from './lib/sheet'
 import {
   MAX_MAX_HP,
-  characterSheet,
   defaultSheetFor,
-  normaliseSheet,
-  sheetValidator,
+  normaliseStoredSheet,
   sheetProblem,
+  storedSheetProblem,
+  storedSheetValidator,
 } from './lib/sheet'
 
 // Not one row of the `characters` or `characterVitals` tables is read in this file.
@@ -112,10 +117,22 @@ async function requireEditableCharacter(
   return character
 }
 
-/** Normalise, validate, and throw the shared wording the form would have shown. */
-function requireUsableSheet(sheet: CharacterSheet): CharacterSheet {
-  const normalised = normaliseSheet(sheet)
-  const problem = sheetProblem(normalised)
+/**
+ * Normalise, validate, and throw the shared wording the form would have shown.
+ *
+ * **Two checks, and the second is the one worth having.** `storedSheetProblem` covers
+ * what the document holds — for a hand-built sheet that is everything, for a preset
+ * only the four selections. So a preset is then *resolved* and put through
+ * `sheetProblem` as well, which is what catches a library entry with a bad roll spec,
+ * a race bonus that pushes an ability past 30, or a DM override that lands the
+ * armour class out of range. The library is content and content drifts; this is the
+ * gate that stops it drifting into the database.
+ */
+function requireUsableSheet(sheet: StoredSheet): StoredSheet {
+  const normalised = normaliseStoredSheet(sheet)
+  const problem =
+    storedSheetProblem(normalised) ??
+    (normalised.kind === 'preset' ? sheetProblem(resolveSheet({ sheet: normalised })) : null)
   if (problem) {
     throw new ConvexError({ kind: 'BadInput', message: problem.message, path: problem.path })
   }
@@ -245,7 +262,7 @@ export const create = mutation({
   args: {
     code: v.string(),
     name: v.string(),
-    sheet: v.optional(sheetValidator),
+    sheet: v.optional(storedSheetValidator),
     dmCode: v.optional(v.string()),
   },
   returns: v.object({ characterId: v.id('characters') }),
@@ -317,7 +334,7 @@ export const updateSheet = mutation({
   args: {
     code: v.string(),
     characterId: v.id('characters'),
-    sheet: sheetValidator,
+    sheet: storedSheetValidator,
     playerId: v.optional(v.id('players')),
     dmCode: v.optional(v.string()),
   },
@@ -332,15 +349,256 @@ export const updateSheet = mutation({
       args.playerId,
     )
 
-    if (characterSheet(character).kind !== args.sheet.kind) {
+    const before = character.sheet
+    // **Monster-ness is what may not change**, not the storage form. A hand-built
+    // hero swapping to a premade sheet is an ordinary thing to want; a hero becoming
+    // a monster would move a document across the line that decides who may see it,
+    // in a single write. So the comparison is on `npc` alone rather than on the
+    // stored kind — comparing the *resolved* kind would be worse still, since a
+    // preset resolves to `pc` and would refuse every update it made to itself.
+    if ((before?.kind === 'npc') !== (args.sheet.kind === 'npc')) {
       throw new ConvexError({
         kind: 'BadInput',
         message: 'A character cannot change between a player character and an NPC.',
       })
     }
 
-    await writeSheet(ctx, character, requireUsableSheet(args.sheet))
+    const wanted = applyPresetPermissions(before, args.sheet, isDm)
+    await writeSheet(ctx, character, requireUsableSheet(wanted))
     return null
+  },
+})
+
+/**
+ * Who may change which part of a premade character, and the only place it is decided.
+ *
+ * Three rules, each with a reason at the table rather than a security one — every
+ * one of them stops a mistake, and none of them survives the network tab, because
+ * `playerId` is routing and not identity (ADR 0004). That is the right amount of
+ * enforcement for what these are.
+ *
+ * - **Level is the DM's.** Levels are awarded, not taken; there is no experience in
+ *   D&D Lite and the DM decides when the party goes up.
+ * - **Race, class and archetype lock once chosen.** Rebuilding a character mid-session
+ *   is almost always a misclick rather than an intention, and when it is an intention
+ *   the DM clears the lock and it takes two seconds.
+ * - **Overrides are the DM's**, because they are the DM's own thumb on the scale.
+ *
+ * A player may set `locked` true — committing is theirs — but only the DM may set it
+ * false. That asymmetry is the whole unlock mechanic.
+ */
+function applyPresetPermissions(
+  before: StoredSheet | undefined,
+  after: StoredSheet,
+  isDm: boolean,
+): StoredSheet {
+  if (isDm || after.kind !== 'preset') return after
+
+  // Building a character that was not one before — nothing to protect yet.
+  if (before?.kind !== 'preset') return after
+
+  // **Preserved rather than refused**, and the distinction matters. The level and
+  // the overrides are fields the player's form displays but cannot edit, so the
+  // client sends them back exactly as it received them — and comparing what came
+  // back against what is stored, to refuse a difference, makes an ordinary save
+  // fail whenever the two happen to serialise differently. The first version of
+  // this did precisely that, with a `JSON.stringify` comparison that would have
+  // rejected a no-op the moment a key order changed, under the message "Only the DM
+  // can change those."
+  //
+  // Taking the stored values instead makes the rule unconditional: a player's write
+  // *cannot* move these, however the client is behaving or misbehaving, and there is
+  // no comparison to get wrong.
+  const preserved: StoredSheet = {
+    ...after,
+    level: before.level,
+    ...(before.overrides === undefined ? {} : { overrides: before.overrides }),
+  }
+  if (before.overrides === undefined) delete (preserved as { overrides?: unknown }).overrides
+
+  // The lock is the one thing a player may still be told "no" about, because here a
+  // refusal is information they need: their choices are set, and somebody has to
+  // unlock them.
+  const selectionsChanged =
+    before.race !== after.race ||
+    before.classKey !== after.classKey ||
+    before.subclassKey !== after.subclassKey
+
+  if (before.locked && (selectionsChanged || !after.locked)) {
+    throw new ConvexError({
+      kind: 'CharacterLocked',
+      message: 'Your race, class and archetype are set. Ask the DM to unlock them.',
+    })
+  }
+
+  return preserved
+}
+
+/**
+ * Awarding a level. DM only, and separate from `updateSheet` so that it is one call
+ * rather than a read-modify-write the client has to get right.
+ *
+ * Everything the level changes — hit points, hit dice, features, spells — falls out
+ * of the library the moment the number moves, which is the whole reason a premade
+ * character stores selections rather than a sheet.
+ */
+export const setLevel = mutation({
+  args: {
+    code: v.string(),
+    dmCode: v.string(),
+    characterId: v.id('characters'),
+    level: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const { character, preset } = await requirePresetCharacter(
+      ctx,
+      args,
+      'That character is not built from the library, so edit its sheet instead.',
+    )
+
+    // An archetype chosen at level 2 is cleared if the DM drops the character below
+    // it, because the sheet it points at does not exist down there — and leaving a
+    // dangling archetype would silently reapply itself on the way back up rather
+    // than asking again.
+    const level = Math.round(args.level)
+    await writeSheet(
+      ctx,
+      character,
+      requireUsableSheet({
+        ...preset,
+        level,
+        subclassKey: level < SUBCLASS_LEVEL ? null : preset.subclassKey,
+      }),
+    )
+    return null
+  },
+})
+
+/**
+ * Unlocking, so a player can change their race, class or archetype. DM only, which
+ * is the point of the lock existing.
+ */
+export const setUnlocked = mutation({
+  args: {
+    code: v.string(),
+    dmCode: v.string(),
+    characterId: v.id('characters'),
+    locked: v.boolean(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const { character, preset } = await requirePresetCharacter(
+      ctx,
+      args,
+      'That character is not built from the library.',
+    )
+    await writeSheet(ctx, character, requireUsableSheet({ ...preset, locked: args.locked }))
+    return null
+  },
+})
+
+/**
+ * Load a character the DM is about to change through the library, or throw.
+ *
+ * The two mutations above had this preamble written out twice, and the duplication
+ * had already cost something: `setUnlocked` wrote its result straight to
+ * `writeSheet` while `setLevel` put it through `requireUsableSheet` first, so the
+ * one path that skipped re-validation was the one that had been copied from the
+ * other. That is the failure mode `clampHitDice` describes a few files away — not
+ * everywhere at once, but in whichever copy was edited last. Both now go through the
+ * same door and out through the same check.
+ *
+ * `updateSheet` deliberately does not use this: it is reachable by a player, so it
+ * goes through `requireEditableCharacter` and `applyPresetPermissions` instead of a
+ * flat DM gate.
+ */
+async function requirePresetCharacter(
+  ctx: MutationCtx,
+  args: { code: string; dmCode: string; characterId: Id<'characters'> },
+  // Passed rather than shared: "edit its sheet instead" is the useful next step when
+  // somebody tries to level a hand-built character, and no help at all when they try
+  // to unlock one. Sharing the lookup is worth doing; sharing the sentence is not.
+  refusal: string,
+): Promise<{ character: Doc<'characters'>; preset: PresetSheet }> {
+  const game = await requireDm(ctx, args.code, args.dmCode)
+  const character = await getCharacterInGame(ctx, game._id, args.characterId)
+
+  const stored = character.sheet
+  if (stored?.kind !== 'preset') {
+    throw new ConvexError({ kind: 'BadInput', message: refusal })
+  }
+  return { character, preset: stored }
+}
+
+/**
+ * A long rest. Hit points to full, hit dice back, once-per-rest abilities unspent.
+ *
+ * Available to whoever may edit the character, because a rest is a thing the party
+ * decides on together and making it DM-only would put the DM in the loop for the
+ * most routine event in the game.
+ */
+export const longRest = mutation({
+  args: {
+    code: v.string(),
+    characterId: v.id('characters'),
+    playerId: v.optional(v.id('players')),
+    dmCode: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
+    const character = await requireEditableCharacter(
+      ctx,
+      game,
+      args.characterId,
+      isDm,
+      args.playerId,
+    )
+    await takeLongRest(ctx, character)
+    return null
+  },
+})
+
+/** Spend a once-per-long-rest ability, or hand it back if it was marked by mistake. */
+export const setPerRest = mutation({
+  args: {
+    code: v.string(),
+    characterId: v.id('characters'),
+    key: v.string(),
+    spent: v.boolean(),
+    playerId: v.optional(v.id('players')),
+    dmCode: v.optional(v.string()),
+  },
+  returns: v.object({ spentPerRest: v.array(v.string()) }),
+  handler: async (ctx, args) => {
+    const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
+    const character = await requireEditableCharacter(
+      ctx,
+      game,
+      args.characterId,
+      isDm,
+      args.playerId,
+    )
+
+    // Checked against the character's own race rather than taken as given, so the
+    // stored array cannot fill up with keys nothing will ever clear.
+    //
+    // **Only when spending.** Handing one back is always allowed, and the asymmetry
+    // is what stops a stale key becoming permanent: a DM who changes a character's
+    // race leaves whatever the old race had spent still marked, and a check that
+    // applied here too would make it unclearable by anything short of a long rest —
+    // refusing to undo a state it had been happy to create.
+    const preset = presetOf(character)
+    const known = preset ? perRestAbilities(preset.race).map((ability) => ability.key) : []
+    if (args.spent && !known.includes(args.key)) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message: 'That character has no such ability.',
+      })
+    }
+
+    return { spentPerRest: await setPerRestSpent(ctx, character, args.key, args.spent) }
   },
 })
 

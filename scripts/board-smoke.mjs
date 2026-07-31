@@ -15,6 +15,13 @@
 // `undefined`, and NaN arriving where a whole number was expected. Every one of those
 // is a value convex-test stores without comment.
 //
+// Milestone 4 adds a third member to that stored union, a nested object of optional
+// fields inside it, and a new optional array of strings on the vitals row — and moves
+// every number on a premade character out of the payload and into a library the
+// client never sees. So the section for it asserts two things at once: that the
+// deployment accepts the shapes, and that the numbers coming back are ones nobody
+// sent. The library values it compares against are copied by hand for that reason.
+//
 //   node scripts/board-smoke.mjs
 //
 // Plain .mjs on purpose: no tsx, no new dependency, nothing to install.
@@ -177,6 +184,66 @@ const NPC_SHEET = {
     entryFrom(CATALOGUE.multiattack, 'npc-multiattack'),
   ],
   notes: 'Waits under the third arch. Surfaces on a failed Perception check. 🐉',
+}
+
+/**
+ * The library numbers Milestone 4's section is asserted against, copied by hand out
+ * of `convex/lib/library/rogue.ts`, `convex/lib/library/fighter.ts` and
+ * `convex/lib/races.ts`.
+ *
+ * Copied for the reason the catalogue above is copied, and more sharply. The whole
+ * claim of a premade character is that **none of this is ever sent to the server** —
+ * a name and four selections go in, and a finished sheet comes back. A check that
+ * read these out of the library it is testing would confirm only that some function
+ * ran, and would agree with a mangled library exactly as readily as with a correct
+ * one.
+ *
+ * `featCount` is the length of the library's own feat list. Every resolved sheet
+ * carries one more than that, because a race always contributes its trait — see the
+ * `+ 1` at each use, which is `applyRace` being asserted rather than assumed.
+ */
+const ROGUE_SKILLS = {
+  athletics: false,
+  acrobatics: true,
+  sleightOfHand: true,
+  stealth: true,
+  arcana: false,
+  investigation: true,
+  animalHandling: false,
+  insight: false,
+  perception: true,
+  deception: true,
+  intimidation: false,
+  performance: false,
+  persuasion: true,
+}
+const ROGUE = {
+  base: {
+    abilities: { str: 8, dex: 15, con: 14, int: 13, wis: 12, cha: 10 },
+    armourClass: 14,
+    maxHp: 10,
+    hitDice: { count: 1, faces: 8 },
+    featCount: 5,
+  },
+  thief2: { maxHp: 17, hitDice: { count: 2, faces: 8 }, featCount: 7 },
+  thief3: { maxHp: 24, hitDice: { count: 3, faces: 8 }, featCount: 7 },
+  thief4: { maxHp: 31, hitDice: { count: 4, faces: 8 }, featCount: 8 },
+}
+const FIGHTER = {
+  base: { maxHp: 12, hitDice: { count: 1, faces: 10 } },
+}
+
+/** The three races that move a number, and the only three. */
+const ELF_DEX_BONUS = 2
+const DWARF_HP_PER_LEVEL = 1
+const GOLIATH_SPEED = 45
+
+/** The DM's thumb on the scale, in the one field this section overrides. */
+const DM_ARMOUR_CLASS = 21
+
+/** A stored `preset`: four selections, a lock flag, and nothing else. */
+function presetSheet(fields) {
+  return { kind: 'preset', subclassKey: null, level: 1, locked: false, ...fields }
 }
 
 const results = []
@@ -802,7 +869,454 @@ async function main() {
       survivor ? `${survivor.sheet.feats.length} feats, str ${survivor.sheet.abilities.str}` : 'no sheet',
     )
 
-    // 13. And the start gate, which is what flips every client to the board.
+    // 13. MILESTONE 4, WHICH IS THE MOST THIS APPLICATION HAS EVER ASKED A
+    // DEPLOYMENT TO HAVE AN OPINION ABOUT.
+    //
+    // A third member added to a stored discriminated union; a nested object of
+    // optional fields inside it, itself optional; and a new optional array of
+    // strings on the vitals row. convex-test stores all three without comment,
+    // which is the entire reason this section exists rather than another suite.
+    //
+    // Read the checks as one claim: a name and four selections go in, and every
+    // number that comes back was assembled server-side out of a library the client
+    // never sees.
+    const readSheet = (characterId) =>
+      client.query('characters:sheet', { code, dmCode, characterId })
+    const dmVitalsFor = async (characterId) =>
+      (await client.query('characters:vitals', { code, dmCode })).find(
+        (row) => row.characterId === characterId,
+      )
+
+    const elf = await client.mutation('characters:create', {
+      code,
+      name: 'Nightingale of the Ninth Step',
+      sheet: presetSheet({ race: 'elf', classKey: 'rogue' }),
+    })
+    createdCharacters.push(elf.characterId)
+
+    const elfAtOne = await readSheet(elf.characterId)
+    check(
+      'characters:sheet carried the resolved sheet and the stored selections together',
+      elfAtOne &&
+        elfAtOne.sheet.kind === 'pc' &&
+        elfAtOne.preset !== null &&
+        elfAtOne.preset.kind === 'preset' &&
+        elfAtOne.preset.race === 'elf' &&
+        elfAtOne.preset.classKey === 'rogue' &&
+        elfAtOne.preset.subclassKey === null &&
+        elfAtOne.preset.level === 1 &&
+        elfAtOne.preset.locked === false,
+      elfAtOne ? `preset ${JSON.stringify(elfAtOne.preset)}` : 'no sheet came back',
+    )
+
+    // None of this was sent in. `characters:create` was given a name, a race, a
+    // class and a level; the scores, the armour class, the hit dice, the thirteen
+    // skill flags and every feat below came back out of the library.
+    const built = elfAtOne ? elfAtOne.sheet : null
+    const abilityDrift = built
+      ? firstDifference(
+          { ...ROGUE.base.abilities, dex: ROGUE.base.abilities.dex + ELF_DEX_BONUS },
+          built.abilities,
+          'abilities',
+        )
+      : 'no sheet came back'
+    const skillDrift = built
+      ? firstDifference(ROGUE_SKILLS, built.skillProficiencies, 'skillProficiencies')
+      : 'no sheet came back'
+    check(
+      'the library resolved a whole sheet out of four selections',
+      built &&
+        abilityDrift === null &&
+        skillDrift === null &&
+        built.className === 'Rogue' &&
+        built.armourClass === ROGUE.base.armourClass &&
+        built.maxHp === ROGUE.base.maxHp &&
+        built.hitDice.count === ROGUE.base.hitDice.count &&
+        built.hitDice.faces === ROGUE.base.hitDice.faces &&
+        built.feats.length === ROGUE.base.featCount + 1,
+      abilityDrift ??
+        skillDrift ??
+        (built
+          ? `${built.className}, AC ${built.armourClass}, ${built.maxHp} hp, ${built.hitDice.count}d${built.hitDice.faces}, ${built.feats.length} feats`
+          : 'no sheet came back'),
+    )
+
+    // THE ARITHMETIC THAT IS EASY TO APPLY TWICE. A race is added on top of a
+    // library sheet that was written without one in mind, so a resolver that
+    // applied it in both the base and the overlay would give this Elf a Dexterity
+    // of 19 and nothing on screen would look obviously wrong.
+    const dwarf = await client.mutation('characters:create', {
+      code,
+      name: 'Hrada Stoneminder',
+      sheet: presetSheet({ race: 'dwarf', classKey: 'rogue', subclassKey: 'thief', level: 3 }),
+    })
+    createdCharacters.push(dwarf.characterId)
+    const goliath = await client.mutation('characters:create', {
+      code,
+      name: 'Vaan of the Long Stride',
+      sheet: presetSheet({ race: 'goliath', classKey: 'rogue' }),
+    })
+    createdCharacters.push(goliath.characterId)
+
+    const dwarfSheet = await readSheet(dwarf.characterId)
+    const goliathSheet = await readSheet(goliath.characterId)
+    const wantedDwarfHp = ROGUE.thief3.maxHp + DWARF_HP_PER_LEVEL * 3
+    check(
+      'each race landed on the library sheet exactly once',
+      built &&
+        built.abilities.dex === ROGUE.base.abilities.dex + ELF_DEX_BONUS &&
+        dwarfSheet &&
+        dwarfSheet.sheet.maxHp === wantedDwarfHp &&
+        goliathSheet &&
+        goliathSheet.sheet.speed === GOLIATH_SPEED,
+      `elf dex ${built ? built.abilities.dex : '—'} of ${ROGUE.base.abilities.dex}+${ELF_DEX_BONUS}, dwarf ${dwarfSheet ? dwarfSheet.sheet.maxHp : '—'} hp of ${wantedDwarfHp}, goliath ${goliathSheet ? goliathSheet.sheet.speed : '—'} feet`,
+    )
+
+    // Levelling up. Nothing below sends a sheet except the one call that supplies
+    // the archetype, which is a selection rather than a number.
+    await client.mutation('characters:setLevel', {
+      code,
+      dmCode,
+      characterId: elf.characterId,
+      level: 2,
+    })
+    const atTwo = await readSheet(elf.characterId)
+    await client.mutation('characters:updateSheet', {
+      code,
+      dmCode,
+      characterId: elf.characterId,
+      sheet: presetSheet({ race: 'elf', classKey: 'rogue', subclassKey: 'thief', level: 2 }),
+    })
+    const atTwoThief = await readSheet(elf.characterId)
+    check(
+      'a level 2 with no archetype held the level 1 sheet until one was chosen',
+      atTwo &&
+        atTwo.sheet.level === 2 &&
+        atTwo.sheet.maxHp === ROGUE.base.maxHp &&
+        atTwo.sheet.hitDice.count === ROGUE.base.hitDice.count &&
+        atTwoThief &&
+        atTwoThief.sheet.className === 'Rogue (Thief)' &&
+        atTwoThief.sheet.maxHp === ROGUE.thief2.maxHp &&
+        atTwoThief.sheet.hitDice.count === ROGUE.thief2.hitDice.count &&
+        atTwoThief.sheet.feats.length === ROGUE.thief2.featCount + 1,
+      atTwo && atTwoThief
+        ? `undecided ${atTwo.sheet.maxHp} hp, then ${atTwoThief.sheet.maxHp} hp and ${atTwoThief.sheet.feats.length} feats as a ${atTwoThief.sheet.className}`
+        : 'no sheet came back',
+    )
+
+    await client.mutation('characters:setLevel', {
+      code,
+      dmCode,
+      characterId: elf.characterId,
+      level: 4,
+    })
+    const atFour = await readSheet(elf.characterId)
+    check(
+      'setLevel alone moved hit points, hit dice and the feat list — no sheet was sent',
+      atFour &&
+        atTwoThief &&
+        atFour.sheet.maxHp === ROGUE.thief4.maxHp &&
+        atFour.sheet.maxHp !== atTwoThief.sheet.maxHp &&
+        atFour.sheet.hitDice.count === ROGUE.thief4.hitDice.count &&
+        atFour.sheet.feats.length === ROGUE.thief4.featCount + 1 &&
+        atFour.sheet.feats.some((entry) => entry.name === 'Uncanny Dodge'),
+      atFour
+        ? `${atFour.sheet.maxHp} hp, ${atFour.sheet.hitDice.count} hit dice, ${atFour.sheet.feats.length} feats`
+        : 'no sheet came back',
+    )
+
+    // An override is the DM's last word, and the whole point of it is that awarding
+    // a level five minutes later does not quietly undo it.
+    await client.mutation('characters:updateSheet', {
+      code,
+      dmCode,
+      characterId: elf.characterId,
+      sheet: presetSheet({
+        race: 'elf',
+        classKey: 'rogue',
+        subclassKey: 'thief',
+        level: 4,
+        overrides: { armourClass: DM_ARMOUR_CLASS },
+      }),
+    })
+    await client.mutation('characters:setLevel', {
+      code,
+      dmCode,
+      characterId: elf.characterId,
+      level: 1,
+    })
+    const backAtOne = await readSheet(elf.characterId)
+    check(
+      'dropping below level 2 cleared the archetype in the stored document',
+      backAtOne &&
+        backAtOne.preset &&
+        backAtOne.preset.level === 1 &&
+        backAtOne.preset.subclassKey === null &&
+        backAtOne.sheet.maxHp === ROGUE.base.maxHp,
+      backAtOne
+        ? `subclassKey ${JSON.stringify(backAtOne.preset && backAtOne.preset.subclassKey)}, ${backAtOne.sheet.maxHp} hp`
+        : 'no sheet came back',
+    )
+    check(
+      "the DM's armour class override survived the level change",
+      backAtOne &&
+        backAtOne.preset &&
+        backAtOne.preset.overrides &&
+        backAtOne.preset.overrides.armourClass === DM_ARMOUR_CLASS &&
+        backAtOne.sheet.armourClass === DM_ARMOUR_CLASS,
+      backAtOne
+        ? `stored ${JSON.stringify(backAtOne.preset && backAtOne.preset.overrides)}, resolved AC ${backAtOne.sheet.armourClass} against the library's ${ROGUE.base.armourClass}`
+        : 'no sheet came back',
+    )
+
+    // 14. The lock, which needs a seat to be a real test: refusing a player who
+    // holds no claim would be `requireEditableCharacter` talking rather than the
+    // lock. The seat is a real one, joined the way a player joins.
+    const seat = await client.mutation('players:join', { code, displayName: 'Smoke Player' })
+    const bramble = await client.mutation('characters:create', {
+      code,
+      name: 'Bramblefoot Tosscobble',
+      sheet: presetSheet({ race: 'halfling', classKey: 'rogue', locked: true }),
+    })
+    createdCharacters.push(bramble.characterId)
+    await client.mutation('characters:claim', {
+      code,
+      playerId: seat.playerId,
+      characterId: bramble.characterId,
+    })
+
+    await refuses('characters:updateSheet refused a locked race change by the seat holding it', () =>
+      client.mutation('characters:updateSheet', {
+        code,
+        playerId: seat.playerId,
+        characterId: bramble.characterId,
+        sheet: presetSheet({ race: 'elf', classKey: 'rogue', locked: true }),
+      }),
+    )
+    await client.mutation('characters:setUnlocked', {
+      code,
+      dmCode,
+      characterId: bramble.characterId,
+      locked: false,
+    })
+    await client.mutation('characters:updateSheet', {
+      code,
+      playerId: seat.playerId,
+      characterId: bramble.characterId,
+      sheet: presetSheet({ race: 'elf', classKey: 'rogue', locked: false }),
+    })
+    const unlocked = await readSheet(bramble.characterId)
+    check(
+      'characters:setUnlocked let the same change straight through',
+      unlocked && unlocked.preset && unlocked.preset.race === 'elf' && !unlocked.preset.locked,
+      unlocked && unlocked.preset
+        ? `race ${unlocked.preset.race}, locked ${unlocked.preset.locked}`
+        : 'no sheet came back',
+    )
+    await refuses('characters:setLevel refused a level without the DM code', () =>
+      client.mutation('characters:setLevel', {
+        code,
+        dmCode: 'not-the-dm-code',
+        characterId: bramble.characterId,
+        level: 2,
+      }),
+    )
+
+    // 15. A long rest, which is three writes the table thinks of as one thing —
+    // and `spentPerRest` is a field that did not exist on the vitals row until this
+    // milestone, on a table whose rows were written without it.
+    const human = await client.mutation('characters:create', {
+      code,
+      name: 'Aldis Fenwake',
+      sheet: presetSheet({ race: 'human', classKey: 'fighter' }),
+    })
+    createdCharacters.push(human.characterId)
+
+    await client.mutation('characters:adjustHp', {
+      code,
+      dmCode,
+      characterId: human.characterId,
+      delta: -5,
+    })
+    await client.mutation('characters:adjustHitDice', {
+      code,
+      dmCode,
+      characterId: human.characterId,
+      delta: -1,
+    })
+    const perRestBack = await client.mutation('characters:setPerRest', {
+      code,
+      dmCode,
+      characterId: human.characterId,
+      key: 'heroic-inspiration',
+      spent: true,
+    })
+    const hurt = await dmVitalsFor(human.characterId)
+    check(
+      'damage, a spent hit die and a spent Heroic Inspiration all showed on one vitals row',
+      hurt &&
+        hurt.kind === 'exact' &&
+        hurt.max === FIGHTER.base.maxHp &&
+        hurt.current === FIGHTER.base.maxHp - 5 &&
+        hurt.hitDiceCount === FIGHTER.base.hitDice.count &&
+        hurt.hitDiceRemaining === 0 &&
+        hurt.spentPerRest.length === 1 &&
+        hurt.spentPerRest[0] === 'heroic-inspiration' &&
+        perRestBack.spentPerRest.length === 1,
+      hurt
+        ? `${hurt.current}/${hurt.max}, ${hurt.hitDiceRemaining} of ${hurt.hitDiceCount} hit dice, spent ${JSON.stringify(hurt.spentPerRest)}`
+        : 'no vitals row',
+    )
+
+    await client.mutation('characters:longRest', { code, dmCode, characterId: human.characterId })
+    const afterRest = await dmVitalsFor(human.characterId)
+    check(
+      'characters:longRest reset hit points, hit dice and the per-rest array in one call',
+      afterRest &&
+        afterRest.kind === 'exact' &&
+        afterRest.current === FIGHTER.base.maxHp &&
+        afterRest.hitDiceRemaining === FIGHTER.base.hitDice.count &&
+        afterRest.spentPerRest.length === 0,
+      afterRest
+        ? `${afterRest.current}/${afterRest.max}, ${afterRest.hitDiceRemaining} hit dice, spent ${JSON.stringify(afterRest.spentPerRest)}`
+        : 'no vitals row',
+    )
+    // Checked against the character's own race rather than taken as given, so the
+    // stored array cannot fill with keys nothing will ever clear. A Human has no
+    // Relentless Endurance to spend.
+    await refuses('characters:setPerRest refused a key this character’s race does not have', () =>
+      client.mutation('characters:setPerRest', {
+        code,
+        dmCode,
+        characterId: human.characterId,
+        key: 'relentless-endurance',
+        spent: true,
+      }),
+    )
+
+    // 16. Selections the deployment has to refuse. The first two are the argument
+    // validator's — a race and a class are unions of literals, so a key that is not
+    // one of the eight never reaches a handler. The rest are `storedSheetProblem`'s,
+    // and every one of them is a value convex-test would store without a word.
+    await refuses('characters:create refused a race that is not one of the eight', () =>
+      client.mutation('characters:create', {
+        code,
+        name: 'Uninvited Gnome',
+        sheet: presetSheet({ race: 'gnome', classKey: 'rogue' }),
+      }),
+    )
+    await refuses('characters:create refused a class that is not one of the eight', () =>
+      client.mutation('characters:create', {
+        code,
+        name: 'Uninvited Artificer',
+        sheet: presetSheet({ race: 'human', classKey: 'artificer' }),
+      }),
+    )
+    await refuses('characters:create refused an archetype belonging to another class', () =>
+      client.mutation('characters:create', {
+        code,
+        name: 'Champion Rogue',
+        sheet: presetSheet({
+          race: 'human',
+          classKey: 'rogue',
+          subclassKey: 'champion',
+          level: 2,
+        }),
+      }),
+    )
+    await refuses('characters:create refused an archetype chosen at level 1', () =>
+      client.mutation('characters:create', {
+        code,
+        name: 'Premature Thief',
+        sheet: presetSheet({ race: 'human', classKey: 'rogue', subclassKey: 'thief', level: 1 }),
+      }),
+    )
+    // NaN and Infinity are perfectly ordinary float64s, so both survive the argument
+    // validator and are refused by the bound instead — which is exactly the shape of
+    // value a suite that does not apply value validation would let through.
+    for (const [label, level] of [
+      ['0', 0],
+      ['21', 21],
+      ['NaN', Number.NaN],
+      ['Infinity', Number.POSITIVE_INFINITY],
+    ]) {
+      await refuses(`characters:setLevel refused level ${label}`, () =>
+        client.mutation('characters:setLevel', {
+          code,
+          dmCode,
+          characterId: elf.characterId,
+          level,
+        }),
+      )
+    }
+    // An override is a place a bad roll spec enters as easily as a feat list does,
+    // and it is the one place a sheet entry arrives from outside the picker.
+    await refuses('characters:updateSheet refused an override entry with an invalid roll', () =>
+      client.mutation('characters:updateSheet', {
+        code,
+        dmCode,
+        characterId: elf.characterId,
+        sheet: presetSheet({
+          race: 'elf',
+          classKey: 'rogue',
+          overrides: {
+            armourClass: DM_ARMOUR_CLASS,
+            extraFeats: [
+              customEntry({
+                id: 'dm-ninth-blade',
+                name: 'Blade of the Ninth Step',
+                text: 'A gift from the DM, on a die that does not exist.',
+                roll: '1d7',
+              }),
+            ],
+          },
+        }),
+      }),
+    )
+
+    const untouched = await readSheet(elf.characterId)
+    check(
+      'every refused selection left the stored preset exactly as it was',
+      untouched &&
+        untouched.preset &&
+        untouched.preset.level === 1 &&
+        untouched.preset.subclassKey === null &&
+        untouched.preset.overrides &&
+        untouched.preset.overrides.armourClass === DM_ARMOUR_CLASS &&
+        untouched.preset.overrides.extraFeats === undefined &&
+        untouched.sheet.feats.length === ROGUE.base.featCount + 1,
+      untouched
+        ? `${JSON.stringify(untouched.preset)}, ${untouched.sheet.feats.length} feats`
+        : 'no sheet came back',
+    )
+
+    // 17. AND THE MILESTONE 3 GUARANTEE, CONFIRMED RATHER THAN ASSUMED.
+    //
+    // Every read of every character now goes through `resolveSheet`, so the band a
+    // player gets for an NPC is computed from a sheet that is assembled rather than
+    // stored — and five premade heroes have been added to the game since the scan
+    // in section 10 ran. Both are reasons to look again rather than to trust that
+    // the earlier pass still stands.
+    const vitalsNow = await client.query('characters:vitals', { code })
+    const listNow = await client.query('characters:list', { code })
+    const npcNow = vitalsNow.find((row) => row.characterId === npc.characterId)
+    const scannedNow = [vitalsNow, listNow]
+    const serialisedNow = JSON.stringify(redactOpaque(scannedNow))
+    check(
+      'the Milestone 3 guarantee still holds with every sheet resolved server-side',
+      npcNow &&
+        npcNow.kind === 'band' &&
+        !('current' in npcNow) &&
+        !serialisedNow.includes(String(NPC_MAX_HP)) &&
+        !serialisedNow.includes(String(NPC_CURRENT_HP)) &&
+        !holdsNumber(scannedNow, NPC_MAX_HP) &&
+        !holdsNumber(scannedNow, NPC_CURRENT_HP) &&
+        !serialisedNow.includes(NPC_NAME) &&
+        listNow.some((row) => row.name === PC_NAME),
+      `${vitalsNow.length} rows a player may see, positive control included`,
+    )
+
+    // 18. And the start gate, which is what flips every client to the board.
     await client.mutation('games:start', { code, dmCode })
     const started = await client.query('games:getByCode', { code })
     check('games:start moved the game to playing', started && started.status === 'playing')
@@ -828,6 +1342,9 @@ async function main() {
       console.log(
         `\n  cleaned up the scene, ${created.length} tokens and ${createdCharacters.length} characters`,
       )
+      // The seat Milestone 4's lock check joined on goes the same way as the game
+      // it sits in: there is no API for removing either yet. A row holding a display
+      // name is a rounding error against the budget two forty-entry sheets would be.
       console.log(`  the game itself remains: ${code} (no delete API before Milestone 7)`)
     } else {
       console.log('\n  nothing to clean up: the game was never created')

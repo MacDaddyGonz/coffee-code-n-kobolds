@@ -128,8 +128,27 @@ would move the line is an audience, not a feature — the game being played outs
 ## Rules scope
 
 D&D Lite is a deliberately reduced subset of 5e (2024). Before adding a rules feature, check
-[docs/requirements.md](docs/requirements.md) — things like racial abilities, background skills,
-inventory and movement-impairing conditions are **excluded by design**, not missing.
+[docs/requirements.md](docs/requirements.md) **including its amendments section** — the exclusion
+lists there are the originals, and two entries have since been lifted on the record.
+
+What Milestone 4 changed, precisely:
+
+- **Races are in.** Eight of them, one trait each; three change a number (Elf, Dwarf, Goliath).
+- **Skills are in — from the class, not from a background.** Thirteen skills with a proficiency flag
+  each, granted by the character's premade sheet and by the DM's override, and by no third thing.
+  **Backgrounds are still excluded**, and keeping that distinction is what stops a second source of
+  proficiency ever existing.
+- **Speed is no longer fixed.** It is a stored field defaulting to 35, read through `speedOf`,
+  because the Goliath moves 45.
+
+Still excluded, and still by design: **backgrounds, inventory, multiclassing, experience points and
+movement-impairing conditions.** The fixed equipment kit on a premade sheet is not an inventory —
+it is a line of text, which is exactly what *"No inventory — set equipment per character"* asked
+for.
+
+Everything else on those lists is **excluded by design, not missing.** Lifting one is a spec
+amendment with an ADR behind it — see [ADR 0006](docs/adr/0006-premade-character-library.md) — not
+something a feature branch does on the way past.
 
 ## Commands
 

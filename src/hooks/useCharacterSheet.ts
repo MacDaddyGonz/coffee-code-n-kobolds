@@ -4,7 +4,7 @@ import { useMutation, useQuery } from 'convex/react'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicSheet } from '@convex/lib/characters'
-import type { CharacterSheet } from '@convex/lib/sheet'
+import type { StoredSheet } from '@convex/lib/sheet'
 import { errorMessage } from '@/lib/errors'
 
 export type CharacterSheetArgs = {
@@ -57,10 +57,26 @@ export type CharacterSheetHandle = {
    */
   sheet: PublicSheet | null
   loading: boolean
-  /** Replaces the whole sheet. Resolves to the server's own wording, or null. */
-  save: (next: CharacterSheet) => Promise<string | null>
+  /**
+   * Replaces the whole **stored** sheet, which since Milestone 4 is not the same type
+   * as the one that comes back. `PublicSheet.sheet` is *resolved* — a set of library
+   * selections already turned into a hero — and what goes the other way is the
+   * selections themselves. Only the server can cross that line, because only the server
+   * has `lib/library/` (see the note on `publicSheetValidator`).
+   *
+   * Resolves to the server's own wording, or null.
+   */
+  save: (next: StoredSheet) => Promise<string | null>
   /** The name lives on the character document, not in the sheet, so it saves apart. */
   rename: (name: string) => Promise<string | null>
+  /**
+   * Awarding a level, and clearing the lock so a character can be rebuilt. Both are
+   * DM-only mutations rather than fields of `save`, so both refuse here without a DM
+   * code rather than sending a call that cannot succeed — which is a courtesy and not a
+   * check: `requireDm` re-verifies the code server-side on every call regardless.
+   */
+  setLevel: (level: number) => Promise<string | null>
+  setLocked: (locked: boolean) => Promise<string | null>
 }
 
 /**
@@ -87,12 +103,14 @@ export function useCharacterSheet(args: CharacterSheetArgs): CharacterSheetHandl
 
   const updateSheet = useMutation(api.characters.updateSheet)
   const renameCharacter = useMutation(api.characters.rename)
+  const setCharacterLevel = useMutation(api.characters.setLevel)
+  const setCharacterUnlocked = useMutation(api.characters.setUnlocked)
 
   const seat = playerId === null ? {} : { playerId }
   const dm = dmCode === null ? {} : { dmCode }
 
   const save = useCallback(
-    async (next: CharacterSheet) => {
+    async (next: StoredSheet) => {
       if (characterId === null) return 'There is no character to save.'
       try {
         await updateSheet({ code, characterId, sheet: next, ...seat, ...dm })
@@ -122,6 +140,34 @@ export function useCharacterSheet(args: CharacterSheetArgs): CharacterSheetHandl
     [renameCharacter, code, characterId, dmCode],
   )
 
+  const setLevel = useCallback(
+    async (level: number) => {
+      if (characterId === null) return 'There is no character to level up.'
+      if (dmCode === null) return 'Only the DM can change a character’s level.'
+      try {
+        await setCharacterLevel({ code, dmCode, characterId, level })
+        return null
+      } catch (thrown) {
+        return errorMessage(thrown, 'Could not change that level.')
+      }
+    },
+    [setCharacterLevel, code, characterId, dmCode],
+  )
+
+  const setLocked = useCallback(
+    async (locked: boolean) => {
+      if (characterId === null) return 'There is no character to unlock.'
+      if (dmCode === null) return 'Only the DM can unlock a character.'
+      try {
+        await setCharacterUnlocked({ code, dmCode, characterId, locked })
+        return null
+      } catch (thrown) {
+        return errorMessage(thrown, 'Could not unlock that character.')
+      }
+    },
+    [setCharacterUnlocked, code, characterId, dmCode],
+  )
+
   return {
     sheet: result ?? null,
     // A skipped query and a pending one both read as `undefined`, so the id decides:
@@ -129,5 +175,7 @@ export function useCharacterSheet(args: CharacterSheetArgs): CharacterSheetHandl
     loading: characterId !== null && result === undefined,
     save,
     rename,
+    setLevel,
+    setLocked,
   }
 }

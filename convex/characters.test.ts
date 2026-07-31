@@ -7,8 +7,17 @@ import { describe, expect, test } from 'vitest'
 import { api } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
+import { CLASSES, CLASS_KEYS, SUBCLASS_LEVEL } from './lib/classes'
 import { MAX_CHARACTERS_PER_GAME } from './lib/games'
-import type { NpcSheet, PcSheet, SheetEntry } from './lib/sheet'
+import { RACE_KEYS } from './lib/races'
+import type {
+  NpcSheet,
+  PcSheet,
+  PresetOverrides,
+  PresetSheet,
+  SheetEntry,
+  StoredSheet,
+} from './lib/sheet'
 import {
   MAX_ABILITY_SCORE,
   MAX_ARMOUR_CLASS,
@@ -26,8 +35,10 @@ import {
   MIN_ARMOUR_CLASS,
   MIN_LEVEL,
   MIN_MAX_HP,
+  SPEED_FEET,
   defaultNpcSheet,
   defaultPcSheet,
+  noSkills,
 } from './lib/sheet'
 import schema from './schema'
 
@@ -46,6 +57,7 @@ type Harness = ReturnType<typeof harness>
 
 type ErrorKind =
   | 'BadInput'
+  | 'CharacterLocked'
   | 'CharacterNotFound'
   | 'CharacterNotYours'
   | 'CharacterTaken'
@@ -1323,6 +1335,12 @@ describe('characters.create — sheets', () => {
       _id: thorin,
       name: 'Thorin',
       sheet: defaultPcSheet(),
+      // Milestone 4 sends the stored selections alongside the resolved sheet, and
+      // the premade sheet's kit and levelling note beside them. A hand-built
+      // character has neither, so both fields are present and null rather than
+      // absent — see `publicSheetValidator`.
+      preset: null,
+      extras: null,
     })
   })
 
@@ -1662,6 +1680,10 @@ describe('legacy characters with no sheet', () => {
       _id: legacy,
       name: 'Milestone One',
       sheet: defaultPcSheet(),
+      // As above: no stored selections and no library entry behind it, so both
+      // are null rather than missing.
+      preset: null,
+      extras: null,
     })
   })
 
@@ -3158,5 +3180,1623 @@ describe('characters.remove — vitals and tokens', () => {
 
     expect((await rawToken(t, tokenId))?.characterId).toBe(thorin)
     expect(await rawVitals(t, thorin)).not.toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Milestone 4: the premade library, levelling, rests, and who may change what
+// ---------------------------------------------------------------------------
+//
+// The fixtures below deliberately restate this file's own helpers rather than
+// abstracting over them, for the reason given at the top of vitals.test.ts: every
+// safe home for a shared helper is either deployed as a Convex module or swept by
+// the leak guard.
+//
+// THE NUMBERS ARE THE LIBRARY'S, WRITTEN OUT. A Human Fighter is 12 hit points at
+// level 1, 20 at 2, 28 at 3, 36 at 4 and 44 at 5, on 1 to 5 d10s. Deriving them by
+// calling `librarySheet` here would make every assertion below tautological — the
+// test would agree with the resolver whatever either of them said. Written out, a
+// change to the content or to the arithmetic has to be looked at by a person.
+
+const FIGHTER_MAX_HP: Record<number, number> = { 1: 12, 2: 20, 3: 28, 4: 36, 5: 44 }
+
+/** The selections a premade character stores. A level 1 Human Fighter by default. */
+function presetSheet(overrides: Partial<PresetSheet> = {}): PresetSheet {
+  return {
+    kind: 'preset',
+    race: 'human',
+    classKey: 'fighter',
+    subclassKey: null,
+    level: 1,
+    locked: false,
+    ...overrides,
+  }
+}
+
+async function makePreset(
+  t: Harness,
+  code: string,
+  name: string,
+  sheet: PresetSheet = presetSheet(),
+) {
+  const { characterId } = await t.mutation(api.characters.create, { code, name, sheet })
+  return characterId
+}
+
+/** The stored `sheet` field, insisting it is a set of selections rather than a sheet. */
+async function storedPreset(t: Harness, characterId: Id<'characters'>): Promise<PresetSheet> {
+  const stored = (await rawCharacter(t, characterId))?.sheet
+  if (stored?.kind !== 'preset') {
+    throw new Error(`expected stored selections, got ${JSON.stringify(stored?.kind)}`)
+  }
+  return stored
+}
+
+/** The resolved sheet as the panel receives it, insisting it resolved to a hero. */
+async function resolvedSheet(
+  t: Harness,
+  code: string,
+  characterId: Id<'characters'>,
+  who: Actor = {},
+): Promise<PcSheet> {
+  const payload = await readSheet(t, code, characterId, who)
+  if (!payload) throw new Error('no sheet came back at all')
+  if (payload.sheet.kind !== 'pc') throw new Error(`resolved to a ${payload.sheet.kind}`)
+  return payload.sheet
+}
+
+/**
+ * A premade character claimed by Ana, with Ben sitting at the same table.
+ *
+ * Both seats exist in every case, because most of what is under test is the
+ * difference between them: the claiming seat, another seat, the DM and nobody are
+ * four different answers and three of them are refusals.
+ */
+async function presetFixture(t: Harness, sheet: PresetSheet = presetSheet()) {
+  const game = await makeGame(t)
+  const ana = await makeSeat(t, game.code, 'Ana')
+  const ben = await makeSeat(t, game.code, 'Ben')
+  const characterId = await makePreset(t, game.code, 'Thorin', sheet)
+  await t.mutation(api.characters.claim, { code: game.code, playerId: ana, characterId })
+  return { ...game, ana, ben, characterId }
+}
+
+function update(
+  t: Harness,
+  code: string,
+  characterId: Id<'characters'>,
+  sheet: StoredSheet,
+  who: Actor = {},
+) {
+  return t.mutation(api.characters.updateSheet, { code, characterId, sheet, ...who })
+}
+
+describe('characters.create — a character built from the library', () => {
+  test('the document stores the selections, and the query resolves them', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const selections = presetSheet({ race: 'human', classKey: 'fighter', level: 1 })
+    const thorin = await makePreset(t, code, 'Thorin', selections)
+
+    // Nothing derived is stored: no maximum, no hit dice, no feats.
+    expect(await storedPreset(t, thorin)).toEqual(selections)
+
+    const payload = await readSheet(t, code, thorin, { dmCode })
+    expect(payload?.preset).toEqual(selections)
+    expect(payload?.sheet).toMatchObject({
+      kind: 'pc',
+      level: 1,
+      className: 'Fighter',
+      armourClass: 18,
+      maxHp: FIGHTER_MAX_HP[1],
+      hitDice: { count: 1, faces: 10 },
+      speed: SPEED_FEET,
+    })
+    // The library's allocation of the standard array, not the flat tens a
+    // hand-built sheet starts on.
+    expect((payload!.sheet as PcSheet).abilities).toEqual({
+      str: 15,
+      dex: 13,
+      con: 14,
+      int: 8,
+      wis: 12,
+      cha: 10,
+    })
+    // A resolved sheet always carries both optional fields, whatever the stored
+    // shape does — that is what `skillProficienciesOf` and `speedOf` default for.
+    expect((payload!.sheet as PcSheet).skillProficiencies).toEqual({
+      ...noSkills(),
+      athletics: true,
+      perception: true,
+    })
+  })
+
+  test('the kit and the levelling note travel beside the sheet, and only for a premade one', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const thorin = await makePreset(
+      t,
+      code,
+      'Thorin',
+      presetSheet({ level: 3, subclassKey: 'champion' }),
+    )
+    const byHand = await makePc(t, code, 'Handmade', pcSheet())
+
+    const extras = (await readSheet(t, code, thorin, { dmCode }))?.extras
+    expect(extras?.equipment.length).toBeGreaterThan(0)
+    expect(extras?.levellingNotes.length).toBeGreaterThan(0)
+    // Neither is on the sheet itself — they are not rules, and nothing rolls a kit.
+    expect(await readSheet(t, code, thorin, { dmCode })).toMatchObject({ sheet: { kind: 'pc' } })
+    expect((await readSheet(t, code, byHand, { dmCode }))?.extras).toBeNull()
+  })
+
+  test('the vitals row is written at the library’s maximum, not at a default', async () => {
+    const t = convexTest(schema, modules)
+    const { code } = await makeGame(t)
+    const thorin = await makePreset(
+      t,
+      code,
+      'Thorin',
+      presetSheet({ level: 3, subclassKey: 'champion' }),
+    )
+
+    // 28, not `defaultPcSheet().maxHp` — the number has to come from the library
+    // at insert time, because the stored document has no maximum on it at all.
+    expect(defaultPcSheet().maxHp).not.toBe(FIGHTER_MAX_HP[3])
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      currentHp: FIGHTER_MAX_HP[3],
+      hitDiceRemaining: 3,
+    })
+    expect(await exactVitals(t, code, thorin)).toEqual({
+      current: FIGHTER_MAX_HP[3],
+      max: FIGHTER_MAX_HP[3],
+    })
+  })
+
+  test('a premade character is an ordinary player character to everybody', async () => {
+    const t = convexTest(schema, modules)
+    const { code } = await makeGame(t)
+    const ana = await makeSeat(t, code, 'Ana')
+    const thorin = await makePreset(t, code, 'Thorin')
+    await t.mutation(api.characters.claim, { code, playerId: ana, characterId: thorin })
+
+    // No DM code anywhere: a preset resolves to `pc`, so it is listed, claimable
+    // and readable exactly as a hand-built hero is.
+    expect(rowFor(await t.query(api.characters.list, { code }), thorin)).toMatchObject({
+      kind: 'pc',
+      claimedByName: 'Ana',
+    })
+    expect((await readSheet(t, code, thorin, { playerId: ana }))?.sheet.kind).toBe('pc')
+  })
+
+  test('an archetype cannot be chosen before level 2', async () => {
+    const t = convexTest(schema, modules)
+    const { code } = await makeGame(t)
+
+    await expectSheetProblem(
+      t.mutation(api.characters.create, {
+        code,
+        name: 'Thorin',
+        sheet: presetSheet({ level: 1, subclassKey: 'champion' }),
+      }),
+      'subclassKey',
+    )
+  })
+
+  test('an archetype belonging to another class is refused', async () => {
+    const t = convexTest(schema, modules)
+    const { code } = await makeGame(t)
+
+    await expectSheetProblem(
+      t.mutation(api.characters.create, {
+        code,
+        name: 'Thorin',
+        sheet: presetSheet({ classKey: 'fighter', level: 3, subclassKey: 'berserker' }),
+      }),
+      'subclassKey',
+    )
+  })
+
+  /**
+   * The documented convex-test gap, restated for the two new enums.
+   *
+   * Convex applies *argument* validators, so a race or a class outside the union
+   * never reaches a handler — which means the refusal is a bare `Error` rather than
+   * the `ConvexError` every deliberate refusal in this file carries. Milestone 3
+   * hit exactly this with a d7 hit die.
+   */
+  test('a race or a class outside the union is refused at the argument boundary', async () => {
+    const t = convexTest(schema, modules)
+    const { code } = await makeGame(t)
+
+    for (const sheet of [
+      { ...presetSheet(), race: 'gnome' },
+      { ...presetSheet(), classKey: 'warlock' },
+    ]) {
+      const thrown = await t
+        .mutation(api.characters.create, {
+          code,
+          name: 'Thorin',
+          sheet: sheet as unknown as PresetSheet,
+        })
+        .then(
+          () => null,
+          (error: unknown) => error,
+        )
+      expect(thrown, 'an unknown enum member was accepted').not.toBeNull()
+      expect(thrown).not.toBeInstanceOf(ConvexError)
+    }
+
+    expect(await t.query(api.characters.list, { code })).toEqual([])
+  })
+
+  /**
+   * Every selection the pickers can offer, through the real mutation.
+   *
+   * `create` validates the *resolved* sheet as well as the stored one, so this is
+   * the check that the content and the resolver agree everywhere rather than on the
+   * one combination a hand-written fixture happens to use: an ability score pushed
+   * past 30 by a race bonus, a duplicate entry id where a class's feat and spell
+   * share a name, a roll spec that drifted — each of them would land here.
+   */
+  test('every race, class, archetype and level resolves into a storable sheet', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const thorin = await makePreset(t, code, 'Sweep')
+
+    for (const classKey of CLASS_KEYS) {
+      const definition = CLASSES.find((entry) => entry.key === classKey)!
+      for (const subclass of definition.subclasses) {
+        for (const level of [2, 3, 4, 5]) {
+          for (const race of RACE_KEYS) {
+            const sheet = presetSheet({ race, classKey, subclassKey: subclass.key, level })
+            await update(t, code, thorin, sheet, { dmCode })
+
+            const resolved = await resolvedSheet(t, code, thorin, { dmCode })
+            const where = `${race}/${classKey}/${subclass.key}/${level}`
+            expect(resolved.className, where).toContain(subclass.name)
+            expect(resolved.maxHp, where).toBeGreaterThan(0)
+            // The race's own trait is on every sheet, whether or not it moves a
+            // number — a Halfling's Lucky is the whole of what makes them one.
+            expect(
+              resolved.feats.map((entry) => entry.id),
+              where,
+            ).toContain(`race:${race}`)
+            // Ids are a React key set and Milestone 5's roll targets, merged
+            // across both lists.
+            const ids = [...resolved.feats, ...resolved.spells].map((entry) => entry.id)
+            expect(new Set(ids).size, `${where} repeated an entry id`).toBe(ids.length)
+          }
+        }
+      }
+    }
+  })
+
+  test('level 1 with no archetype resolves for every race and class', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const thorin = await makePreset(t, code, 'Sweep')
+
+    for (const classKey of CLASS_KEYS) {
+      for (const race of RACE_KEYS) {
+        await update(t, code, thorin, presetSheet({ race, classKey, level: 1 }), { dmCode })
+        const resolved = await resolvedSheet(t, code, thorin, { dmCode })
+        expect(resolved.level, `${race}/${classKey}`).toBe(1)
+        expect(resolved.hitDice.count, `${race}/${classKey}`).toBe(1)
+      }
+    }
+  })
+})
+
+describe('characters.updateSheet — the permission split over a premade character', () => {
+  /**
+   * THE MATRIX. Four callers, and the difference between them is the whole of what
+   * `applyPresetPermissions` and `requireEditableCharacter` decide between.
+   *
+   * `owner` is the seat holding the character, `other` is a second seat that is not,
+   * and `anonymous` is a client that sent no identification at all — which is not
+   * the same as `other`, because it is refused a step earlier and with different
+   * wording. Each case rebuilds the game, so a refusal in one cannot be a leftover
+   * write in the next.
+   */
+  type Caller = 'dm' | 'owner' | 'other' | 'anonymous'
+
+  function actorFor(
+    who: Caller,
+    fixture: Awaited<ReturnType<typeof presetFixture>>,
+  ): Actor {
+    if (who === 'dm') return { dmCode: fixture.dmCode }
+    if (who === 'owner') return { playerId: fixture.ana }
+    if (who === 'other') return { playerId: fixture.ben }
+    return {}
+  }
+
+  /** The refusal a caller with no business here gets, before any preset rule runs. */
+  const NOT_YOURS: Record<'other' | 'anonymous', string> = {
+    other: 'Ana is playing that character.',
+    anonymous: 'Only the DM can change that character.',
+  }
+
+  /**
+   * LEVEL IS THE DM'S, AND A PLAYER'S WRITE CANNOT MOVE IT.
+   *
+   * Note the shape of the guarantee, because the implementation states it in an
+   * unusual way: a player asking for a different level is **not** refused, it is
+   * *preserved* — the rest of their save lands and the level comes back off the
+   * stored document. The level is a field their form displays and cannot edit, so a
+   * client sends it back as it received it, and refusing a difference would fail an
+   * ordinary save whenever the two happened to disagree. What is asserted here is
+   * therefore the outcome rather than the mechanism: after any player write, the
+   * stored level is the one the DM last set.
+   */
+  test('a player’s write can never move the level, and the DM’s can', async () => {
+    for (const who of ['dm', 'owner', 'other', 'anonymous'] as Caller[]) {
+      const t = convexTest(schema, modules)
+      const fixture = await presetFixture(t, presetSheet({ level: 1 }))
+      // A race change is something this player *is* allowed, sent in the same call
+      // as the level they are not — so a passing test cannot be the whole write
+      // being dropped on the floor.
+      const wanted = presetSheet({ level: 3, race: 'elf' })
+
+      if (who === 'dm') {
+        await update(t, fixture.code, fixture.characterId, wanted, actorFor(who, fixture))
+        expect(await storedPreset(t, fixture.characterId)).toMatchObject({
+          level: 3,
+          race: 'elf',
+        })
+        continue
+      }
+
+      if (who === 'owner') {
+        await update(t, fixture.code, fixture.characterId, wanted, actorFor(who, fixture))
+        expect(await storedPreset(t, fixture.characterId), who).toMatchObject({
+          level: 1,
+          race: 'elf',
+        })
+        // And the sheet everybody reads followed the level that is stored, not the
+        // one that was asked for.
+        expect(
+          (await resolvedSheet(t, fixture.code, fixture.characterId, { playerId: fixture.ana }))
+            .maxHp,
+          who,
+        ).toBe(FIGHTER_MAX_HP[1])
+        continue
+      }
+
+      const refusal = await refusalOf(
+        update(t, fixture.code, fixture.characterId, wanted, actorFor(who, fixture)),
+      )
+      expect(refusal.kind, who).toBe('CharacterNotYours')
+      expect(refusal.message, who).toBe(NOT_YOURS[who])
+      // Nothing moved at all, which is the other half of a refusal.
+      expect(await storedPreset(t, fixture.characterId), who).toMatchObject({
+        level: 1,
+        race: 'human',
+      })
+    }
+  })
+
+  /**
+   * ⚠️ WHERE THE LEVEL RULE STOPS, recorded so that whoever finds it reads this
+   * rather than filing it as a bug — or, better, decides it *is* one on purpose.
+   *
+   * `applyPresetPermissions` protects a character that is *already* built from the
+   * library. It does nothing on `create`, and nothing when the stored sheet is not a
+   * preset, both by explicit design: "building a character that was not one before —
+   * nothing to protect yet".
+   *
+   * The consequence is that a player can hand themselves a level, in two calls and
+   * without the DM, by replacing their preset with a hand-built `pc` sheet — which is
+   * always allowed, since a hero's sheet belongs to the party — and then building a
+   * fresh preset at whatever level they like. The lock goes the same way.
+   *
+   * That is the advisory ceiling ADR 0004 describes rather than a hole in a secret:
+   * nothing here is hidden from anybody, and every step of it is visible to the whole
+   * table. It is asserted rather than left implicit because a test that only proved
+   * the rule holds would read as a stronger promise than the code makes.
+   */
+  test('the level rule guards an existing premade character, and not the act of making one', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ level: 1, locked: true }))
+    const { code, characterId, ana } = fixture
+
+    // Step one: out of the library altogether, which is not a preset change.
+    await update(t, code, characterId, pcSheet({ className: 'By hand', level: 1 }), {
+      playerId: ana,
+    })
+    expect((await rawCharacter(t, characterId))?.sheet?.kind).toBe('pc')
+
+    // Step two: back in, at a level nobody awarded.
+    await update(t, code, characterId, presetSheet({ level: 5, subclassKey: 'champion' }), {
+      playerId: ana,
+    })
+    expect(await storedPreset(t, characterId)).toMatchObject({ level: 5, locked: false })
+
+    // And the same thing in one call, on a character being created rather than
+    // changed — which is the case the design deliberately leaves open.
+    const fresh = await makePreset(t, code, 'Fresh', presetSheet({ level: MAX_LEVEL }))
+    expect((await storedPreset(t, fresh)).level).toBe(MAX_LEVEL)
+  })
+
+  test('the level a player sends is ignored, whatever nonsense it is', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ level: 2, subclassKey: 'champion' }))
+    const stored = await storedPreset(t, fixture.characterId)
+
+    for (const level of [5, 20, 0, -3, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await update(
+        t,
+        fixture.code,
+        fixture.characterId,
+        { ...stored, level },
+        { playerId: fixture.ana },
+      ).catch(() => undefined)
+      expect((await storedPreset(t, fixture.characterId)).level, String(level)).toBe(2)
+    }
+  })
+
+  test('a locked character keeps its race, class and archetype against its own player', async () => {
+    const locked = presetSheet({ level: 3, subclassKey: 'champion', locked: true })
+    const changes: [string, PresetSheet][] = [
+      ['race', { ...locked, race: 'elf' }],
+      ['class', { ...locked, classKey: 'wizard', subclassKey: 'evocation' }],
+      ['archetype', { ...locked, subclassKey: 'battle-master' }],
+    ]
+
+    for (const [label, wanted] of changes) {
+      const t = convexTest(schema, modules)
+      const fixture = await presetFixture(t, locked)
+
+      const refusal = await refusalOf(
+        update(t, fixture.code, fixture.characterId, wanted, { playerId: fixture.ana }),
+      )
+      expect(refusal.kind, label).toBe('CharacterLocked')
+      expect(refusal.message, label).toBe(
+        'Your race, class and archetype are set. Ask the DM to unlock them.',
+      )
+      expect(await storedPreset(t, fixture.characterId), label).toEqual(locked)
+
+      // The DM is allowed the same change, on the same locked character.
+      await update(t, fixture.code, fixture.characterId, wanted, { dmCode: fixture.dmCode })
+      expect(await storedPreset(t, fixture.characterId), label).toEqual(wanted)
+    }
+  })
+
+  test('an unlocked character may be rebuilt by the player playing it', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ level: 3, subclassKey: 'champion' }))
+
+    const wanted = presetSheet({
+      race: 'elf',
+      classKey: 'rogue',
+      subclassKey: 'assassin',
+      level: 3,
+    })
+    await update(t, fixture.code, fixture.characterId, wanted, { playerId: fixture.ana })
+
+    expect(await storedPreset(t, fixture.characterId)).toEqual(wanted)
+    // And the sheet the panel draws followed the selections, without anybody
+    // typing a number.
+    const resolved = await resolvedSheet(t, fixture.code, fixture.characterId, {
+      playerId: fixture.ana,
+    })
+    expect(resolved.className).toBe('Rogue (Assassin)')
+    expect(resolved.feats.map((entry) => entry.id)).toContain('race:elf')
+  })
+
+  test('a player may commit to their selections but may not undo the lock', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ level: 1, locked: false }))
+
+    // Locking is theirs: committing is the player's own decision.
+    await update(t, fixture.code, fixture.characterId, presetSheet({ locked: true }), {
+      playerId: fixture.ana,
+    })
+    expect((await storedPreset(t, fixture.characterId)).locked).toBe(true)
+
+    // Unlocking is not — and this is the one thing a player is genuinely told
+    // "no" about, because a refusal here is information they need: somebody has to
+    // unlock them.
+    const refusal = await refusalOf(
+      update(t, fixture.code, fixture.characterId, presetSheet({ locked: false }), {
+        playerId: fixture.ana,
+      }),
+    )
+    expect(refusal.kind).toBe('CharacterLocked')
+    expect(refusal.message).toBe(
+      'Your race, class and archetype are set. Ask the DM to unlock them.',
+    )
+    expect((await storedPreset(t, fixture.characterId)).locked).toBe(true)
+
+    // Saving a locked character unchanged is not an unlock attempt and is allowed,
+    // so an ordinary save does not fail merely because the lock is on.
+    await update(t, fixture.code, fixture.characterId, presetSheet({ locked: true }), {
+      playerId: fixture.ana,
+    })
+    expect((await storedPreset(t, fixture.characterId)).locked).toBe(true)
+
+    // The DM can, through `updateSheet` or through the mutation that exists for it.
+    await t.mutation(api.characters.setUnlocked, {
+      code: fixture.code,
+      dmCode: fixture.dmCode,
+      characterId: fixture.characterId,
+      locked: false,
+    })
+    expect((await storedPreset(t, fixture.characterId)).locked).toBe(false)
+
+    // And now the player may change what the lock was protecting.
+    await update(t, fixture.code, fixture.characterId, presetSheet({ race: 'goliath' }), {
+      playerId: fixture.ana,
+    })
+    expect((await storedPreset(t, fixture.characterId)).race).toBe('goliath')
+  })
+
+  /**
+   * Overrides are the DM's thumb on the scale, and a player's write cannot touch
+   * them — stated the same way the level is: the stored value is taken, whatever
+   * arrived. So the assertions are on the document afterwards rather than on a
+   * refusal, and the interesting cases are the three ways a client could get it
+   * wrong — inventing one, editing one, and dropping one.
+   */
+  test('a player’s write can neither invent, edit nor drop an override', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t)
+    const overrides: PresetOverrides = { armourClass: 21, maxHp: 60 }
+
+    // Inventing one does nothing, and does not stop the rest of the save landing.
+    await update(
+      t,
+      fixture.code,
+      fixture.characterId,
+      presetSheet({ overrides, race: 'elf' }),
+      { playerId: fixture.ana },
+    )
+    expect(await storedPreset(t, fixture.characterId)).toMatchObject({ race: 'elf' })
+    expect((await storedPreset(t, fixture.characterId)).overrides).toBeUndefined()
+
+    // The DM sets one, and it reaches the sheet everybody reads.
+    await update(t, fixture.code, fixture.characterId, presetSheet({ overrides, race: 'elf' }), {
+      dmCode: fixture.dmCode,
+    })
+    const asOwner = () =>
+      resolvedSheet(t, fixture.code, fixture.characterId, { playerId: fixture.ana })
+    expect(await asOwner()).toMatchObject({
+      armourClass: 21,
+      maxHp: 60,
+    })
+
+    // A player round-tripping the `preset` they were sent keeps it, which is the
+    // ordinary save and the one that must not fail.
+    const stored = await storedPreset(t, fixture.characterId)
+    await update(
+      t,
+      fixture.code,
+      fixture.characterId,
+      { ...stored, race: 'halfling' },
+      { playerId: fixture.ana },
+    )
+    expect(await storedPreset(t, fixture.characterId)).toMatchObject({ race: 'halfling' })
+    expect((await storedPreset(t, fixture.characterId)).overrides).toEqual(overrides)
+
+    // Editing it, or quietly dropping it, changes nothing either.
+    for (const attempt of [
+      { ...stored, overrides: { ...overrides, armourClass: 40, maxHp: 999 } },
+      { ...stored, overrides: undefined },
+    ]) {
+      await update(t, fixture.code, fixture.characterId, attempt, { playerId: fixture.ana })
+      expect((await storedPreset(t, fixture.characterId)).overrides).toEqual(overrides)
+    }
+    expect(await asOwner()).toMatchObject({ armourClass: 21, maxHp: 60 })
+  })
+
+  /**
+   * `requireUsableSheet` runs `sheetProblem` over the *resolved* sheet as well as
+   * the stored one, and this is the case that needs it: a preset holds no numbers,
+   * so the only place an override that lands the armour class at 999 can be caught
+   * is after the library, the race and the override have been put together.
+   */
+  test('an override that pushes the resolved sheet out of bounds is refused', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t)
+
+    await expectSheetProblem(
+      update(t, fixture.code, fixture.characterId, presetSheet({ overrides: { armourClass: 999 } }), {
+        dmCode: fixture.dmCode,
+      }),
+      'armourClass',
+    )
+    await expectSheetProblem(
+      update(t, fixture.code, fixture.characterId, presetSheet({ overrides: { maxHp: 0 } }), {
+        dmCode: fixture.dmCode,
+      }),
+      'maxHp',
+    )
+    // An extra feat is an ordinary entry and gets the ordinary checks — an override
+    // is a place a bad roll spec can enter just as easily as a feat list is.
+    await expectSheetProblem(
+      update(
+        t,
+        fixture.code,
+        fixture.characterId,
+        presetSheet({
+          overrides: { extraFeats: [sheetEntry({ id: 'plot:x', roll: '99d99' })] },
+        }),
+        { dmCode: fixture.dmCode },
+      ),
+      'overrides.extraFeats[0].roll',
+    )
+    expect((await storedPreset(t, fixture.characterId)).overrides).toBeUndefined()
+  })
+
+  test('the DM can take an override away again, and the sheet goes back to the library', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(
+      t,
+      presetSheet({ level: 3, subclassKey: 'champion', overrides: { maxHp: 60 } }),
+    )
+
+    await update(
+      t,
+      fixture.code,
+      fixture.characterId,
+      presetSheet({ level: 3, subclassKey: 'champion' }),
+      { dmCode: fixture.dmCode },
+    )
+    expect((await storedPreset(t, fixture.characterId)).overrides).toBeUndefined()
+    expect(
+      (await resolvedSheet(t, fixture.code, fixture.characterId, { dmCode: fixture.dmCode })).maxHp,
+    ).toBe(FIGHTER_MAX_HP[3])
+  })
+
+  test('the DM may change level, selections and overrides of a locked character at once', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ locked: true }))
+
+    const wanted = presetSheet({
+      race: 'dragonborn',
+      classKey: 'cleric',
+      subclassKey: 'light',
+      level: 4,
+      locked: true,
+      overrides: { armourClass: 20 },
+    })
+    await update(t, fixture.code, fixture.characterId, wanted, { dmCode: fixture.dmCode })
+    expect(await storedPreset(t, fixture.characterId)).toEqual(wanted)
+  })
+
+  test('a character nobody is playing belongs to the DM', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const ana = await makeSeat(t, code, 'Ana')
+    const thorin = await makePreset(t, code, 'Thorin')
+
+    const refusal = await refusalOf(
+      update(t, code, thorin, presetSheet({ race: 'elf' }), { playerId: ana }),
+    )
+    expect(refusal.kind).toBe('CharacterNotYours')
+    expect(refusal.message).toBe(
+      'Nobody is playing that character yet, so only the DM can change it.',
+    )
+    await update(t, code, thorin, presetSheet({ race: 'elf' }), { dmCode })
+    expect((await storedPreset(t, thorin)).race).toBe('elf')
+  })
+
+  test('a premade character cannot be turned into a monster, nor a monster into one', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const thorin = await makePreset(t, code, 'Thorin')
+    const goblin = await makeNpc(t, code, dmCode, 'Goblin', npcSheet({ maxHp: 7 }))
+
+    const toMonster = await refusalOf(update(t, code, thorin, npcSheet(), { dmCode }))
+    expect(toMonster.kind).toBe('BadInput')
+    expect(toMonster.message).toBe('A character cannot change between a player character and an NPC.')
+
+    const toHero = await refusalOf(update(t, code, goblin, presetSheet(), { dmCode }))
+    expect(toHero.kind).toBe('BadInput')
+    expect(toHero.message).toBe('A character cannot change between a player character and an NPC.')
+
+    // Neither document moved, and the monster is still nobody's business but the
+    // DM's.
+    expect((await storedPreset(t, thorin)).kind).toBe('preset')
+    expect((await rawCharacter(t, goblin))?.sheet).toEqual(npcSheet({ maxHp: 7 }))
+    expect(await t.query(api.characters.list, { code })).toHaveLength(1)
+  })
+
+  /**
+   * Swapping between the two storage forms is allowed on purpose — a hand-built
+   * hero picking a premade sheet is an ordinary thing to want, and the check is on
+   * monster-ness rather than on the stored kind.
+   */
+  test('a hand-built hero may be rebuilt from the library, and keeps its vitals row', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const thorin = await makePc(t, code, 'Thorin', pcSheet({ maxHp: 40, className: 'By hand' }))
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -30, dmCode })
+
+    await update(t, code, thorin, presetSheet({ level: 2, subclassKey: 'champion' }), { dmCode })
+
+    expect((await storedPreset(t, thorin)).classKey).toBe('fighter')
+    // 10 hit points survive the swap; the maximum is now the library's.
+    expect(await exactVitals(t, code, thorin, { dmCode })).toEqual({
+      current: 10,
+      max: FIGHTER_MAX_HP[2],
+    })
+  })
+})
+
+describe('characters.setLevel', () => {
+  test('the DM code is the only thing that authorises it', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t)
+
+    await expectKind(
+      t.mutation(api.characters.setLevel, {
+        code: fixture.code,
+        dmCode: 'NOPENOPE',
+        characterId: fixture.characterId,
+        level: 5,
+      }),
+      'NotDm',
+    )
+    // The badge in the roster is not the code, and the seat playing the character
+    // has no way to award itself a level.
+    await t.run(async (ctx) => {
+      await ctx.db.patch('players', fixture.ana, { isDm: true })
+    })
+    await expectKind(
+      t.mutation(api.characters.setLevel, {
+        code: fixture.code,
+        dmCode: '',
+        characterId: fixture.characterId,
+        level: 5,
+      }),
+      'NotDm',
+    )
+    expect((await storedPreset(t, fixture.characterId)).level).toBe(1)
+
+    await t.mutation(api.characters.setLevel, {
+      code: fixture.code,
+      dmCode: fixture.dmCode,
+      characterId: fixture.characterId,
+      level: 5,
+    })
+    expect((await storedPreset(t, fixture.characterId)).level).toBe(5)
+  })
+
+  test('dropping below level 2 clears the archetype, and level 2 keeps it', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ level: 5, subclassKey: 'champion' }))
+    const setLevel = (level: number) =>
+      t.mutation(api.characters.setLevel, {
+        code: fixture.code,
+        dmCode: fixture.dmCode,
+        characterId: fixture.characterId,
+        level,
+      })
+
+    await setLevel(SUBCLASS_LEVEL)
+    // The stored document, not the response — an archetype that survived only in a
+    // payload would reapply itself on the way back up.
+    expect(await storedPreset(t, fixture.characterId)).toMatchObject({
+      level: 2,
+      subclassKey: 'champion',
+    })
+
+    await setLevel(1)
+    expect(await storedPreset(t, fixture.characterId)).toMatchObject({
+      level: 1,
+      subclassKey: null,
+    })
+
+    // And back up: the archetype is genuinely gone rather than hidden, so the
+    // character is level 3 with no archetype until somebody chooses again.
+    await setLevel(3)
+    expect(await storedPreset(t, fixture.characterId)).toMatchObject({
+      level: 3,
+      subclassKey: null,
+    })
+    expect(
+      (await resolvedSheet(t, fixture.code, fixture.characterId, { dmCode: fixture.dmCode }))
+        .className,
+    ).toBe('Fighter')
+  })
+
+  test('a level moves the whole sheet without anybody editing one', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ level: 2, subclassKey: 'champion' }))
+    const at = async (level: number) => {
+      await t.mutation(api.characters.setLevel, {
+        code: fixture.code,
+        dmCode: fixture.dmCode,
+        characterId: fixture.characterId,
+        level,
+      })
+      return await resolvedSheet(t, fixture.code, fixture.characterId, { playerId: fixture.ana })
+    }
+
+    const two = await at(2)
+    expect(two).toMatchObject({ maxHp: FIGHTER_MAX_HP[2], hitDice: { count: 2, faces: 10 } })
+    expect(two.feats.map((entry) => entry.id)).not.toContain('lib:extra-attack')
+
+    const five = await at(5)
+    expect(five).toMatchObject({ maxHp: FIGHTER_MAX_HP[5], hitDice: { count: 5, faces: 10 } })
+    // Features arrive with the level, out of the library rather than out of a form.
+    expect(five.feats.map((entry) => entry.id)).toContain('lib:extra-attack')
+    expect(five.feats.length).toBeGreaterThan(two.feats.length)
+    // Level 3 is where this build takes its ability score improvement.
+    expect(five.abilities.str).toBe(17)
+    expect(two.abilities.str).toBe(15)
+  })
+
+  test('a level past the library’s last one stops gaining rather than falling back', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ level: 5, subclassKey: 'champion' }))
+    await t.mutation(api.characters.setLevel, {
+      code: fixture.code,
+      dmCode: fixture.dmCode,
+      characterId: fixture.characterId,
+      level: MAX_LEVEL,
+    })
+
+    const resolved = await resolvedSheet(t, fixture.code, fixture.characterId, {
+      dmCode: fixture.dmCode,
+    })
+    expect((await storedPreset(t, fixture.characterId)).level).toBe(MAX_LEVEL)
+    expect(resolved.level).toBe(MAX_LEVEL)
+    expect(resolved.maxHp).toBe(FIGHTER_MAX_HP[5])
+    expect(resolved.hitDice).toEqual({ count: 5, faces: 10 })
+  })
+
+  /**
+   * THE PROMISE THE DESIGN MAKES. An override is the DM's final word, applied after
+   * the library and after the race — so awarding a level five minutes after bumping
+   * a boss-fight armour class must not quietly undo it.
+   */
+  test('a DM override survives every level change, in both directions', async () => {
+    const t = convexTest(schema, modules)
+    const overrides: PresetOverrides = {
+      armourClass: 21,
+      maxHp: 60,
+      speed: 45,
+      abilities: { str: 20, dex: 11, con: 16, int: 9, wis: 12, cha: 13 },
+      extraFeats: [
+        sheetEntry({ id: 'plot:wyrmglass', name: 'Wyrmglass Shard', roll: '2d6', text: 'A shard.' }),
+      ],
+    }
+    const fixture = await presetFixture(
+      t,
+      presetSheet({ level: 2, subclassKey: 'champion', overrides }),
+    )
+
+    for (const level of [3, 5, 4, 2, 5]) {
+      await t.mutation(api.characters.setLevel, {
+        code: fixture.code,
+        dmCode: fixture.dmCode,
+        characterId: fixture.characterId,
+        level,
+      })
+
+      expect((await storedPreset(t, fixture.characterId)).overrides, `level ${level}`).toEqual(
+        overrides,
+      )
+      const resolved = await resolvedSheet(t, fixture.code, fixture.characterId, {
+        dmCode: fixture.dmCode,
+      })
+      expect(resolved, `level ${level}`).toMatchObject({
+        armourClass: 21,
+        maxHp: 60,
+        speed: 45,
+        abilities: overrides.abilities,
+      })
+      // Appended, not replacing: the plot item sits beside whatever the level just
+      // handed over.
+      expect(resolved.feats.map((entry) => entry.id), `level ${level}`).toContain('plot:wyrmglass')
+      expect(resolved.feats.map((entry) => entry.id), `level ${level}`).toContain('lib:second-wind')
+    }
+  })
+
+  test('levelling a hand-built character or a monster says what to do instead', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const thorin = await makePc(t, code, 'Thorin', pcSheet({ level: 2 }))
+    const goblin = await makeNpc(t, code, dmCode, 'Goblin', npcSheet({ maxHp: 7 }))
+    const legacy = await insertLegacyCharacter(t, code, 'Milestone One')
+
+    for (const characterId of [thorin, goblin, legacy]) {
+      const refusal = await refusalOf(
+        t.mutation(api.characters.setLevel, { code, dmCode, characterId, level: 4 }),
+      )
+      expect(refusal.kind).toBe('BadInput')
+      expect(refusal.message).toBe(
+        'That character is not built from the library, so edit its sheet instead.',
+      )
+    }
+
+    // Nothing was rewritten on the way past.
+    expect((await rawCharacter(t, thorin))?.sheet).toEqual(pcSheet({ level: 2 }))
+    expect((await rawCharacter(t, legacy))?.sheet).toBeUndefined()
+  })
+
+  test('unlocking a character that is not built from the library is refused too', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const thorin = await makePc(t, code, 'Thorin', pcSheet())
+
+    const refusal = await refusalOf(
+      t.mutation(api.characters.setUnlocked, {
+        code,
+        dmCode,
+        characterId: thorin,
+        locked: false,
+      }),
+    )
+    expect(refusal.kind).toBe('BadInput')
+    expect(refusal.message).toBe('That character is not built from the library.')
+  })
+
+  test('a level outside 1 to 20 is refused, including the values a form produces', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ level: 3, subclassKey: 'champion' }))
+
+    // `NaN` is what an emptied number input sends, and it is a perfectly valid
+    // float64 — so it reaches the handler and has to be refused there rather than
+    // being stored to poison every comparison made against it afterwards.
+    for (const level of [0, -1, MAX_LEVEL + 1, Number.NaN, Number.POSITIVE_INFINITY, -Infinity]) {
+      await expectSheetProblem(
+        t.mutation(api.characters.setLevel, {
+          code: fixture.code,
+          dmCode: fixture.dmCode,
+          characterId: fixture.characterId,
+          level,
+        }),
+        'level',
+      )
+      expect(await storedPreset(t, fixture.characterId), String(level)).toMatchObject({
+        level: 3,
+        subclassKey: 'champion',
+      })
+    }
+
+    // Both ends of the range are accepted, so the refusals above are about the
+    // bound rather than about the check being on at all.
+    for (const level of [MIN_LEVEL, MAX_LEVEL]) {
+      await t.mutation(api.characters.setLevel, {
+        code: fixture.code,
+        dmCode: fixture.dmCode,
+        characterId: fixture.characterId,
+        level,
+      })
+      expect((await storedPreset(t, fixture.characterId)).level).toBe(level)
+    }
+  })
+
+  test('setLevel refuses a character in another game', async () => {
+    const t = convexTest(schema, modules)
+    const alpha = await makeGame(t, 'Alpha')
+    const beta = await makeGame(t, 'Beta', 'Ben')
+    const theirs = await makePreset(t, beta.code, 'Thorin')
+
+    await expectKind(
+      t.mutation(api.characters.setLevel, {
+        code: alpha.code,
+        dmCode: alpha.dmCode,
+        characterId: theirs,
+        level: 4,
+      }),
+      'CharacterNotFound',
+    )
+    expect((await storedPreset(t, theirs)).level).toBe(1)
+  })
+})
+
+describe('hit points against a resolved sheet', () => {
+  /**
+   * THE CASE MOST LIKELY TO BE WRONG. A preset stores no maximum, so the re-clamp
+   * in `writeSheet` has to resolve the *new* selections to find one — and levelling
+   * down is precisely when the maximum moves underneath a character who is standing
+   * on more hit points than the new sheet allows.
+   */
+  test('levelling down re-clamps hit points and hit dice against the new sheet', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ level: 5, subclassKey: 'champion' }))
+    const { code, dmCode, characterId } = fixture
+
+    await t.mutation(api.characters.adjustHp, { code, characterId, delta: -6, dmCode })
+    expect(await exactVitals(t, code, characterId, { dmCode })).toEqual({
+      current: 38,
+      max: FIGHTER_MAX_HP[5],
+    })
+
+    await t.mutation(api.characters.setLevel, { code, dmCode, characterId, level: 1 })
+
+    // 38 out of a maximum of 12 would draw a health bar past the end of itself and
+    // hand a player a band computed from a ratio greater than one.
+    expect(await rawVitals(t, characterId)).toMatchObject({
+      currentHp: FIGHTER_MAX_HP[1],
+      hitDiceRemaining: 1,
+    })
+    expect(await exactVitals(t, code, characterId, { dmCode })).toEqual({
+      current: FIGHTER_MAX_HP[1],
+      max: FIGHTER_MAX_HP[1],
+    })
+  })
+
+  test('levelling up raises the ceiling without healing anybody', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ level: 1 }))
+    const { code, dmCode, characterId } = fixture
+
+    await t.mutation(api.characters.adjustHp, { code, characterId, delta: -8, dmCode })
+    await t.mutation(api.characters.setLevel, { code, dmCode, characterId, level: 5 })
+    await update(t, code, characterId, presetSheet({ level: 5, subclassKey: 'champion' }), {
+      dmCode,
+    })
+
+    expect(await exactVitals(t, code, characterId, { dmCode })).toEqual({
+      current: 4,
+      max: FIGHTER_MAX_HP[5],
+    })
+    // Spent hit dice are not minted by a level either — one was all it had.
+    expect((await rawVitals(t, characterId))?.hitDiceRemaining).toBe(1)
+  })
+
+  test('a Dwarf’s maximum is the library’s plus its level, and the clamp follows it', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(
+      t,
+      presetSheet({ race: 'dwarf', level: 3, subclassKey: 'champion' }),
+    )
+    const { code, dmCode, characterId } = fixture
+    const dwarfMax = FIGHTER_MAX_HP[3] + 3
+
+    expect(await rawVitals(t, characterId)).toMatchObject({ currentHp: dwarfMax })
+    expect(await resolvedSheet(t, code, characterId, { dmCode })).toMatchObject({
+      maxHp: dwarfMax,
+    })
+
+    // The clamp is against the raced maximum, not the library's.
+    expect(
+      await t.mutation(api.characters.setHp, { code, characterId, currentHp: 500, dmCode }),
+    ).toEqual({ currentHp: dwarfMax })
+    expect(
+      await t.mutation(api.characters.adjustHp, { code, characterId, delta: -500, dmCode }),
+    ).toEqual({ currentHp: 0 })
+
+    // And it moves with the level, one point at a time.
+    await t.mutation(api.characters.setLevel, { code, dmCode, characterId, level: 5 })
+    expect((await resolvedSheet(t, code, characterId, { dmCode })).maxHp).toBe(
+      FIGHTER_MAX_HP[5] + 5,
+    )
+  })
+
+  test('a DM override of the maximum wins over the race and the library', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(
+      t,
+      presetSheet({
+        race: 'dwarf',
+        level: 3,
+        subclassKey: 'champion',
+        overrides: { maxHp: 25 },
+      }),
+    )
+    const { code, dmCode, characterId } = fixture
+
+    expect(await rawVitals(t, characterId)).toMatchObject({ currentHp: 25 })
+    expect(
+      await t.mutation(api.characters.setHp, { code, characterId, currentHp: 999, dmCode }),
+    ).toEqual({ currentHp: 25 })
+  })
+
+  test('the player playing a premade character may take damage on it, and another seat may not', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ level: 3, subclassKey: 'champion' }))
+    const { code, characterId, ana, ben } = fixture
+
+    expect(
+      await t.mutation(api.characters.adjustHp, { code, characterId, delta: -5, playerId: ana }),
+    ).toEqual({ currentHp: FIGHTER_MAX_HP[3] - 5 })
+
+    await expectKind(
+      t.mutation(api.characters.adjustHp, { code, characterId, delta: -5, playerId: ben }),
+      'CharacterNotYours',
+    )
+    expect((await rawVitals(t, characterId))?.currentHp).toBe(FIGHTER_MAX_HP[3] - 5)
+  })
+})
+
+describe('long rest and once-per-rest abilities', () => {
+  test('a long rest restores hit points, hit dice and spent abilities in one call', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(
+      t,
+      presetSheet({ race: 'human', level: 5, subclassKey: 'champion' }),
+    )
+    const { code, characterId, ana } = fixture
+
+    await t.mutation(api.characters.adjustHp, { code, characterId, delta: -20, playerId: ana })
+    await t.mutation(api.characters.adjustHitDice, {
+      code,
+      characterId,
+      delta: -3,
+      playerId: ana,
+    })
+    await t.mutation(api.characters.setPerRest, {
+      code,
+      characterId,
+      key: 'heroic-inspiration',
+      spent: true,
+      playerId: ana,
+    })
+    expect(await rawVitals(t, characterId)).toMatchObject({
+      currentHp: FIGHTER_MAX_HP[5] - 20,
+      hitDiceRemaining: 2,
+      spentPerRest: ['heroic-inspiration'],
+    })
+
+    // One call, all three — a rest that restored hit points and left the dice
+    // spent would be a rules bug somebody has to notice.
+    await t.mutation(api.characters.longRest, { code, characterId, playerId: ana })
+    expect(await rawVitals(t, characterId)).toMatchObject({
+      currentHp: FIGHTER_MAX_HP[5],
+      hitDiceRemaining: 5,
+      spentPerRest: [],
+    })
+  })
+
+  test('the spent state travels on the vitals row, for the player and the DM alike', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ race: 'human' }))
+    const { code, dmCode, characterId, ana } = fixture
+
+    expect(
+      await t.mutation(api.characters.setPerRest, {
+        code,
+        characterId,
+        key: 'heroic-inspiration',
+        spent: true,
+        playerId: ana,
+      }),
+    ).toEqual({ spentPerRest: ['heroic-inspiration'] })
+
+    for (const who of [{}, { dmCode }]) {
+      const rows = await t.query(api.characters.vitals, { code, ...who })
+      const row = rows.find((entry) => entry.characterId === characterId)
+      expect(row?.kind).toBe('exact')
+      expect(row).toMatchObject({ spentPerRest: ['heroic-inspiration'] })
+    }
+
+    // Handing it back is the same call with `spent: false`, because a mark made by
+    // mistake has to be undoable.
+    expect(
+      await t.mutation(api.characters.setPerRest, {
+        code,
+        characterId,
+        key: 'heroic-inspiration',
+        spent: false,
+        playerId: ana,
+      }),
+    ).toEqual({ spentPerRest: [] })
+  })
+
+  test('spending the same ability twice is idempotent rather than cumulative', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ race: 'human' }))
+    const { code, characterId, ana } = fixture
+
+    for (let i = 0; i < 3; i += 1) {
+      await t.mutation(api.characters.setPerRest, {
+        code,
+        characterId,
+        key: 'heroic-inspiration',
+        spent: true,
+        playerId: ana,
+      })
+    }
+    expect((await rawVitals(t, characterId))?.spentPerRest).toEqual(['heroic-inspiration'])
+  })
+
+  test('a key the character’s race does not have is refused', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ race: 'human' }))
+    const { code, characterId, ana } = fixture
+
+    for (const key of ['relentless-endurance', 'lucky', '', 'heroic_inspiration']) {
+      const refusal = await refusalOf(
+        t.mutation(api.characters.setPerRest, {
+          code,
+          characterId,
+          key,
+          spent: true,
+          playerId: ana,
+        }),
+      )
+      expect(refusal.kind, key).toBe('BadInput')
+      expect(refusal.message, key).toBe('That character has no such ability.')
+    }
+    expect((await rawVitals(t, characterId))?.spentPerRest ?? []).toEqual([])
+  })
+
+  test('a Dwarf has nothing to spend, and a Half-Orc has exactly one thing', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const dwarf = await makePreset(t, code, 'Dwalin', presetSheet({ race: 'dwarf' }))
+    const halfOrc = await makePreset(t, code, 'Grash', presetSheet({ race: 'half-orc' }))
+
+    for (const key of ['heroic-inspiration', 'relentless-endurance', 'dwarven-toughness']) {
+      await expectKind(
+        t.mutation(api.characters.setPerRest, {
+          code,
+          characterId: dwarf,
+          key,
+          spent: true,
+          dmCode,
+        }),
+        'BadInput',
+      )
+    }
+    expect((await rawVitals(t, dwarf))?.spentPerRest ?? []).toEqual([])
+
+    expect(
+      await t.mutation(api.characters.setPerRest, {
+        code,
+        characterId: halfOrc,
+        key: 'relentless-endurance',
+        spent: true,
+        dmCode,
+      }),
+    ).toEqual({ spentPerRest: ['relentless-endurance'] })
+    await expectKind(
+      t.mutation(api.characters.setPerRest, {
+        code,
+        characterId: halfOrc,
+        key: 'heroic-inspiration',
+        spent: true,
+        dmCode,
+      }),
+      'BadInput',
+    )
+  })
+
+  test('a hand-built character has no per-rest abilities at all', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const thorin = await makePc(t, code, 'Thorin', pcSheet())
+
+    await expectKind(
+      t.mutation(api.characters.setPerRest, {
+        code,
+        characterId: thorin,
+        key: 'heroic-inspiration',
+        spent: true,
+        dmCode,
+      }),
+      'BadInput',
+    )
+  })
+
+  test('a rest is refused to a seat that is not playing the character, and to nobody', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ race: 'human', level: 3, subclassKey: 'champion' }))
+    const { code, characterId, ana, ben } = fixture
+    await t.mutation(api.characters.adjustHp, { code, characterId, delta: -10, playerId: ana })
+
+    await expectKind(
+      t.mutation(api.characters.longRest, { code, characterId, playerId: ben }),
+      'CharacterNotYours',
+    )
+    await expectKind(t.mutation(api.characters.longRest, { code, characterId }), 'CharacterNotYours')
+    expect((await rawVitals(t, characterId))?.currentHp).toBe(FIGHTER_MAX_HP[3] - 10)
+
+    await t.mutation(api.characters.longRest, { code, characterId, playerId: ana })
+    expect((await rawVitals(t, characterId))?.currentHp).toBe(FIGHTER_MAX_HP[3])
+  })
+
+  test('resting an NPC is the DM’s alone, and a player cannot even find one', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const ana = await makeSeat(t, code, 'Ana')
+    const goblin = await makeNpc(t, code, dmCode, 'Goblin', npcSheet({ maxHp: 7 }))
+    await t.mutation(api.characters.setHp, { code, characterId: goblin, currentHp: 2, dmCode })
+
+    await expectKind(
+      t.mutation(api.characters.longRest, { code, characterId: goblin, playerId: ana }),
+      'CharacterNotFound',
+    )
+    expect((await rawVitals(t, goblin))?.currentHp).toBe(2)
+
+    await t.mutation(api.characters.longRest, { code, characterId: goblin, dmCode })
+    const rested = await rawVitals(t, goblin)
+    expect(rested?.currentHp).toBe(7)
+    // A monster carries no hit dice, so a rest must not invent it any.
+    expect(rested?.hitDiceRemaining).toBeUndefined()
+  })
+
+  test('a long rest creates the vitals row a Milestone 1 character never had', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const legacy = await insertLegacyCharacter(t, code, 'Milestone One')
+    expect(await rawVitals(t, legacy)).toBeNull()
+
+    await t.mutation(api.characters.longRest, { code, characterId: legacy, dmCode })
+    expect(await rawVitals(t, legacy)).toMatchObject({
+      currentHp: defaultPcSheet().maxHp,
+      hitDiceRemaining: defaultPcSheet().hitDice.count,
+      spentPerRest: [],
+    })
+  })
+
+  test('the spent state survives a level change and an edit', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ race: 'human', level: 2, subclassKey: 'champion' }))
+    const { code, dmCode, characterId, ana } = fixture
+
+    await t.mutation(api.characters.setPerRest, {
+      code,
+      characterId,
+      key: 'heroic-inspiration',
+      spent: true,
+      playerId: ana,
+    })
+    await t.mutation(api.characters.setLevel, { code, dmCode, characterId, level: 4 })
+    await update(t, code, characterId, presetSheet({ race: 'human', level: 4, subclassKey: 'battle-master' }), { dmCode })
+
+    // A rest clears it; an edit does not touch it (ADR 0005).
+    expect((await rawVitals(t, characterId))?.spentPerRest).toEqual(['heroic-inspiration'])
+  })
+})
+
+describe('characters built before the library existed', () => {
+  /**
+   * A Milestone 3 sheet has neither `skillProficiencies` nor `speed`, because
+   * neither field existed when it was written. Both are optional for exactly that
+   * reason, and the accessors default them — so one has to keep reading, keep
+   * editing and keep taking damage without a migration.
+   */
+  test('a Milestone 3 sheet with neither optional field still reads, edits and takes damage', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const gameId = await gameIdFor(t, code)
+
+    // Written straight into the table, because no mutation produces this shape any
+    // more — which is exactly why the fallbacks need testing.
+    const milestoneThree: PcSheet = {
+      kind: 'pc',
+      level: 3,
+      className: 'Fighter',
+      abilities: { str: 16, dex: 12, con: 14, int: 10, wis: 11, cha: 8 },
+      saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
+      armourClass: 17,
+      maxHp: 30,
+      hitDice: { count: 3, faces: 10 },
+      feats: [sheetEntry()],
+      spells: [],
+    }
+    const thorin = await t.run(
+      async (ctx) =>
+        await ctx.db.insert('characters', { gameId, name: 'Thorin', sheet: milestoneThree }),
+    )
+
+    const payload = await readSheet(t, code, thorin, { dmCode })
+    expect(payload?.preset).toBeNull()
+    expect(payload?.sheet).toEqual(milestoneThree)
+    expect(rowFor(await t.query(api.characters.list, { code }), thorin).kind).toBe('pc')
+
+    // It still takes damage, against the maximum on the stored sheet.
+    expect(
+      await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -12, dmCode }),
+    ).toEqual({ currentHp: 18 })
+
+    // And it still edits, by hand, with the fields it always had.
+    await update(t, code, thorin, { ...milestoneThree, maxHp: 34 }, { dmCode })
+    expect((await readSheet(t, code, thorin, { dmCode }))?.sheet).toMatchObject({ maxHp: 34 })
+    expect(await exactVitals(t, code, thorin, { dmCode })).toEqual({ current: 18, max: 34 })
+  })
+
+  test('a character with no sheet at all is untouched by any of this', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const legacy = await insertLegacyCharacter(t, code, 'Milestone One')
+
+    expect(await readSheet(t, code, legacy, { dmCode })).toEqual({
+      _id: legacy,
+      name: 'Milestone One',
+      sheet: defaultPcSheet(),
+      preset: null,
+      extras: null,
+    })
+    // The read is a fallback, not a lazy migration.
+    expect((await rawCharacter(t, legacy))?.sheet).toBeUndefined()
+    await t.mutation(api.characters.adjustHp, { code, characterId: legacy, delta: -3, dmCode })
+    expect((await rawCharacter(t, legacy))?.sheet).toBeUndefined()
+  })
+
+  /**
+   * Content drifts. A subclass key is stored on a character, so retiring or
+   * renaming an archetype must leave the characters that chose it *readable* — the
+   * resolver returns the class's own defaults rather than throwing on a query that
+   * paints a screen.
+   */
+  test('a character whose archetype has been retired still reads', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const thorin = await makePreset(
+      t,
+      code,
+      'Thorin',
+      presetSheet({ level: 4, subclassKey: 'champion' }),
+    )
+
+    // The archetype disappears out from under the stored document.
+    await t.run(async (ctx) => {
+      const character = await ctx.db.get('characters', thorin)
+      await ctx.db.patch('characters', thorin, {
+        sheet: { ...(character!.sheet as PresetSheet), subclassKey: 'retired-in-a-later-patch' },
+      })
+    })
+
+    const resolved = await resolvedSheet(t, code, thorin, { dmCode })
+    expect(resolved.className).toBe('Fighter')
+    expect(resolved.level).toBe(4)
+    expect(resolved.hitDice).toEqual({ count: 4, faces: 10 })
+    // The race trait is still there: only the numbers it was borrowing are gone.
+    expect(resolved.feats.map((entry) => entry.id)).toEqual(['race:human'])
+    // And it is still a hero to everybody, rather than becoming unreadable.
+    expect(rowFor(await t.query(api.characters.list, { code }), thorin).kind).toBe('pc')
+  })
+
+  /**
+   * A character above level 1 with no archetype chosen reads as the level 1 sheet —
+   * `librarySheet`'s stated rule, because the library has no archetype-less level 2
+   * and showing somebody mid-decision the sheet they have is more honest than
+   * inventing one.
+   *
+   * ⚠️ WORTH KNOWING ABOUT, because the two correct behaviours compose into a
+   * surprising one: an unlocked player who clears their own archetype at level 5
+   * drops from 44 maximum hit points to 12, and `writeSheet`'s re-clamp — which is
+   * right on its own terms — takes their current hit points down with it. Choosing
+   * the archetype again restores the maximum and **not** the hit points. A long rest
+   * repairs it, so the damage is bounded, but nothing on the way through says so.
+   */
+  test('clearing the archetype above level 2 falls back to the level 1 sheet, and hit points follow', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ level: 5, subclassKey: 'champion' }))
+    const { code, dmCode, characterId, ana } = fixture
+    expect((await rawVitals(t, characterId))?.currentHp).toBe(FIGHTER_MAX_HP[5])
+
+    await update(t, code, characterId, presetSheet({ level: 5, subclassKey: null }), {
+      dmCode,
+    })
+
+    const resolved = await resolvedSheet(t, code, characterId, { playerId: ana })
+    expect(resolved.level).toBe(5)
+    expect(resolved.className).toBe('Fighter')
+    expect(resolved.maxHp).toBe(FIGHTER_MAX_HP[1])
+    expect(await exactVitals(t, code, characterId, { dmCode })).toEqual({
+      current: FIGHTER_MAX_HP[1],
+      max: FIGHTER_MAX_HP[1],
+    })
+
+    // Choosing again restores the maximum, and does not restore the hit points.
+    await update(t, code, characterId, presetSheet({ level: 5, subclassKey: 'champion' }), {
+      dmCode,
+    })
+    expect(await exactVitals(t, code, characterId, { dmCode })).toEqual({
+      current: FIGHTER_MAX_HP[1],
+      max: FIGHTER_MAX_HP[5],
+    })
+    // A long rest is what repairs it.
+    await t.mutation(api.characters.longRest, { code, characterId, playerId: ana })
+    expect((await rawVitals(t, characterId))?.currentHp).toBe(FIGHTER_MAX_HP[5])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The two normalisation regressions, held down
+// ---------------------------------------------------------------------------
+//
+// Both of these were live defects when this suite was written, and both were found
+// and fixed while it was being written. They are kept because the shape of each is
+// a trap that will be walked into again: `normaliseSheet` rebuilds a sheet **field
+// by field** rather than spreading it — which is the right call, since it is what
+// stops an unknown field riding into the database — and the cost of that call is
+// that any field added to `pcSheetValidator` and not added here is discarded in
+// silence, by a write that reports success.
+//
+// Neither is a leak. Both are data loss on Save, invisible to a validator, because
+// a value that is permitted to be absent looks identical to one that was thrown
+// away.
+
+describe('normalisation covers every field the sheet has grown', () => {
+  /**
+   * `skillProficiencies` and `speed` are Milestone 4's additions to
+   * `pcSheetValidator`, and both are optional — necessarily, because the table
+   * already held Milestone 3 sheets without them. Optional is exactly what makes
+   * losing them silent.
+   *
+   * The case that matters is the swap the design invites in both directions:
+   * `updateSheet`'s own comment says "a hand-built hero swapping to a premade sheet
+   * is an ordinary thing to want", and the reverse — taking the resolved sheet and
+   * saving it back as a `pc` to edit by hand — arrives carrying thirteen skill
+   * proficiencies and, for a Goliath, 45 feet of speed.
+   */
+  test('a hand-built sheet keeps its skill proficiencies and its speed across a save', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const wanted: PcSheet = {
+      ...pcSheet({ className: 'Rogue' }),
+      skillProficiencies: { ...noSkills(), stealth: true, perception: true },
+      speed: 45,
+    }
+    const thorin = await makePc(t, code, 'Thorin', wanted)
+
+    expect((await rawCharacter(t, thorin))?.sheet).toEqual(wanted)
+    expect((await readSheet(t, code, thorin, { dmCode }))?.sheet).toEqual(wanted)
+
+    // And through the edit path as well as the create path, since they share the
+    // normaliser but not the caller.
+    const swapped: PcSheet = { ...wanted, speed: 25, skillProficiencies: noSkills() }
+    await update(t, code, thorin, swapped, { dmCode })
+    expect((await rawCharacter(t, thorin))?.sheet).toEqual(swapped)
+  })
+
+  test('a sheet that never had either field does not acquire one', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const thorin = await makePc(t, code, 'Thorin', pcSheet())
+
+    // Absent means the defaults, and absent is what the table already holds — so a
+    // write must not name the field and give it `undefined`, which is a different
+    // thing from omitting it and is not a Convex value at all.
+    await update(t, code, thorin, pcSheet({ maxHp: 22 }), { dmCode })
+    const stored = (await rawCharacter(t, thorin))?.sheet as PcSheet
+    expect(stored.maxHp).toBe(22)
+    expect('skillProficiencies' in stored).toBe(false)
+    expect('speed' in stored).toBe(false)
+  })
+
+  /**
+   * The DM's `overrides.extraFeats` and `overrides.extraSpells` are ordinary sheet
+   * entries and are validated as such by `storedSheetProblem` — so they have to be
+   * *normalised* as such too, or they are checked before `normaliseEntry` has run
+   * over them rather than after.
+   *
+   * The visible symptom of getting that wrong is a roll spec the rest of the
+   * application accepts being refused inside an override: `normaliseRoll` exists
+   * precisely so that `2d6 + wis` typed by hand becomes `2d6+WIS`. The invisible one
+   * is worse — an id stored as `" plot:shard "` looks identical to `"plot:shard"` on
+   * screen while being a different React key and a different roll target.
+   */
+  test('an override entry is normalised before it is validated, like every other entry', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const thorin = await makePreset(t, code, 'Thorin')
+
+    await update(
+      t,
+      code,
+      thorin,
+      presetSheet({
+        overrides: {
+          extraFeats: [
+            sheetEntry({
+              id: 'plot:shard',
+              name: 'Wyrmglass  Shard',
+              text: 'A shard of the thing.',
+              // Accepted anywhere else on any sheet, because `normaliseRoll` runs
+              // first. Here it reaches `rollProblem` exactly as it was typed.
+              roll: '2d6 + wis',
+            }),
+          ],
+        },
+      }),
+      { dmCode },
+    )
+
+    const stored = await storedPreset(t, thorin)
+    expect(stored.overrides?.extraFeats?.[0]).toMatchObject({
+      name: 'Wyrmglass Shard',
+      roll: '2d6+WIS',
+    })
   })
 })
