@@ -246,6 +246,120 @@ function presetSheet(fields) {
   return { kind: 'preset', subclassKey: null, level: 1, locked: false, ...fields }
 }
 
+/**
+ * MILESTONE 5'S FIXTURES, hand-copied out of `convex/lib/bestiary/monstersLow.ts`,
+ * `convex/lib/bestiary/social.ts` and `convex/lib/bestiary/benchmarks.ts`.
+ *
+ * Copied for the reason `ROGUE` above is copied, and the argument is sharper again here.
+ * A creature stores **two fields** — a key and a challenge rating — and every number a
+ * player will ever roll against comes back out of a corpus and a scaler that the request
+ * never touched. A check that read these out of the code under test would confirm only
+ * that some function ran, and would agree with a mangled corpus exactly as readily as
+ * with a correct one.
+ *
+ * The benchmark rows this is worked out from, also copied by hand:
+ *
+ * ```
+ * CR    hp   ac  atk  dmg  dc  skill
+ *  1    26   13   4     8  12   2
+ *  4    70   15   6    16  14   4
+ *  6   120   16   7    25  15   5
+ * ```
+ *
+ * `hp` and `damage` are **ratio** columns, so the creature's own figure is multiplied and
+ * its deviation from its row is preserved. The four d20 columns are **deltas**, because
+ * 1.23× of an armour class is not a statement about anything. Mixing the two up is the
+ * single easiest way to get a scaler wrong, so both kinds are worked out separately below.
+ */
+const WOLF = {
+  key: 'dire-wolf',
+  entryName: 'Dire Wolf',
+  libraryCr: 1,
+  blurb: 'Horse-sized wolf that hunts in twos and does not tire.',
+  loot: 'Nothing carried and nothing hidden. A beast owns only itself.',
+  /** The entry as written. CR 1 → CR 1 is the exact identity and is not short-circuited. */
+  atCr1: {
+    maxHp: 31,
+    armourClass: 12,
+    attackBonus: 4,
+    initiativeBonus: 2,
+    passivePerception: 13,
+    speed: 50,
+    skills: { perception: 3, stealth: 4 },
+    damage: '2d6+3',
+  },
+  /** 31 × 70/26 = 83.46… → 83, and +2 on every d20 column. Damage 16/8 = 2.0× exactly. */
+  atCr4: {
+    maxHp: 83,
+    armourClass: 14,
+    attackBonus: 6,
+    initiativeBonus: 4,
+    passivePerception: 15,
+    speed: 50,
+    skills: { perception: 5, stealth: 6 },
+    damage: '4d6+6',
+  },
+  /** 31 × 120/26 = 143.07… → 143, and +3 on every d20 column. Damage 25/8 = 3.125×. */
+  atCr6: {
+    maxHp: 143,
+    armourClass: 15,
+    attackBonus: 7,
+    initiativeBonus: 5,
+    passivePerception: 16,
+    speed: 50,
+    skills: { perception: 6, stealth: 7 },
+    damage: '6d6+10',
+  },
+  /** The composed opening of the resolved Bite at each rating, from `attackText`. */
+  biteAtCr1: 'Melee. 2d6+3 piercing damage.',
+  biteAtCr6: 'Melee. 6d6+10 piercing damage.',
+}
+
+/** The creature's own name in the game, which is neither the entry's nor the token's. */
+const WOLF_CHARACTER_NAME = 'Wyrmshadow at the Ford 🐺'
+/** 89 of 143. Distinctive digits, for the reason 271 and 137 are. */
+const WOLF_CURRENT_HP = 89
+
+/**
+ * A social NPC with **no combat block at all** — twenty-two of the thirty are like this
+ * — whose `knows` string is the plot. Copied in full, because a fragment would not prove
+ * the whole sentence stayed off a player's wire.
+ */
+const INNKEEPER = {
+  key: 'innkeeper',
+  entryName: 'Innkeeper',
+  characterName: 'Maergan Tolt',
+  /** CR ⅛: the only rating in the ten a payload cannot produce by coincidence. */
+  shiftedCr: 0.125,
+  loot: "A jar of thin old silver under the bar, the week's takings in a locked box and a very good bread knife.",
+  knows:
+    'Three of her regulars have been paying in thin old silver of the Verrow mint, coin nobody has struck in four generations, and all three of them work the deep shift at the Hallow Delve. She keeps a jar of it under the bar and has told nobody, because the Ledger House in Greyhallow would want to know where it came from and so would the revenue.',
+}
+
+/** The DM's thumb on a creature, in the one field section 19 overrides. */
+const DM_CREATURE_ARMOUR_CLASS = 25
+
+/**
+ * The eight numbers a rating shift moves, pulled off a resolved sheet in one shape so
+ * `firstDifference` can name the one that drifted.
+ *
+ * `damage` is read off the first action's `roll` rather than its `text`, because the roll
+ * is what Milestone 6 will aim dice at and the text is the sentence a person reads. Both
+ * are asserted; only one of them is a value.
+ */
+function statlineOf(sheet) {
+  return {
+    maxHp: sheet.maxHp,
+    armourClass: sheet.armourClass,
+    attackBonus: sheet.attackBonus,
+    initiativeBonus: sheet.initiativeBonus,
+    passivePerception: sheet.passivePerception,
+    speed: sheet.speed,
+    skills: sheet.skills,
+    damage: sheet.actions[0] && sheet.actions[0].roll,
+  }
+}
+
 const results = []
 let failures = 0
 
@@ -1321,6 +1435,554 @@ async function main() {
     const started = await client.query('games:getByCode', { code })
     check('games:start moved the game to playing', started && started.status === 'playing')
     await client.mutation('games:returnToLobby', { code, dmCode })
+
+    // 19. MILESTONE 5. A FOURTH MEMBER OF THE STORED UNION, A LITERAL UNION OF TEN
+    // FLOAT64S IN IT, AND A SECOND OPTIONAL OBJECT OF OPTIONAL FIELDS BESIDE IT.
+    //
+    // Read the section as one claim, the same shape as Milestone 4's: **a name, a
+    // creature key and a challenge rating go in, and every number that comes back was
+    // assembled server-side out of a corpus the client never sees.** Then two things only
+    // a real deployment can answer:
+    //
+    //   - `crValidator` is a union of ten *literals*, three of which are fractions. CR 1.5
+    //     and 0.3 are perfectly ordinary float64s, so they survive everything convex-test
+    //     applies and are refused at the function boundary here — which is the whole
+    //     reason `normaliseStoredSheet` is allowed not to round a rating.
+    //   - `bestiaryOverridesValidator` is a second optional object of ten optional fields
+    //     nested inside an optional member of a union. Convex has opinions about that
+    //     shape; convex-test has none.
+    //
+    // ⚠️ **Both of this repo's silently-dropped-field bugs were found here**, and the
+    // shape of each was a field-by-field rebuild that a validator permitted to be absent.
+    // `withCreatureOverrides` and `normaliseCreatureOverrides` are two more of those
+    // rebuilds, over ten fields each, so the override round trip below is not ceremony.
+    const wolf = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: WOLF_CHARACTER_NAME,
+      sheet: { kind: 'bestiary', entryKey: WOLF.key, cr: WOLF.libraryCr },
+    })
+    // Pushed before anything is asserted about it, so the `finally` reclaims it however
+    // the checks below go.
+    createdCharacters.push(wolf.characterId)
+    check(
+      'characters:create stored a creature as two fields and a rating',
+      Boolean(wolf.characterId),
+    )
+
+    const wolfAtOne = await readSheet(wolf.characterId)
+    const storedSelections = wolfAtOne && wolfAtOne.creature
+    check(
+      'characters:sheet carried the selections and the library’s labels together',
+      storedSelections &&
+        storedSelections.entryKey === WOLF.key &&
+        storedSelections.cr === WOLF.libraryCr &&
+        storedSelections.libraryCr === WOLF.libraryCr &&
+        storedSelections.name === WOLF.entryName &&
+        storedSelections.blurb === WOLF.blurb &&
+        storedSelections.loot === WOLF.loot &&
+        storedSelections.overrides === null &&
+        storedSelections.overriddenFields.length === 0 &&
+        storedSelections.social === null &&
+        wolfAtOne.preset === null &&
+        wolfAtOne.extras === null,
+      storedSelections ? JSON.stringify(storedSelections) : 'no creature payload came back',
+    )
+
+    // None of this was sent in. A key and a rating went out; the hit points, the armour
+    // class, the four d20 bonuses, the two skill bonuses and the damage expression all
+    // came back off the corpus and through the scaler.
+    const oneDrift = wolfAtOne
+      ? firstDifference(WOLF.atCr1, statlineOf(wolfAtOne.sheet), 'statline')
+      : 'no sheet came back'
+    check(
+      'the corpus resolved a whole statline out of a key and a rating',
+      wolfAtOne &&
+        oneDrift === null &&
+        wolfAtOne.sheet.kind === 'npc' &&
+        wolfAtOne.sheet.actions.length === 3 &&
+        wolfAtOne.sheet.actions[0].id === 'atk:bite' &&
+        wolfAtOne.sheet.actions[0].text.startsWith(WOLF.biteAtCr1),
+      oneDrift ??
+        (wolfAtOne
+          ? `${wolfAtOne.sheet.maxHp} hp, AC ${wolfAtOne.sheet.armourClass}, ${wolfAtOne.sheet.actions.length} actions`
+          : 'no sheet came back'),
+    )
+    check(
+      'the vitals row was seeded from the corpus maximum, not from a default',
+      (await dmVitalsFor(wolf.characterId)) &&
+        (await dmVitalsFor(wolf.characterId)).max === WOLF.atCr1.maxHp,
+      `${JSON.stringify(await dmVitalsFor(wolf.characterId))} against ${WOLF.atCr1.maxHp}`,
+    )
+
+    // ONE FIELD IN, EIGHT NUMBERS OUT.
+    const serialisedAtOne = wolfAtOne ? JSON.stringify(wolfAtOne.sheet) : ''
+    await client.mutation('characters:setCreatureCr', {
+      code,
+      dmCode,
+      characterId: wolf.characterId,
+      cr: 4,
+    })
+    const wolfAtFour = await readSheet(wolf.characterId)
+    const fourDrift = wolfAtFour
+      ? firstDifference(WOLF.atCr4, statlineOf(wolfAtFour.sheet), 'statline')
+      : 'no sheet came back'
+    check(
+      'characters:setCreatureCr moved eight numbers and left the words alone',
+      wolfAtOne &&
+        wolfAtFour &&
+        fourDrift === null &&
+        wolfAtFour.creature.cr === 4 &&
+        wolfAtFour.creature.libraryCr === WOLF.libraryCr &&
+        // The tier is the *resolved* rating's, so a DM who scaled something reads what it
+        // is now — CR 4 is Tier IV.
+        wolfAtFour.creature.tier === 4 &&
+        // The ids do not renumber, because they are derived from the name rather than the
+        // position: React would otherwise read the whole list as replaced.
+        wolfAtFour.sheet.actions.map((entry) => entry.id).join(',') ===
+          wolfAtOne.sheet.actions.map((entry) => entry.id).join(','),
+      fourDrift ?? `CR ${wolfAtFour ? wolfAtFour.creature.cr : '—'}, tier ${wolfAtFour ? wolfAtFour.creature.tier : '—'}`,
+    )
+    // Nothing scaled was persisted: there is nowhere on the stored document to put a
+    // number, which is what makes the round trip below non-compounding by construction.
+    check(
+      'the shift wrote the rating and nothing else',
+      wolfAtFour &&
+        wolfAtFour.creature.overrides === null &&
+        wolfAtFour.creature.overriddenFields.length === 0,
+      wolfAtFour ? JSON.stringify(wolfAtFour.creature.overrides) : 'no creature payload',
+    )
+
+    // AND BACK. Byte-identical, or the scaler is reading a previously scaled result.
+    await client.mutation('characters:setCreatureCr', {
+      code,
+      dmCode,
+      characterId: wolf.characterId,
+      cr: WOLF.libraryCr,
+    })
+    const wolfBack = await readSheet(wolf.characterId)
+    check(
+      'CR 1 → 4 → 1 came back byte-identical, and the shift itself was real',
+      wolfBack &&
+        wolfAtFour &&
+        JSON.stringify(wolfBack.sheet) === serialisedAtOne &&
+        // The positive control. Without it a scaler that returned its input
+        // unconditionally would pass the assertion above.
+        serialisedAtOne !== JSON.stringify(wolfAtFour.sheet),
+      wolfBack && wolfAtFour
+        ? `${wolfBack.sheet.maxHp} hp of ${WOLF.atCr1.maxHp}, against ${wolfAtFour.sheet.maxHp} at CR 4`
+        : 'no sheet came back',
+    )
+
+    // THE FRACTION, THROUGH A REAL ROUND TRIP. `maxHp` lives on the resolved sheet and
+    // current hit points live in `characterVitals`, so a shift is two writes in one
+    // transaction — and the number that has to survive it is a ratio rather than a value.
+    await client.mutation('characters:setHp', {
+      code,
+      dmCode,
+      characterId: wolf.characterId,
+      currentHp: 15,
+    })
+    await client.mutation('characters:setCreatureCr', {
+      code,
+      dmCode,
+      characterId: wolf.characterId,
+      cr: 4,
+    })
+    const rescaled = await dmVitalsFor(wolf.characterId)
+    check(
+      'a creature on half its hit points came out on half of the new maximum',
+      // round(15 × 83/31) = round(40.16) = 40 of 83. Neither dead nor healed.
+      rescaled && rescaled.current === 40 && rescaled.max === WOLF.atCr4.maxHp,
+      rescaled ? `${rescaled.current}/${rescaled.max}, wanted 40/${WOLF.atCr4.maxHp}` : 'no vitals row',
+    )
+
+    // An override is the DM's last word, and the scale happens before it — so a boss-fight
+    // armour class stays bumped through a shift while everything unpinned moves.
+    await client.mutation('characters:updateSheet', {
+      code,
+      dmCode,
+      characterId: wolf.characterId,
+      sheet: {
+        kind: 'bestiary',
+        entryKey: WOLF.key,
+        cr: 4,
+        overrides: { armourClass: DM_CREATURE_ARMOUR_CLASS },
+      },
+    })
+    await client.mutation('characters:setCreatureCr', {
+      code,
+      dmCode,
+      characterId: wolf.characterId,
+      cr: 6,
+    })
+    const wolfAtSix = await readSheet(wolf.characterId)
+    const sixDrift = wolfAtSix
+      ? firstDifference(
+          { ...WOLF.atCr6, armourClass: DM_CREATURE_ARMOUR_CLASS },
+          statlineOf(wolfAtSix.sheet),
+          'statline',
+        )
+      : 'no sheet came back'
+    check(
+      "the DM's pinned armour class survived a shift while the rest of the statline moved",
+      wolfAtSix &&
+        sixDrift === null &&
+        wolfAtSix.creature.overrides &&
+        wolfAtSix.creature.overrides.armourClass === DM_CREATURE_ARMOUR_CLASS &&
+        wolfAtSix.creature.overriddenFields.length === 1 &&
+        wolfAtSix.creature.overriddenFields[0] === 'armourClass' &&
+        wolfAtSix.sheet.actions[0].text.startsWith(WOLF.biteAtCr6),
+      sixDrift ??
+        (wolfAtSix
+          ? `AC ${wolfAtSix.sheet.armourClass} against the corpus's ${WOLF.atCr6.armourClass}, ${wolfAtSix.sheet.maxHp} hp`
+          : 'no sheet came back'),
+    )
+    const rescaledAgain = await dmVitalsFor(wolf.characterId)
+    check(
+      'the fraction survived the second shift too',
+      // round(40 × 143/83) = round(68.92) = 69 of 143.
+      rescaledAgain && rescaledAgain.current === 69 && rescaledAgain.max === WOLF.atCr6.maxHp,
+      rescaledAgain
+        ? `${rescaledAgain.current}/${rescaledAgain.max}, wanted 69/${WOLF.atCr6.maxHp}`
+        : 'no vitals row',
+    )
+
+    // 20. THE ACCEPTANCE TEST, EXTENDED TO THE SHELF. The creature's coin goes on the
+    // PLAYER layer, because that is the case that matters — the party can see the thing
+    // in the reeds, so they get a health bar for it, and the bar must not be built out of
+    // its exact hit points. A DM-layer creature is the easy case.
+    await client.mutation('characters:setHp', {
+      code,
+      dmCode,
+      characterId: wolf.characterId,
+      currentHp: WOLF_CURRENT_HP,
+    })
+    const wolfToken = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      // Deliberately neither the entry's name nor the character's: a player is *supposed*
+      // to see what is written on a coin, so reusing either would make the scan below
+      // unable to tell a leak from the thing it is meant to allow.
+      name: 'Shape in the Reeds',
+      layer: 'player',
+      sizeSquares: 2,
+      tint: '#34495e',
+      characterId: wolf.characterId,
+      x: 1100,
+      y: 700,
+    })
+    created.push(wolfToken.tokenId)
+
+    // And a person, whose social block is the other half of what a creature carries. It
+    // has no combat statistics at all, so nothing here is a statline — what is secret is
+    // what she knows.
+    const innkeeper = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: INNKEEPER.characterName,
+      sheet: { kind: 'bestiary', entryKey: INNKEEPER.key, cr: 0 },
+    })
+    createdCharacters.push(innkeeper.characterId)
+    await client.mutation('characters:setCreatureCr', {
+      code,
+      dmCode,
+      characterId: innkeeper.characterId,
+      cr: INNKEEPER.shiftedCr,
+    })
+    const innkeeperToken = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      name: 'Someone Behind the Bar',
+      layer: 'player',
+      sizeSquares: 1,
+      tint: '#d35400',
+      characterId: innkeeper.characterId,
+      x: 1500,
+      y: 300,
+    })
+    created.push(innkeeperToken.tokenId)
+    const innkeeperSheet = await readSheet(innkeeper.characterId)
+    check(
+      'a fractional challenge rating round-tripped exactly, on a creature with no statline',
+      innkeeperSheet &&
+        innkeeperSheet.creature.cr === INNKEEPER.shiftedCr &&
+        innkeeperSheet.creature.libraryCr === 0 &&
+        innkeeperSheet.creature.social &&
+        innkeeperSheet.creature.social.knows === INNKEEPER.knows &&
+        innkeeperSheet.creature.social.personality.length === 3 &&
+        innkeeperSheet.sheet.actions.length === 0,
+      innkeeperSheet
+        ? `cr ${innkeeperSheet.creature.cr} of ${INNKEEPER.shiftedCr}`
+        : 'no sheet came back',
+    )
+
+    const creatureVitals = await client.query('characters:vitals', { code })
+    const wolfBand = creatureVitals.find((row) => row.characterId === wolf.characterId)
+    check(
+      'a player sees the creature as a band, with no hit-point key on the row at all',
+      wolfBand && wolfBand.kind === 'band' && !('current' in wolfBand) && !('max' in wolfBand),
+      wolfBand ? `keys: ${Object.keys(wolfBand).sort().join(', ')}` : 'no row for the creature',
+    )
+
+    const creatureList = await client.query('characters:list', { code })
+    const wolfAsPlayer = await client.query('characters:sheet', {
+      code,
+      characterId: wolf.characterId,
+    })
+    const personAsPlayer = await client.query('characters:sheet', {
+      code,
+      characterId: innkeeper.characterId,
+    })
+    // Scanned twice over, for the reason section 10 gives: `holdsNumber` walks every
+    // number in the decoded payload, which is exact, and the substring scan over the
+    // redacted form catches one that arrived as text in a field nobody thought to look at.
+    // One catches 143 hiding in a string; the other catches it as a float64 in an object.
+    const shelfScannable = [creatureVitals, creatureList, wolfAsPlayer, personAsPlayer]
+    const shelfSerialised = JSON.stringify(redactOpaque(shelfScannable))
+    const shelfNeedles = [
+      WOLF.key,
+      WOLF.entryName,
+      WOLF_CHARACTER_NAME,
+      WOLF.blurb,
+      WOLF.loot,
+      INNKEEPER.key,
+      INNKEEPER.entryName,
+      INNKEEPER.characterName,
+      INNKEEPER.loot,
+      // The one that is not a statistic and matters most. What the innkeeper knows is the
+      // plot, and the whole social block is DM-only for that reason.
+      INNKEEPER.knows,
+    ]
+    const leaked = shelfNeedles.filter((needle) => shelfSerialised.includes(needle))
+    check(
+      "nothing off the DM's shelf appears in a player's payload",
+      leaked.length === 0 &&
+        !shelfSerialised.includes(String(WOLF.atCr6.maxHp)) &&
+        !shelfSerialised.includes(String(WOLF_CURRENT_HP)) &&
+        !shelfSerialised.includes(String(INNKEEPER.shiftedCr)) &&
+        !holdsNumber(shelfScannable, WOLF.atCr6.maxHp) &&
+        !holdsNumber(shelfScannable, WOLF_CURRENT_HP) &&
+        !holdsNumber(shelfScannable, INNKEEPER.shiftedCr),
+      leaked.length > 0
+        ? `leaked ${JSON.stringify(leaked)}`
+        : `${WOLF_CURRENT_HP}/${WOLF.atCr6.maxHp} and CR ${INNKEEPER.shiftedCr} scanned as text and as numbers`,
+    )
+
+    // THE POSITIVE CONTROL, in three parts because the needles live in three payloads —
+    // and without it the scan above passes on a game with no creature in it, which is the
+    // failure mode this repo has written down twice.
+    const shelf = await client.query('bestiary:index', { code, dmCode })
+    const shelfText = JSON.stringify(shelf)
+    check(
+      'bestiary:index hands the DM 129 summary rows and no stat block',
+      shelf.length === 129 &&
+        shelfText.includes(WOLF.key) &&
+        shelfText.includes(WOLF.entryName) &&
+        shelfText.includes(WOLF.blurb) &&
+        shelfText.includes(INNKEEPER.key) &&
+        !shelfText.includes('"maxHp":') &&
+        !shelfText.includes('"armourClass":') &&
+        !shelfText.includes('"notes":') &&
+        !shelfText.includes('"loot":') &&
+        !shelfText.includes('"knows":'),
+      `${shelf.length} rows, positive control included`,
+    )
+    const original = await client.query('bestiary:entry', { code, dmCode, key: WOLF.key })
+    check(
+      "bestiary:entry is the library's own copy, with the DM's override skipped",
+      original &&
+        original.sheet.armourClass === WOLF.atCr1.armourClass &&
+        original.sheet.maxHp === WOLF.atCr1.maxHp &&
+        original.extras.loot === WOLF.loot &&
+        // View Original: the creature in the game is pinned at 25 and at CR 6, and none
+        // of that reaches the library's copy.
+        original.sheet.armourClass !== DM_CREATURE_ARMOUR_CLASS,
+      original
+        ? `AC ${original.sheet.armourClass}, ${original.sheet.maxHp} hp at CR ${original.extras.libraryCr}`
+        : 'no entry came back',
+    )
+    const dmWolfSheet = JSON.stringify(await readSheet(wolf.characterId))
+    const dmWolfVitals = await dmVitalsFor(wolf.characterId)
+    check(
+      'the same fetches with the DM code do carry every one of them',
+      dmWolfSheet.includes(WOLF.key) &&
+        dmWolfSheet.includes(WOLF_CHARACTER_NAME) &&
+        dmWolfSheet.includes(WOLF.loot) &&
+        JSON.stringify(innkeeperSheet).includes(INNKEEPER.knows) &&
+        dmWolfVitals &&
+        dmWolfVitals.kind === 'exact' &&
+        dmWolfVitals.current === WOLF_CURRENT_HP &&
+        dmWolfVitals.max === WOLF.atCr6.maxHp,
+      'positive control — without it the scan above passes on an empty fixture',
+    )
+
+    // 21. Reset to library defaults, which is one patch rather than two: the rating goes
+    // back, the override is deleted by simply not being named on the rebuilt object, and
+    // hit points are reconciled by the same write.
+    await client.mutation('characters:resetCreature', {
+      code,
+      dmCode,
+      characterId: wolf.characterId,
+    })
+    const reset = await readSheet(wolf.characterId)
+    const resetDrift = reset
+      ? firstDifference(WOLF.atCr1, statlineOf(reset.sheet), 'statline')
+      : 'no sheet came back'
+    const resetVitals = await dmVitalsFor(wolf.characterId)
+    check(
+      'characters:resetCreature cleared the rating and the override together',
+      reset &&
+        resetDrift === null &&
+        reset.creature.cr === WOLF.libraryCr &&
+        reset.creature.overrides === null &&
+        reset.creature.overriddenFields.length === 0 &&
+        // round(89 × 31/143) = round(19.29) = 19 of 31.
+        resetVitals &&
+        resetVitals.current === 19 &&
+        resetVitals.max === WOLF.atCr1.maxHp,
+      resetDrift ??
+        (resetVitals
+          ? `CR ${reset.creature.cr}, ${resetVitals.current}/${resetVitals.max}, wanted 19/${WOLF.atCr1.maxHp}`
+          : 'no vitals row'),
+    )
+
+    // 22. Values the local suite cannot judge. Every one of these is a shape convex-test
+    // stores or accepts without a word.
+    await refuses('characters:create refused a creature without the DM code', () =>
+      client.mutation('characters:create', {
+        code,
+        name: 'Uninvited Dire Wolf',
+        sheet: { kind: 'bestiary', entryKey: WOLF.key, cr: WOLF.libraryCr },
+      }),
+    )
+    await refuses('characters:create refused a creature key the corpus does not have', () =>
+      client.mutation('characters:create', {
+        code,
+        dmCode,
+        name: 'Invented Beast',
+        sheet: { kind: 'bestiary', entryKey: 'no-such-beast', cr: 1 },
+      }),
+    )
+    // ⚠️ **THIS IS WHERE CONVEX'S OWN ARGUMENT VALIDATION EARNS ITS PLACE.** `crValidator`
+    // is a union of ten literals rather than a range, and 1.5, 0.3, NaN and Infinity are
+    // all perfectly ordinary float64s — so every one of them survives the local suite and
+    // is refused at the function boundary here. That refusal is the entire reason
+    // `normaliseStoredSheet` is allowed to leave a rating unrounded, which it must,
+    // because `Math.round` collapses CR ⅛, ¼ and ½ onto other ratings.
+    for (const [label, cr] of [
+      ['1.5', 1.5],
+      ['0.3', 0.3],
+      ['7', 7],
+      ['-1', -1],
+      ['NaN', Number.NaN],
+      ['Infinity', Number.POSITIVE_INFINITY],
+    ]) {
+      await refuses(`characters:setCreatureCr refused CR ${label}`, () =>
+        client.mutation('characters:setCreatureCr', {
+          code,
+          dmCode,
+          characterId: wolf.characterId,
+          cr,
+        }),
+      )
+    }
+    // The three fractional ratings that a rounding would have destroyed are all accepted,
+    // so the refusals above are set membership rather than "no fractions allowed".
+    for (const cr of [0.125, 0.25, 0.5]) {
+      await client.mutation('characters:setCreatureCr', {
+        code,
+        dmCode,
+        characterId: wolf.characterId,
+        cr,
+      })
+      const stored = await readSheet(wolf.characterId)
+      check(
+        `characters:setCreatureCr stored CR ${cr} without rounding it`,
+        stored && stored.creature.cr === cr,
+        stored ? `stored ${stored.creature.cr}` : 'no sheet came back',
+      )
+    }
+    await refuses('bestiary:index refused a caller with no DM code', () =>
+      client.query('bestiary:index', { code }),
+    )
+    await refuses('bestiary:index refused a well-formed wrong DM code', () =>
+      client.query('bestiary:index', { code, dmCode: 'not-the-dm-code' }),
+    )
+    await refuses('bestiary:entry refused a well-formed wrong DM code', () =>
+      client.query('bestiary:entry', { code, dmCode: 'not-the-dm-code', key: WOLF.key }),
+    )
+    // The override object is the other new shape, and it is a place a bad value enters as
+    // easily as a hand-built sheet is — with one difference that makes it worse: the same
+    // merge runs in the browser, so a preview agrees with the server exactly and nothing
+    // on screen looks wrong.
+    await refuses('characters:updateSheet refused a NaN inside a creature override', () =>
+      client.mutation('characters:updateSheet', {
+        code,
+        dmCode,
+        characterId: wolf.characterId,
+        sheet: {
+          kind: 'bestiary',
+          entryKey: WOLF.key,
+          cr: 1,
+          overrides: { armourClass: Number.NaN },
+        },
+      }),
+    )
+    await refuses('characters:updateSheet refused an out-of-range creature save DC', () =>
+      client.mutation('characters:updateSheet', {
+        code,
+        dmCode,
+        characterId: wolf.characterId,
+        sheet: { kind: 'bestiary', entryKey: WOLF.key, cr: 1, overrides: { saveDc: 0 } },
+      }),
+    )
+    // THE MILESTONE 1 BUG, restated for the newest string field on the newest object. A
+    // lone high surrogate is an ordinary one-character string to every bound in
+    // lib/sheet.ts, so nothing in the application refuses it and nothing in the suite
+    // notices; only a real deployment insists a stored string be valid Unicode.
+    await refuses('characters:updateSheet refused a lone surrogate in override notes', () =>
+      client.mutation('characters:updateSheet', {
+        code,
+        dmCode,
+        characterId: wolf.characterId,
+        sheet: {
+          kind: 'bestiary',
+          entryKey: WOLF.key,
+          cr: 1,
+          overrides: { notes: 'Half an emoji: \uD800' },
+        },
+      }),
+    )
+    await refuses('characters:updateSheet refused a creature becoming a hero', () =>
+      client.mutation('characters:updateSheet', {
+        code,
+        dmCode,
+        characterId: wolf.characterId,
+        sheet: presetSheet({ race: 'human', classKey: 'fighter' }),
+      }),
+    )
+    await refuses('characters:claim refused a creature to a seat', () =>
+      client.mutation('characters:claim', {
+        code,
+        playerId: seat.playerId,
+        characterId: wolf.characterId,
+      }),
+    )
+    const survivingCreature = await readSheet(wolf.characterId)
+    check(
+      'every refused write left the creature exactly as it was',
+      survivingCreature &&
+        survivingCreature.creature.entryKey === WOLF.key &&
+        survivingCreature.creature.cr === 0.5 &&
+        survivingCreature.creature.overrides === null,
+      survivingCreature
+        ? JSON.stringify(survivingCreature.creature.overrides) +
+            ` at CR ${survivingCreature.creature.cr}`
+        : 'no sheet came back',
+    )
   } catch (error) {
     const data = error && error.data ? ` ${JSON.stringify(error.data)}` : ''
     record('the run completed without an unexpected error', false, `${error.message ?? error}${data}`)

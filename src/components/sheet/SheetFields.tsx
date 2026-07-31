@@ -5,10 +5,12 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { cn, parseNumber } from '@/lib/utils'
-import type { HitDice } from '@convex/lib/sheet'
-import { HIT_DIE_FACES } from '@convex/lib/sheet'
+import { findTag } from '@convex/lib/creatures'
+import type { HitDice, SheetProblem } from '@convex/lib/sheet'
+import { HIT_DIE_FACES, SPEED_FEET } from '@convex/lib/sheet'
 
-// The small controls the two sheet forms are built out of.
+// The small controls the two sheet forms are built out of, and the handful of pure
+// functions that decide how a shared field *reads*.
 //
 // They live together because each of them is a decision rather than a wrapper, and
 // the decisions are the same one three times over: this shadcn set has no checkbox,
@@ -86,6 +88,20 @@ export function DerivedStat({
       {hint ? <span className="text-muted-foreground text-xs">{hint}</span> : null}
     </div>
   )
+}
+
+/**
+ * The tinted row a set of `DerivedStat`s is printed in.
+ *
+ * Four columns, wrapping onto as many rows as the contents need — a hero has four
+ * numbers and a creature has seven, and both want the same box rather than the same
+ * count. It exists because the class string was spelled out twice, in `DerivedStats`
+ * and in the creature statline, and a tinted panel assembled out of five utilities is
+ * exactly the kind of thing that drifts one utility at a time. `HitDiceField` above
+ * carries the same argument at more length.
+ */
+export function StatGrid({ children }: { children: ReactNode }) {
+  return <div className="bg-muted/40 grid grid-cols-4 gap-3 rounded-lg border p-3">{children}</div>
 }
 
 export type NumberInputProps = Omit<
@@ -237,6 +253,64 @@ export function HitDiceField({
 export function signed(value: number): string {
   if (!Number.isFinite(value)) return '—'
   return value < 0 ? `−${Math.abs(value)}` : `+${value}`
+}
+
+/**
+ * What goes under a speed: `the usual`, or how this one differs from it.
+ *
+ * Three screens print a speed — a hero's derived row, a hand-built monster's form and a
+ * creature's statline — and until this existed the first two spelled the comparison out
+ * separately while the third printed the bare number with nothing beside it. Three
+ * spellings of one sentence is two chances to disagree about what 20 feet means.
+ *
+ * It says *faster or slower than the usual number* rather than naming a cause, and that
+ * is the whole of what can honestly be claimed here. Speed used to be a constant, on the
+ * grounds that a character whose speed differs is one the rules say cannot exist; then
+ * the Goliath arrived at 45 and the bestiary gave a Dire Wolf 50 and a Zombie 20. Which
+ * of race, entry or override moved it is *not on the wire* — the resolved sheet carries
+ * one number with all three already folded in, and telling them apart would mean shipping
+ * the corpora to the browser. So this compares against `SPEED_FEET`, which is the one
+ * thing it can see, and the DM's own mark in `PresetNumbers` is where "you changed this"
+ * is said.
+ */
+export function speedHint(speed: number): string {
+  if (speed === SPEED_FEET) return 'the usual'
+  return `${speed > SPEED_FEET ? 'faster' : 'slower'} than the usual ${SPEED_FEET}`
+}
+
+/**
+ * Whether this exact field is the one thing `sheetProblem` is complaining about.
+ *
+ * ⚠️ **It belongs beside `messageAtField` and `problemAtEntry` in convex/lib/sheet.ts**,
+ * which exist precisely so that no consumer takes a `SheetProblem` apart itself — and it
+ * lives here only because the change that pulled the four hand-written copies together
+ * did not own that file. Moving it there is a one-line follow-up and the call sites do
+ * not change.
+ *
+ * Exact, unlike `messageAtField`, and the two match differently on purpose: the group's
+ * *message* goes under the whole group, so asking about `hitDice` should also print what
+ * is wrong with `hitDice.count`, whereas only the one control that is actually wrong
+ * should turn red.
+ */
+export function marksField(problem: SheetProblem | null | undefined, path: string): boolean {
+  return problem?.path === path
+}
+
+/**
+ * A tag's long name, falling back to the key itself.
+ *
+ * `findTag` already tolerates a key the vocabulary has since retired, and gives the
+ * reason: a tag key is *stored*, on every entry in the corpus, so removing one must leave
+ * everything that named it readable. This adds the other half — a chip labelled with the
+ * bare key still filters correctly, whereas one labelled `undefined` is a control nobody
+ * will touch again.
+ *
+ * Beside `findTag` itself would be the right home, for the reason above; it is here so
+ * that the picker's chips and the creature sheet's badges cannot come to disagree, which
+ * is the failure that mattered.
+ */
+export function tagName(key: string): string {
+  return findTag(key)?.name ?? key
 }
 
 /**

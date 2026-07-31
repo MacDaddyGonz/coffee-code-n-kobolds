@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import { DmNpcPanel } from '@/components/board/dm/DmNpcPanel'
 import { DmSheetsPanel } from '@/components/board/dm/DmSheetsPanel'
 import { MapSetupPanel } from '@/components/board/dm/MapSetupPanel'
 import { Button } from '@/components/ui/button'
@@ -29,6 +30,13 @@ export type MapSetupOverlayProps = {
  * twice and throwing the first one away. So this is deliberately the *seam* rather
  * than an attempt at the panel: the place Milestone 5 adds tabs to, holding only
  * what Milestone 3 actually needs to be playable.
+ *
+ * **Three tabs now, and the third is still not the five-section panel.** The NPCs tab is
+ * there because the bestiary needs somewhere to be reached from, and "somewhere" had to be
+ * over the board rather than back in the lobby: a DM taking a creature off the shelf is
+ * doing it with the party opening the door. The token list, the modal image library and the
+ * music are still ahead, and this is still the seam they are added to rather than an attempt
+ * at the whole panel.
  *
  * Collapsed by default, and the wrapper is `pointer-events-none` so that the empty
  * space it reserves is not a hole in the map: only the button and the open panel
@@ -68,6 +76,7 @@ export function MapSetupOverlay({ code, dmCode }: MapSetupOverlayProps) {
             <TabsList className="sticky top-0 z-10 w-full">
               <TabsTrigger value="map">Map</TabsTrigger>
               <TabsTrigger value="sheets">Sheets</TabsTrigger>
+              <TabsTrigger value="npcs">NPCs</TabsTrigger>
             </TabsList>
 
             <TabsContent value="map">
@@ -80,6 +89,14 @@ export function MapSetupOverlay({ code, dmCode }: MapSetupOverlayProps) {
 
             <TabsContent value="sheets">
               <DmSheetsPanel
+                code={code}
+                dmCode={dmCode}
+                className="bg-background/95 shadow-lg backdrop-blur"
+              />
+            </TabsContent>
+
+            <TabsContent value="npcs">
+              <DmNpcPanel
                 code={code}
                 dmCode={dmCode}
                 className="bg-background/95 shadow-lg backdrop-blur"

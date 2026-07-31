@@ -10,7 +10,9 @@ import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
 import { CLASSES, CLASS_KEYS, SUBCLASS_LEVEL } from './lib/classes'
 import { MAX_CHARACTERS_PER_GAME } from './lib/games'
 import { RACE_KEYS } from './lib/races'
+import { kindOf } from './lib/resolve'
 import type {
+  BestiarySheet,
   NpcSheet,
   PcSheet,
   PresetOverrides,
@@ -38,6 +40,7 @@ import {
   SPEED_FEET,
   defaultNpcSheet,
   defaultPcSheet,
+  isMonsterSheet,
   noSkills,
 } from './lib/sheet'
 import schema from './schema'
@@ -1341,6 +1344,9 @@ describe('characters.create — sheets', () => {
       // absent — see `publicSheetValidator`.
       preset: null,
       extras: null,
+      // The bestiary link, sent as a sibling of `preset` rather than widening it —
+      // a hand-built character has no creature behind it either.
+      creature: null,
     })
   })
 
@@ -1684,6 +1690,9 @@ describe('legacy characters with no sheet', () => {
       // are null rather than missing.
       preset: null,
       extras: null,
+      // The bestiary link, sent as a sibling of `preset` rather than widening it —
+      // a hand-built character has no creature behind it either.
+      creature: null,
     })
   })
 
@@ -4108,7 +4117,7 @@ describe('characters.setLevel', () => {
       )
       expect(refusal.kind).toBe('BadInput')
       expect(refusal.message).toBe(
-        'That character is not built from the library, so edit its sheet instead.',
+        'Only a hero built from the character library has a level. A creature from the bestiary has a challenge rating instead.',
       )
     }
 
@@ -4131,7 +4140,9 @@ describe('characters.setLevel', () => {
       }),
     )
     expect(refusal.kind).toBe('BadInput')
-    expect(refusal.message).toBe('That character is not built from the library.')
+    expect(refusal.message).toBe(
+      'Only a hero built from the character library has selections to lock.',
+    )
   })
 
   test('a level outside 1 to 20 is refused, including the values a form produces', async () => {
@@ -4604,6 +4615,9 @@ describe('characters built before the library existed', () => {
       sheet: defaultPcSheet(),
       preset: null,
       extras: null,
+      // The bestiary link, sent as a sibling of `preset` rather than widening it —
+      // a hand-built character has no creature behind it either.
+      creature: null,
     })
     // The read is a fallback, not a lazy migration.
     expect((await rawCharacter(t, legacy))?.sheet).toBeUndefined()
@@ -4798,5 +4812,444 @@ describe('normalisation covers every field the sheet has grown', () => {
       name: 'Wyrmglass Shard',
       roll: '2d6+WIS',
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Milestone 5: invariant 9 — the discriminator, in all four directions
+// ---------------------------------------------------------------------------
+//
+// A FOURTH MEMBER OF `storedSheetValidator` IS THE ONE CHANGE THAT COULD NOT BE
+// MADE SAFELY BY THE COMPILER, and the two bugs it shipped are the reason this
+// section exists.
+//
+// `isMonsterSheet` is an allow-list of the kinds that may be published rather than a
+// deny-list of the ones that must not be, and every kind-test that guards the secret
+// now goes through it. The two that did not, before the invariant was written down:
+//
+//   - `characters.create` gated on `wanted.kind === 'npc'`, so a `bestiary` sheet
+//     took the *un-gated* branch of the ternary. Any client that knows the game code
+//     — it is in the URL — could have posted `{ kind: 'bestiary', entryKey:
+//     'ancient-red-dragon', cr: 6 }` with no `dmCode` at all.
+//   - `updateSheet` compared `kind === 'npc'` on both sides, so `pc → bestiary`
+//     slipped past a check whose entire job is to stop a document crossing the line
+//     that decides who may see it. `playerId` is routing rather than identity, so the
+//     seat id of whoever holds a hero clears `requireEditableCharacter` — and the
+//     result is an irreversible overwrite of that hero's whole stored sheet plus a
+//     character that vanishes from its own player's screen.
+//
+// Neither of those was a type error. `tsc` had nothing to say about either, because
+// both expressions are perfectly valid against a fourth union member. So the matrix
+// is asserted through the API in every direction rather than trusted to a comparison.
+
+/** A creature the bestiary really has, so `requireUsableSheet`'s corpus check passes. */
+const BESTIARY_KEY = 'dire-wolf'
+/** 31 hit points at CR 1 — hand-copied from `convex/lib/bestiary/monstersLow.ts`. */
+const BESTIARY_MAX_HP = 31
+
+function bestiarySheet(overrides: Partial<BestiarySheet> = {}): BestiarySheet {
+  return { kind: 'bestiary', entryKey: BESTIARY_KEY, cr: 1, ...overrides }
+}
+
+/** Well-formed and wrong. A `dmCode` being present is not the same as being correct. */
+function twiddleCode(code: string): string {
+  return (code[0] === 'A' ? 'B' : 'A') + code.slice(1)
+}
+
+/** Every row in the table, so "nothing was created" can be said about the table itself. */
+function allCharacterRows(t: Harness) {
+  return t.run(async (ctx) => await ctx.db.query('characters').collect())
+}
+
+describe('characters.create — the DM gate keys off monster-ness, not off one kind', () => {
+  /**
+   * THE LIVE AUTH BYPASS, held down. All three shapes a client can send: no `dmCode`
+   * field at all, an empty string, and a well-formed wrong code. The third is the one
+   * that distinguishes a gate on the argument being *present* from a gate on it being
+   * *correct*.
+   */
+  test('a bestiary creature cannot be created without the DM code, in any of three ways', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+
+    for (const who of [{}, { dmCode: '' }, { dmCode: '   ' }, { dmCode: twiddleCode(dmCode) }]) {
+      await expectKind(
+        t.mutation(api.characters.create, {
+          code,
+          name: 'Something at the Ford',
+          sheet: bestiarySheet(),
+          ...who,
+        }),
+        'NotDm',
+      )
+    }
+
+    // Asserted against the table rather than against `characters.list`, which filters
+    // monsters out and would report an empty game either way.
+    expect(await allCharacterRows(t)).toEqual([])
+    expect(await t.query(api.characters.list, { code })).toEqual([])
+    expect(await t.query(api.characters.vitals, { code, dmCode })).toEqual([])
+  })
+
+  test('the same creature is created cleanly with the right code, and is a monster', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const { characterId } = await t.mutation(api.characters.create, {
+      code,
+      dmCode,
+      name: 'Something at the Ford',
+      sheet: bestiarySheet(),
+    })
+
+    // The positive control for the refusals above, and the visibility rule in one:
+    // hidden from a player, listed as an `npc` to the DM, and its hit points came out
+    // of the corpus rather than out of the request.
+    expect(await t.query(api.characters.list, { code })).toEqual([])
+    expect(rowFor(await t.query(api.characters.list, { code, dmCode }), characterId).kind).toBe(
+      'npc',
+    )
+    expect(await readSheet(t, code, characterId)).toBeNull()
+    expect(await exactVitals(t, code, characterId, { dmCode })).toEqual({
+      current: BESTIARY_MAX_HP,
+      max: BESTIARY_MAX_HP,
+    })
+  })
+
+  /**
+   * `requireUsableSheet`'s corpus-membership check, which is the only place in the
+   * application it can happen: `lib/sheet.ts` may never import `lib/bestiary/`,
+   * because every function in that file also runs in the browser.
+   */
+  test('a key the corpus does not have is refused on write', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+
+    for (const entryKey of ['no-such-beast', 'Dire-Wolf', '__proto__', 'toString']) {
+      await expectSheetProblem(
+        t.mutation(api.characters.create, {
+          code,
+          dmCode,
+          name: 'Invented',
+          sheet: bestiarySheet({ entryKey }),
+        }),
+        'entryKey',
+      )
+    }
+    expect(await allCharacterRows(t)).toEqual([])
+  })
+
+  /**
+   * ⚠️ **Refused on write, tolerated on read**, and the asymmetry is deliberate. A
+   * character *stores* the key, so retiring an entry has to leave every character that
+   * named it readable rather than unopenable — resolution runs inside
+   * `characters.list`, where a throw would blank the party panel for the whole table.
+   */
+  test('a character whose stored key has been retired still reads as a usable monster', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const gameId = await gameIdFor(t, code)
+    const orphan = await t.run(
+      async (ctx) =>
+        await ctx.db.insert('characters', {
+          gameId,
+          name: 'Something Retired',
+          sheet: { kind: 'bestiary', entryKey: 'no-such-beast', cr: 3 },
+        }),
+    )
+
+    const payload = await readSheet(t, code, orphan, { dmCode })
+    expect(payload?.sheet.kind).toBe('npc')
+    expect((payload?.sheet as NpcSheet).maxHp).toBe(defaultNpcSheet().maxHp)
+    expect((payload?.sheet as NpcSheet).notes).toBe('')
+    // Both halves or neither: the labels are gone, so none are sent.
+    expect(payload?.creature).toBeNull()
+    // And it is still a monster, so the retirement did not publish it.
+    expect(await t.query(api.characters.list, { code })).toEqual([])
+    expect(rowFor(await t.query(api.characters.list, { code, dmCode }), orphan).kind).toBe('npc')
+  })
+})
+
+describe('characters.updateSheet — monster-ness may not change, in either direction', () => {
+  /**
+   * THE FOUR-DIRECTION MATRIX. `pc` and `preset` are the two kinds a player may see;
+   * `npc` and `bestiary` are the two they may not. Crossing that line in a single write
+   * is what is refused — the *storage form* is free to change, which is the whole
+   * reason the comparison goes through `isMonsterSheet` rather than naming a kind.
+   */
+  test('a hero cannot become a creature and a creature cannot become a hero', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+
+    const byHand = await makePc(t, code, 'Thorin', pcSheet())
+    const premade = await makePreset(t, code, 'Brannoc')
+    const creatureOne = (
+      await t.mutation(api.characters.create, {
+        code,
+        dmCode,
+        name: 'Wolf One',
+        sheet: bestiarySheet(),
+      })
+    ).characterId
+    const creatureTwo = (
+      await t.mutation(api.characters.create, {
+        code,
+        dmCode,
+        name: 'Wolf Two',
+        sheet: bestiarySheet(),
+      })
+    ).characterId
+
+    const crossings: [string, Id<'characters'>, StoredSheet][] = [
+      ['pc → bestiary', byHand, bestiarySheet()],
+      ['preset → bestiary', premade, bestiarySheet()],
+      ['bestiary → pc', creatureOne, pcSheet()],
+      ['bestiary → preset', creatureTwo, presetSheet()],
+    ]
+
+    for (const [label, characterId, sheet] of crossings) {
+      const before = (await rawCharacter(t, characterId))?.sheet
+      const refusal = await refusalOf(update(t, code, characterId, sheet, { dmCode }))
+      expect(refusal.kind, label).toBe('BadInput')
+      expect(refusal.message, label).toBe(
+        'A character cannot change between a player character and an NPC.',
+      )
+      // Byte-identical afterwards: the refusal happens before any write, so a rejected
+      // crossing cannot have overwritten half a sheet on the way past.
+      expect((await rawCharacter(t, characterId))?.sheet, label).toStrictEqual(before)
+    }
+
+    // And nothing moved across the visibility line either way.
+    expect(
+      (await t.query(api.characters.list, { code })).map((row) => row._id).sort(),
+    ).toEqual([byHand, premade].sort())
+  })
+
+  /**
+   * THE ONE THE NETWORK TAB REACHES. `playerId` is routing rather than identity (ADR
+   * 0004), so the seat id of whoever holds a hero — readable straight out of the public
+   * roster — clears `requireEditableCharacter`. That is accepted for a hero's sheet,
+   * which is not a secret from the party; what it must never buy is `pc → bestiary`,
+   * because that write both destroys the hero's stored sheet irreversibly and makes the
+   * character vanish from its own player's screen.
+   */
+  test('a seat holding a hero cannot overwrite it with a creature, and nothing is lost', async () => {
+    const t = convexTest(schema, modules)
+    const { code } = await makeGame(t)
+    const ana = await makeSeat(t, code, 'Ana')
+    const wanted: PcSheet = pcSheet({
+      className: 'Battle Skald',
+      maxHp: 84,
+      armourClass: 18,
+      feats: [sheetEntry({ id: 'feat-second-wind' })],
+    })
+    const thorin = await makePc(t, code, 'Thorin', wanted)
+    await t.mutation(api.characters.claim, { code, playerId: ana, characterId: thorin })
+
+    const refusal = await refusalOf(
+      update(t, code, thorin, bestiarySheet(), { playerId: ana }),
+    )
+    expect(refusal.kind).toBe('BadInput')
+
+    // Byte-identical, which is the assertion that matters: the attack was an
+    // irreversible overwrite rather than a permission slip.
+    expect((await rawCharacter(t, thorin))?.sheet).toStrictEqual(wanted)
+    expect(rowFor(await t.query(api.characters.list, { code }), thorin).kind).toBe('pc')
+    expect((await readSheet(t, code, thorin, { playerId: ana }))?.sheet).toEqual(wanted)
+    expect(await exactVitals(t, code, thorin)).toEqual({ current: 84, max: 84 })
+  })
+
+  /**
+   * `npc ↔ bestiary` IS PERMITTED IN BOTH DIRECTIONS, and that is required rather than
+   * incidental: saving a linked creature as a plain `npc` sheet is the documented
+   * one-way door out of CR scaling, and linking a hand-built monster to an entry is how
+   * a DM adopts the feature at all. Monster-ness does not move in either case.
+   */
+  test('a hand-built monster may be linked to the bestiary, and a creature saved back out of it', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+
+    // Adopting the feature: a goblin somebody typed in becomes a linked creature, and
+    // its numbers now come out of the corpus.
+    const typedIn = await makeNpc(t, code, dmCode, 'Goblin, typed in', npcSheet({ maxHp: 7 }))
+    await update(t, code, typedIn, bestiarySheet(), { dmCode })
+    expect((await rawCharacter(t, typedIn))?.sheet).toStrictEqual(bestiarySheet())
+    expect((await readSheet(t, code, typedIn, { dmCode }))?.sheet.maxHp).toBe(BESTIARY_MAX_HP)
+
+    // Leaving it: the resolved sheet is saved back as a hand-built one, which is the
+    // door out of scaling. It stops being scalable and stays a monster.
+    const resolved = (await readSheet(t, code, typedIn, { dmCode }))!.sheet as NpcSheet
+    await update(t, code, typedIn, resolved, { dmCode })
+    expect((await rawCharacter(t, typedIn))?.sheet).toMatchObject({ kind: 'npc', maxHp: 31 })
+    await expectKind(
+      t.mutation(api.characters.setCreatureCr, { code, dmCode, characterId: typedIn, cr: 4 }),
+      'BadInput',
+    )
+
+    // Hidden from a player at every point in that journey.
+    expect(await t.query(api.characters.list, { code })).toEqual([])
+    expect(await readSheet(t, code, typedIn)).toBeNull()
+  })
+
+  /**
+   * `applyPresetPermissions` refuses a monster outright rather than waving it through,
+   * and the branch is unreachable only because `updateSheet`'s guard above stops a
+   * creature arriving without the DM code. Asserted anyway, because the two facts that
+   * make it unreachable live in another function.
+   */
+  test('a player with no DM code cannot edit a creature even with a seat id attached', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const ana = await makeSeat(t, code, 'Ana')
+    const { characterId: creature } = await t.mutation(api.characters.create, {
+      code,
+      dmCode,
+      name: 'Wolf',
+      sheet: bestiarySheet(),
+    })
+
+    for (const who of [{}, { playerId: ana }, { dmCode: twiddleCode(dmCode) }]) {
+      await expectKind(update(t, code, creature, bestiarySheet({ cr: 6 }), who), 'CharacterNotFound')
+    }
+    expect((await rawCharacter(t, creature))?.sheet).toStrictEqual(bestiarySheet())
+  })
+})
+
+describe('a bestiary creature is not a playable hero', () => {
+  /**
+   * A DISTINCT REFUSAL IS AN EXISTENCE ORACLE. Once the payload channel is closed, the
+   * remaining way to enumerate the DM's shelf is to guess ids and read the error back —
+   * so "you may not claim that one" and "no such character" have to be one answer,
+   * message included.
+   *
+   * Compared with `toEqual` on the whole `{ kind, message }` rather than on the kind
+   * alone, which is the stance the Milestone 3 tests one file over take.
+   */
+  test('claim refuses a creature exactly as it refuses a fabricated id', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const ana = await makeSeat(t, code, 'Ana')
+    const { characterId: creature } = await t.mutation(api.characters.create, {
+      code,
+      dmCode,
+      name: 'Wolf',
+      sheet: bestiarySheet(),
+    })
+    const ghost = await makeCharacter(t, code, 'Ghost')
+    await t.mutation(api.characters.remove, { code, dmCode, characterId: ghost })
+
+    const claim = (characterId: Id<'characters'>) =>
+      t.mutation(api.characters.claim, { code, playerId: ana, characterId })
+
+    const forCreature = await refusalOf(claim(creature))
+    expect(forCreature.kind).toBe('CharacterNotFound')
+    expect(await refusalOf(claim(ghost))).toEqual(forCreature)
+
+    expect(await heldBy(t, ana)).toBeNull()
+  })
+
+  /**
+   * Refused even to the DM, because the rule is about what a seat may play rather than
+   * about who is asking. Handing a player a monster would make its hit points exact on
+   * every screen in the game through the `exact` variant of `publicVitalsValidator`.
+   */
+  test('assign refuses a creature to the DM, with the fabricated id’s own refusal', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const ana = await makeSeat(t, code, 'Ana')
+    const { characterId: creature } = await t.mutation(api.characters.create, {
+      code,
+      dmCode,
+      name: 'Wolf',
+      sheet: bestiarySheet(),
+    })
+    const ghost = await makeCharacter(t, code, 'Ghost')
+    await t.mutation(api.characters.remove, { code, dmCode, characterId: ghost })
+
+    const assign = (characterId: Id<'characters'>) =>
+      t.mutation(api.characters.assign, { code, dmCode, playerId: ana, characterId })
+
+    const forCreature = await refusalOf(assign(creature))
+    expect(forCreature.kind).toBe('CharacterNotFound')
+    expect(await refusalOf(assign(ghost))).toEqual(forCreature)
+    expect(await heldBy(t, ana)).toBeNull()
+
+    // The control: a real hero does go onto the seat, so the refusals above are about
+    // the character rather than about `assign` being broken.
+    const thorin = await makePc(t, code, 'Thorin', pcSheet())
+    await assign(thorin)
+    expect(await heldBy(t, ana)).toBe(thorin)
+  })
+
+  /**
+   * The roster is a query nobody thinks of as privileged, which is why it is worth
+   * checking: a seat holding a character resolves that character's name for the lobby.
+   * `claim` and `assign` both refuse a creature, so the only way into this state is to
+   * write it directly — which is the point. The filter has to be where the payload is
+   * built, not only at the two doors.
+   */
+  test('the lobby roster never names a creature written onto a seat behind the API', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const ana = await makeSeat(t, code, 'Ana')
+    const { characterId: creature } = await t.mutation(api.characters.create, {
+      code,
+      dmCode,
+      name: 'Maergan Tolt',
+      sheet: bestiarySheet(),
+    })
+    await t.run(async (ctx) => {
+      await ctx.db.patch('players', ana, { characterId: creature })
+    })
+
+    const roster = await t.query(api.players.list, { code })
+    expect(roster.find((row) => row._id === ana)?.characterName).toBeNull()
+    expect(JSON.stringify(roster) ?? '').not.toContain('Maergan Tolt')
+  })
+})
+
+describe('the discriminator itself', () => {
+  /**
+   * ⚠️ **THE ONE-LINE FIX THAT DECIDES WHETHER EVERY PREPARED CREATURE IN THE GAME
+   * REACHES PLAYERS**, asserted directly rather than only through a payload.
+   *
+   * `isMonsterSheet` is an allow-list with a `never` assignment behind it, so a fifth
+   * union member fails `npm run lint` rather than answering `false` and publishing
+   * itself. The runtime default is `true` — fail-closed — because a schema push is not
+   * atomic across a deployment and a document written by a newer one can be read by an
+   * older one for the seconds in between.
+   */
+  test('isMonsterSheet answers for all four stored kinds and for a sheet-less character', () => {
+    expect(isMonsterSheet(npcSheet())).toBe(true)
+    expect(isMonsterSheet(bestiarySheet())).toBe(true)
+    expect(isMonsterSheet(pcSheet())).toBe(false)
+    expect(isMonsterSheet(presetSheet())).toBe(false)
+    // A Milestone 1 character has no sheet at all, and every one of them is a hero:
+    // NPCs could not be created before sheets existed.
+    expect(isMonsterSheet(undefined)).toBe(false)
+
+    // Fail-closed on a kind this deployment has never heard of, which is the state a
+    // mid-deploy read is in. Cast, because the type system's whole job here is to make
+    // this unreachable from ordinary code.
+    expect(isMonsterSheet({ kind: 'chimera' } as unknown as StoredSheet)).toBe(true)
+  })
+
+  /**
+   * `kindOf` is what `maySeeCharacter`, `publicCharacters` and `playerCharacterNames`
+   * all ask, and it used to read `doc.sheet?.kind === 'npc'` — a deny-list of the one
+   * secret kind. Adding the bestiary member made it answer `'pc'` for a creature nobody
+   * was allowed to see, while compiling cleanly and passing every test.
+   */
+  test('kindOf reports a bestiary creature as an npc without resolving anything', () => {
+    expect(kindOf({ sheet: bestiarySheet() })).toBe('npc')
+    expect(kindOf({ sheet: npcSheet() })).toBe('npc')
+    expect(kindOf({ sheet: pcSheet() })).toBe('pc')
+    expect(kindOf({ sheet: presetSheet() })).toBe('pc')
+    expect(kindOf({})).toBe('pc')
+
+    // And it answers for a creature the corpus does not have, because a security
+    // predicate reads one stored field rather than reaching through ~130 stat blocks —
+    // a content bug that made resolution throw would otherwise take `characters.list`
+    // down for the whole table.
+    expect(kindOf({ sheet: bestiarySheet({ entryKey: 'no-such-beast' }) })).toBe('npc')
   })
 })

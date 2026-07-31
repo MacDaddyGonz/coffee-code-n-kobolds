@@ -4,6 +4,7 @@ import { FieldError } from '@/components/FieldError'
 import { HpControls } from '@/components/HpControls'
 import type { BuilderSelections } from '@/components/sheet/CharacterBuilder'
 import { CharacterBuilder } from '@/components/sheet/CharacterBuilder'
+import { CreatureEntryMissing, CreatureSheetView } from '@/components/sheet/CreatureSheetView'
 import { HitDiceControls } from '@/components/sheet/HitDiceControls'
 import { NpcSheetForm } from '@/components/sheet/NpcSheetForm'
 import { PcSheetForm } from '@/components/sheet/PcSheetForm'
@@ -15,32 +16,42 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { SheetFooter } from '@/components/ui/sheet'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { PublicSheet, PublicVitals } from '@convex/lib/characters'
 import { MAX_CHARACTER_NAME_LENGTH, collapseWhitespace } from '@convex/lib/codes'
+import type { ChallengeRating } from '@convex/lib/creatures'
 import { perRestAbilities } from '@convex/lib/races'
-import type { PcSheet, StoredSheet } from '@convex/lib/sheet'
+import type { NpcSheet, PcSheet, StoredSheet } from '@convex/lib/sheet'
 import {
   normaliseStoredSheet,
   sheetProblem,
   storedSheetProblem,
+  withCreatureOverrides,
   withOverrides,
   withoutUndefined,
 } from '@convex/lib/sheet'
 
 export type CharacterSheetEditorProps = {
+  /** The game, for the one panel below that has a query of its own to run. */
+  code: string
   /** The sheet as the server last sent it. The draft below is edited against this. */
   saved: PublicSheet
   /** What this client was told about the character's hit points. Null while loading. */
   vitals: PublicVitals | null
   /**
-   * Whether this browser holds the DM code.
+   * The DM code, if this browser holds one.
    *
    * It decides what is *offered* and never what is permitted: every mutation reached
    * from here re-verifies the code server-side through `requireDm` or
    * `resolveDmAccess`, and a browser that lied about this gets a panel full of controls
    * and a refusal from each one.
+   *
+   * The value rather than a boolean, because the creature panel has a query to run —
+   * `bestiary.entry`, for *View original* — and a query takes the code rather than a
+   * claim about holding one. `isDm` below is derived from it in one place; two props
+   * carrying the same fact would be two places for them to disagree.
    */
-  isDm: boolean
+  dmCode: string | null
   onAdjustHp: (delta: number) => void
   /** −1 spends a hit die, +1 hands one back. Floored and capped server-side. */
   onAdjustHitDice: (delta: number) => void
@@ -50,6 +61,13 @@ export type CharacterSheetEditorProps = {
   /** DM only. Immediate rather than drafted — see `LevelControl`. Refusals toast. */
   onSetLevel: (level: number) => void
   onSetLocked: (locked: boolean) => void
+  /**
+   * The creature counterparts, and immediate for the same reason: a rating is a selection
+   * like a level, not a field of a form. `onResetCreature` also throws the overrides away,
+   * which is why `CreatureSheetView` puts a confirmation in front of it.
+   */
+  onSetCreatureCr: (cr: ChallengeRating) => void
+  onResetCreature: () => void
   onSetPerRest: (key: string, spent: boolean) => void
   onLongRest: () => void
 }
@@ -71,11 +89,12 @@ export type CharacterSheetEditorProps = {
  *
  * ⚠️ **The draft is a `StoredSheet` and the thing it is compared against is not.**
  * `saved.sheet` is the *resolved* sheet — for a library character, the class's numbers
- * with the race applied and the DM's overrides on top — while `saved.preset` is what
- * the document actually holds. Only the latter can be sent back, because resolving
- * needs `lib/library/`, which must never reach the browser. So the draft is seeded from
- * `saved.preset ?? saved.sheet`, and every comparison below is between two stored
- * shapes.
+ * with the race applied and the DM's overrides on top; for a creature off the bestiary
+ * shelf, the entry scaled to its rating with the same treatment — while `saved.preset`
+ * and `saved.creature` say what the document actually holds. Only the stored form can be
+ * sent back, because resolving needs the corpora, which must never reach the browser. So
+ * the draft is seeded through `storedOf`, and every comparison below is between two
+ * stored shapes.
  *
  * Saved explicitly rather than on every keystroke, unlike a token's position. The trade
  * is the opposite one: a drag is continuous and has to look instant, so `moveToken` is
@@ -90,18 +109,24 @@ export type CharacterSheetEditorProps = {
  * shape for all three.
  */
 export function CharacterSheetEditor({
+  code,
   saved,
   vitals,
-  isDm,
+  dmCode,
   onAdjustHp,
   onAdjustHitDice,
   onSave,
   onRename,
   onSetLevel,
   onSetLocked,
+  onSetCreatureCr,
+  onResetCreature,
   onSetPerRest,
   onLongRest,
 }: CharacterSheetEditorProps) {
+  // What the panel *offers*, and nothing more — see the note on the prop.
+  const isDm = dmCode !== null
+
   const [draft, setDraft] = useState<StoredSheet>(() => storedOf(saved))
   const [name, setName] = useState(saved.name)
   const [echoed, setEchoed] = useState(saved)
@@ -146,6 +171,7 @@ export function CharacterSheetEditor({
   // field towards a value the library guarantees is in range, so it can only be
   // pessimistic about whether Save should be lit.
   const resolved: PcSheet | null = saved.sheet.kind === 'pc' ? saved.sheet : null
+  const resolvedCreature: NpcSheet | null = saved.sheet.kind === 'npc' ? saved.sheet : null
   const preview = useMemo(() => {
     if (draft.kind !== 'preset' || !resolved) return null
     // The two appended lists are held back, and this is the one place the browser's
@@ -160,16 +186,34 @@ export function CharacterSheetEditor({
     return withOverrides(resolved, editable)
   }, [draft, resolved])
 
+  // The same thing for a creature, through the counterpart function and for the identical
+  // reasons — `withCreatureOverrides` is the server's own last stage, the CR scale and the
+  // corpus lookup being the only server-only parts of resolution.
+  //
+  // `extraActions` is held back for the reason `extraFeats` is above: the sheet coming in
+  // has already been resolved once, so it is carrying the saved override's actions already,
+  // and appending the draft's would show every one of them twice and trip `sheetProblem`'s
+  // duplicate-id check with a sentence nobody could act on.
+  const creaturePreview = useMemo(() => {
+    if (draft.kind !== 'bestiary' || !resolvedCreature) return null
+    const { extraActions: _actions, ...editable } = draft.overrides ?? {}
+    return withCreatureOverrides(resolvedCreature, editable)
+  }, [draft, resolvedCreature])
+
   // **Two checks, mirroring `requireUsableSheet` on the server.** `storedSheetProblem`
-  // covers what the document holds, which for a preset is only the four selections; the
-  // numbers a preset resolves to are checked separately, because a preset has none
-  // until it is resolved. Getting this wrong in the obvious way — checking the stored
-  // form alone — would leave Save lit up for an armour class of 999 and the refusal
-  // arriving from the network instead.
-  const problem = useMemo(
-    () => storedSheetProblem(normalised) ?? (preview ? sheetProblem(preview) : null),
-    [normalised, preview],
-  )
+  // covers what the document holds, which for a preset is only the four selections and for
+  // a creature only the key, the rating and the override diff; the numbers either one
+  // resolves to are checked separately, because neither has any until it is resolved.
+  // Getting this wrong in the obvious way — checking the stored form alone — would leave
+  // Save lit up for an armour class of 999 and the refusal arriving from the network
+  // instead.
+  //
+  // At most one of the two previews is ever non-null: they are keyed on the draft's kind,
+  // and the draft has one.
+  const problem = useMemo(() => {
+    const shown = preview ?? creaturePreview
+    return storedSheetProblem(normalised) ?? (shown ? sheetProblem(shown) : null)
+  }, [normalised, preview, creaturePreview])
 
   // Whether the draft would store identically to what the server last sent.
   //
@@ -278,6 +322,143 @@ export function CharacterSheetEditor({
     void commit(normaliseStoredSheet(withoutUndefined(built)))
   }
 
+  /**
+   * Stepping a creature's rating — **and moving the draft with it.**
+   *
+   * `characters.setCreatureCr` writes immediately, exactly as `setLevel` does, so the
+   * document's rating changes while the panel may be holding half-typed overrides. Without
+   * the local patch the draft would still be carrying the *old* rating, the sync below
+   * would hold it back because there is local work to lose, and pressing Save would
+   * quietly step the creature back down. That failure exists for a preset's level too and
+   * is invisible there because nothing on the panel reads the level back; here the rating
+   * is on screen in two places, so it is worth the one line to keep them the same number.
+   */
+  const setCreatureCr = (cr: ChallengeRating) => {
+    setDraft((was) => (was.kind === 'bestiary' ? { ...was, cr } : was))
+    onSetCreatureCr(cr)
+  }
+
+  /**
+   * Putting the bestiary's own numbers back, and **handing the draft to the server to do
+   * it.** What a reset produces is the server's business — it clears the overrides and the
+   * shift together — so guessing at the result here would mean a draft that disagrees with
+   * the answer by exactly one field, and a footer reading "unsaved changes" about a reset
+   * nobody has edited since.
+   *
+   * Re-seeding from `echoed` is what avoids the guess: it makes the panel clean, so the
+   * push that answers the reset is recognised by the sync below as "nothing local to lose"
+   * and the draft is rebuilt from whatever the server actually wrote. The unsaved overrides
+   * it drops are the ones being reset anyway.
+   */
+  const resetCreature = () => {
+    setDraft(storedOf(echoed))
+    onResetCreature()
+  }
+
+  /**
+   * Which of the four panels this sheet gets.
+   *
+   * ⚠️ **A `switch` on the draft's kind rather than a chain of ternaries, and the
+   * difference is a whole class of blank screen.** The chain mixed two questions — which
+   * kind is this, and is its preview ready — into one condition each, so
+   * `draft.kind === 'preset' && preview` could fail on its *second* half and then fall
+   * through the bestiary arm, the `pc` arm and out of the bottom to `: null`. That is a
+   * panel with nothing in it above a live Save button, which is exactly the failure the
+   * creature arm's own comment insists must not happen, arriving one case over. Here every
+   * kind owns its own not-ready state, and the `never` default means the compiler refuses a
+   * fifth stored kind that nobody has written a panel for.
+   *
+   * Deliberately **not** a registry of view modules keyed by kind. The four take genuinely
+   * different props — one takes a builder's confirm handler, one a creature's rating
+   * stepper, one nothing but the draft — so a registry would buy indirection by giving up
+   * the exhaustiveness check that is the point of writing it this way.
+   */
+  function sheetBody() {
+    switch (draft.kind) {
+      case 'npc':
+        return (
+          <NpcSheetForm sheet={draft} problem={problem} disabled={saving} onChange={setDraft} />
+        )
+
+      case 'preset':
+        // The preview is the library's numbers with the draft laid over them, and it is
+        // null only while `saved.sheet` is not yet the hero this preset resolves to — the
+        // gap between a conversion being saved and the server's answer landing.
+        return preview ? (
+          <PresetSheetView
+            draft={draft}
+            saved={saved.preset}
+            sheet={preview}
+            extras={saved.extras}
+            problem={problem}
+            isDm={isDm}
+            disabled={saving}
+            onChange={setDraft}
+            onConfirm={confirm}
+            onSetLevel={onSetLevel}
+            onSetLocked={onSetLocked}
+          />
+        ) : (
+          <SheetBodyPending />
+        )
+
+      case 'bestiary':
+        // Both halves or a sentence. `saved.creature` is null when the stored key names
+        // nothing in the corpus any more, and `creaturePreview` is null only for the
+        // impossible pairing of a bestiary draft against a resolved sheet that is somehow
+        // a hero — so the fallback covers a retired entry rather than a state to be
+        // engineered around.
+        return saved.creature && creaturePreview ? (
+          <CreatureSheetView
+            draft={draft}
+            creature={saved.creature}
+            resolved={creaturePreview}
+            problem={problem}
+            isDm={isDm}
+            code={code}
+            dmCode={dmCode}
+            disabled={saving}
+            onChange={setDraft}
+            onSetCr={setCreatureCr}
+            onReset={resetCreature}
+          />
+        ) : (
+          <CreatureEntryMissing entryKey={draft.entryKey} />
+        )
+
+      case 'pc':
+        return (
+          <>
+            {/* The offer comes first, because for anybody making their first character
+                it is the whole answer and the form below is the escape hatch. A
+                hand-built sheet is still supported — a hero brought from another table,
+                or one made before the library existed — so it is offered rather than
+                replaced. */}
+            <CharacterBuilder
+              preset={null}
+              level={draft.level}
+              isDm={isDm}
+              busy={saving}
+              onConfirm={confirm}
+              // There is no preset for `characters.setLevel` to act on yet, so the level
+              // is the form's own field below and this shows it rather than changing it.
+              onSetLevel={null}
+              onSetLocked={onSetLocked}
+            />
+            <Separator />
+            <PcSheetForm sheet={draft} problem={problem} disabled={saving} onChange={setDraft} />
+          </>
+        )
+
+      default: {
+        // Unreachable while the four cases above cover `StoredSheet`. If a fifth kind is
+        // added this stops compiling here rather than blanking a panel at the table.
+        const exhaustive: never = draft
+        return exhaustive
+      }
+    }
+  }
+
   return (
     <>
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-4">
@@ -370,49 +551,7 @@ export function CharacterSheetEditor({
           />
         ) : null}
 
-        {draft.kind === 'npc' ? (
-          <NpcSheetForm sheet={draft} problem={problem} disabled={saving} onChange={setDraft} />
-        ) : draft.kind === 'preset' && preview ? (
-          <PresetSheetView
-            draft={draft}
-            saved={saved.preset}
-            sheet={preview}
-            extras={saved.extras}
-            problem={problem}
-            isDm={isDm}
-            disabled={saving}
-            onChange={setDraft}
-            onConfirm={confirm}
-            onSetLevel={onSetLevel}
-            onSetLocked={onSetLocked}
-          />
-        ) : draft.kind === 'pc' ? (
-          <>
-            {/* The offer comes first, because for anybody making their first character
-                it is the whole answer and the form below is the escape hatch. A
-                hand-built sheet is still supported — a hero brought from another table,
-                or one made before the library existed — so it is offered rather than
-                replaced. */}
-            <CharacterBuilder
-              preset={null}
-              level={draft.level}
-              isDm={isDm}
-              busy={saving}
-              onConfirm={confirm}
-              // There is no preset for `characters.setLevel` to act on yet, so the level
-              // is the form's own field below and this shows it rather than changing it.
-              onSetLevel={null}
-              onSetLocked={onSetLocked}
-            />
-            <Separator />
-            <PcSheetForm
-              sheet={draft}
-              problem={problem}
-              disabled={saving}
-              onChange={setDraft}
-            />
-          </>
-        ) : null}
+        {sheetBody()}
       </div>
 
       <SheetFooter>
@@ -443,16 +582,69 @@ export function CharacterSheetEditor({
 }
 
 /**
+ * The panel while its resolved half has not arrived.
+ *
+ * A shape rather than nothing, because the alternative is the blank-panel-above-a-live-Save
+ * failure the dispatch above exists to make unreachable. The window it covers is narrow and
+ * arguably unreachable — a preset draft is only ever seeded from a payload that already
+ * resolves to a hero — but "arguably unreachable" is the reasoning that produced the
+ * fall-through in the first place.
+ */
+function SheetBodyPending() {
+  return <Skeleton className="h-40 w-full" />
+}
+
+/**
  * What the document holds, as opposed to what the panel displays.
  *
  * The one place the two are told apart, so that nothing below has to remember that
- * `sheet` on a library character is a value the server assembled and cannot be sent
- * back.
+ * `sheet` on a library character or a creature off the bestiary shelf is a value the
+ * server assembled and cannot be sent back.
+ *
+ * ⚠️ **The creature case has to come first, and getting that wrong is silent.** A linked
+ * creature's `preset` is null and its `sheet` is a fully resolved `NpcSheet`, so
+ * `preset ?? sheet` — which is what this was — handed back a hand-built monster: pressing
+ * Save would have written the scaled numbers into the document as literals, discarding the
+ * entry key, the rating and the override diff, with nothing refused and no error anywhere.
+ * The creature simply stopped being linked. Both the draft seed and the dirty check go
+ * through here, so a wrong answer here is the whole panel's notion of "what the document
+ * holds" being wrong.
+ *
+ * The stored sheet is *reconstructed* from the payload's `creature` block rather than sent
+ * whole, because that block is also carrying a dozen fields the document does not hold —
+ * the name, the tier, the loot, the social block — and a `StoredSheet` with extra keys on
+ * it is a write Convex refuses.
+ *
+ * The two spellings of "no overrides" have to be crossed on the way through, which is the
+ * fiddly half of this. On the wire the field is nullable, because a `returns:` validator
+ * cannot express an absent key; on the document it is *optional*, because `undefined` is
+ * not a Convex value and a document naming the key and giving it that is a different write
+ * from one omitting it. So the null becomes `undefined` and then `withoutUndefined` removes
+ * the key altogether — and that is not tidiness, it is what makes the dirty check below
+ * byte-exact for a creature nobody has overridden.
  */
 function storedOf(sheet: PublicSheet): StoredSheet {
+  const creature = sheet.creature
+  if (creature) {
+    return withoutUndefined({
+      kind: 'bestiary',
+      entryKey: creature.entryKey,
+      cr: creature.cr,
+      overrides: creature.overrides ?? undefined,
+    })
+  }
   return sheet.preset ?? sheet.sheet
 }
 
+/**
+ * The level to carry across when a sheet is rebuilt from the library, which two of the four
+ * stored kinds do not have.
+ *
+ * A monster has no level and neither does a creature, so both read as 1. That is not a
+ * default standing in for a missing value — it is the answer to "what level should the hero
+ * this is about to become start at", and the only sheet in the game that could be converted
+ * from either is one nobody has built yet.
+ */
 function levelOf(sheet: StoredSheet): number {
-  return sheet.kind === 'npc' ? 1 : sheet.level
+  return sheet.kind === 'npc' || sheet.kind === 'bestiary' ? 1 : sheet.level
 }

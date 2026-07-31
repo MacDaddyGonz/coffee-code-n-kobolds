@@ -34,12 +34,13 @@ export function CharacterSheetView({
   playerId,
   dmCode,
 }: CharacterSheetViewProps) {
-  const { sheet, loading, save, rename, setLevel, setLocked } = useCharacterSheet({
-    code,
-    characterId,
-    playerId,
-    dmCode,
-  })
+  const { sheet, loading, save, rename, setLevel, setLocked, setCreatureCr, resetCreature } =
+    useCharacterSheet({
+      code,
+      characterId,
+      playerId,
+      dmCode,
+    })
   const vitals = useVitals(code, dmCode)
   const hp = useHpActions({ code, dmCode, playerId })
 
@@ -91,12 +92,14 @@ export function CharacterSheetView({
       // across from the last one. `MapSetupPanel` keys its calibrator on the scene
       // for exactly the same reason.
       key={sheet._id}
+      code={code}
       saved={sheet}
       vitals={vitals.of(characterId)}
-      // Whether this browser holds the DM code, which decides what the panel offers and
-      // nothing more — every mutation behind those controls re-verifies the code
-      // server-side (CLAUDE.md invariant 7).
-      isDm={dmCode !== null}
+      // The DM code, which decides what the panel offers and nothing more — every mutation
+      // behind those controls re-verifies it server-side (CLAUDE.md invariant 7). The value
+      // rather than a boolean because the creature panel has a query of its own to run, and
+      // a query takes the code rather than a claim about holding one.
+      dmCode={dmCode}
       onAdjustHp={(delta) => void hp.adjust(characterId, delta)}
       // Reported through the same `hp.error`, and so through the same toast above.
       // `useHpActions` clears and sets one error for all of its writes precisely so a
@@ -106,6 +109,10 @@ export function CharacterSheetView({
       onRename={rename}
       onSetLevel={(level) => announce(setLevel(level))}
       onSetLocked={(locked) => announce(setLocked(locked))}
+      // Announced the same way and for the same reason: both land the instant the control is
+      // used, so a refusal has no half-filled form left on screen to attach a message to.
+      onSetCreatureCr={(cr) => announce(setCreatureCr(cr))}
+      onResetCreature={() => announce(resetCreature())}
       onSetPerRest={(key, spent) => void hp.setPerRest(characterId, key, spent)}
       onLongRest={() => void hp.longRest(characterId)}
     />

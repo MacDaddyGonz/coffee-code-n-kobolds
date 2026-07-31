@@ -24,19 +24,30 @@ import { ConvexError, v, type Infer } from 'convex/values'
 
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
+import {
+  creatureSizeValidator,
+  crValidator,
+  roleKeyValidator,
+  tagKeyValidator,
+  tierValidator,
+} from './creatures'
 import { MAX_CHARACTERS_PER_GAME } from './games'
-import type { CharacterSheet, StoredSheet } from './sheet'
+import type { BestiarySheet, CharacterSheet, StoredSheet } from './sheet'
 // `resolveSheet` rather than `characterSheet`, and that one substitution is the
 // whole of what Milestone 4 changed in this file. Everything below still asks for a
 // `CharacterSheet` and still gets one; whether it was typed in by hand or assembled
 // from the library, a race and the DM's overrides is settled before it arrives.
-import { kindOf, presetExtras, presetOf, resolveSheet } from './resolve'
+import type { CreatureExtras } from './resolve'
+import { bestiaryOf, creatureExtras, kindOf, presetExtras, presetOf, resolveSheet } from './resolve'
 import {
+  bestiaryOverridesValidator,
+  bestiarySheetValidator,
   characterKindValidator,
   clampHitDice,
   clampHp,
   healthBand,
   presetSheetValidator,
+  reconcileHp,
   sheetValidator,
 } from './sheet'
 
@@ -107,6 +118,163 @@ export const publicCharacterValidator = v.object({
 export type PublicCharacter = Infer<typeof publicCharacterValidator>
 
 /**
+ * A social NPC's block, as it travels.
+ *
+ * `personality` arrives from the corpus as a fixed three-tuple and leaves as an array,
+ * because Convex has no tuple validator — `v.array(v.string())` is the closest thing
+ * expressible, and the tuple type stays the enforcement where it can actually be enforced,
+ * on the entry being written. `usefulSkills` is likewise a plain string array rather than
+ * the thirteen skill keys, for want of a skill-key validator to reference; the corpus test
+ * is what holds those to `SKILL_KEYS`, which is where a content rule belongs.
+ *
+ * `questHooks` is optional on the entry and nullable here: `undefined` is not a Convex
+ * value, so an absent errand has to become something on the way out.
+ */
+const creatureSocialValidator = v.object({
+  occupation: v.string(),
+  personality: v.array(v.string()),
+  usefulSkills: v.array(v.string()),
+  knows: v.string(),
+  questHooks: v.union(v.string(), v.null()),
+})
+
+/**
+ * What a bestiary entry says about a creature that its resolved `NpcSheet` has nowhere to
+ * put.
+ *
+ * The same relationship `extras` has to a premade hero, and for the same reason: none of
+ * this is a rule. Nothing rolls a creature type, computes with an alignment or adjudicates
+ * a size, so carrying any of it on `NpcSheet` would mean a dozen more optional fields on a
+ * type that a hand-built monster shares — and a dozen more accessors to read them through.
+ *
+ * `libraryCr` is the entry's **own** rating rather than the one this creature is currently
+ * resolved at, and both travel. The pair is the `Owlbear · CR 3 → 5` banner, which exists
+ * because a DM who has forgotten they scaled something has encounter maths that is quietly
+ * wrong.
+ */
+export const creatureLabelsValidator = v.object({
+  name: v.string(),
+  /** The entry's own rating. The creature's current one is `cr` on the payload below. */
+  libraryCr: crValidator,
+  /** The tier of the **resolved** rating, not the entry's — see `CreatureExtras`. */
+  tier: tierValidator,
+  role: roleKeyValidator,
+  tags: v.array(tagKeyValidator),
+  creatureType: v.string(),
+  size: creatureSizeValidator,
+  alignment: v.string(),
+  /**
+   * A line of text, and **not** folded into a hero's `equipment`. Reusing that field for a
+   * creature's hoard would be a lie in the schema for the sake of one fewer name: they are
+   * the same *shape* and different facts, and the panel prints them under different
+   * headings.
+   */
+  loot: v.string(),
+  blurb: v.string(),
+  recommendedPartyLevelMin: v.number(),
+  recommendedPartyLevelMax: v.number(),
+  environmentTags: v.array(tagKeyValidator),
+  /**
+   * Whether the entry has a statline at all — false for a social NPC not expected to fight.
+   *
+   * **Declared here as well as on the picker's summary row, and that is the point rather
+   * than a duplication.** A resolved sheet always has an armour class and hit points, so
+   * "does this creature fight?" cannot be read off the numbers; the nearest proxy is
+   * `attackBonusOf(sheet) !== null`, and the panel did exactly that until two consumers of
+   * the same fact disagreed. The server has `entry.combat` in hand, so it decides once and
+   * ships the answer, and the statline and the comparison panel agree by construction. See
+   * `CreatureExtras.hasCombat`, which records that failure in full.
+   */
+  hasCombat: v.boolean(),
+  /** Null on a monster. Honestly named rather than squeezed into `levellingNotes`. */
+  social: v.union(creatureSocialValidator, v.null()),
+})
+export type CreatureLabels = Infer<typeof creatureLabelsValidator>
+
+/**
+ * A bestiary-linked creature, both halves: what the DM selected, and what the library says
+ * about what they selected.
+ *
+ * One payload rather than two round trips, because the panel needs both and they answer
+ * different questions — the selections are what the CR stepper and the override panel
+ * edit, the labels are what the sheet header prints. It also hands over every feature the
+ * source spec's Library Linking section asked for without anything being computed twice:
+ * `overrides === null` is *isModified*, `overriddenFields` is *modifiedFields[]*, and `cr`
+ * read against `libraryCr` together with the override object **are** *Compare Changes*.
+ *
+ * ⚠️ **This is a new secret inside an existing payload, and the mechanical guard does not
+ * reach it.** A `returns:` validator catches a secret *field* arriving in a shape that has
+ * nowhere to put it — that is what keeps a DM code out of a public game. It cannot help
+ * here, because a bestiary payload and a preset payload are both legitimately shaped, so
+ * Convex would approve either against `publicSheetValidator` without comment. What keeps a
+ * creature's stat block away from a player is the structural guard: `maySeeCharacter`,
+ * one predicate, in this one module. The payload-scan test is where that gets proved rather
+ * than asserted.
+ */
+export const creaturePayloadValidator = creatureLabelsValidator.extend({
+  // Read off `bestiarySheetValidator` rather than re-typed, so the payload cannot come to
+  // disagree with the document about what a selection is.
+  entryKey: bestiarySheetValidator.fields.entryKey,
+  /** The rating this creature is resolved at — the entry's own unless the DM has stepped it. */
+  cr: bestiarySheetValidator.fields.cr,
+  /**
+   * The DM's overrides, or null for a creature straight off the shelf. Nullable rather
+   * than optional because `undefined` is not a Convex value, and because null is what the
+   * panel actually tests to decide whether *Reset to Library Defaults* does anything.
+   */
+  overrides: v.union(bestiaryOverridesValidator, v.null()),
+  /**
+   * Which fields the DM has pinned, for the marks beside them. Derived from the override
+   * object's own keys rather than maintained alongside it — a hand-maintained list is the
+   * design ADR 0006 rejected, and it goes stale the first time a write forgets to append.
+   */
+  overriddenFields: v.array(v.string()),
+})
+export type CreaturePayload = Infer<typeof creaturePayloadValidator>
+
+/**
+ * The labels, as **what is left of `CreatureExtras` once the two fields that are not labels
+ * are dropped.**
+ *
+ * This was thirteen field names written out by hand, which is a projection maintained in a
+ * second module and checked by nobody: a field added to `CreatureExtras` and to the
+ * validator but forgotten here throws at runtime on the first call, and one dropped from the
+ * validator and left here compiles and ships. `CreatureLabels` is a strict subset of
+ * `CreatureExtras`, so saying so is both shorter and the check — assigning the rest to the
+ * declared return type **typechecks only if the two agree**, which is the mechanical guard
+ * the hand-written copy never had.
+ *
+ * The arrays are not re-copied on the way through. `creatureExtras` already builds fresh
+ * ones, per request, with nothing cached in between — its doc comment is where that argument
+ * now lives, because that is where the corpus is actually touched. A second copy here was
+ * defending an object nothing else had ever held.
+ */
+export function creatureLabels(extras: CreatureExtras): CreatureLabels {
+  // `overriddenFields` is the one field that is not a label: it describes what the DM has
+  // done to this creature rather than what the library says about it, and it travels on
+  // `creaturePayloadValidator` beside the overrides themselves.
+  const { overriddenFields, ...labels } = extras
+  return labels
+}
+
+/** The labels plus the selections. The shape `characters.sheet` sends for a creature. */
+export function creaturePayload(
+  creature: BestiarySheet,
+  extras: CreatureExtras,
+): CreaturePayload {
+  return {
+    ...creatureLabels(extras),
+    // Off the stored selection rather than off `extras`, which no longer carries either —
+    // see the warning on `CreatureExtras`. One spelling of a selection, in the document
+    // that holds it.
+    entryKey: creature.entryKey,
+    cr: creature.cr,
+    overrides: creature.overrides ?? null,
+    overriddenFields: extras.overriddenFields,
+  }
+}
+
+/**
  * A whole sheet, for the panel that edits one.
  *
  * Current hit points are deliberately absent — they come from `characters.vitals`
@@ -147,6 +315,24 @@ export const publicSheetValidator = v.object({
     v.object({ equipment: v.string(), levellingNotes: v.string() }),
     v.null(),
   ),
+  /**
+   * The bestiary selections and the library's labels, or null for anything that is not a
+   * creature taken off the DM's shelf.
+   *
+   * **A sibling of `preset` rather than a widening of it**, and that is not symmetry for
+   * its own sake. Widening `preset` to `PresetSheet | BestiarySheet | null` type-checks and
+   * then makes three consumers structurally dishonest: `presetOf`'s declared return, the
+   * sheet editor's `storedOf`, and `PresetSheetView`'s `draft: PresetSheet`. Each would
+   * compile against the wider field and mean something false — "these are the four
+   * dropdowns" said about a creature key and a challenge rating. Two fields, one of which
+   * is always null, is the honest shape.
+   *
+   * Null as well for a creature whose entry has since been retired, exactly as `extras` is
+   * null for a hero whose class has: the labels are gone, so there are none to send, and the
+   * resolved sheet above still renders. A character stays readable when the content it
+   * pointed at does not.
+   */
+  creature: v.union(creaturePayloadValidator, v.null()),
 })
 export type PublicSheet = Infer<typeof publicSheetValidator>
 
@@ -333,12 +519,20 @@ export async function requireVisibleCharacter(
 }
 
 export function publicSheet(character: Doc<'characters'>): PublicSheet {
+  // Both halves or neither. `creatureExtras` returns null for a retired entry key, and a
+  // payload carrying the selections with no labels beside them would put the panel in a
+  // state it has no rendering for — a CR banner with nothing to name. `presetExtras` takes
+  // the identical stance on a retired class.
+  const creature = bestiaryOf(character)
+  const extras = creatureExtras(character)
+
   return {
     _id: character._id,
     name: character.name,
     sheet: resolveSheet(character),
     preset: presetOf(character),
     extras: presetExtras(character),
+    creature: creature && extras ? creaturePayload(creature, extras) : null,
   }
 }
 
@@ -425,6 +619,22 @@ export async function visibleVitals(
   const out: PublicVitals[] = []
   for (const character of characters) {
     const sheet = resolveSheet(character)
+    // ⚠️ **Read off the *resolved* sheet, and do not "optimise" this to `kindOf`.**
+    //
+    // The argument for doing so is a good one everywhere else in this module and is written
+    // out on `kindOf` itself: the answer is one stored field, and reaching through a corpus
+    // to get it costs a lookup and several object copies per character on a subscription
+    // that re-runs on every point of damage. `maySeeCharacter` takes that trade for exactly
+    // that reason.
+    //
+    // It is the wrong trade here, because this is the *second* place the same question is
+    // asked, and the value of a second answer is entirely in it being reached by a different
+    // route. A discriminator that had come to answer `pc` for a monster — a fifth stored
+    // kind, a schema push read by an older deployment mid-deploy — would defeat
+    // `maySeeCharacter` and this branch together if both read it, and only the first if
+    // they do not. `resolveSheet` returns `kind: 'npc'` for a monster because it built an
+    // `NpcSheet`, which is a fact about the object in hand rather than a claim on the
+    // document. That is a guard worth a library lookup.
     const isNpc = sheet.kind === 'npc'
     if (isNpc && !isDm && !visibleNpcIds.has(character._id)) continue
 
@@ -682,12 +892,71 @@ export async function renameCharacter(
  * 20 while they are sitting on 38 would otherwise leave them above their own
  * ceiling, which draws a health bar past the end of itself and hands a player a
  * band computed from a ratio greater than one.
+ *
+ * **Keeping the number is right for an edit and for a level-up, and wrong for a
+ * challenge-rating shift** — `writeSheetRescalingHp` below is the other rule, and the
+ * distinction between them is principled rather than a matter of taste.
  */
 export async function writeSheet(
   ctx: MutationCtx,
   character: Doc<'characters'>,
   sheet: StoredSheet,
 ): Promise<void> {
+  await storeSheet(ctx, character, sheet, false)
+}
+
+/**
+ * The same write, carrying current hit points across as a **fraction** rather than as a
+ * number. For a challenge-rating shift.
+ *
+ * The difference from `writeSheet` is principled and worth stating in one place, because
+ * it is the sort of thing that otherwise gets "tidied" into a single rule: **a level-up is
+ * growth, and a CR shift is the same creature rescaled.** 5e adds a level's new hit points
+ * to the current total, so keeping the number is as close as this app gets to that. A
+ * shifted creature is not growing — its maximum was 45 because it was a CR 5 Troll and is
+ * 20 because it is now a CR 2 one, so the number on its own means nothing and the fraction
+ * is the fact worth preserving. A Troll on half its hit points comes out on half of the new
+ * maximum; re-clamping instead would leave it on 20 of 20 and reading `healthy` when it had
+ * been nearly dead.
+ *
+ * `reconcileHp` in lib/sheet.ts holds the rest of the rules — a corpse stays a corpse, an
+ * untouched creature stays exactly untouched, and a living one never rounds down to `down`.
+ */
+export async function writeSheetRescalingHp(
+  ctx: MutationCtx,
+  character: Doc<'characters'>,
+  sheet: StoredSheet,
+): Promise<void> {
+  await storeSheet(ctx, character, sheet, true)
+}
+
+/**
+ * The one sheet-write path, so that the two rules above cannot drift apart.
+ *
+ * `preserveHpFraction` is the whole difference between them, and it is a flag rather than a
+ * second copy of this function for the reason `clampHitDice` records a few functions away:
+ * arithmetic written out twice in this file has already failed once, and it failed "not
+ * everywhere at once, but in whichever copy was edited last".
+ */
+async function storeSheet(
+  ctx: MutationCtx,
+  character: Doc<'characters'>,
+  sheet: StoredSheet,
+  preserveHpFraction: boolean,
+): Promise<void> {
+  // ⚠️ **Read before the patch, and the ordering is load-bearing rather than tidy.** The
+  // old maximum is the denominator of the fraction being preserved, and the only place it
+  // exists is the document as it stands. `ctx.db.patch` does not mutate this local object
+  // today, so reading it afterwards happens to work — which is precisely the kind of
+  // accident one refactor removes, and the symptom would be silent rather than a failure:
+  // every ratio would come out as 1, `reconcileHp` would hand back the new maximum, and
+  // the feature would quietly become the clamp it was written to replace.
+  //
+  // Null rather than a number on the other path so that the cheap case stays cheap — a
+  // level-up does not need the old maximum, and resolving a sheet to work one out costs a
+  // library lookup and a copy of every feat and spell on it.
+  const oldMax = preserveHpFraction ? resolveSheet(character).maxHp : null
+
   await ctx.db.patch('characters', character._id, { sheet })
 
   const vitals = await vitalsFor(ctx, character._id)
@@ -695,10 +964,17 @@ export async function writeSheet(
 
   // Resolved, because a level-up is a `preset` whose stored form has no maximum on
   // it at all — and levelling up is precisely when the maximum moves. Without this
-  // the re-clamp below would be reading a number that is not there.
+  // the re-clamp below would be reading a number that is not there. A `bestiary` sheet
+  // is the same case doubled: neither the maximum nor the rating it was scaled from is
+  // written down anywhere on the document.
   const resolved = resolveSheet({ sheet })
   const patch: { currentHp: number; hitDiceRemaining?: number } = {
-    currentHp: clampHp(vitals.currentHp, resolved.maxHp),
+    // Both branches end inside `clampHp` — `reconcileHp` applies it itself, at both ends —
+    // so neither can store a value above the new ceiling or below zero.
+    currentHp:
+      oldMax === null
+        ? clampHp(vitals.currentHp, resolved.maxHp)
+        : reconcileHp(vitals.currentHp, oldMax, resolved.maxHp),
   }
   // Through `clampHitDice`, like every other path. This branch used to cap at the
   // new complement without flooring at zero or rounding — so the one write whose

@@ -3,7 +3,12 @@ import { AbilityTable } from '@/components/sheet/AbilityTable'
 import { DerivedStats } from '@/components/sheet/DerivedStats'
 import { SheetEntryList } from '@/components/sheet/SheetEntryList'
 import { SkillList } from '@/components/sheet/SkillList'
-import { HitDiceField, NumberInput, SheetField } from '@/components/sheet/SheetFields'
+import {
+  HitDiceField,
+  NumberInput,
+  SheetField,
+  marksField,
+} from '@/components/sheet/SheetFields'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { FEATS, SPELLS } from '@convex/lib/rules'
@@ -54,13 +59,12 @@ export function PcSheetForm({ sheet, problem, disabled, onChange }: PcSheetFormP
   // reddens the box; `messageAtField` puts the wording beside the group it belongs
   // to, rather than at the bottom of a column the offending field has scrolled off.
   //
-  // The two match differently on purpose. `messageAtField` catches a nested path, so
-  // asking about `hitDice` also prints what is wrong with `hitDice.count`; `marks`
-  // stays exact, because the group's message goes under the whole group but only the
-  // one control that is actually wrong should turn red. Both forms used to carry
-  // their own copy of the message matcher and the two had already drifted apart,
-  // which is why it now lives beside `sheetProblem` and not here.
-  const marks = (path: string) => problem?.path === path
+  // The two match differently on purpose, and `marksField` carries that note now that
+  // both halves are shared: `messageAtField` catches a nested path, so asking about
+  // `hitDice` also prints what is wrong with `hitDice.count`, while the mark stays exact
+  // because the group's message goes under the whole group but only the one control that
+  // is actually wrong should turn red. Four forms used to carry their own copy of each.
+  const marks = (path: string) => marksField(problem, path)
 
   return (
     <div className="flex flex-col gap-5">

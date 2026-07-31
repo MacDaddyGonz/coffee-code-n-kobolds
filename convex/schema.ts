@@ -75,13 +75,28 @@ export default defineSchema({
     // makes a legacy row a player character lives in exactly one place. This is the
     // same treatment `games.status` gets through `gameStatus`, for the same reason.
     //
-    // **What is stored here is not what the application reads.** Milestone 4 added a
-    // third member, `preset`, which holds a race, a class, an archetype and a level
-    // and nothing else — the stats come out of `lib/library/` at resolution time, so
-    // awarding a level is one number changing rather than a sheet being rewritten.
-    // `resolveSheet` turns any of the three into the ordinary `CharacterSheet` every
-    // consumer already expected, which is why adding a whole character-building
-    // system changed no read path.
+    // **What is stored here is not what the application reads.** The premade-library
+    // milestone added a third member, `preset`, which holds a race, a class, an
+    // archetype and a level and nothing else — the stats come out of `lib/library/` at
+    // resolution time, so awarding a level is one number changing rather than a sheet
+    // being rewritten. `resolveSheet` turns any of them into the ordinary
+    // `CharacterSheet` every consumer already expected, which is why adding a whole
+    // character-building system changed no read path.
+    //
+    // The bestiary added a fourth, `bestiary`, which is the same arrangement pointed at
+    // the DM's corpus: a creature key, a challenge rating, and an optional override diff.
+    // The stats come out of `lib/bestiary/`, scaled to that rating, with the DM's
+    // overrides laid on top — three layers, and the order cannot be rearranged. Note what
+    // it does **not** hold: no hit points, no armour class, no attack bonus. That absence
+    // is what makes CR scaling non-compounding, because there is nowhere on the document
+    // for a scaled number to be persisted and read back as a baseline. See
+    // `bestiarySheetValidator`.
+    //
+    // Two of the four members are selections that resolve and two are the finished
+    // article, and the union is the only place that distinction is recorded. Which of the
+    // four is a **monster** is `isMonsterSheet` in lib/sheet.ts and is asked nowhere else
+    // — an allow-list of the publishable kinds, so that a fifth member fails the
+    // typecheck rather than quietly reaching every player at the table.
     sheet: v.optional(storedSheetValidator),
   }).index('by_gameId', ['gameId']),
 
