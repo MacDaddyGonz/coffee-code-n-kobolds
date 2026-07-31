@@ -1,0 +1,483 @@
+// THE CHOKE POINT. This module is the only place in `convex/` allowed to read the
+// `tokens` and `tokenPositions` tables, and a test greps the sources to keep it
+// that way.
+//
+// The reason it has to be one module rather than a habit is CLAUDE.md invariant 8.
+// A `returns:` validator catches a leaked *field* — that is what keeps the DM code
+// out of a game payload — but a DM-layer token is the same shape as a player-layer
+// one, so a validator would cheerfully approve a payload made entirely of secrets.
+// Nothing about the type of a token distinguishes a spoiler from a hero. Only the
+// row does. So the guard is structural instead: every read of those two tables
+// passes through the single predicate below, and any future query that wants token
+// data has to come here to get it.
+
+import { ConvexError, v, type Infer } from 'convex/values'
+
+import type { Doc, Id } from '../_generated/dataModel'
+import type { MutationCtx, QueryCtx } from '../_generated/server'
+import { MAX_PLACEMENTS_PER_SCENE, MAX_SCENES_PER_GAME, MAX_TOKENS_PER_GAME } from './games'
+import { findClaimHolder } from './players'
+import type { Grid, Point } from './grid'
+import { cellOf, centreOfCell, snapToGrid } from './grid'
+
+/**
+ * The two layers a token can be on, spelled once.
+ *
+ * Used by the schema, by the public projection and by `board.addToken`'s argument
+ * validator, because this union is the field the DM layer's whole secrecy turns on
+ * (invariant 8) and three copies of it are three places for a fourth member to be
+ * added to two of them. The client derives its own type from `PublicToken['layer']`
+ * rather than re-spelling it either.
+ */
+export const tokenLayerValidator = v.union(v.literal('player'), v.literal('dm'))
+
+/** The public shape of a token. artUrl is a signed storage URL, null when there is no art. */
+export const publicTokenValidator = v.object({
+  _id: v.id('tokens'),
+  name: v.string(),
+  layer: tokenLayerValidator,
+  sizeSquares: v.number(),
+  artUrl: v.union(v.string(), v.null()),
+  tint: v.string(),
+  characterId: v.union(v.id('characters'), v.null()),
+})
+export type PublicToken = Infer<typeof publicTokenValidator>
+
+export const publicPositionValidator = v.object({
+  tokenId: v.id('tokens'),
+  x: v.number(),
+  y: v.number(),
+})
+export type PublicPosition = Infer<typeof publicPositionValidator>
+
+/**
+ * Deliberately indistinguishable from "no such token" and "token in another game".
+ *
+ * Once the payload channel is closed, the remaining way to enumerate the DM layer
+ * is to guess ids and read the error back: a distinct "you are not allowed to move
+ * that" confirms a hidden token exists, and a player who knows an ambush is on the
+ * board has had the ambush spoiled whether or not they can see it. So all three
+ * refusals throw this, and the tests assert the parity — which is why it is a
+ * shared constant rather than three literals that drift apart under maintenance.
+ */
+export const TOKEN_NOT_FOUND = {
+  kind: 'TokenNotFound',
+  message: 'That token is not on this board.',
+}
+
+function tokenNotFound(): ConvexError<typeof TOKEN_NOT_FOUND> {
+  return new ConvexError(TOKEN_NOT_FOUND)
+}
+
+/**
+ * The whole visibility rule, in one expression, in one place.
+ *
+ * `isDm` arrives from `resolveDmAccess` in lib/games.ts, which means it is the
+ * result of comparing a DM code supplied on *this* request against the one stored
+ * on the game. It is not computed here and it must never be computed from anything
+ * else. In particular it is never `players.isDm`, which is a badge in the roster
+ * that anybody can find (invariant 7), and never derived from a `playerId`
+ * argument, which says which seat to act on rather than who is calling (ADR 0003).
+ * Either of those would amount to a player asking to be trusted, and would defeat
+ * invariant 1 completely while looking like a working filter.
+ */
+function maySee(token: Doc<'tokens'>, isDm: boolean): boolean {
+  return isDm || token.layer === 'player'
+}
+
+/**
+ * Filtered token documents for this caller. THE choke point.
+ *
+ * Private deliberately: a caller outside this module holding raw `Doc<'tokens'>`
+ * rows is a projection waiting to be written somewhere else, and the point of the
+ * choke point is that the filtering and the projecting live together. Everything
+ * beyond this file gets `publicTokens` below instead.
+ */
+async function visibleTokens(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+  isDm: boolean,
+): Promise<Doc<'tokens'>[]> {
+  const tokens = await ctx.db
+    .query('tokens')
+    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  return tokens.filter((token) => maySee(token, isDm))
+}
+
+/**
+ * The same set, projected and with signed art URLs resolved. For `board.tokens`.
+ *
+ * Filter first, project second, and the order is load-bearing rather than tidy. A
+ * signed storage URL is unguessable but not permission-checked: once it exists it
+ * is a bearer link to that image for anyone holding the string. Resolving one for
+ * a hidden token — even to throw the object away a line later — would mean the
+ * secret had already been minted into a form that could be logged, cached or
+ * accidentally spread. Projection only ever runs over rows the caller may see.
+ */
+export async function publicTokens(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+  isDm: boolean,
+): Promise<PublicToken[]> {
+  const tokens = await visibleTokens(ctx, gameId, isDm)
+
+  return await Promise.all(
+    tokens.map(async (token) => ({
+      _id: token._id,
+      name: token.name,
+      layer: token.layer,
+      sizeSquares: token.sizeSquares,
+      // Null rather than undefined: `undefined` is not a Convex value, so an
+      // optional field has to become something on the way out. A getUrl of a blob
+      // that has been deleted underneath us is null too, and the board draws a
+      // tinted coin for both cases.
+      artUrl: token.imageId ? await ctx.storage.getUrl(token.imageId) : null,
+      tint: token.tint,
+      characterId: token.characterId ?? null,
+    })),
+  )
+}
+
+/**
+ * The characters standing on tokens this caller may see.
+ *
+ * The only thing that crosses this module's boundary is a filtered set of ids —
+ * never a `Doc<'tokens'>` — which is the same narrow crossing `tokenReferencesImage`
+ * makes below, and it is what lets `characters.vitals` be built out of both choke
+ * points without either one reading the other's tables.
+ *
+ * It exists to close a leak that is easy to miss. A health bar needs hit points for
+ * every creature on the board, and the obvious way to serve one is to send a band
+ * for every NPC in the game — which quietly publishes a *count*. A player reading
+ * twelve entries knows the DM has twelve monsters prepared for tonight, and that is
+ * the same category of spoiler as the scene names ADR 0004 refused to send. Scoping
+ * to what the caller can already see on the board means a hidden creature
+ * contributes nothing at all: not a row, not a band, not a number in a length.
+ */
+export async function visibleCharacterIds(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+  isDm: boolean,
+): Promise<Set<Id<'characters'>>> {
+  const tokens = await visibleTokens(ctx, gameId, isDm)
+
+  const ids = new Set<Id<'characters'>>()
+  for (const token of tokens) {
+    if (token.characterId) ids.add(token.characterId)
+  }
+  return ids
+}
+
+/**
+ * Positions on one scene, filtered to tokens this caller may see. For `board.positions`.
+ *
+ * Each position row is hydrated back to its token so the same `maySee` decides it.
+ * The obvious optimisation is to copy `layer` onto the position row and skip the
+ * join, and it is the wrong trade: it would make two documents authoritative for
+ * the one field that decides whether a row is a secret, and the bug that leaks is
+ * exactly a token moved to the DM layer whose stale placements still say 'player'.
+ * A denormalised copy cannot be verified by reading this file, which is the whole
+ * point of having a choke point.
+ *
+ * The cost accepted is that this query re-subscribes when a token *document*
+ * changes, not only when something moves. That is cheap here precisely because of
+ * invariant 2's table split: token documents are written when the DM adds, renames
+ * or re-layers a token, which is rare, while the churn of a drag lands on
+ * `tokenPositions` alone.
+ */
+export async function visiblePositions(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+  sceneId: Id<'scenes'>,
+  isDm: boolean,
+): Promise<PublicPosition[]> {
+  const placements = await ctx.db
+    .query('tokenPositions')
+    .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
+    .take(MAX_PLACEMENTS_PER_SCENE)
+
+  const rows = await Promise.all(
+    placements.map(async (placement) => {
+      const token = await ctx.db.get('tokens', placement.tokenId)
+      // The gameId check is not paranoia about a caller: a scene belongs to one
+      // game, so a placement pointing at a token in another is data that should
+      // not exist, and dropping it here means a stray row cannot become a coin
+      // hovering on somebody else's map.
+      if (!token || token.gameId !== gameId || !maySee(token, isDm)) return null
+      return { tokenId: placement.tokenId, x: placement.x, y: placement.y }
+    }),
+  )
+
+  return rows.filter((row): row is PublicPosition => row !== null)
+}
+
+/**
+ * The token this caller is allowed to move, or a throw. Throws the SAME
+ * TokenNotFound error for "no such token", "token in another game" and
+ * "DM-layer token without the DM code" — telling those apart is an existence
+ * oracle for the DM layer. Throws TokenNotYours for a player-layer token whose
+ * character another seat has claimed (advisory only; see ADR 0004).
+ */
+export async function requireMovableToken(
+  ctx: QueryCtx,
+  game: Doc<'games'>,
+  tokenId: Id<'tokens'>,
+  isDm: boolean,
+  playerId?: Id<'players'>,
+): Promise<Doc<'tokens'>> {
+  const token = await ctx.db.get('tokens', tokenId)
+  if (!token || token.gameId !== game._id || !maySee(token, isDm)) throw tokenNotFound()
+
+  // The DM moves anything on their own board, including a claimed hero, because
+  // dragging the party through a door is a normal thing for them to do.
+  if (isDm) return token
+
+  // Be honest about the ceiling. `playerId` is a routing argument, so anyone can pass
+  // another seat's id and walk straight past the checks below; they stop a misclick
+  // and a misunderstanding, not somebody with the network tab open. Closing that needs
+  // real identity, which means accounts, and ADR 0002 declined those deliberately —
+  // ADR 0004 records why that is the right trade at this table rather than a gap
+  // waiting to be filled. It is acceptable because nothing behind this check is a
+  // secret: a player-layer token is already drawn on every screen in the game, so the
+  // worst outcome is a rude move everybody watched happen. The refusal above, which
+  // does guard a secret, gets no such latitude and keys off the DM code alone.
+  // Control is granted, never assumed. This used to let anyone move a token that no
+  // character was attached to, on the reasoning that a creature nobody is playing
+  // should still be draggable. A first real session found that immediately: every
+  // NPC the DM adds has no character attached, so the whole table could shove the
+  // monsters around. An unattached token is the DM's.
+  if (playerId === undefined || !token.characterId) {
+    throw new ConvexError({
+      kind: 'TokenNotYours',
+      message: 'Only the DM can move that token.',
+    })
+  }
+
+  const holder = await findClaimHolder(ctx, token.characterId)
+  if (!holder) {
+    throw new ConvexError({
+      kind: 'TokenNotYours',
+      message: 'Nobody is playing that character yet, so only the DM can move it.',
+    })
+  }
+  if (holder._id !== playerId) {
+    throw new ConvexError({
+      kind: 'TokenNotYours',
+      message: `${holder.displayName} is playing that token.`,
+    })
+  }
+
+  return token
+}
+
+/**
+ * How far from the asked-for square to look for an empty one. Eight rings is 289
+ * squares, which is more of a search than any real board needs — it exists so the
+ * loop terminates rather than because anyone will reach it.
+ */
+const FREE_CELL_RINGS = 8
+
+/**
+ * The nearest empty square to `point`, for dropping a *new* token.
+ *
+ * Every token is added at the same default spot — the middle of the map — and
+ * snapping then puts each one in the identical square, so a DM adding six goblins
+ * got six coins stacked in one cell with their names overprinted into mush and five
+ * drags needed to undo it. Found by running the app; no test would have noticed,
+ * because every individual write was correct.
+ *
+ * Deliberately only used by `addToken`. Moving a token onto an occupied square is a
+ * legitimate thing to want — two figures crowding a doorway — so `moveToken` must
+ * never displace anything, and this is not called from there.
+ *
+ * Occupancy compares snapped centres rather than footprints. A 2×2 ogre overlapping
+ * a 1×1 goblin's square is not detected, which is the honest limit of one line of
+ * arithmetic; it costs a drag in a rare case, where the stacking above cost a drag
+ * every single time.
+ */
+export async function freeCellNear(
+  ctx: QueryCtx,
+  sceneId: Id<'scenes'>,
+  grid: Grid,
+  sizeSquares: number,
+  point: Point,
+): Promise<Point> {
+  const placements = await ctx.db
+    .query('tokenPositions')
+    .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
+    .take(MAX_PLACEMENTS_PER_SCENE)
+
+  // Keyed on the snapped centre, so a placement left off-grid by an interrupted
+  // drag still occupies the square it is sitting in.
+  const taken = new Set(
+    placements.map((placement) => {
+      const centre = snapToGrid({ x: placement.x, y: placement.y }, grid, sizeSquares)
+      return `${centre.x},${centre.y}`
+    }),
+  )
+
+  const wanted = cellOf(point, grid, sizeSquares)
+  for (let ring = 0; ring <= FREE_CELL_RINGS; ring += 1) {
+    for (let dCol = -ring; dCol <= ring; dCol += 1) {
+      for (let dRow = -ring; dRow <= ring; dRow += 1) {
+        // Only the edge of each ring: the inside was covered by a smaller one.
+        if (ring > 0 && Math.abs(dCol) !== ring && Math.abs(dRow) !== ring) continue
+        const candidate = centreOfCell(
+          { col: wanted.col + dCol, row: wanted.row + dRow },
+          grid,
+          sizeSquares,
+        )
+        if (!taken.has(`${candidate.x},${candidate.y}`)) return candidate
+      }
+    }
+  }
+
+  // Every square within the search is occupied, which needs 289 tokens on one
+  // scene and cannot happen under MAX_TOKENS_PER_GAME. Stack rather than refuse:
+  // a token the DM cannot place at all is worse than one they have to drag.
+  return centreOfCell(wanted, grid, sizeSquares)
+}
+
+/**
+ * Take a deleted character off whatever tokens were standing on it.
+ *
+ * `characters.remove` is the only irreversible operation on durable data, and
+ * without this it would leave tokens pointing at a document that has gone. The
+ * pointer runs token → character, so the token is what has to be repaired, and it
+ * has to be repaired here because this is the only module that may write that
+ * table.
+ *
+ * The consequences of skipping it are quiet rather than loud, which is why it is
+ * worth doing: `requireMovableToken` would find no claim holder and fall back to
+ * "only the DM can move that", and the health bar would simply never appear — a
+ * hero's token that has become undraggable with no visible reason why.
+ *
+ * Bounded by the by_characterId index rather than a scan of the game's tokens.
+ */
+export async function detachCharacterFromTokens(
+  ctx: MutationCtx,
+  characterId: Id<'characters'>,
+): Promise<void> {
+  const tokens = await ctx.db
+    .query('tokens')
+    .withIndex('by_characterId', (q) => q.eq('characterId', characterId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  for (const token of tokens) {
+    await ctx.db.patch('tokens', token._id, { characterId: undefined })
+  }
+}
+
+/** Insert or update the placement of a token on a scene. */
+export async function placeToken(
+  ctx: MutationCtx,
+  sceneId: Id<'scenes'>,
+  tokenId: Id<'tokens'>,
+  point: Point,
+): Promise<void> {
+  const existing = await ctx.db
+    .query('tokenPositions')
+    .withIndex('by_sceneId_and_tokenId', (q) => q.eq('sceneId', sceneId).eq('tokenId', tokenId))
+    .unique()
+
+  // Upsert rather than insert, because the row's existence is what puts a token on
+  // a board: a drag has to patch the four coordinates it already has, while a token
+  // dropped onto a scene it has never stood on has to create them. One function for
+  // both keeps a mid-drag write from quietly stacking up duplicate placements.
+  if (existing) {
+    await ctx.db.patch('tokenPositions', existing._id, { x: point.x, y: point.y })
+  } else {
+    await ctx.db.insert('tokenPositions', { sceneId, tokenId, x: point.x, y: point.y })
+  }
+}
+
+/**
+ * Every placement of one token, across all scenes. For removeToken.
+ *
+ * Bounded by the scene count rather than the placement count: a token holds at
+ * most one row per scene, so this is the tight bound and MAX_PLACEMENTS_PER_SCENE
+ * would be the wrong axis.
+ */
+export async function deleteTokenPlacements(
+  ctx: MutationCtx,
+  tokenId: Id<'tokens'>,
+): Promise<void> {
+  const placements = await ctx.db
+    .query('tokenPositions')
+    .withIndex('by_tokenId', (q) => q.eq('tokenId', tokenId))
+    .take(MAX_SCENES_PER_GAME)
+
+  for (const placement of placements) {
+    await ctx.db.delete('tokenPositions', placement._id)
+  }
+}
+
+/**
+ * Every placement on one scene. For scenes.remove.
+ *
+ * Deleting a scene takes its layout with it and leaves every `tokens` row alone,
+ * which is what makes a recurring villain survive the map they were last seen on.
+ */
+export async function deleteScenePlacements(
+  ctx: MutationCtx,
+  sceneId: Id<'scenes'>,
+): Promise<void> {
+  const placements = await ctx.db
+    .query('tokenPositions')
+    .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
+    .take(MAX_PLACEMENTS_PER_SCENE)
+
+  for (const placement of placements) {
+    await ctx.db.delete('tokenPositions', placement._id)
+  }
+}
+
+/**
+ * Bounded count of tokens in a game, so addToken can enforce MAX_TOKENS_PER_GAME.
+ *
+ * Counts both layers regardless of the caller, because this answers "is the game
+ * full?" and a limit that ignored the hidden half would let the DM's own bestiary
+ * overrun the read window that every board query uses. The number never leaves the
+ * server: only `addToken` reads it, to decide whether to throw.
+ *
+ * There is no matching count of placements on a scene, and the absence is
+ * deliberate — see the note on MAX_PLACEMENTS_PER_SCENE in lib/games.ts.
+ */
+export async function countTokensInGame(ctx: QueryCtx, gameId: Id<'games'>): Promise<number> {
+  const tokens = await ctx.db
+    .query('tokens')
+    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  return tokens.length
+}
+
+/**
+ * Is this blob still the art of a token in this game? So `files.discard` can refuse
+ * to delete a file that something on the board is drawing.
+ *
+ * It lives here rather than in files.ts for the reason at the top of this module:
+ * the leak guard greps the sources, and a read of the `tokens` table outside this
+ * file is a violation whether it returns rows or a boolean. A boolean is all that
+ * crosses the boundary, which is also why there is no `isDm` argument — the only
+ * caller is DM-gated, and the question is about a storage id the caller already
+ * holds rather than about what is on the board.
+ *
+ * Counts both layers: a DM-layer skeleton's portrait is exactly as much in use as a
+ * hero's, and a check that skipped the hidden half would let a mis-sequenced client
+ * blank out the encounter it was hiding.
+ */
+export async function tokenReferencesImage(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+  imageId: Id<'_storage'>,
+): Promise<boolean> {
+  const tokens = await ctx.db
+    .query('tokens')
+    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  return tokens.some((token) => token.imageId === imageId)
+}

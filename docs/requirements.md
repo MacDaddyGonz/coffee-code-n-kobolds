@@ -1,7 +1,9 @@
 # Coffee, Code n' Kobolds — Requirements
 
 > Original requirements as captured at project inception. Kept verbatim in substance; formatted as
-> Markdown for readability.
+> Markdown for readability. Where the build has since been allowed to differ, that is recorded in
+> [Amendments to the rule set](#amendments-to-the-rule-set) below rather than folded into the text
+> above.
 
 ## Concept
 
@@ -31,6 +33,54 @@ Excluded:
 - No skills from backgrounds / proficiencies
 - No inventory — set equipment per character
 - No movement-detriment status effects (prone, stand up, difficult terrain, etc.)
+
+### Amendments to the rule set
+
+> **Not part of the original.** The two lists above are as they were captured and are deliberately
+> left that way. A spec quietly edited to match the code is a spec that can no longer catch the code
+> being wrong, so a rule the build no longer follows is recorded here — with a date and a decision
+> behind it — instead of being corrected upstairs.
+
+#### Milestone 4 — 2026-07-31 — [ADR 0006](adr/0006-premade-character-library.md)
+
+A library of 72 premade character sheets, chosen by picking a race and a class rather than by
+filling in a form. Two exclusions could not survive it, and one inclusion became a default. Nothing
+else on either list moved.
+
+**"No racial abilities" — lifted.** Eight races exist (Human, Elf, Dwarf, Halfling, Half-Orc,
+Tiefling, Dragonborn, Goliath), each with one trait that is always shown on the sheet. Five of the
+eight change no number at all and are words on a page; three touch arithmetic — the Elf's +2
+Dexterity, the Dwarf's extra hit point per level and the Goliath's extra 10 feet of speed. The
+Human's and the Half-Orc's traits are spendable once per long rest and the app remembers whether
+they have been, which is tracking rather than enforcement: no racial ability is adjudicated by the
+software. Still excluded: subraces, racial languages and racial tool or weapon proficiencies. Race
+is one dropdown with one trait behind it.
+
+**"No skills from backgrounds / proficiencies" — half lifted, and the half matters.** Thirteen
+skills now exist, each with a proficiency flag and a bonus derived from its ability and the
+character's proficiency bonus. **Backgrounds are still excluded**, and that is the point of stating
+it precisely: a proficiency comes from the character's *class* — from the premade sheet the class
+supplies — and from the DM's override, and there is no third source. There is no background on a
+character, no background list to maintain and nowhere for a second grant of the same skill to come
+from. The exclusion that was lifted is "no skills"; the exclusion that stands is "no backgrounds".
+
+**"35 speed for all characters" — now the default rather than the rule.** Speed is a stored field
+on the sheet, absent on every character that has not been given a reason to differ, and read
+through one accessor that answers 35 when it is absent. The reason it exists at all is the Goliath,
+who moves 45. Every other character in the game still moves 35, and nothing offers a control to
+change it — the DM's override is the only route to a different number.
+
+**Equipment — no change, and worth saying so.** Each premade sheet carries a fixed kit as a line of
+text ("chain mail, a shield, a longsword, two javelins…"). That is not a new inclusion sneaking
+past the list: it is exactly what *"No inventory — set equipment per character"* already permitted.
+There is no inventory model, no slots, no weights, no encumbrance and nothing to pick up or drop.
+
+**Everything else on both lists stands**, and so does everything the lists never had to name:
+backgrounds, inventory, multiclassing and experience points are all out, and the DM awards levels
+rather than the app counting them. The exclusion of movement-detriment status effects in particular
+is a live constraint rather than a stale one — two of the Battle Master's best-known manoeuvres,
+Trip Attack and Pushing Attack, were left out of the library because of it, and their dice went to
+manoeuvres that do the same job without knocking anybody prone.
 
 ## Accounts and games
 
