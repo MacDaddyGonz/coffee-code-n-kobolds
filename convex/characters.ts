@@ -651,7 +651,7 @@ export const adjustHp = mutation({
  * to search for the caller: every control on screen is `−`, an amount and `+`, which
  * `adjustHp` serves and serves better, because two people clicking at once compose
  * instead of clobbering. This is here for the case a delta cannot express — a DM
- * typing a monster's hit points straight in, which Milestone 5's panel will want —
+ * typing a monster's hit points straight in, which Milestone 7's DM panel will want —
  * and it is exercised by the suite and by `npm run test:smoke` in the meantime.
  */
 export const setHp = mutation({

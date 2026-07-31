@@ -266,11 +266,17 @@ the database.
   twice; the app knows it has been spent and says so.
 - **Two more optional fields and two more accessors nobody may bypass**, which is two more places a
   future contributor can read a field directly and get `undefined`.
-- **The milestone numbering shifted underneath the earlier records.** Inserting this milestone moved
-  the roadmap's old Milestones 4 to 7 down one. ADRs 0004 and 0005 are not edited after the fact, so:
-  where they say "Milestone 4" they mean rolls, feed and dice, now **Milestone 5**; where they say
-  "Milestone 5" they mean DM tooling, layers and fog of war, now **Milestone 6**; and the orphaned-blob
-  sweeper they put in "Milestone 7" is now **Milestone 8**.
+- **The milestone numbering shifted underneath the earlier records — twice.** Inserting this milestone
+  moved the roadmap's old Milestones 4 to 7 down one; the monster library was then inserted as
+  Milestone 5 and moved them down again. ADRs are not edited after the fact, so read the older ones by
+  what they name rather than by the number: **rolls, feed and dice** is now Milestone 6, **DM tooling,
+  layers and fog of war** is now Milestone 7, and the **orphaned-blob sweeper** is now Milestone 9.
+
+  The lesson, recorded because it has now cost two sweeps of the source in one sitting: **a comment
+  that names a milestone number dates badly.** Numbers move whenever anything is inserted, and the
+  compiler cannot tell you. Where a comment needs to point forward, naming the *feature* — "when
+  rolling lands", "the DM panel milestone" — survives renumbering and is what the next one of these
+  should do.
 
 ## Alternatives considered
 

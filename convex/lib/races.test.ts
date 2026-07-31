@@ -255,7 +255,7 @@ describe('the trait lands on the sheet', () => {
    * across two resolutions of the same character, and — the case that matters —
    * unchanged by a level-up. `withId` derives an id from the entry's *name*
    * rather than its position precisely so that levelling does not renumber a
-   * sheet, which React would read as every row being replaced and Milestone 5
+   * sheet, which React would read as every row being replaced and Milestone 6
    * would read as every roll target moving.
    */
   test("every race's trait keeps one id across resolutions, levels and classes", () => {

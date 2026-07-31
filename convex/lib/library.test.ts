@@ -341,7 +341,7 @@ describe('entries', () => {
   })
 
   /**
-   * A name is what a player reads and an id is what React and Milestone 5's
+   * A name is what a player reads and an id is what React and Milestone 6's
    * roll target use, and the two can fail independently. `sheetProblem` refuses
    * a sheet with a duplicate *id*, so a repeated name is caught downstream — but
    * a repeated name that slugs to two *different* ids is not, and reads as the

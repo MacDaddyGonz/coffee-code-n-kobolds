@@ -118,7 +118,7 @@ export const publicSheetValidator = v.object({
   _id: v.id('characters'),
   name: v.string(),
   /**
-   * The **resolved** sheet — what to display and what Milestone 5 will roll. For a
+   * The **resolved** sheet — what to display and what Milestone 6 will roll. For a
    * character built from the library this is the library's numbers with the race
    * applied and the DM's overrides on top; the client never sees the library itself
    * and never has to assemble anything.

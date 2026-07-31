@@ -213,7 +213,7 @@ function clampLevel(level: number): number {
  *
  * Derived from the entry's name rather than its position, so that levelling up does
  * not renumber a character's whole spell list — which React would read as every row
- * being replaced, and which Milestone 5 would read as every roll target moving.
+ * being replaced, and which Milestone 6 would read as every roll target moving.
  * `sheetProblem` insists ids are unique within a sheet, so the library's integrity
  * test asserts no sheet repeats a name.
  */

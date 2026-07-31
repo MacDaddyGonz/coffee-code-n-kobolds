@@ -23,7 +23,7 @@ export default defineSchema({
     dmRecoverySalt: v.string(),
     dmRecoveryHash: v.string(),
     // The board everyone is looking at. Optional because a game has no scene until
-    // the DM uploads a map. Scene *switching* for the whole group is Milestone 5;
+    // the DM uploads a map. Scene *switching* for the whole group is Milestone 7;
     // this field is the data it will drive.
     activeSceneId: v.optional(v.id('scenes')),
     // 'lobby' until the DM presses Start, then 'playing' and every client flips to
@@ -157,7 +157,7 @@ export default defineSchema({
     name: v.string(),
     // Two members, not the three layers in requirements.md: the background layer is
     // the scene image itself, and no token ever lives on it. Images on layers are
-    // Milestone 5.
+    // Milestone 7.
     //
     // THE SECRET IS HERE. A 'dm' token must never reach a player client, and it has
     // the same shape as a 'player' one — so a `returns:` validator cannot catch a

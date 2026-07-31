@@ -64,7 +64,7 @@ export const list = query({
       // straight to `characters.sheet`, which is the one query that would refuse it,
       // rather than to a screen that renders it. Unreachable today, because `claim`
       // and `assign` both refuse an NPC; the projection filtering as one decision
-      // rather than two is what keeps it unreachable if Milestone 5 changes who may
+      // rather than two is what keeps it unreachable if Milestone 7 changes who may
       // hold what.
       const name = seat.characterId ? nameById.get(seat.characterId) ?? null : null
       return {

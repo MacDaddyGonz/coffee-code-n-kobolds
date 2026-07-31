@@ -116,7 +116,7 @@ export const ROLL_MODIFIER_TOKENS = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA', '
  * `NdM` followed by any number of `±term`, where a term is a small integer or one
  * of the tokens above. `1d8+WIS`, `2d6`, `1d20+PROF`, `3d6-1`, `1d10+STR+PROF`.
  *
- * Milestone 3 validates the shape and Milestone 5 evaluates it, and that split is
+ * Milestone 3 validates the shape and Milestone 6 evaluates it, and that split is
  * deliberate rather than half a feature. A roll string stored unvalidated today is
  * a migration over every sheet in every game the moment something tries to parse
  * one — so the grammar is fixed now, while there is nothing to migrate, and the
@@ -124,7 +124,7 @@ export const ROLL_MODIFIER_TOKENS = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA', '
  *
  * Die faces are an allow-list because `1d7` is a typo rather than a house rule, and
  * the count is capped at twenty because the alternative is a client asking for
- * 99999 dice to be rendered in Milestone 5's physics engine.
+ * 99999 dice to be rendered in Milestone 6's physics engine.
  */
 export const ROLL_PATTERN =
   /^(?:[1-9]|1\d|20)d(?:4|6|8|10|12|20|100)(?:[+-](?:\d{1,3}|STR|DEX|CON|INT|WIS|CHA|PROF))*$/
@@ -235,7 +235,7 @@ export type HitDice = Infer<typeof hitDiceValidator>
  *
  * **One shape for all three**, and that is the decision that keeps a reduced NPC
  * sheet from becoming a second copy of everything. The two sheet variants differ in
- * what they hold; they do not differ in what a *line* is, so Milestone 5 gets one
+ * what they hold; they do not differ in what a *line* is, so Milestone 6 gets one
  * roll path rather than a fork, and the picker, the list and the editor are each
  * written once.
  *
@@ -548,7 +548,7 @@ export function maxHpOf(sheet: CharacterSheet): number {
   return sheet.maxHp
 }
 
-/** Every line on a sheet, whichever list it is in. For validation and for Milestone 5. */
+/** Every line on a sheet, whichever list it is in. For validation and for Milestone 6. */
 export function sheetEntriesOf(sheet: CharacterSheet): SheetEntry[] {
   return sheet.kind === 'pc' ? [...sheet.feats, ...sheet.spells] : [...sheet.actions]
 }
@@ -867,7 +867,7 @@ export function sheetProblem(sheet: CharacterSheet): SheetProblem | null {
 
   // One `seen` set across both lists, not one per list. `sheetEntriesOf` merges
   // feats and spells into a single array — which is a React key set, and is what
-  // Milestone 5 will aim a roll at — so an id checked only within its own list is
+  // Milestone 6 will aim a roll at — so an id checked only within its own list is
   // an id that can still collide in the merged one. Checking per list would have
   // enforced exactly the half of the guarantee that does not matter.
   const seen = new Set<string>()
@@ -888,7 +888,7 @@ function entriesProblem(
   for (const [index, entry] of entries.entries()) {
     const path = `${list}[${index}]`
 
-    // The id is a React key and Milestone 5's roll target. A duplicate would make
+    // The id is a React key and Milestone 6's roll target. A duplicate would make
     // rolling one entry roll another, and an empty one would make the list
     // unaddressable — neither is something a user can see to fix, so it is checked
     // rather than trusted.

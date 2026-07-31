@@ -3462,7 +3462,7 @@ describe('characters.create — a character built from the library', () => {
               resolved.feats.map((entry) => entry.id),
               where,
             ).toContain(`race:${race}`)
-            // Ids are a React key set and Milestone 5's roll targets, merged
+            // Ids are a React key set and Milestone 6's roll targets, merged
             // across both lists.
             const ids = [...resolved.feats, ...resolved.spells].map((entry) => entry.id)
             expect(new Set(ids).size, `${where} repeated an entry id`).toBe(ids.length)
