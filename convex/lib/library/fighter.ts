@@ -48,10 +48,12 @@ export const FIGHTER: ClassLibrary = {
     feats: [
       {
         name: 'Longsword',
-        text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other. Roll 1d20 plus Strength and proficiency to hit anything within 5 feet, then this for the damage — the 2 from Duelling is already in it.',
+        text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
         roll: '1d8+STR+2',
         level: null,
         catalogueKey: null,
+        category: 'weapon',
+        toHit: '1d20+STR+PROF',
       },
       {
         name: 'Fighting Style: Duelling',
@@ -59,6 +61,7 @@ export const FIGHTER: ClassLibrary = {
         roll: null,
         level: null,
         catalogueKey: null,
+        category: 'passive',
       },
       {
         name: 'Second Wind',
@@ -66,6 +69,7 @@ export const FIGHTER: ClassLibrary = {
         roll: '1d10',
         level: null,
         catalogueKey: 'second-wind',
+        category: 'action',
       },
     ],
     spells: [],
@@ -100,10 +104,12 @@ export const FIGHTER: ClassLibrary = {
         feats: [
           {
             name: 'Longsword',
-            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other. Roll 1d20 plus Strength and proficiency to hit anything within 5 feet, then this for the damage — the 2 from Duelling is already in it.',
+            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
             roll: '1d8+STR+2',
             level: null,
             catalogueKey: null,
+            category: 'weapon',
+            toHit: '1d20+STR+PROF',
           },
           {
             name: 'Fighting Style: Duelling',
@@ -111,6 +117,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
           {
             name: 'Second Wind',
@@ -118,6 +125,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d10',
             level: null,
             catalogueKey: 'second-wind',
+            category: 'action',
           },
           {
             name: 'Action Surge',
@@ -125,6 +133,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: 'action-surge',
+            category: 'passive',
           },
           {
             name: 'Improved Critical',
@@ -132,6 +141,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
         ],
         spells: [],
@@ -169,10 +179,12 @@ export const FIGHTER: ClassLibrary = {
         feats: [
           {
             name: 'Longsword',
-            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other. Roll 1d20 plus Strength and proficiency to hit anything within 5 feet, then this for the damage — the 2 from Duelling is already in it.',
+            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
             roll: '1d8+STR+2',
             level: null,
             catalogueKey: null,
+            category: 'weapon',
+            toHit: '1d20+STR+PROF',
           },
           {
             name: 'Fighting Style: Duelling',
@@ -180,6 +192,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
           {
             name: 'Second Wind',
@@ -187,6 +200,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d10',
             level: null,
             catalogueKey: 'second-wind',
+            category: 'action',
           },
           {
             name: 'Action Surge',
@@ -194,6 +208,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: 'action-surge',
+            category: 'passive',
           },
           {
             name: 'Improved Critical',
@@ -201,6 +216,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
         ],
         spells: [],
@@ -233,10 +249,12 @@ export const FIGHTER: ClassLibrary = {
         feats: [
           {
             name: 'Longsword',
-            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other. Roll 1d20 plus Strength and proficiency to hit anything within 5 feet, then this for the damage — the 2 from Duelling is already in it.',
+            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
             roll: '1d8+STR+2',
             level: null,
             catalogueKey: null,
+            category: 'weapon',
+            toHit: '1d20+STR+PROF',
           },
           {
             name: 'Extra Attack',
@@ -244,6 +262,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
           {
             name: 'Fighting Style: Duelling',
@@ -251,6 +270,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
           {
             name: 'Second Wind',
@@ -258,6 +278,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d10',
             level: null,
             catalogueKey: 'second-wind',
+            category: 'action',
           },
           {
             name: 'Action Surge',
@@ -265,6 +286,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: 'action-surge',
+            category: 'passive',
           },
           {
             name: 'Improved Critical',
@@ -272,6 +294,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
         ],
         spells: [],
@@ -304,10 +327,12 @@ export const FIGHTER: ClassLibrary = {
         feats: [
           {
             name: 'Longsword',
-            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other. Roll 1d20 plus Strength and proficiency to hit anything within 5 feet, then this for the damage — the 2 from Duelling is already in it.',
+            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
             roll: '1d8+STR+2',
             level: null,
             catalogueKey: null,
+            category: 'weapon',
+            toHit: '1d20+STR+PROF',
           },
           {
             name: 'Extra Attack',
@@ -315,6 +340,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
           {
             name: 'Fighting Style: Duelling',
@@ -322,6 +348,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
           {
             name: 'Fighting Style: Defence',
@@ -329,6 +356,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
           {
             name: 'Second Wind',
@@ -336,6 +364,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d10',
             level: null,
             catalogueKey: 'second-wind',
+            category: 'action',
           },
           {
             name: 'Action Surge',
@@ -343,6 +372,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: 'action-surge',
+            category: 'passive',
           },
           {
             name: 'Improved Critical',
@@ -350,6 +380,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
           {
             name: 'Remarkable Athlete',
@@ -357,6 +388,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d20+DEX',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
         ],
         spells: [],
@@ -391,10 +423,12 @@ export const FIGHTER: ClassLibrary = {
         feats: [
           {
             name: 'Longsword',
-            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other. Roll 1d20 plus Strength and proficiency to hit anything within 5 feet, then this for the damage — the 2 from Duelling is already in it.',
+            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
             roll: '1d8+STR+2',
             level: null,
             catalogueKey: null,
+            category: 'weapon',
+            toHit: '1d20+STR+PROF',
           },
           {
             name: 'Fighting Style: Duelling',
@@ -402,6 +436,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
           {
             name: 'Second Wind',
@@ -409,6 +444,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d10',
             level: null,
             catalogueKey: 'second-wind',
+            category: 'action',
           },
           {
             name: 'Action Surge',
@@ -416,6 +452,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: 'action-surge',
+            category: 'passive',
           },
           {
             name: 'Superiority Dice',
@@ -423,6 +460,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d8',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
           {
             name: 'Precision Attack',
@@ -430,6 +468,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d8',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
           {
             name: 'Menacing Attack',
@@ -437,6 +476,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d8',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
         ],
         spells: [],
@@ -473,10 +513,12 @@ export const FIGHTER: ClassLibrary = {
         feats: [
           {
             name: 'Longsword',
-            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other. Roll 1d20 plus Strength and proficiency to hit anything within 5 feet, then this for the damage — the 2 from Duelling is already in it.',
+            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
             roll: '1d8+STR+2',
             level: null,
             catalogueKey: null,
+            category: 'weapon',
+            toHit: '1d20+STR+PROF',
           },
           {
             name: 'Fighting Style: Duelling',
@@ -484,6 +526,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
           {
             name: 'Second Wind',
@@ -491,6 +534,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d10',
             level: null,
             catalogueKey: 'second-wind',
+            category: 'action',
           },
           {
             name: 'Action Surge',
@@ -498,6 +542,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: 'action-surge',
+            category: 'passive',
           },
           {
             name: 'Superiority Dice',
@@ -505,6 +550,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d8',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
           {
             name: 'Precision Attack',
@@ -512,6 +558,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d8',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
           {
             name: 'Menacing Attack',
@@ -519,6 +566,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d8',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
           {
             name: 'Riposte',
@@ -526,6 +574,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d8',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
         ],
         spells: [],
@@ -558,10 +607,12 @@ export const FIGHTER: ClassLibrary = {
         feats: [
           {
             name: 'Longsword',
-            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other. Roll 1d20 plus Strength and proficiency to hit anything within 5 feet, then this for the damage — the 2 from Duelling is already in it.',
+            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
             roll: '1d8+STR+2',
             level: null,
             catalogueKey: null,
+            category: 'weapon',
+            toHit: '1d20+STR+PROF',
           },
           {
             name: 'Extra Attack',
@@ -569,6 +620,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
           {
             name: 'Fighting Style: Duelling',
@@ -576,6 +628,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
           {
             name: 'Second Wind',
@@ -583,6 +636,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d10',
             level: null,
             catalogueKey: 'second-wind',
+            category: 'action',
           },
           {
             name: 'Action Surge',
@@ -590,6 +644,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: 'action-surge',
+            category: 'passive',
           },
           {
             name: 'Superiority Dice',
@@ -597,6 +652,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d8',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
           {
             name: 'Precision Attack',
@@ -604,6 +660,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d8',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
           {
             name: 'Menacing Attack',
@@ -611,6 +668,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d8',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
           {
             name: 'Riposte',
@@ -618,6 +676,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d8',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
         ],
         spells: [],
@@ -650,10 +709,12 @@ export const FIGHTER: ClassLibrary = {
         feats: [
           {
             name: 'Longsword',
-            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other. Roll 1d20 plus Strength and proficiency to hit anything within 5 feet, then this for the damage — the 2 from Duelling is already in it.',
+            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
             roll: '1d8+STR+2',
             level: null,
             catalogueKey: null,
+            category: 'weapon',
+            toHit: '1d20+STR+PROF',
           },
           {
             name: 'Extra Attack',
@@ -661,6 +722,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
           {
             name: 'Fighting Style: Duelling',
@@ -668,6 +730,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: null,
+            category: 'passive',
           },
           {
             name: 'Second Wind',
@@ -675,6 +738,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d10',
             level: null,
             catalogueKey: 'second-wind',
+            category: 'action',
           },
           {
             name: 'Action Surge',
@@ -682,6 +746,7 @@ export const FIGHTER: ClassLibrary = {
             roll: null,
             level: null,
             catalogueKey: 'action-surge',
+            category: 'passive',
           },
           {
             name: 'Superiority Dice',
@@ -689,6 +754,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d10',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
           {
             name: 'Precision Attack',
@@ -696,6 +762,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d10',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
           {
             name: 'Menacing Attack',
@@ -703,6 +770,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d10',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
           {
             name: 'Riposte',
@@ -710,6 +778,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d10',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
           {
             name: 'Rally',
@@ -717,6 +786,7 @@ export const FIGHTER: ClassLibrary = {
             roll: '1d10',
             level: null,
             catalogueKey: null,
+            category: 'action',
           },
         ],
         spells: [],

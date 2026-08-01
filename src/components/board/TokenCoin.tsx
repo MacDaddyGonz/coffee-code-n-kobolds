@@ -4,11 +4,16 @@ import type Konva from 'konva'
 
 import { COIN_DETAIL_MIN_DIAMETER, TokenHealthBar } from './TokenHealthBar'
 import { useCanvasImage } from '@/hooks/useCanvasImage'
+// The tint and the letters on an art-less coin, shared with the HTML profile icon
+// that draws a seat the same way — one function of a name, so a person is the same
+// disc on the board as in the roster. See `@/lib/avatar`.
+import { initialsOf, readableInk } from '@/lib/avatar'
 // The board's token type, imported rather than restated. A structural copy of it
 // lived here to keep the canvas independent of the hook that feeds it — but this
 // is `import type`, which is erased, so there is no runtime dependency to be
 // independent of and nothing stopping a test rendering a hand-written token.
 import type { BoardToken } from '@/hooks/useBoard'
+import type { Id } from '@convex/_generated/dataModel'
 import type { Point } from '@convex/lib/grid'
 import type { PublicScene } from '@convex/lib/scenes'
 
@@ -41,6 +46,13 @@ export type TokenCoinProps = {
   /** Image-space centre, mid-drag. Throttle the writes; see CLAUDE.md invariant 2. */
   onDragMove?: (token: BoardToken, point: Point) => void
   onDragEnd?: (token: BoardToken, point: Point) => void
+  /**
+   * Passed straight through to the health bar, which is the only thing here that
+   * opens the hit point editor. An id rather than the token, because it crosses one
+   * more component boundary than the callbacks above and the note about stable
+   * identities applies the whole way down.
+   */
+  onOpenHp: (tokenId: Id<'tokens'>) => void
 }
 
 /**
@@ -73,6 +85,7 @@ export const TokenCoin = memo(function TokenCoin({
   onDragStart,
   onDragMove,
   onDragEnd,
+  onOpenHp,
 }: TokenCoinProps) {
   const art = useCanvasImage(token.artUrl)
 
@@ -214,7 +227,17 @@ export const TokenCoin = memo(function TokenCoin({
         actually do.
       */}
       {showDetail && token.vitals ? (
-        <TokenHealthBar vitals={token.vitals} radius={radius} scale={scale} />
+        <TokenHealthBar
+          vitals={token.vitals}
+          radius={radius}
+          scale={scale}
+          // The bar is the way in to the hit point editor, so it needs both the id
+          // to hand back and the affordance that decides whether it listens at all.
+          // Both are primitives off a token this component already has.
+          tokenId={token._id}
+          canEditHp={token.canEditHp}
+          onOpenHp={onOpenHp}
+        />
       ) : null}
 
       {showDetail ? (
@@ -265,35 +288,4 @@ function fillPattern(art: HTMLImageElement | null, diameter: number) {
     fillPatternScale: { x: cover, y: cover },
     fillPatternRepeat: 'no-repeat',
   }
-}
-
-/** Up to two initials for an art-less coin. Split by code point, so an emoji name survives. */
-function initialsOf(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean)
-  if (words.length === 0) return '?'
-  return words
-    .slice(0, 2)
-    .map((word) => [...word][0] ?? '')
-    .join('')
-    .toUpperCase()
-}
-
-/**
- * Ink that can be read on the tint. The server already validates a tint as
- * `#rrggbb`, so the guards here are only for a value that arrived some other way —
- * a preview in the DM's panel with a half-typed colour in it.
- */
-function readableInk(tint: string): string {
-  const hex = tint.replace('#', '')
-  if (hex.length !== 6) return '#ffffff'
-
-  const channels = [hex.slice(0, 2), hex.slice(2, 4), hex.slice(4, 6)].map((pair) =>
-    Number.parseInt(pair, 16),
-  )
-  if (channels.some((channel) => Number.isNaN(channel))) return '#ffffff'
-
-  // Rec. 601 luma, which is close enough for a two-way choice and needs no gamma.
-  const [red, green, blue] = channels as [number, number, number]
-  const luma = (0.299 * red + 0.587 * green + 0.114 * blue) / 255
-  return luma > 0.6 ? '#111111' : '#ffffff'
 }

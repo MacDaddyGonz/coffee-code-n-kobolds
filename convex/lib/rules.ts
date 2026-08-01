@@ -21,25 +21,41 @@
 // substitute for the rulebook, and it is short because it renders inside a sheet
 // panel next to a dozen others.
 //
+// ⚠️ **The prose never states the to-hit**, on any entry, because the to-hit is now a
+// field. A number written in both places is two places for it to disagree the moment
+// somebody edits their copy, and a line reading `+4 to hit` beside a `toHit` of
+// `1d20+6` is worse than one that says nothing. This is the rule `attackEntry` in
+// lib/resolve.ts already applies to the bestiary, stated here for the corpus a person
+// hand-writes; a test asserts it rather than trusting it.
+//
 // Nothing here reaches outside the D&D Lite subset in docs/requirements.md. Feats
 // that would normally mention difficult terrain or being knocked prone have those
 // clauses left out, because movement-impairing conditions are excluded by design and
 // a catalogue entry describing one would be the first place they crept back in.
 
-import type { SheetEntry } from './sheet'
+import type { ContentEntry } from './sheet'
 
-/** A catalogue entry is a SheetEntry template: everything except the per-character `id`. */
-export type CatalogueEntry = Omit<SheetEntry, 'id' | 'catalogueKey'> & { key: string }
+/**
+ * A catalogue entry is a `ContentEntry` template: everything except the per-character
+ * `id`, and without the `catalogueKey`, which is what a *copy* records about where it
+ * came from rather than something the source of the copy carries.
+ *
+ * `ContentEntry` rather than `SheetEntry` because the **category is required** on
+ * content — see the note on it in lib/sheet.ts.
+ */
+export type CatalogueEntry = Omit<ContentEntry, 'catalogueKey'> & { key: string }
 
 /**
  * The spells, cantrips through 3rd level.
  *
- * Each entry carries one roll, and where an entry has a choice the roll is the
- * damage or the healing rather than the attack. A to-hit is the same shape for
- * everything — a d20 plus an ability and proficiency, which the sheet already knows
- * how to build — whereas the dice a spell actually deals are the part only the
- * catalogue can tell you. The description names the save or the attack so the
- * distinction is visible at the table.
+ * `roll` is the damage or the healing — what the spell does once it has happened.
+ * **A spell that has to land first is a `weapon` and carries its to-hit in `toHit`**,
+ * which is the shape a single `roll` could not express and the reason that field
+ * exists. The three categories fall out of the spells themselves rather than being
+ * imposed on them: Fire Bolt is aimed, Fireball simply goes off, Shield is declared.
+ *
+ * A caster's to-hit is written with the ability token of the class that most often
+ * casts it, for exactly the reason the damage is — see the paragraph below.
  *
  * Rolls use ability tokens (`2d8+WIS`) instead of baked-in numbers wherever the
  * modifier genuinely belongs to the caster, because Milestone 4 resolves those
@@ -54,9 +70,11 @@ export const SPELLS: readonly CatalogueEntry[] = [
   {
     key: 'fire-bolt',
     name: 'Fire Bolt',
-    text: 'A mote of fire hurled at one target within 120 feet. Make a ranged spell attack; on a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
+    text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
     roll: '1d10',
     level: 0,
+    category: 'weapon',
+    toHit: '1d20+INT+PROF',
   },
   {
     key: 'sacred-flame',
@@ -64,13 +82,16 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
     roll: '1d8',
     level: 0,
+    category: 'action',
   },
   {
     key: 'eldritch-blast',
     name: 'Eldritch Blast',
-    text: 'A beam of crackling force at one creature within 120 feet, on a ranged spell attack. A higher-level warlock fires more beams, each aimed and rolled separately.',
+    text: 'A beam of crackling force at one creature within 120 feet. A higher-level warlock fires more beams, each aimed and rolled separately.',
     roll: '1d10',
     level: 0,
+    category: 'weapon',
+    toHit: '1d20+CHA+PROF',
   },
   {
     key: 'mage-hand',
@@ -78,6 +99,7 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
     roll: null,
     level: 0,
+    category: 'passive',
   },
   {
     key: 'guidance',
@@ -85,6 +107,7 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
     roll: '1d4',
     level: 0,
+    category: 'action',
   },
   {
     key: 'cure-wounds',
@@ -92,6 +115,7 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
     roll: '2d8+WIS',
     level: 1,
+    category: 'action',
   },
   {
     key: 'healing-word',
@@ -99,6 +123,7 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
     roll: '2d4+WIS',
     level: 1,
+    category: 'action',
   },
   {
     key: 'magic-missile',
@@ -106,6 +131,7 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
     roll: '3d4+3',
     level: 1,
+    category: 'action',
   },
   {
     key: 'shield',
@@ -113,6 +139,7 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
     roll: null,
     level: 1,
+    category: 'passive',
   },
   {
     key: 'burning-hands',
@@ -120,13 +147,16 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
     roll: '3d6',
     level: 1,
+    category: 'action',
   },
   {
     key: 'guiding-bolt',
     name: 'Guiding Bolt',
-    text: 'A lance of light on a ranged spell attack against one creature within 120 feet. The next attack made against that creature before your next turn has advantage.',
+    text: 'A lance of light against one creature within 120 feet. The next attack made against that creature before your next turn has advantage.',
     roll: '4d6',
     level: 1,
+    category: 'weapon',
+    toHit: '1d20+WIS+PROF',
   },
   {
     key: 'thunderwave',
@@ -134,6 +164,7 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'A wave of force bursts out 15 feet around you with a thunderclap. Creatures caught in it take the damage and are shoved 10 feet away, or take half and hold their ground on a successful Constitution saving throw.',
     roll: '2d8',
     level: 1,
+    category: 'action',
   },
   {
     key: 'bless',
@@ -141,6 +172,7 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
     roll: '1d4',
     level: 1,
+    category: 'action',
   },
   {
     key: 'detect-magic',
@@ -148,6 +180,7 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
     roll: null,
     level: 1,
+    category: 'passive',
   },
   {
     key: 'misty-step',
@@ -155,13 +188,16 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'A bonus action: you vanish in a puff of silver mist and reappear in an unoccupied space you can see up to 30 feet away.',
     roll: null,
     level: 2,
+    category: 'passive',
   },
   {
     key: 'scorching-ray',
     name: 'Scorching Ray',
-    text: 'Three rays of fire, aimed at one target or split between several, each needing its own ranged spell attack. The damage listed is for a single ray.',
+    text: 'Three rays of fire, aimed at one target or split between several, each rolled separately. The damage listed is for a single ray.',
     roll: '2d6',
     level: 2,
+    category: 'weapon',
+    toHit: '1d20+INT+PROF',
   },
   {
     key: 'aid',
@@ -169,6 +205,7 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'Three creatures gain 5 hit points, to both their current and their maximum, for eight hours. Another 5 for each slot level above 2nd.',
     roll: null,
     level: 2,
+    category: 'passive',
   },
   {
     key: 'hold-person',
@@ -176,6 +213,7 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'One humanoid within 60 feet is held rigid — unable to move, act or speak — while you concentrate, and repeats its Wisdom saving throw at the end of each of its turns. Attacks made against it from within five feet are critical hits.',
     roll: null,
     level: 2,
+    category: 'passive',
   },
   {
     key: 'spiritual-weapon',
@@ -183,6 +221,8 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'A bonus action conjures a floating spectral weapon for a minute. On this turn and each turn after, a bonus action moves it 20 feet and attacks with it.',
     roll: '1d8+WIS',
     level: 2,
+    category: 'weapon',
+    toHit: '1d20+WIS+PROF',
   },
   {
     key: 'fireball',
@@ -190,6 +230,7 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'A roaring sphere of flame fills a 20-foot radius around a point within 150 feet, going round corners to do it. Each creature there takes the damage, halved on a successful Dexterity saving throw. Another 1d6 per slot level above 3rd.',
     roll: '8d6',
     level: 3,
+    category: 'action',
   },
   {
     key: 'counterspell',
@@ -197,6 +238,7 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'A reaction that interrupts a spell you can see being cast within 60 feet. The caster makes a Constitution saving throw, and on a failure the spell does nothing and the slot is spent anyway.',
     roll: null,
     level: 3,
+    category: 'passive',
   },
   {
     key: 'revivify',
@@ -204,6 +246,7 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'Touch a creature that died within the last minute and it returns to life with 1 hit point. It does not regrow anything it lost, and the diamond you spend is gone.',
     roll: null,
     level: 3,
+    category: 'passive',
   },
   {
     key: 'lightning-bolt',
@@ -211,6 +254,7 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'A stroke of lightning 100 feet long and 5 feet wide leaps from your hand. Everything in the line takes the damage, halved on a successful Dexterity saving throw.',
     roll: '8d6',
     level: 3,
+    category: 'action',
   },
   {
     key: 'dispel-magic',
@@ -218,6 +262,7 @@ export const SPELLS: readonly CatalogueEntry[] = [
     text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
     roll: null,
     level: 3,
+    category: 'passive',
   },
 ]
 
@@ -226,12 +271,20 @@ export const SPELLS: readonly CatalogueEntry[] = [
  * for. `level` is null throughout — it means *spell* level, and a feat has none.
  *
  * Most of these are descriptive: what a feat usually changes is a number already on
- * the sheet, or permission to do something, neither of which is a roll. The handful
- * that do roll are the ones with dice of their own, and two of them scale with class
- * level, which is not an ability token and therefore cannot be written down here.
- * Those entries say so in their text and expect the player to edit their copy as they
- * level, which is the cost of the catalogue being a starting point rather than a
- * live rules engine.
+ * the sheet, or permission to do something, neither of which is a roll. Those are the
+ * eleven `passive` entries, and the category is that sentence restated rather than a
+ * second judgement. The five that do roll are the ones with dice of their own, and two
+ * of them scale with class level, which is not an ability token and therefore cannot
+ * be written down here. Those entries say so in their text and expect the player to
+ * edit their copy as they level, which is the cost of the catalogue being a starting
+ * point rather than a live rules engine.
+ *
+ * **No feat is a `weapon`, and none carries a to-hit.** A feat that rolls dice rolls
+ * them on something that has already landed — Sneak Attack and Divine Smite both ride
+ * on a hit made with a weapon the character is holding, and the weapon is what was
+ * aimed — or it rolls them at nothing to aim at, as Lucky's does. Lucky is the one
+ * worth stating: its `1d20` is the reroll itself, not an attack, which is why a d20 in
+ * the `roll` field is never on its own a reason to call something a weapon.
  */
 export const FEATS: readonly CatalogueEntry[] = [
   {
@@ -240,6 +293,7 @@ export const FEATS: readonly CatalogueEntry[] = [
     text: 'A bonus action, once per rest, to catch your breath and regain hit points. Add your fighter level to the die.',
     roll: '1d10',
     level: null,
+    category: 'action',
   },
   {
     key: 'action-surge',
@@ -247,6 +301,7 @@ export const FEATS: readonly CatalogueEntry[] = [
     text: 'Once per rest, take one extra action on your turn — a whole second action, not a bonus action.',
     roll: null,
     level: null,
+    category: 'passive',
   },
   {
     key: 'rage',
@@ -254,6 +309,7 @@ export const FEATS: readonly CatalogueEntry[] = [
     text: 'A bonus action to rage for a minute: advantage on Strength checks and saving throws, extra damage on Strength weapon attacks, and resistance to bludgeoning, piercing and slashing damage. It ends early if a turn goes by in which you neither attack nor take damage.',
     roll: null,
     level: null,
+    category: 'passive',
   },
   {
     key: 'sneak-attack',
@@ -261,6 +317,7 @@ export const FEATS: readonly CatalogueEntry[] = [
     text: 'Once a turn, extra damage on a hit with a finesse or ranged weapon, either when you have advantage or when an ally is beside the target and you do not have disadvantage. A rogue adds another die every two levels — edit your copy as you level.',
     roll: '1d6',
     level: null,
+    category: 'action',
   },
   {
     key: 'divine-smite',
@@ -268,6 +325,7 @@ export const FEATS: readonly CatalogueEntry[] = [
     text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage: 2d8 for a 1st-level slot, another 1d8 per level above that, and 1d8 more again against undead and fiends.',
     roll: '2d8',
     level: null,
+    category: 'action',
   },
   {
     key: 'wild-shape',
@@ -275,6 +333,7 @@ export const FEATS: readonly CatalogueEntry[] = [
     text: 'A bonus action, twice per rest, to take the shape of a beast you have seen. You keep your mental scores and use the beast\'s physical ones, and snap back when its hit points run out.',
     roll: null,
     level: null,
+    category: 'passive',
   },
   {
     key: 'lay-on-hands',
@@ -282,6 +341,7 @@ export const FEATS: readonly CatalogueEntry[] = [
     text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
     roll: null,
     level: null,
+    category: 'passive',
   },
   {
     key: 'bardic-inspiration',
@@ -289,6 +349,7 @@ export const FEATS: readonly CatalogueEntry[] = [
     text: 'A bonus action hands an ally the die for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
     roll: '1d6',
     level: null,
+    category: 'action',
   },
   {
     key: 'great-weapon-master',
@@ -296,6 +357,7 @@ export const FEATS: readonly CatalogueEntry[] = [
     text: 'Heavy melee weapons bite harder in your hands. Score a critical hit or drop a creature with one and you get a bonus-action attack with the same weapon.',
     roll: null,
     level: null,
+    category: 'passive',
   },
   {
     key: 'sharpshooter',
@@ -303,6 +365,7 @@ export const FEATS: readonly CatalogueEntry[] = [
     text: 'Long range costs you no accuracy, cover counts for less against your ranged attacks, and you may trade accuracy for damage on a heavy shot.',
     roll: null,
     level: null,
+    category: 'passive',
   },
   {
     key: 'tough',
@@ -310,6 +373,7 @@ export const FEATS: readonly CatalogueEntry[] = [
     text: 'Your hit point maximum rises by twice your level, and by 2 more every time you gain a level after taking this.',
     roll: null,
     level: null,
+    category: 'passive',
   },
   {
     key: 'alert',
@@ -317,13 +381,19 @@ export const FEATS: readonly CatalogueEntry[] = [
     text: 'You add your proficiency bonus to initiative, and once the order is rolled you may swap your place in it with a willing ally\'s.',
     roll: null,
     level: null,
+    category: 'passive',
   },
   {
     key: 'lucky',
     name: 'Lucky',
     text: 'A few times per rest, reroll a d20 you have just rolled — your own attack, check or saving throw, or an attack made against you — and decide afterwards which of the two results stands.',
+    // An `action` whose roll happens to be a d20, and the one entry where that is
+    // worth a comment. The die *is* the reroll, so it belongs in `roll` where the
+    // dice work will throw it; moving it to `toHit` would make this a weapon that
+    // announces an attack and then deals no damage.
     roll: '1d20',
     level: null,
+    category: 'action',
   },
   {
     key: 'savage-attacker',
@@ -331,6 +401,7 @@ export const FEATS: readonly CatalogueEntry[] = [
     text: 'Once a turn, reroll the damage dice of a melee weapon attack and keep whichever total you prefer.',
     roll: null,
     level: null,
+    category: 'passive',
   },
   {
     key: 'mobile',
@@ -343,6 +414,7 @@ export const FEATS: readonly CatalogueEntry[] = [
     text: 'A creature you attack in melee cannot make an opportunity attack against you for the rest of that turn.',
     roll: null,
     level: null,
+    category: 'passive',
   },
   {
     key: 'resilient',
@@ -350,6 +422,7 @@ export const FEATS: readonly CatalogueEntry[] = [
     text: 'Choose one ability: it rises by 1, and you become proficient in its saving throws.',
     roll: null,
     level: null,
+    category: 'passive',
   },
 ]
 
@@ -364,63 +437,81 @@ export const FEATS: readonly CatalogueEntry[] = [
  * entry, and the DM edits them on the copy to make a stronger or weaker version of
  * the same creature. The numbers chosen are around CR 1 — a goblin's sword, an
  * ogre's club — because scaling up from a modest starting point is easier than
- * remembering to scale down.
+ * remembering to scale down. The same reasoning now reaches the to-hit, which is why
+ * a monster's is written `1d20+4` where a hero's is `1d20+STR+PROF`: there is no
+ * Strength score and no level on the sheet for either token to resolve against.
  *
  * The three saving throws exist for the same reason. Without ability scores there is
  * nothing on a monster's sheet for "the ogre makes a Constitution save" to be built
  * from, so the escape hatch is an entry that simply *is* that roll, with the bonus
  * written in and meant to be edited. Only the three commonly called for are here;
- * anything rarer is a custom entry, which costs the DM one line of typing.
+ * anything rarer is a custom entry, which costs the DM one line of typing. They are
+ * `action`s and their `1d20+2` stays in `roll`, for Lucky's reason: a save is the roll,
+ * not an attack that lands one.
  */
 export const NPC_ACTIONS: readonly CatalogueEntry[] = [
   {
     key: 'npc-claw',
     name: 'Claw',
-    text: 'Melee attack, +4 to hit, reach 5 feet, slashing damage. The workhorse attack for a beast or anything that fights with its hands.',
+    text: 'Melee attack, reach 5 feet, slashing damage. The workhorse attack for a beast or anything that fights with its hands.',
     roll: '1d6+2',
     level: null,
+    category: 'weapon',
+    toHit: '1d20+4',
   },
   {
     key: 'npc-bite',
     name: 'Bite',
-    text: 'Melee attack, +4 to hit, reach 5 feet, piercing damage. Pack hunters get advantage when one of their own is already beside the target.',
+    text: 'Melee attack, reach 5 feet, piercing damage. Pack hunters get advantage when one of their own is already beside the target.',
     roll: '1d8+2',
     level: null,
+    category: 'weapon',
+    toHit: '1d20+4',
   },
   {
     key: 'npc-slam',
     name: 'Slam',
-    text: 'Melee attack, +5 to hit, reach 5 feet, bludgeoning damage — a construct, an ooze, or anything that swings its whole body at you.',
+    text: 'Melee attack, reach 5 feet, bludgeoning damage — a construct, an ooze, or anything that swings its whole body at you.',
     roll: '2d6+3',
     level: null,
+    category: 'weapon',
+    toHit: '1d20+5',
   },
   {
     key: 'npc-scimitar',
     name: 'Scimitar',
-    text: 'Melee attack, +4 to hit, reach 5 feet, slashing damage. The standard swing of an armed goblin or a bandit.',
+    text: 'Melee attack, reach 5 feet, slashing damage. The standard swing of an armed goblin or a bandit.',
     roll: '1d6+2',
     level: null,
+    category: 'weapon',
+    toHit: '1d20+4',
   },
   {
     key: 'npc-longbow',
     name: 'Longbow',
-    text: 'Ranged attack, +4 to hit, piercing damage, out to 150 feet and 600 at long range with disadvantage.',
+    text: 'Ranged attack, piercing damage, out to 150 feet and 600 at long range with disadvantage.',
     roll: '1d8+2',
     level: null,
+    category: 'weapon',
+    toHit: '1d20+4',
   },
   {
     key: 'npc-greatclub',
     name: 'Greatclub',
-    text: 'Melee attack, +6 to hit, reach 5 feet, bludgeoning damage — an ogre with a tree trunk, and enough to fell a first-level character outright.',
+    text: 'Melee attack, reach 5 feet, bludgeoning damage — an ogre with a tree trunk, and enough to fell a first-level character outright.',
     roll: '2d8+3',
     level: null,
+    category: 'weapon',
+    toHit: '1d20+6',
   },
   {
     key: 'npc-javelin',
     name: 'Javelin',
-    text: 'Thrown or melee attack, +4 to hit, piercing damage, 30 feet and 120 at long range. Gives a melee monster something to do on a turn it cannot close.',
+    text: 'Thrown or melee attack, piercing damage, 30 feet and 120 at long range. Gives a melee monster something to do on a turn it cannot close.',
     roll: '1d6+2',
     level: null,
+    category: 'weapon',
+    toHit: '1d20+4',
   },
   {
     key: 'npc-fire-breath',
@@ -428,6 +519,7 @@ export const NPC_ACTIONS: readonly CatalogueEntry[] = [
     text: 'A cone of fire the creature can loose once every few rounds. Everything caught takes the damage, halved on a successful Dexterity saving throw. These dice suit a hell hound — add more for anything draconic.',
     roll: '6d6',
     level: null,
+    category: 'action',
   },
   {
     key: 'npc-multiattack',
@@ -435,6 +527,7 @@ export const NPC_ACTIONS: readonly CatalogueEntry[] = [
     text: 'The creature takes two of its attacks on its turn instead of one. Roll each of them separately from its other entries.',
     roll: null,
     level: null,
+    category: 'passive',
   },
   {
     key: 'npc-constitution-save',
@@ -442,6 +535,7 @@ export const NPC_ACTIONS: readonly CatalogueEntry[] = [
     text: 'A Constitution saving throw for a creature whose sheet has no ability scores to build one from. The bonus is a starting point: +2 suits an ordinary brute, +5 something genuinely tough.',
     roll: '1d20+2',
     level: null,
+    category: 'action',
   },
   {
     key: 'npc-dexterity-save',
@@ -449,6 +543,7 @@ export const NPC_ACTIONS: readonly CatalogueEntry[] = [
     text: 'A Dexterity saving throw for a creature whose sheet has no ability scores to build one from. +2 fits most things; drop it to zero for anything heavy and slow.',
     roll: '1d20+2',
     level: null,
+    category: 'action',
   },
   {
     key: 'npc-wisdom-save',
@@ -456,6 +551,7 @@ export const NPC_ACTIONS: readonly CatalogueEntry[] = [
     text: 'A Wisdom saving throw for a creature whose sheet has no ability scores to build one from. Beasts and constructs are usually worse at this than the bonus given here.',
     roll: '1d20+1',
     level: null,
+    category: 'action',
   },
 ]
 

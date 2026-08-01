@@ -8,7 +8,6 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
-import { cn } from '@/lib/utils'
 import {
   CharacterRow,
   CharacterSection,
@@ -22,8 +21,6 @@ export type DmSheetsPanelProps = {
   code: string
   /** Present means this browser holds it; every call below re-verifies it server-side. */
   dmCode: string
-  /** So the board can position this without this file knowing where. */
-  className?: string
 }
 
 /**
@@ -55,11 +52,11 @@ export type DmSheetsPanelProps = {
  * The subscriptions, the filters and the delete are all `useDmCharacterRows`, which carries
  * the notes about why there are two of them and why no seat id appears in any of it.
  */
-export function DmSheetsPanel({ code, dmCode, className }: DmSheetsPanelProps) {
+export function DmSheetsPanel({ code, dmCode }: DmSheetsPanelProps) {
   const rows = useDmCharacterRows(code, dmCode)
 
   return (
-    <Card className={cn('w-full', className)}>
+    <Card className="w-full">
       <CardHeader>
         <CardTitle>Characters</CardTitle>
         <CardDescription>

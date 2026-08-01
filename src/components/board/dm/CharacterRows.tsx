@@ -260,27 +260,22 @@ export function DeleteCharacterButton({
  *
  * **A drawer rather than a section that unrolls inside the row, and the editor settled
  * it.** `CharacterSheetEditor` is written as the body and footer of a fixed-height column:
- * the fields claim `flex-1` and scroll within it, and Save sits in a `SheetFooter` pinned to
+ * the fields claim `flex-1` and scroll within it, and Save sits in an `EditorFooter` pinned to
  * the bottom, because a Save button below the fold of a long form is the failure that
- * primitive exists to prevent. Inside a row of one of these panels it would get neither half
- * of that — the panel is itself a scrolling column inside the overlay, so there is no height
- * for the body to claim and no bottom for the footer to stick to, and a full spell list would
- * unroll inside a column too narrow for six ability scores and their saves. The brief was to
- * adapt the call site rather than build a second editor, and handing it the container it was
- * shaped for is that adaptation.
+ * arrangement exists to prevent. Inside a row of one of these panels it would get neither half
+ * of that — the panel is itself a scrolling column inside the DM tools tab, so there is no
+ * height for the body to claim and no bottom for the footer to stick to, and a spell list would
+ * unroll inside a column too narrow for six ability scores and their saves. Adapting the call
+ * site was preferred to building a second editor, and handing it the container it was shaped
+ * for is that adaptation.
  *
- * **From the left, which is the only edge free.** These tools already own the right-hand side
- * of the board, so a drawer on that edge would slide over the list that opened it and over
- * the tabs beside it. From the left, the roster, the tab strip and the middle of the map all
- * stay on screen — which is the whole reason this panel is over the board instead of back in
- * the lobby, since a DM reaching for a monster's stat block is doing it with the party
- * standing on that monster. The player's own sheet opens from the same edge, for the
- * mirror-image reason.
- *
- * Nothing here is added to the pointer-events trap `MapSetupOverlay` documents. All this puts
- * inside the overlay's box is the button; the drawer is a Radix portal, fixed to the viewport
- * and mounted only while it is open, so it is never an invisible rectangle lying over the
- * canvas waiting to swallow a drag.
+ * **It opens from the left, and the map is why.** These lists live in the DM tools tab of the
+ * right-hand panel, so a drawer on that edge would slide over the list that opened it. From the
+ * left, that panel and the middle of the map both stay on screen — which is what a DM reaching
+ * for a monster's stat block needs, since they are doing it with the party standing on that
+ * monster and the map is the thing they must not lose sight of. The player's own sheet is not a
+ * drawer at all: it is the Character tab in this same panel, which is already the fixed-height
+ * column the editor wants, so this is the one place a sheet is still drawn over the board.
  *
  * One drawer per row, rather than one for the panel with the open character held in state.
  * Closed, a Radix dialog is its trigger and nothing more, so a party of six and their

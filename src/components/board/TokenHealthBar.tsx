@@ -1,7 +1,9 @@
 import { memo } from 'react'
 import { Rect, Text } from 'react-konva'
+import type Konva from 'konva'
 
 import { BAND_COLOUR, healthFraction, healthLabel } from '@/lib/health'
+import type { Id } from '@convex/_generated/dataModel'
 import type { PublicVitals } from '@convex/lib/characters'
 import { healthBand } from '@convex/lib/sheet'
 
@@ -30,6 +32,39 @@ const LABEL_FONT_SIZE = 9
  */
 export const COIN_DETAIL_MIN_DIAMETER = 26
 
+/**
+ * The three bar handlers that close over nothing, declared once for the module.
+ *
+ * See the note beside the track below for why these are not written inline: every bar
+ * re-renders on every step of a zoom, and react-konva answers a changed `on*`
+ * reference by detaching and re-attaching the listener.
+ *
+ * `cursor` is the same container trick `TokenCoin` uses, and the same handover:
+ * clearing the inline style gives the cursor back to the class `BoardStage`'s div
+ * sets, and the coin's own `mouseenter` reclaims it as the pointer crosses the gap
+ * below.
+ */
+function cursor(event: Konva.KonvaEventObject<MouseEvent>, style: string) {
+  const container = event.target.getStage()?.container()
+  if (container) container.style.cursor = style
+}
+
+const showPointer = (event: Konva.KonvaEventObject<MouseEvent>) => cursor(event, 'pointer')
+const clearCursor = (event: Konva.KonvaEventObject<MouseEvent>) => cursor(event, '')
+
+function swallowLeftPress(event: Konva.KonvaEventObject<MouseEvent>) {
+  // Left button only, as on the coin: a right-click is not an edit and a middle-drag
+  // belongs to the pan.
+  if (event.evt.button !== 0) return
+  // Konva binds its drag start with a namespaced mousedown listener on the draggable
+  // node — which is the token's `Group`, our parent. Cancelling the bubble here is
+  // what stops a press on the bar picking the creature up by its head. It also means
+  // a press on the bar does not select the token, which is the same separation the
+  // other way round: aiming the arrow keys and adjusting hit points are two different
+  // intentions.
+  event.cancelBubble = true
+}
+
 /** Dark enough that the four band colours all read against it on any map art. */
 const TRACK_FILL = 'rgba(15, 23, 42, 0.85)'
 const TRACK_STROKE = 'rgba(0, 0, 0, 0.6)'
@@ -47,6 +82,26 @@ export type TokenHealthBarProps = {
   radius: number
   /** The camera's scale, for the same reason `TokenCoin` needs it. */
   scale: number
+  /**
+   * The token this bar belongs to, handed down as a primitive and handed back with
+   * the click. See `onOpenHp` for why it is not simply closed over.
+   */
+  tokenId: Id<'tokens'>
+  /**
+   * Whether this client may change these hit points — an affordance mirroring
+   * `requireEditableCharacter`, exactly as `canMove` mirrors `requireMovableToken`,
+   * and never a permission. It decides whether the bar is clickable at all; the
+   * mutation behind the editor re-checks the same question on every press.
+   */
+  canEditHp: boolean
+  /**
+   * Open the editor on this token. One function for the whole board, given the id
+   * back, rather than a closure per bar — the arrangement `TokenCoinProps`
+   * explains, for the same reason: react-konva compares `on*` props by reference
+   * and answers a new one by unbinding the old listener and binding the new, so a
+   * fresh arrow per coin is a rebind per coin per frame of a pan.
+   */
+  onOpenHp: (tokenId: Id<'tokens'>) => void
 }
 
 /**
@@ -68,16 +123,51 @@ export type TokenHealthBarProps = {
  *
  * Memoised, and every prop is a primitive or an identity the join in `useBoard`
  * holds still. Hit points change a few times a round; the camera changes sixty
- * times a second. This must not be the thing that makes a zoom expensive, so there
- * is nothing allocated per render — no dash arrays, no style objects, no arrays of
- * points — and `listening={false}` on all three nodes keeps the bar out of Konva's
- * hit graph entirely. A bar that could be clicked is a token you cannot pick up by
- * its head.
+ * times a second. This must not be the thing that makes a zoom expensive, so
+ * **exactly one thing is allocated per render** — the `onClick` closure, which is the
+ * only handler that needs this bar's own token — and nothing else: no dash arrays, no
+ * style objects, no arrays of points, and the other three handlers hoisted to the
+ * module. The fill and the label are `listening={false}`, leaving exactly one node of
+ * the three in Konva's hit graph and only when this client may edit the numbers on it.
+ *
+ * **A bar that could be clicked is a token you cannot pick up by its head**, which
+ * was the reason all three were once deaf and is still true of the naive version of
+ * this. It is now the reason the press handler below cancels the bubble instead:
+ * Konva binds a draggable node's drag start with a namespaced `mousedown` listener
+ * on the node itself, and the node here is the coin's `Group`, our parent.
+ *
+ * **The track listening is an answer to a rejected proposal rather than a quiet
+ * reversal of it.** ADR 0005 turned down Konva `+`/`−` controls on every coin for
+ * three reasons, and it is worth being precise that none of them describes this:
+ *
+ * - *Two hit targets on every coin.* This adds **no shapes at all**. The track is
+ *   already drawn, already spans the bar box exactly, and is already the first of
+ *   the three — so with the two above it left deaf it wins the hit test underneath
+ *   them on its own. That is one hit shape per bar, zero on a bar this client may
+ *   not edit, and zero on every coin below `COIN_DETAIL_MIN_DIAMETER`, which is
+ *   precisely the crowded, zoomed-out board the objection was about.
+ * - *Competes with the drag gesture.* Answered by geometry rather than by care.
+ *   The bar sits wholly **above** the circle — see `top` — so the coin's own hit
+ *   area is untouched and nothing about picking a creature up changes. What it
+ *   costs is pan-by-empty-drag over a twelve-pixel strip above each coin. Held
+ *   space still pans across it regardless, because `BoardStage` claims that press
+ *   in the capture phase before Konva is offered it.
+ * - *Rebuilds canvas event bindings.* Answered by the props above: an id and one
+ *   handler the board holds still for its whole life, so the memo still skips and a
+ *   pan still reconciles nothing.
+ *
+ * What the ADR actually settled is where the editor lives — HTML over the canvas,
+ * with real buttons, a real field and a keyboard — and that is untouched. This
+ * changes only what opens it, from selecting a token to clicking the thing the
+ * editor edits.
  */
 export const TokenHealthBar = memo(function TokenHealthBar({
   vitals,
   radius,
   scale,
+  tokenId,
+  canEditHp,
+  onOpenHp,
 }: TokenHealthBarProps) {
   const height = BAR_HEIGHT / scale
   const width = radius * 2
@@ -107,7 +197,27 @@ export const TokenHealthBar = memo(function TokenHealthBar({
         fill={TRACK_FILL}
         stroke={TRACK_STROKE}
         strokeWidth={BAR_EDGE / scale}
-        listening={false}
+        // The whole bar's hit shape, drawn first and spanned by the two deaf nodes
+        // above it. False keeps a bar this client may not edit out of the hit graph
+        // rather than making it a target that answers a click with nothing.
+        listening={canEditHp}
+        // ⚠️ Three of these four are module-level and only `onClick` is built here,
+        // and that split is the point rather than an inconsistency. react-konva
+        // compares `on*` by reference and answers a change by unbinding the old
+        // listener and binding the new one — and every bar on the board re-renders on
+        // every step of a zoom, because `scale` is a prop. A closure per render per
+        // bar is a detach and re-attach per bar per frame for behaviour that never
+        // varies. These three close over nothing render-scoped, so they are declared
+        // once; `onClick` genuinely needs `tokenId` and `onOpenHp` and cannot be.
+        onMouseDown={swallowLeftPress}
+        onClick={(event) => {
+          // Otherwise this reaches the stage, where a click that hit no token is the
+          // gesture that closes the very editor about to open.
+          event.cancelBubble = true
+          onOpenHp(tokenId)
+        }}
+        onMouseEnter={showPointer}
+        onMouseLeave={clearCursor}
         perfectDrawEnabled={false}
       />
 

@@ -38,6 +38,19 @@ export type Seat = {
    * draggable; the server re-checks every move.
    */
   characterId: Id<'characters'> | null
+  /**
+   * This seat's display name and the name of what it is playing, both read from the
+   * same roster row `characterId` comes from and both null until it arrives.
+   *
+   * Read here rather than looked up again by whoever wants to print them. The header
+   * shows both, and the alternative — the shell holding its own `players.list`
+   * subscription to re-derive what this hook has already found — is the third
+   * subscription this hook was written to avoid. The display name in particular must
+   * *not* come from browser storage: a rename lands on the server first, and a header
+   * reading the remembered name would go on showing the old one until the next visit.
+   */
+  displayName: string | null
+  characterName: string | null
   error: string | null
   /** Join or rejoin under this name. Idempotent server-side. */
   takeSeat: (displayName: string) => Promise<void>
@@ -153,15 +166,17 @@ export function useSeat(code: string): Seat {
     return 'needsName'
   })()
 
-  // `players.list` is public and the lobby subscribes to it with these very
+  // `players.list` is public and the Table tab subscribes to it with these very
   // arguments, so Convex serves both from one cache entry and one socket.
-  const characterId = seats?.find((row) => row._id === playerId)?.characterId ?? null
+  const mySeat = seats?.find((row) => row._id === playerId) ?? null
 
   return {
     status,
     game: game ?? null,
     playerId,
-    characterId,
+    characterId: mySeat?.characterId ?? null,
+    displayName: mySeat?.displayName ?? null,
+    characterName: mySeat?.characterName ?? null,
     error,
     takeSeat,
     renameSeat,

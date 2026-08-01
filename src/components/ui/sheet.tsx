@@ -5,7 +5,7 @@
 // shadcn calls a slide-out drawer a "Sheet". This application's whole subject
 // matter is *character sheets*. So `Sheet` here means the drawer and nothing else,
 // and every domain component that renders one is named `CharacterSheet*` —
-// `CharacterSheetPanel`, `CharacterSheetView`, `CharacterSheetEditor` — so that a
+// `CharacterSheetDrawer`, `CharacterSheetView`, `CharacterSheetEditor` — so that a
 // reader is never left wondering which sense of the word an identifier is in. The
 // primitives below keep shadcn's names on purpose rather than being renamed to
 // something like `Drawer`: the day this set is updated from upstream, a file that
@@ -63,10 +63,24 @@ function SheetOverlay({
  * Which edge the panel is pinned to.
  *
  * Only the two horizontal edges, because a panel that is a tall column of fields is
- * what this application needs one for — the character sheet on the left, and
- * Milestone 5's DM panel on the right beside the map setup overlay. Top and bottom
- * are in upstream shadcn and are left out here rather than carried unused: an
- * untested code path in a shared primitive is worse than an absent one.
+ * what this application needs one for. Top and bottom are in upstream shadcn and are
+ * left out here rather than carried unused: an untested code path in a shared
+ * primitive is worse than an absent one.
+ *
+ * ⚠️ **Since the DM's tools became a tab in a persistent right-hand panel, `left` is
+ * the only side with a caller** — `CharacterSheetDrawer`, which is pinned there
+ * precisely because that panel owns the right-hand edge of the screen. So the
+ * argument above now points at `right` too, and it is worth answering rather than
+ * leaving it standing over a line it would delete.
+ *
+ * **`right` stays, and the difference from top and bottom is that it is the
+ * *default*.** `SheetContent`'s signature says `side = "right"`, matching upstream,
+ * so removing the entry does not remove a code path — it forces the default to become
+ * `left`, which is a silent change to what every future `<SheetContent>` written
+ * without a side does, in a primitive this file's opening comment says is kept close
+ * to upstream so that the next update from it is a merge somebody can review. Top and
+ * bottom could be dropped for free because nothing could reach them by accident. This
+ * one is reached by omission, which is the opposite property.
  */
 const SIDE_CLASSES = {
   right:

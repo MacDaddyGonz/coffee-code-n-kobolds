@@ -9,7 +9,7 @@
 // it is exactly the sort of thing one convenient import quietly undoes.
 
 import type { ClassKey } from '../classes'
-import type { AbilityScores, HitDice, SaveProficiencies, SheetEntry } from '../sheet'
+import type { AbilityScores, ContentEntry, HitDice, SaveProficiencies } from '../sheet'
 import type { SkillProficiencies } from '../skills'
 
 /**
@@ -18,9 +18,15 @@ import type { SkillProficiencies } from '../skills'
  * `id` is absent because it is per-character: the resolver mints stable ids when it
  * builds the sheet, so two characters of the same class do not share a React key or
  * a roll target. Everything else is the `SheetEntry` the rest of the app already
- * knows — no new entry type, and therefore no second roll path in Milestone 5.
+ * knows — no new entry type, and therefore no second roll path when the dice land.
+ *
+ * That is now `ContentEntry`, which is the same thing with the **category answered**
+ * rather than left to a default. See the note on it in lib/sheet.ts: the stored field
+ * has to be optional because the table already holds entries without one, and content
+ * has no such history — so requiring it here is what makes the type checker list
+ * every entry that still has to be decided.
  */
-export type LibraryEntry = Omit<SheetEntry, 'id'>
+export type LibraryEntry = ContentEntry
 
 export type LibrarySheet = {
   /** 1 to 5. Held on the sheet as well as in its position, so a test can catch a misfile. */

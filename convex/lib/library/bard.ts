@@ -56,6 +56,7 @@ export const BARD: ClassLibrary = {
         text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
         roll: null,
         level: null,
+        category: 'passive',
         catalogueKey: null,
       },
       {
@@ -63,6 +64,7 @@ export const BARD: ClassLibrary = {
         text: 'A bonus action hands an ally the die for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
         roll: '1d6',
         level: null,
+        category: 'action',
         catalogueKey: 'bardic-inspiration',
       },
     ],
@@ -72,6 +74,7 @@ export const BARD: ClassLibrary = {
         text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
         roll: '1d6',
         level: 0,
+        category: 'action',
         catalogueKey: null,
       },
       {
@@ -79,6 +82,7 @@ export const BARD: ClassLibrary = {
         text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
         roll: '2d4+CHA',
         level: 1,
+        category: 'action',
         catalogueKey: 'healing-word',
       },
     ],
@@ -121,6 +125,7 @@ export const BARD: ClassLibrary = {
             text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -128,6 +133,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action hands an ally the die for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
             roll: '1d6',
             level: null,
+            category: 'action',
             catalogueKey: 'bardic-inspiration',
           },
           {
@@ -135,6 +141,7 @@ export const BARD: ClassLibrary = {
             text: 'Add half your proficiency bonus, rounded down, to any ability check that does not already include it. A bard is never completely hopeless at anything.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -142,6 +149,7 @@ export const BARD: ClassLibrary = {
             text: 'A reaction when a creature within 60 feet makes an attack roll or an ability check: spend a Bardic Inspiration die and subtract it from their roll. You may decide after seeing their d20 but before the result is called, so it is the same die used to spoil rather than to help.',
             roll: '1d6',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
         ],
@@ -151,6 +159,7 @@ export const BARD: ClassLibrary = {
             text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
             roll: '1d6',
             level: 0,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -158,6 +167,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
             roll: '2d4+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'healing-word',
           },
           {
@@ -165,6 +175,7 @@ export const BARD: ClassLibrary = {
             text: 'One person within 30 feet who can see and hear you is charmed for an hour on a failed Wisdom saving throw, and treats you as a friend while it lasts. They know they were charmed once it ends, so it buys a conversation rather than a servant.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -172,6 +183,7 @@ export const BARD: ClassLibrary = {
             text: 'For an hour you understand every spoken language you hear, and you can read any writing you touch at about a page a minute. Secret codes and invisible ink stay secret.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -209,6 +221,7 @@ export const BARD: ClassLibrary = {
             text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -216,6 +229,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action hands an ally the die for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
             roll: '1d6',
             level: null,
+            category: 'action',
             catalogueKey: 'bardic-inspiration',
           },
           {
@@ -223,6 +237,7 @@ export const BARD: ClassLibrary = {
             text: 'Add half your proficiency bonus, rounded down, to any ability check that does not already include it. A bard is never completely hopeless at anything.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -230,6 +245,7 @@ export const BARD: ClassLibrary = {
             text: 'A reaction when a creature within 60 feet makes an attack roll or an ability check: spend a Bardic Inspiration die and subtract it from their roll. You may decide after seeing their d20 but before the result is called, so it is the same die used to spoil rather than to help.',
             roll: '1d6',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -237,6 +253,7 @@ export const BARD: ClassLibrary = {
             text: 'Two of the skills you are trained in count your proficiency bonus twice. Persuasion and Investigation are the pair that suit this build — the two things your bard becomes famous for.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -246,6 +263,7 @@ export const BARD: ClassLibrary = {
             text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
             roll: '1d6',
             level: 0,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -253,6 +271,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
             roll: '2d4+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'healing-word',
           },
           {
@@ -260,6 +279,7 @@ export const BARD: ClassLibrary = {
             text: 'One person within 30 feet who can see and hear you is charmed for an hour on a failed Wisdom saving throw, and treats you as a friend while it lasts. They know they were charmed once it ends, so it buys a conversation rather than a servant.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -267,6 +287,7 @@ export const BARD: ClassLibrary = {
             text: 'For an hour you understand every spoken language you hear, and you can read any writing you touch at about a page a minute. Secret codes and invisible ink stay secret.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -274,6 +295,7 @@ export const BARD: ClassLibrary = {
             text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'detect-magic',
           },
           {
@@ -281,6 +303,7 @@ export const BARD: ClassLibrary = {
             text: 'Put one reasonable course of action to a creature that can hear and understand you. On a failed Wisdom saving throw it spends up to eight hours following the suggestion, and anything obviously harmful to it breaks the spell at once.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -318,6 +341,7 @@ export const BARD: ClassLibrary = {
             text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -325,6 +349,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action hands an ally the die for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
             roll: '1d6',
             level: null,
+            category: 'action',
             catalogueKey: 'bardic-inspiration',
           },
           {
@@ -332,6 +357,7 @@ export const BARD: ClassLibrary = {
             text: 'Add half your proficiency bonus, rounded down, to any ability check that does not already include it. A bard is never completely hopeless at anything.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -339,6 +365,7 @@ export const BARD: ClassLibrary = {
             text: 'A reaction when a creature within 60 feet makes an attack roll or an ability check: spend a Bardic Inspiration die and subtract it from their roll. You may decide after seeing their d20 but before the result is called, so it is the same die used to spoil rather than to help.',
             roll: '1d6',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -346,6 +373,7 @@ export const BARD: ClassLibrary = {
             text: 'Two of the skills you are trained in count your proficiency bonus twice. Persuasion and Investigation are the pair that suit this build — the two things your bard becomes famous for.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -355,6 +383,7 @@ export const BARD: ClassLibrary = {
             text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
             roll: '1d6',
             level: 0,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -362,6 +391,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
             roll: '2d4+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'healing-word',
           },
           {
@@ -369,6 +399,7 @@ export const BARD: ClassLibrary = {
             text: 'One person within 30 feet who can see and hear you is charmed for an hour on a failed Wisdom saving throw, and treats you as a friend while it lasts. They know they were charmed once it ends, so it buys a conversation rather than a servant.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -376,6 +407,7 @@ export const BARD: ClassLibrary = {
             text: 'For an hour you understand every spoken language you hear, and you can read any writing you touch at about a page a minute. Secret codes and invisible ink stay secret.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -383,6 +415,7 @@ export const BARD: ClassLibrary = {
             text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'detect-magic',
           },
           {
@@ -390,6 +423,7 @@ export const BARD: ClassLibrary = {
             text: 'Put one reasonable course of action to a creature that can hear and understand you. On a failed Wisdom saving throw it spends up to eight hours following the suggestion, and anything obviously harmful to it breaks the spell at once.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -397,6 +431,7 @@ export const BARD: ClassLibrary = {
             text: 'A sharp crack of sound unlocks whatever you point at within 60 feet — a door, a chest, a set of manacles, a lid held shut by magic. Everyone within 300 feet hears the bang, so it is never the quiet option.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -404,6 +439,7 @@ export const BARD: ClassLibrary = {
             text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: 'dispel-magic',
           },
         ],
@@ -441,6 +477,7 @@ export const BARD: ClassLibrary = {
             text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -448,6 +485,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action hands an ally the die — now a d8 — for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
             roll: '1d8',
             level: null,
+            category: 'action',
             catalogueKey: 'bardic-inspiration',
           },
           {
@@ -455,6 +493,7 @@ export const BARD: ClassLibrary = {
             text: 'You get every Bardic Inspiration die back on a short rest as well as a long one, so handing them out freely costs you almost nothing.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -462,6 +501,7 @@ export const BARD: ClassLibrary = {
             text: 'Add half your proficiency bonus, rounded down, to any ability check that does not already include it. A bard is never completely hopeless at anything.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -469,6 +509,7 @@ export const BARD: ClassLibrary = {
             text: 'A reaction when a creature within 60 feet makes an attack roll or an ability check: spend a Bardic Inspiration die — a d8 now — and subtract it from their roll. You may decide after seeing their d20 but before the result is called.',
             roll: '1d8',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -476,6 +517,7 @@ export const BARD: ClassLibrary = {
             text: 'Two of the skills you are trained in count your proficiency bonus twice. Persuasion and Investigation are the pair that suit this build — the two things your bard becomes famous for.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -485,6 +527,7 @@ export const BARD: ClassLibrary = {
             text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
             roll: '1d6',
             level: 0,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -492,6 +535,7 @@ export const BARD: ClassLibrary = {
             text: 'Make a sound, or an image no bigger than a cupboard, somewhere within 30 feet for a minute — a voice round the corner, a wall where there is none, a chest that is not there. Anyone who studies it and succeeds on an Investigation check sees straight through it.',
             roll: null,
             level: 0,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -499,6 +543,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
             roll: '2d4+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'healing-word',
           },
           {
@@ -506,6 +551,7 @@ export const BARD: ClassLibrary = {
             text: 'One person within 30 feet who can see and hear you is charmed for an hour on a failed Wisdom saving throw, and treats you as a friend while it lasts. They know they were charmed once it ends, so it buys a conversation rather than a servant.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -513,6 +559,7 @@ export const BARD: ClassLibrary = {
             text: 'For an hour you understand every spoken language you hear, and you can read any writing you touch at about a page a minute. Secret codes and invisible ink stay secret.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -520,6 +567,7 @@ export const BARD: ClassLibrary = {
             text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'detect-magic',
           },
           {
@@ -527,6 +575,7 @@ export const BARD: ClassLibrary = {
             text: 'Put one reasonable course of action to a creature that can hear and understand you. On a failed Wisdom saving throw it spends up to eight hours following the suggestion, and anything obviously harmful to it breaks the spell at once.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -534,6 +583,7 @@ export const BARD: ClassLibrary = {
             text: 'A sharp crack of sound unlocks whatever you point at within 60 feet — a door, a chest, a set of manacles, a lid held shut by magic. Everyone within 300 feet hears the bang, so it is never the quiet option.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -541,6 +591,7 @@ export const BARD: ClassLibrary = {
             text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: 'dispel-magic',
           },
           {
@@ -548,6 +599,7 @@ export const BARD: ClassLibrary = {
             text: 'A reaction that interrupts a spell you can see being cast within 60 feet. The caster makes a Constitution saving throw, and on a failure the spell does nothing and the slot is spent anyway.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: 'counterspell',
           },
         ],
@@ -590,6 +642,7 @@ export const BARD: ClassLibrary = {
             text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -597,6 +650,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action hands an ally the die for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
             roll: '1d6',
             level: null,
+            category: 'action',
             catalogueKey: 'bardic-inspiration',
           },
           {
@@ -604,6 +658,7 @@ export const BARD: ClassLibrary = {
             text: 'Add half your proficiency bonus, rounded down, to any ability check that does not already include it. A bard is never completely hopeless at anything.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -611,6 +666,7 @@ export const BARD: ClassLibrary = {
             text: 'An ally holding one of your Bardic Inspiration dice may instead add it to a damage roll, or to their Armour Class against one attack. The Armour Class use is decided after the attacker rolls, which is what turns a hit into a miss.',
             roll: '1d6',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -618,6 +674,7 @@ export const BARD: ClassLibrary = {
             text: 'Your training covers medium armour, shields and martial weapons, so you sing from inside the shield wall rather than from behind it.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -627,6 +684,7 @@ export const BARD: ClassLibrary = {
             text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
             roll: '1d6',
             level: 0,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -634,6 +692,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
             roll: '2d4+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'healing-word',
           },
           {
@@ -641,6 +700,7 @@ export const BARD: ClassLibrary = {
             text: 'For a minute a creature you touch cannot be frightened, and at the start of each of its turns it gains temporary hit points equal to your Charisma modifier. The spell for the ally who is about to do something brave.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -648,6 +708,7 @@ export const BARD: ClassLibrary = {
             text: 'One person within 30 feet who can see and hear you is charmed for an hour on a failed Wisdom saving throw, and treats you as a friend while it lasts. They know they were charmed once it ends, so it buys a conversation rather than a servant.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -685,6 +746,7 @@ export const BARD: ClassLibrary = {
             text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -692,6 +754,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action hands an ally the die for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
             roll: '1d6',
             level: null,
+            category: 'action',
             catalogueKey: 'bardic-inspiration',
           },
           {
@@ -699,6 +762,7 @@ export const BARD: ClassLibrary = {
             text: 'Add half your proficiency bonus, rounded down, to any ability check that does not already include it. A bard is never completely hopeless at anything.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -706,6 +770,7 @@ export const BARD: ClassLibrary = {
             text: 'An ally holding one of your Bardic Inspiration dice may instead add it to a damage roll, or to their Armour Class against one attack. The Armour Class use is decided after the attacker rolls, which is what turns a hit into a miss.',
             roll: '1d6',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -713,6 +778,7 @@ export const BARD: ClassLibrary = {
             text: 'Your training covers medium armour, shields and martial weapons, so you sing from inside the shield wall rather than from behind it.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -720,6 +786,7 @@ export const BARD: ClassLibrary = {
             text: 'Two of the skills you are trained in count your proficiency bonus twice. Persuasion and Performance are the pair that suit this build — the two things your bard becomes famous for.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -729,6 +796,7 @@ export const BARD: ClassLibrary = {
             text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
             roll: '1d6',
             level: 0,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -736,6 +804,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
             roll: '2d4+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'healing-word',
           },
           {
@@ -743,6 +812,7 @@ export const BARD: ClassLibrary = {
             text: 'For a minute a creature you touch cannot be frightened, and at the start of each of its turns it gains temporary hit points equal to your Charisma modifier. The spell for the ally who is about to do something brave.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -750,6 +820,7 @@ export const BARD: ClassLibrary = {
             text: 'One person within 30 feet who can see and hear you is charmed for an hour on a failed Wisdom saving throw, and treats you as a friend while it lasts. They know they were charmed once it ends, so it buys a conversation rather than a servant.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -757,6 +828,7 @@ export const BARD: ClassLibrary = {
             text: 'Three creatures gain 5 hit points, to both their current and their maximum, for eight hours. Another 5 for each slot level above 2nd.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: 'aid',
           },
           {
@@ -764,6 +836,7 @@ export const BARD: ClassLibrary = {
             text: 'Put one reasonable course of action to a creature that can hear and understand you. On a failed Wisdom saving throw it spends up to eight hours following the suggestion, and anything obviously harmful to it breaks the spell at once.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -801,6 +874,7 @@ export const BARD: ClassLibrary = {
             text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -808,6 +882,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action hands an ally the die for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
             roll: '1d6',
             level: null,
+            category: 'action',
             catalogueKey: 'bardic-inspiration',
           },
           {
@@ -815,6 +890,7 @@ export const BARD: ClassLibrary = {
             text: 'Add half your proficiency bonus, rounded down, to any ability check that does not already include it. A bard is never completely hopeless at anything.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -822,6 +898,7 @@ export const BARD: ClassLibrary = {
             text: 'An ally holding one of your Bardic Inspiration dice may instead add it to a damage roll, or to their Armour Class against one attack. The Armour Class use is decided after the attacker rolls, which is what turns a hit into a miss.',
             roll: '1d6',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -829,6 +906,7 @@ export const BARD: ClassLibrary = {
             text: 'Your training covers medium armour, shields and martial weapons, so you sing from inside the shield wall rather than from behind it.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -836,6 +914,7 @@ export const BARD: ClassLibrary = {
             text: 'Two of the skills you are trained in count your proficiency bonus twice. Persuasion and Performance are the pair that suit this build — the two things your bard becomes famous for.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -845,6 +924,7 @@ export const BARD: ClassLibrary = {
             text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
             roll: '1d6',
             level: 0,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -852,6 +932,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
             roll: '2d4+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'healing-word',
           },
           {
@@ -859,6 +940,7 @@ export const BARD: ClassLibrary = {
             text: 'For a minute a creature you touch cannot be frightened, and at the start of each of its turns it gains temporary hit points equal to your Charisma modifier. The spell for the ally who is about to do something brave.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -866,6 +948,7 @@ export const BARD: ClassLibrary = {
             text: 'One person within 30 feet who can see and hear you is charmed for an hour on a failed Wisdom saving throw, and treats you as a friend while it lasts. They know they were charmed once it ends, so it buys a conversation rather than a servant.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -873,6 +956,7 @@ export const BARD: ClassLibrary = {
             text: 'Three creatures gain 5 hit points, to both their current and their maximum, for eight hours. Another 5 for each slot level above 2nd.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: 'aid',
           },
           {
@@ -880,6 +964,7 @@ export const BARD: ClassLibrary = {
             text: 'Put one reasonable course of action to a creature that can hear and understand you. On a failed Wisdom saving throw it spends up to eight hours following the suggestion, and anything obviously harmful to it breaks the spell at once.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -887,6 +972,7 @@ export const BARD: ClassLibrary = {
             text: 'A twist of shimmering colour hangs in the air within 120 feet. Every creature that can see it and fails a Wisdom saving throw is charmed and gazes at it, doing nothing at all, until the pattern fades or an ally shakes it out of the trance. A whole ambush undone without a point of damage.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -894,6 +980,7 @@ export const BARD: ClassLibrary = {
             text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: 'dispel-magic',
           },
         ],
@@ -931,6 +1018,7 @@ export const BARD: ClassLibrary = {
             text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -938,6 +1026,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action hands an ally the die — now a d8 — for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
             roll: '1d8',
             level: null,
+            category: 'action',
             catalogueKey: 'bardic-inspiration',
           },
           {
@@ -945,6 +1034,7 @@ export const BARD: ClassLibrary = {
             text: 'You get every Bardic Inspiration die back on a short rest as well as a long one, so handing them out freely costs you almost nothing.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -952,6 +1042,7 @@ export const BARD: ClassLibrary = {
             text: 'Add half your proficiency bonus, rounded down, to any ability check that does not already include it. A bard is never completely hopeless at anything.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -959,6 +1050,7 @@ export const BARD: ClassLibrary = {
             text: 'An ally holding one of your Bardic Inspiration dice — a d8 now — may instead add it to a damage roll, or to their Armour Class against one attack. The Armour Class use is decided after the attacker rolls, which is what turns a hit into a miss.',
             roll: '1d8',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -966,6 +1058,7 @@ export const BARD: ClassLibrary = {
             text: 'Your training covers medium armour, shields and martial weapons, so you sing from inside the shield wall rather than from behind it.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -973,6 +1066,7 @@ export const BARD: ClassLibrary = {
             text: 'When you take the Attack action you swing twice instead of once. Valour is the only college that gets this, and it is what makes singing from the front rank a real fighting style.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -980,6 +1074,7 @@ export const BARD: ClassLibrary = {
             text: 'Two of the skills you are trained in count your proficiency bonus twice. Persuasion and Performance are the pair that suit this build — the two things your bard becomes famous for.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -989,6 +1084,7 @@ export const BARD: ClassLibrary = {
             text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
             roll: '1d6',
             level: 0,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -996,6 +1092,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
             roll: '2d4+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'healing-word',
           },
           {
@@ -1003,6 +1100,7 @@ export const BARD: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -1010,6 +1108,7 @@ export const BARD: ClassLibrary = {
             text: 'For a minute a creature you touch cannot be frightened, and at the start of each of its turns it gains temporary hit points equal to your Charisma modifier. The spell for the ally who is about to do something brave.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -1017,6 +1116,7 @@ export const BARD: ClassLibrary = {
             text: 'One person within 30 feet who can see and hear you is charmed for an hour on a failed Wisdom saving throw, and treats you as a friend while it lasts. They know they were charmed once it ends, so it buys a conversation rather than a servant.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -1024,6 +1124,7 @@ export const BARD: ClassLibrary = {
             text: 'Three creatures gain 5 hit points, to both their current and their maximum, for eight hours. Another 5 for each slot level above 2nd.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: 'aid',
           },
           {
@@ -1031,6 +1132,7 @@ export const BARD: ClassLibrary = {
             text: 'Put one reasonable course of action to a creature that can hear and understand you. On a failed Wisdom saving throw it spends up to eight hours following the suggestion, and anything obviously harmful to it breaks the spell at once.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -1038,6 +1140,7 @@ export const BARD: ClassLibrary = {
             text: 'A bonus action: you vanish in a puff of silver mist and reappear in an unoccupied space you can see up to 30 feet away.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: 'misty-step',
           },
           {
@@ -1045,6 +1148,7 @@ export const BARD: ClassLibrary = {
             text: 'A twist of shimmering colour hangs in the air within 120 feet. Every creature that can see it and fails a Wisdom saving throw is charmed and gazes at it, doing nothing at all, until the pattern fades or an ally shakes it out of the trance. A whole ambush undone without a point of damage.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -1052,6 +1156,7 @@ export const BARD: ClassLibrary = {
             text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: 'dispel-magic',
           },
         ],

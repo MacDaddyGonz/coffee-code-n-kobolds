@@ -37,8 +37,9 @@ export function SceneSelect({ code, dmCode, scenes, activeSceneId }: SceneSelect
   const setActive = useMutation(api.scenes.setActive)
   const removeScene = useMutation(api.scenes.remove)
   const action = useLobbyAction()
-  // Not a literal: the panel is rendered from the lobby and can be rendered again
-  // over the board, and two selects sharing an id break both labels.
+  // Not a literal: Radix can have the Map tab mounted more than once — a tab kept
+  // alive behind the one on screen is still in the document — and two selects
+  // sharing an id is a label that focuses the wrong control.
   const fieldId = useId()
 
   const busy = action.pending !== null

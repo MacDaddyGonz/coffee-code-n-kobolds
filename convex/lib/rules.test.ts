@@ -10,14 +10,16 @@ import {
   MAX_SHEET_ENTRIES,
   MAX_SPELL_LEVEL,
   MIN_SPELL_LEVEL,
+  SHEET_ENTRY_CATEGORIES,
   defaultNpcSheet,
   defaultPcSheet,
   isValidRoll,
   normaliseRoll,
   normaliseSheet,
+  rollShapeOf,
   sheetProblem,
 } from './sheet'
-import type { NpcSheet, PcSheet, SheetEntry } from './sheet'
+import type { NpcSheet, PcSheet, SheetEntry, SheetEntryCategory } from './sheet'
 
 /** The three lists with their names, so a failure says which one it came from. */
 const LISTS: [string, readonly CatalogueEntry[]][] = [
@@ -26,7 +28,26 @@ const LISTS: [string, readonly CatalogueEntry[]][] = [
   ['NPC_ACTIONS', NPC_ACTIONS],
 ]
 
-/** A catalogue entry as it lands on a sheet: the template plus a per-character id. */
+/**
+ * A catalogue entry as it lands on a sheet: the template plus a per-character id.
+ *
+ * ⚠️ **Built field by field, which is the trap `normaliseSheet` carries a paragraph
+ * about in both of its branches — and this helper had already fallen into it.** It was
+ * written before entries had a `category` or a `toHit` and was not extended when they
+ * arrived, so every catalogue entry reached `sheetProblem` stripped of both. Both fields
+ * are optional on `SheetEntry`, so nothing failed to compile and nothing failed to run:
+ * the two arity tests below — including the one this file calls its most valuable —
+ * passed over fifty-two entries that had been quietly reduced to their pre-milestone
+ * shape. A weapon with no to-hit is precisely what `entriesProblem` now refuses, and
+ * this helper was removing the evidence on the way in.
+ *
+ * `category` is copied unconditionally because it is **required** on a `CatalogueEntry`;
+ * `toHit` is spread conditionally because naming a key and handing it `undefined` is a
+ * different object from omitting the key, and `entriesProblem` refuses a to-hit on
+ * anything that is not a weapon by asking `!== undefined`.
+ *
+ * `carries every field` below is the guard that stops this happening a third time.
+ */
 function asSheetEntry(entry: CatalogueEntry, index = 0): SheetEntry {
   return {
     id: `entry-${index}`,
@@ -35,7 +56,16 @@ function asSheetEntry(entry: CatalogueEntry, index = 0): SheetEntry {
     roll: entry.roll,
     level: entry.level,
     catalogueKey: entry.key,
+    category: entry.category,
+    ...(entry.toHit === undefined ? {} : { toHit: entry.toHit }),
   }
+}
+
+/** The three categories, tallied over a list. */
+function tally(list: readonly CatalogueEntry[]): Record<SheetEntryCategory, number> {
+  const out: Record<SheetEntryCategory, number> = { weapon: 0, action: 0, passive: 0 }
+  for (const entry of list) out[entry.category] += 1
+  return out
 }
 
 describe('keys', () => {
@@ -170,6 +200,155 @@ describe('rolls', () => {
   })
 })
 
+describe('categories', () => {
+  /**
+   * **Pinned as exact numbers, copied out of the corpus by hand**, because the
+   * failure this guards against is not one entry being wrong — it is a mass
+   * re-categorisation that leaves every per-entry rule below still satisfied. A
+   * sweep that turned all twenty-four spells into `action`s would keep every
+   * coherence test in this file green (an action rolls something and carries no
+   * to-hit, which is true of most of them), and the only visible symptom would be
+   * five spells that no longer ask for an attack roll at the table.
+   *
+   * So the shape of the catalogue is stated rather than derived. A number moving
+   * here is a decision somebody has to make on purpose.
+   */
+  test('each list holds the categories the catalogue was written with', () => {
+    expect(tally(SPELLS)).toEqual({ weapon: 5, action: 10, passive: 9 })
+    expect(tally(FEATS)).toEqual({ weapon: 0, action: 5, passive: 11 })
+    expect(tally(NPC_ACTIONS)).toEqual({ weapon: 7, action: 4, passive: 1 })
+    // And the tallies really do account for every entry, so a list that gained one
+    // in a category nobody counted cannot hide in the arithmetic.
+    for (const [name, list] of LISTS) {
+      const counted = Object.values(tally(list)).reduce((a, b) => a + b, 0)
+      expect(counted, name).toBe(list.length)
+    }
+  })
+
+  /** Every stored value is one of the three. A cast-in fourth would fail the schema. */
+  test('every entry names one of the three categories', () => {
+    for (const [name, list] of LISTS) {
+      for (const entry of list) {
+        expect(SHEET_ENTRY_CATEGORIES, `${name}: ${entry.key}`).toContain(entry.category)
+      }
+    }
+  })
+
+  /**
+   * The arity rule, applied to the catalogue directly rather than through a sheet.
+   * `entriesProblem` enforces the same thing on save, but it reports the *first*
+   * problem on a sheet, so a list checked one entry at a time through a sheet says
+   * nothing about the second offender. This says which entries, all of them.
+   */
+  test('every entry carries exactly the rolls its category promises', () => {
+    const wrong: string[] = []
+    for (const [name, list] of LISTS) {
+      for (const entry of list) {
+        const shape = rollShapeOf(entry.category)
+        const where = `${name}: ${entry.key} (${entry.category})`
+        if (shape.toHit !== (entry.toHit !== undefined)) {
+          wrong.push(`${where} toHit ${entry.toHit === undefined ? 'absent' : entry.toHit}`)
+        }
+        if (shape.roll !== (entry.roll !== null)) {
+          wrong.push(`${where} roll ${entry.roll === null ? 'absent' : entry.roll}`)
+        }
+      }
+    }
+    expect(wrong).toEqual([])
+  })
+
+  /**
+   * A weapon's to-hit is a roll like any other and goes through the same grammar and
+   * the same normaliser — for the reason `every roll is already in its normalised
+   * form` gives about the damage: the picker's copy is stored verbatim, so a to-hit
+   * that is valid but not already normalised would be stored as something other than
+   * what the catalogue says.
+   */
+  test('every weapon has a valid, already-normalised to-hit and a damage roll', () => {
+    const weapons = CATALOGUE.filter((entry) => entry.category === 'weapon')
+    // Not vacuous: the catalogue really does contain weapons.
+    expect(weapons.length).toBeGreaterThan(0)
+    for (const entry of weapons) {
+      const toHit = entry.toHit
+      expect(toHit, `${entry.key} has no to-hit`).toBeDefined()
+      expect(isValidRoll(toHit as string), `${entry.key} → ${toHit}`).toBe(true)
+      expect(normaliseRoll(toHit as string), entry.key).toBe(toHit)
+      expect((toHit as string).startsWith('1d20'), `${entry.key} → ${toHit}`).toBe(true)
+      expect(entry.roll, `${entry.key} has no damage`).not.toBeNull()
+    }
+  })
+
+  /**
+   * The other half, and the one that is a *refusal* rather than a requirement:
+   * `entriesProblem` rejects a to-hit on anything that is not a weapon, and
+   * `toHitOf` returns null for one regardless. A stored to-hit nothing will ever
+   * read is a roll waiting to be resurrected by a future category change.
+   */
+  test('no action and no passive carries a to-hit', () => {
+    const stray = CATALOGUE.filter(
+      (entry) => entry.category !== 'weapon' && entry.toHit !== undefined,
+    ).map((entry) => `${entry.key} (${entry.category}) → ${entry.toHit}`)
+    expect(stray).toEqual([])
+  })
+
+  /**
+   * **The asymmetry `no NPC action references an ability or proficiency token`
+   * already asserts about damage, asserted about the to-hit for the same reason.**
+   *
+   * An ability token is a promise that something can resolve it, and the reduced NPC
+   * sheet has no ability scores — so `1d20+STR+PROF` on a monster's scimitar is a
+   * roll the dice work cannot complete. A monster's numbers are flat, and `PROF` is
+   * excluded alongside the six because a creature has no level to derive a
+   * proficiency bonus from either.
+   */
+  test("no NPC action's to-hit references an ability or proficiency token", () => {
+    const weapons = NPC_ACTIONS.filter((entry) => entry.category === 'weapon')
+    expect(weapons.length).toBeGreaterThan(0)
+    for (const entry of weapons) {
+      expect(entry.toHit as string, entry.key).toMatch(/^1d20([+-]\d+)?$/)
+    }
+  })
+
+  /**
+   * ⚠️ **The prose never states the to-hit**, which rules.ts states in its header as
+   * a rule about the corpus: a number written in both a sentence and a field is two
+   * places for it to disagree the moment somebody edits their copy.
+   *
+   * ⚠️ **Scanned over the `text` fields, not over the file source.** The doc comment
+   * this test enforces quotes `+4 to hit` as its own example of what not to write, so
+   * a grep of rules.ts would fail on the paragraph most carefully written to respect
+   * the rule — which is how a guard gets deleted rather than obeyed.
+   */
+  test('no entry states a to-hit or a d20 in its prose', () => {
+    const offenders: string[] = []
+    for (const [name, list] of LISTS) {
+      for (const entry of list) {
+        if (/\bto hit\b/i.test(entry.text)) offenders.push(`${name}: ${entry.key} says "to hit"`)
+        if (/1d20/.test(entry.text)) offenders.push(`${name}: ${entry.key} names 1d20`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  /**
+   * The positive control for the sweep above. Both patterns are empty sets over the
+   * catalogue, which is what makes them tripwires — and an empty set is exactly what
+   * a scan reading nothing at all also produces.
+   */
+  test('and the sweep reads every entry and its patterns do find a needle', () => {
+    expect(CATALOGUE.length).toBe(SPELLS.length + FEATS.length + NPC_ACTIONS.length)
+    expect(CATALOGUE.length).toBeGreaterThan(40)
+    for (const entry of CATALOGUE) expect(typeof entry.text).toBe('string')
+
+    expect(/\bto hit\b/i.test('Scimitar. +4 to hit, reach 5 ft.')).toBe(true)
+    expect(/1d20/.test('Roll 1d20+STR+PROF against its armour class.')).toBe(true)
+    // And they do not fire on an innocent substring — a guard that cries wolf is a
+    // guard somebody relaxes.
+    expect(/\bto hit\b/i.test('Hard to hits and easy to miss.')).toBe(false)
+    expect(/1d20/.test('A 19 on the d20 counts as a critical hit for you.')).toBe(false)
+  })
+})
+
 describe('names, text and levels', () => {
   test('every name and description is non-empty and inside the stored bounds', () => {
     for (const [name, list] of LISTS) {
@@ -216,6 +395,41 @@ describe('names, text and levels', () => {
 })
 
 describe('the catalogue and the validator agree', () => {
+  /**
+   * ⚠️ **The guard on the fixture, and it has to come first, because everything
+   * below it is only as good as `asSheetEntry` is faithful.**
+   *
+   * This test exists because the helper was *not* faithful. It rebuilt a `SheetEntry`
+   * field by field and was never extended when `category` and `toHit` arrived, so the
+   * two tests underneath — the ones whose whole job is to run the server's own
+   * validator over the real catalogue — were running it over fifty-two entries with
+   * both new fields stripped off. Every weapon in the catalogue reached
+   * `entriesProblem` looking like a legacy action, which is the one shape the new
+   * arity rules are written to accept. Green, and asserting nothing.
+   *
+   * Written against `Object.keys` of the source rather than against a list of field
+   * names, so the **next** field added to `CatalogueEntry` and forgotten here fails
+   * this test rather than silently hollowing out the two below it.
+   */
+  test('the fixture carries every field of a catalogue entry onto the sheet', () => {
+    for (const entry of CATALOGUE) {
+      const source = entry as unknown as Record<string, unknown>
+      const built = asSheetEntry(entry) as unknown as Record<string, unknown>
+      // `key` becomes `catalogueKey`; `id` is minted per character. Everything else
+      // has to survive the copy under its own name and with its own value.
+      const carried = Object.keys(source).filter((field) => field !== 'key')
+      const missing = carried.filter((field) => !(field in built))
+      expect(missing, `${entry.key} lost fields`).toEqual([])
+      for (const field of carried) {
+        expect(built[field], `${entry.key}.${field}`).toEqual(source[field])
+      }
+      expect(built.catalogueKey, entry.key).toBe(entry.key)
+      // Absent, never null: `entriesProblem` asks `toHit !== undefined`, so a key
+      // present and empty is a to-hit as far as the refusal is concerned.
+      expect('toHit' in built, `${entry.key} toHit key`).toBe(entry.toHit !== undefined)
+    }
+  })
+
   /**
    * The most valuable test in the file. Everything above checks the catalogue
    * against a bound one at a time; this puts each entry where it will actually
