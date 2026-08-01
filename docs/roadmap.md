@@ -1383,6 +1383,118 @@ The bit that makes it feel like a game.
   put on `SheetEntry` for exactly this reason. An action rolls once. A passive is declared and rolls nothing,
   so clicking one announces it and pushes to the feed without any dice.
 
+### ⚠️ The list above is a feature list, not a specification — read this before starting
+
+**Reviewed before building, and the review found the section wanting.** Everything above says *what
+will exist*. Almost none of it says **how a sheet behaves when somebody clicks it**, and that is the
+entire milestone. Specifically it never says how an ability check, a saving throw, a skill check, an
+initiative roll, a weapon's to-hit and damage, a spell attack, a spell save DC, a spell slot, a
+limited-use class feature or a passive actually work — nor which of those this app adjudicates and
+which it merely announces.
+
+That gap is not a documentation problem. Three of the things in that list **do not exist in the data
+model at all**, and discovering them at implementation time is how the shape of the roll path gets
+decided by whichever file was open at the time. They are named below so they are decided on the record
+first.
+
+### The rules surface is fixed, and that is the whole reason this is tractable
+
+The sheets are **fixed and cherry-picked** — a deliberate constraint from the character-library and
+bestiary milestones, and the thing that stops this being an implementation of 2024 D&D. Nothing needs
+to work in general; a bounded, countable list needs to work exactly. As it stands:
+
+| The corpus | Count |
+| --- | --- |
+| Premade hero sheets (`convex/lib/library/`) | 72 — eight classes, two archetypes each, levels 1–5 |
+| Creatures (`convex/lib/bestiary/`) | 140 |
+| Catalogue entries (`convex/lib/rules.ts`) | 52, of which the library actually references **29** |
+| **Distinct damage/effect roll expressions in the library** | **32** |
+| **Distinct to-hit expressions in the library** | **7** |
+| Distinct roll expressions across the bestiary | 27 |
+
+So the evaluator has **fewer than sixty distinct expressions** to satisfy, every one of which already
+passes `isValidRoll` and is therefore already in the grammar. The 29 catalogue keys the library leans
+on are the complete set of spells and class features that need behaviour:
+
+> `action-surge` `aid` `bardic-inspiration` `bless` `burning-hands` `counterspell` `cure-wounds`
+> `detect-magic` `dispel-magic` `divine-smite` `fire-bolt` `fireball` `guidance` `guiding-bolt`
+> `healing-word` `hold-person` `lightning-bolt` `lay-on-hands` `mage-hand` `magic-missile`
+> `misty-step` `rage` `revivify` `sacred-flame` `scorching-ray` `second-wind` `shield`
+> `sneak-attack` `spiritual-weapon`
+
+⚠️ **Enumerate before implementing.** Regenerate those counts and that list from the corpus rather
+than trusting this table — it is a snapshot, and the corpus is content. The instruction that matters
+is the shape of the work: *go and read what is actually there, then make exactly that work.* Anything
+built for the general case is built for content this project does not have and will not add.
+
+⚠️ **And the reduced rules stay reduced.** The library is a **modified** 2024 subset — an archetype is
+chosen at **level 2** rather than level 3, for every class; levels stop at 5; backgrounds, inventory,
+multiclassing and experience points are excluded by design. Consult the 2024 rules for how a
+cherry-picked feature *works*, never for what a character *has*. The corpus is the authority on the
+second question, and a rules reference that disagrees with it is describing a different game.
+
+### Five things the data model does not have, and each one is a decision
+
+None of these is a gap to fill quietly on the way past. Each changes what the roll path is.
+
+1. **There are no spell slots anywhere.** No field, no table, no accessor. A `spells` entry is a
+   `SheetEntry` with an optional `level`, and nothing tracks casting. So "clicking a spell casts it"
+   currently cannot mean "and spends a slot". Decide whether slots exist at all — a table of them per
+   class and level is real content, and the alternative (the app announces the cast and the table
+   tracks slots on paper, as it already does for most things) is entirely consistent with a project
+   whose stated purpose is to not be a rules engine.
+2. **A hero has no spell attack bonus and no spell save DC.** A *creature* has both — `attackBonus`
+   and `saveDc` on the reduced sheet — and a hero has neither, because a hero's are derived from the
+   spellcasting ability plus proficiency. So either they get derived at resolution (and the
+   spellcasting ability per class becomes stored content) or they get stored per sheet across 72
+   files.
+3. **A hero has no initiative bonus.** A creature stores one; a hero derives it from DEX. The
+   initiative-from-the-selector feature above rolls for both, so it needs one answer that covers a
+   stored number and a derived one.
+4. **Limited-use resources are coarser than the features need.** `characterVitals` holds
+   `spentPerRest: string[]` — a set of *keys*, so a thing is spent or it is not — plus
+   `hitDiceRemaining`. That cannot express Rage twice a day, Channel Divinity twice a rest, or Second
+   Wind once a *short* rest, and the corpus contains features of all three shapes. A count per key, a
+   short-rest versus long-rest distinction, or a deliberate decision not to track them: pick one, and
+   note that `characters.longRest` currently restores everything.
+5. **Nothing expresses concentration or the action economy.** No field says a spell needs
+   concentration, and nothing knows an action from a bonus action from a reaction. The reduced rule
+   set never promised either. Say so explicitly rather than leaving the absence to be read as an
+   oversight — and if the answer is that the table tracks them, the sheet should not imply otherwise.
+
+**The likely right answer to most of these is "announce, do not adjudicate"** — which is what
+[requirements.md](requirements.md) means by D&D Lite and what the bestiary milestone already decided
+about CR scaling. But it is an answer that has to be given, because the opposite reading builds a
+rules engine by accident, one feature at a time.
+
+### Reference material, and what each is good for
+
+- **[A beginner's guide to playing using D&D Beyond](https://www.anotherdndblog.com/d&d/preparation/session0/dm/lmop/starter/players/d&dbeyond/2020/07/08/a_beginners_guide_to_playing_using_dnd_beyond.html)**
+  — the interaction model this project's sheets should feel like: which numbers are clickable and what
+  each click rolls. Ability scores, saves and skills each roll a d20 plus their modifier; a weapon is
+  **two separate clicks**, a to-hit then a damage; passive scores are printed and never rolled; a
+  spell save DC is a printed number the caster does not roll; advantage rolls twice and takes the
+  higher.
+  ⚠️ **It is a beginner's guide and it is silent on precisely the hard parts** — it does not cover
+  spell-slot consumption, concentration, limited-use resource tracking or action economy, which are
+  four of the five open decisions above. Take the click-to-roll model from it; do not expect it to
+  settle the rest.
+- **2024 rules, per class and archetype** — for how a cherry-picked feature works, never for what a
+  character has:
+
+  | Class | Archetypes | Reference |
+  | --- | --- | --- |
+  | [Barbarian](http://dnd2024.wikidot.com/barbarian:main) | [Berserker](http://dnd2024.wikidot.com/barbarian:path-of-the-berserker) · [Wild Heart](http://dnd2024.wikidot.com/barbarian:path-of-the-wild-heart) | [feats](http://dnd2024.wikidot.com/feat:all) |
+  | [Bard](http://dnd2024.wikidot.com/bard:main) | [Lore](http://dnd2024.wikidot.com/bard:college-of-lore) · [Valour](http://dnd2024.wikidot.com/bard:college-of-valor) | [spells](http://dnd2024.wikidot.com/bard:spell-list) |
+  | [Cleric](http://dnd2024.wikidot.com/cleric:main) | [Life](http://dnd2024.wikidot.com/cleric:life-domain) · [Light](http://dnd2024.wikidot.com/cleric:light-domain) | [spells](http://dnd2024.wikidot.com/cleric:spell-list) |
+  | [Fighter](http://dnd2024.wikidot.com/fighter:main) | [Champion](http://dnd2024.wikidot.com/fighter:champion) · [Battle Master](http://dnd2024.wikidot.com/fighter:battle-master) | [feats](http://dnd2024.wikidot.com/feat:all) |
+  | [Paladin](http://dnd2024.wikidot.com/paladin:main) | [Devotion](http://dnd2024.wikidot.com/paladin:oath-of-devotion) · [Vengeance](http://dnd2024.wikidot.com/paladin:oath-of-vengeance) | [spells](http://dnd2024.wikidot.com/paladin:spell-list) |
+  | [Ranger](http://dnd2024.wikidot.com/ranger:main) | [Hunter](http://dnd2024.wikidot.com/ranger:hunter) · [Beast Master](http://dnd2024.wikidot.com/ranger:beast-master) | [spells](http://dnd2024.wikidot.com/ranger:spell-list) |
+  | [Rogue](http://dnd2024.wikidot.com/rogue:main) | [Thief](http://dnd2024.wikidot.com/rogue:thief) · [Assassin](http://dnd2024.wikidot.com/rogue:assassin) | [feats](http://dnd2024.wikidot.com/feat:all) |
+  | [Wizard](http://dnd2024.wikidot.com/wizard:main) | [Evocation](http://dnd2024.wikidot.com/wizard:evoker) · [Divination](http://dnd2024.wikidot.com/wizard:diviner) | [spells](http://dnd2024.wikidot.com/wizard:spell-list) |
+
+  Plus [all spells](http://dnd2024.wikidot.com/spell:all) and [all feats](http://dnd2024.wikidot.com/feat:all).
+
 ### The roll announcement over the map, and why it is not decoration
 
 **A floating glowing line naming who rolled and what they did, then the result under it a beat later.**

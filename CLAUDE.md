@@ -6,20 +6,33 @@ SSR, no SEO.
 Spec: [docs/requirements.md](docs/requirements.md). Build order:
 [docs/roadmap.md](docs/roadmap.md). Decisions: [docs/adr/](docs/adr/).
 
-## Branching — always work on a branch
+## Branching — always work on a branch, and always finish with a pull request
 
 **Never commit directly to `dev` or `main`.**
 
 ```
 feature/xyz ──┐
-              ├──▶ dev ──(pull request)──▶ main
+              ├──(pull request)──▶ dev ──(pull request)──▶ main
   fix/abc  ───┘
 ```
 
 - Branch from `dev` for every change, however small.
 - Prefixes: `feature/`, `fix/`, `chore/`, `docs/`.
-- Merge the branch into `dev` when it's complete and working.
+- When the work is complete and working, push the branch and **open a pull request into `dev`**.
 - `main` only ever receives changes via pull request from `dev`. GitHub rejects direct pushes.
+
+⚠️ **Claude raises pull requests and never merges them.** Every branch — feature, fix, chore or
+docs — ends at an open PR, and the review and the merge are the maintainer's. This applies to `dev`
+exactly as it applies to `main`: `git merge` into either branch, a `gh pr merge`, a squash, a
+fast-forward or a "just this one is trivial" is out of scope, whichever branch it targets and
+however small the diff. If a PR needs changes, push another commit to the same branch rather than
+merging and following up afterwards. Deleting the branch is the maintainer's call too — it happens
+after the merge, and Claude is not the one merging.
+
+The one thing to do after opening a PR is **say so and stop**: report the branch, the PR URL and
+what still needs a human eye. Do not treat an approving CI run, a clean `npm run build` or the
+absence of review comments as permission to merge — none of those are the confirmation, and the
+confirmation is a person saying so.
 
 Commit messages: short imperative subject (`Add initiative tracker to DM panel`). Use the body to
 explain *why* when the diff doesn't make it obvious.
