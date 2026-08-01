@@ -26,13 +26,17 @@ import { JoinDoorDialog } from './JoinDoorDialog'
  * ⚠️ **The payload carries no join code**, deliberately, so nothing in this card can
  * admit anybody to anything: a row says a game exists and the code is still what gets
  * you in. That is why both doors open with a code step, and it is why the *Join with a
- * code* panel below is not made redundant by this list — the cap is real, and a game
+ * code* card below is not made redundant by this list — the cap is real, and a game
  * off the end of it is still perfectly joinable.
  *
  * **One dialog for the whole list rather than one per row.** The row reports which
- * door was clicked and this component holds the pair; the dialog reads `game === null`
- * as closed and resets everything typed into it on the way out, so consecutive opens
- * cannot inherit a code from the row before.
+ * door was clicked and this component holds the pair; the dialog reads `opening ===
+ * null` as closed and resets everything typed into it on the way out, so consecutive
+ * opens cannot inherit a code from the row before.
+ *
+ * The card below the list holds a *second* instance of the same dialog, opened with no
+ * row at all. That is deliberate rather than a missed chance to share this one — see
+ * `JoinGamePanel` for why the state is not hoisted up to `Home`.
  */
 export function GameList() {
   const games = useQuery(api.games.list, {})
@@ -42,6 +46,10 @@ export function GameList() {
    * and "no door" are not separately reachable — the dialog is opened by a click that
    * names both at once, and a `door` left over from the last open would be a state
    * with nothing on screen to explain it.
+   *
+   * Non-null `game`, unlike the prop it feeds, which accepts a null one for the
+   * code-only card. Every open from this list comes from a row, so saying so here keeps
+   * the wrong-game check — the reason the row travels at all — mandatory on this path.
    */
   const [opening, setOpening] = useState<{ game: GameListing; door: Door } | null>(null)
 

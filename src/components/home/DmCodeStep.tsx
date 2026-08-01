@@ -99,7 +99,8 @@ export function DmCodeStep({ code, typed, onTyped, onVerified, onCancel, busy }:
           All four sentences are `dmVerdictMessage`'s, including the one on success —
           which the join code step deliberately does not have, for the reason that
           function's docblock gives. The fixed height and the live region are
-          `VerdictLine`'s, shared with the two other code fields on this screen.
+          `VerdictLine`'s, shared with the join code field this step follows — and with
+          the card below the list until that card stopped having a field of its own.
 
           `wrongCode` is the only arm that is a refusal, so it is the only one in the
           destructive colour: the unfinished state is *not yet* and the success state

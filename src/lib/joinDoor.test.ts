@@ -92,6 +92,20 @@ describe('verdictOf', () => {
         resolved: { _id: ANOTHER_GAME, code: OTHER_CODE },
       }),
     ).toEqual({ kind: 'ok', code: OTHER_CODE })
+
+    // ⚠️ **Both sides of the nullable switch, in the one test, because this is the
+    // case a careless nullable breaks.** The identical arguments with `null` in place
+    // of the row are *accepted*, and that is correct rather than a leak: with no row
+    // nothing claimed which game this was, so there is no contradiction available. If
+    // the two assertions above ever agree with this one, the wrong-game arm has been
+    // skipped for the caller that must never skip it.
+    expect(
+      verdictOf({
+        typed: OTHER_CODE,
+        expectedGameId: null,
+        resolved: { _id: ANOTHER_GAME, code: OTHER_CODE },
+      }),
+    ).toEqual({ kind: 'ok', code: OTHER_CODE })
   })
 
   test('the right code for the right game is ok', () => {
@@ -116,6 +130,72 @@ describe('verdictOf', () => {
         resolved: { _id: THIS_GAME, code: 'ABC234' },
       }),
     ).toEqual({ kind: 'ok', code: 'ABC234' })
+  })
+
+  /**
+   * The *Join with a code* card, which has no row to compare against — see the ⚠️ in
+   * `verdictOf` on why that is a legitimate state and not a bypass.
+   *
+   * The point of asserting the other three arms here as well as the accepting one is
+   * that `null` must weaken *exactly* the id comparison and nothing else. A nullable
+   * written as an early `return { kind: 'ok' }` would pass the first test below and
+   * turn a mistyped six-character code into a navigation to a game that does not
+   * exist — which is the failure the code step was built to keep off the game screen.
+   */
+  describe('with no row behind the code', () => {
+    test('any game the code opens is the right game', () => {
+      // The same resolved document that is refused against `THIS_GAME` above.
+      expect(
+        verdictOf({
+          typed: OTHER_CODE,
+          expectedGameId: null,
+          resolved: { _id: ANOTHER_GAME, code: OTHER_CODE },
+        }),
+      ).toEqual({ kind: 'ok', code: OTHER_CODE })
+
+      // And still the server's spelling rather than the typed one, since that is what
+      // reaches `localStorage` and the URL from here.
+      expect(
+        verdictOf({
+          typed: 'abc234',
+          expectedGameId: null,
+          resolved: { _id: THIS_GAME, code: 'ABC234' },
+        }),
+      ).toEqual({ kind: 'ok', code: 'ABC234' })
+    })
+
+    test('a complete code that resolves to nothing is still no such game', () => {
+      expect(verdictOf({ typed: CODE, expectedGameId: null, resolved: null })).toEqual({
+        kind: 'noSuchGame',
+      })
+    })
+
+    test('a lookup still out is still checking, and a half-typed code still incomplete', () => {
+      expect(verdictOf({ typed: CODE, expectedGameId: null, resolved: undefined })).toEqual({
+        kind: 'checking',
+      })
+      expect(verdictOf({ typed: 'ABC', expectedGameId: null, resolved: undefined })).toEqual({
+        kind: 'incomplete',
+      })
+    })
+
+    // The arm that cannot be reached without a row, stated as an absence: there is no
+    // combination of arguments that produces it, because the only thing that can
+    // contradict a resolved game is a row saying it should have been a different one.
+    test('never answers wrongGame', () => {
+      const resolvedShapes = [
+        undefined,
+        null,
+        { _id: THIS_GAME, code: CODE },
+        { _id: ANOTHER_GAME, code: OTHER_CODE },
+      ]
+
+      for (const resolved of resolvedShapes) {
+        for (const typed of ['', 'ABC', CODE, OTHER_CODE]) {
+          expect(verdictOf({ typed, expectedGameId: null, resolved }).kind).not.toBe('wrongGame')
+        }
+      }
+    })
   })
 })
 

@@ -8,6 +8,11 @@ import { JoinGamePanel } from '@/components/home/JoinGamePanel'
  * the URL — including the join conversation, which is a dialog rather than a route
  * of its own. `JoinDoorDialog`'s docblock says why.
  *
+ * **Both ways in open that same conversation**, from a row on the list or from a code
+ * typed into the card below it, and neither piece of its state lives here: each card
+ * holds its own instance, so this component is a header and three children and holds
+ * nothing. `JoinGamePanel` argues that division where the second instance appears.
+ *
  * **The list comes first, full width, and the two panels below it.** The order is
  * the screen's argument: most arrivals are returning to a game that already exists,
  * so recognising it in a list is the cheap correct path and typing a code from memory
