@@ -7,14 +7,14 @@ Two principles drive the ordering:
 
 1. **Risky things first.** The live token sync and the DM-layer security model are the parts most
    likely to force a redesign. Build them before there's a lot of code sitting on top of them.
-2. **Reach a playable session early.** Milestones 1–8 are the minimum to actually run a game.
+2. **Reach a playable session early.** Milestones 1–9 are the minimum to actually run a game.
    Everything after that makes it nicer. For a game played a few times a year, a rough playable
    version beats a polished half.
 
 Each milestone is a branch (or a few), merged to `dev`, then promoted to `main` when it's worth
 deploying. Acceptance criteria are written so you can tell "done" from "mostly done".
 
-**Numbering note.** Four milestones have been inserted after the one before them shipped, and each
+**Numbering note.** Five milestones have been inserted after the one before them shipped, and each
 insertion pushed everything below it down one.
 
 - **Milestone 4, the character library**, inserted after Milestone 3 shipped.
@@ -30,34 +30,40 @@ insertion pushed everything below it down one.
   is rolling and on whose sheet**, and the shell built in Milestone 6 answers that question wrongly
   — it offers the DM a character to play and gives the players' sheet panel no way to show anything
   but their own. Every one of those is a fixture the feed would then be written against.
+- **Milestone 8, getting to the table**, inserted after Milestone 7 shipped and after five minutes of
+  using it. A fifth instance, and the least theoretical of them: the roll announcement and the feed
+  are written against who is at the table and what they are holding, and **the DM could not reach DM
+  mode without being told where to look.** The front door being in the wrong place is not something
+  to fix after building three more rooms.
 
-So rolls and dice went 4 → 5 → 6 → 7 → **8**, DM tooling 5 → 6 → 7 → 8 → **9**, tools and polish
-6 → 7 → 8 → 9 → **10**, and the game editor 7 → 8 → 9 → 10 → **11**. This file is renumbered
-throughout. **The ADRs are not**, because an ADR is not edited after the fact — read them against
-this table:
+So rolls and dice went 4 → 5 → 6 → 7 → 8 → **9**, DM tooling 5 → 6 → 7 → 8 → 9 → **10**, tools and
+polish 6 → 7 → 8 → 9 → 10 → **11**, and the game editor 7 → 8 → 9 → 10 → 11 → **12**. This file is
+renumbered throughout. **The ADRs are not**, because an ADR is not edited after the fact — read them
+against this table:
 
 | Where the ADR says | It means | Read it as |
 | --- | --- | --- |
-| Milestone 4 — [0004](adr/0004-board-authorisation-and-layers.md), [0005](adr/0005-character-sheets-and-hit-point-secrecy.md) | rolls, feed and dice | 8 |
-| Milestone 5 — [0004](adr/0004-board-authorisation-and-layers.md), [0005](adr/0005-character-sheets-and-hit-point-secrecy.md) | DM tooling, layers, fog of war | 9 |
-| Milestone 5 — [0006](adr/0006-premade-character-library.md) | rolls, feed and dice | 8 |
-| Milestone 6 — [0006](adr/0006-premade-character-library.md) | DM tooling, layers, fog of war | 9 |
-| Milestone 6 — [0007](adr/0007-monster-bestiary-and-cr-scaling.md) | rolls, feed and dice | 8 |
-| Milestone 7 — [0004](adr/0004-board-authorisation-and-layers.md) | orphaned-blob sweeper, admin view | 11 |
-| Milestone 7 — [0007](adr/0007-monster-bestiary-and-cr-scaling.md) | DM tooling, layers, fog of war | 9 |
-| Milestone 8 — [0006](adr/0006-premade-character-library.md) | orphaned-blob sweeper | 11 |
+| Milestone 4 — [0004](adr/0004-board-authorisation-and-layers.md), [0005](adr/0005-character-sheets-and-hit-point-secrecy.md) | rolls, feed and dice | 9 |
+| Milestone 5 — [0004](adr/0004-board-authorisation-and-layers.md), [0005](adr/0005-character-sheets-and-hit-point-secrecy.md) | DM tooling, layers, fog of war | 10 |
+| Milestone 5 — [0006](adr/0006-premade-character-library.md) | rolls, feed and dice | 9 |
+| Milestone 6 — [0006](adr/0006-premade-character-library.md) | DM tooling, layers, fog of war | 10 |
+| Milestone 6 — [0007](adr/0007-monster-bestiary-and-cr-scaling.md) | rolls, feed and dice | 9 |
+| Milestone 7 — [0004](adr/0004-board-authorisation-and-layers.md) | orphaned-blob sweeper, admin view | 12 |
+| Milestone 7 — [0007](adr/0007-monster-bestiary-and-cr-scaling.md) | DM tooling, layers, fog of war | 10 |
+| Milestone 8 — [0006](adr/0006-premade-character-library.md) | orphaned-blob sweeper | 12 |
 
 [ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md) and
 [ADR 0009](adr/0009-who-plays-what-and-what-control-grants.md) have no rows, and that is the
 discipline working rather than an omission: neither names a milestone number anywhere, so the fourth
-renumbering cost 0008 nothing and a fifth would cost 0009 nothing either. Both say "the dice
-milestone" and "the DM-tooling milestone", which is the formulation that survives.
+and fifth renumberings cost them nothing. Both say "the dice milestone" and "the DM-tooling
+milestone", which is the formulation that survives. **Two in a row is the convention holding**, and
+the table above stops growing on the day the last numbered ADR is superseded.
 
 **This file no longer contains a forward reference by number, and that is the fix rather than a
 tidy-up.** Three renumberings taught the lesson [ADR 0006](adr/0006-premade-character-library.md)
 wrote down — *a comment that names a milestone number dates badly, and naming the feature survives* —
 so every "still Milestone 6" in a completed section above now reads "still the rolls milestone", and
-the same for the DM-tooling, tools and game-editor milestones. **The fourth insertion cost a heading
+the same for the DM-tooling, tools and game-editor milestones. **Each insertion since has cost a heading
 renumber and this table, and nothing else**, which is the prediction that sentence made being paid
 out rather than a coincidence worth glossing over.
 
@@ -1152,7 +1158,132 @@ editing the text, as the three amendments before it were:
 
 ---
 
-## Milestone 8 — Rolls, feed and dice
+## Milestone 8 — Getting to the table, and the DM's tokens
+
+**Inserted after playing with the deployed seats-and-sheets build**, and it is the same shape of
+correction the last one was: the model is now right and the *way in* to it is not. Three of the four
+items below were found in the first five minutes of using it, which is the argument for doing them
+before the dice rather than after.
+
+**Why it goes before the dice and not after.** Two reasons, and only the first is the usual one.
+The dice milestone puts a roll announcement on screen and a feed in a panel, and both are written
+against *who is at the table and what they are holding* — so the door people come in through is a
+fixture the feed gets written against, exactly as the sheet panel was. The second reason is blunter:
+**the DM cannot currently get into DM mode without being told to look in Settings.** That is not a
+polish item, it is the front door being in the wrong place, and everything the dice milestone adds
+for the DM sits behind it.
+
+### The way in, and why it is currently wrong
+
+Today the whole of joining is: type a game code you already have, type a display name, land on the
+board. A returning DM then has to notice that *Settings* holds an elevate control and paste their DM
+code into it — after they are already sitting at the table as a player. Every part of that is
+discoverable only if somebody tells you.
+
+⚠️ **The elevate control is in Settings for a good reason and must stay there as well.**
+[ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md) moved `DmBar` out of the lobby precisely
+because a DM whose browser lost its code mid-campaign previously had *no way back in* — the lobby
+was a screen you left. The fix here is therefore **both doors, not the door moved back**: the
+landing page is where a returning DM says who they are, and Settings stays as the recovery path for
+somebody already seated.
+
+**A landing page that lists the games.** Name, creator, and when it was created, with **Join as
+player** and **Join as DM** beside each. Choosing either asks for the game code — so the code is
+still what admits you, and the list is only what tells you the game exists.
+
+- **A player** who gives the right code is then shown **the seats that already exist**, each with the
+  character it is holding, and picks their own name off the list. That is the whole of "restore my
+  session" today, done by retyping a name from memory and hoping the normalisation matches
+  ([ADR 0003](adr/0003-player-identity-without-accounts.md)); showing the list makes the idempotence
+  visible instead of hoping for it.
+- **A DM** who gives the right code is then asked for the **DM code**, and lands on the board already
+  elevated. No seat-then-settings two-step.
+- **A new player** takes the *new player* route: a display name, and then their character.
+
+⚠️ **That last clause reverses a decision made one milestone ago, and the reversal has to be
+deliberate or not happen.** [ADR 0009](adr/0009-who-plays-what-and-what-control-grants.md) settled
+that **the DM creates characters and players claim them**, and rewrote `characters.create` to require
+the DM code on every path. "A new player provides their name and selects their starting level 1 race
+and class" reads as a player creating a character again.
+
+There are two readings and this milestone has to pick one on the record:
+
+| Reading | What it costs |
+| --- | --- |
+| **The player builds, on a character the DM already made.** They claim an unclaimed slot and then choose race and class on it. | Nothing. This is already how the code behaves — `applyPresetPermissions` lets a player set race, class and archetype while the sheet is unlocked, and only the DM may unlock it once locked. It needs a *screen*, not a rule change. |
+| **The player creates the character outright.** | A superseding ADR. It reopens `characters.create`, and with it the reason it was closed: an ungated create is what let the character list grow sideways, and it is one of the two doors invariant 9 is about. |
+
+**The first reading is almost certainly what is wanted** and costs nothing, so it is the default
+unless the DM-creates rule turns out to be wrong at the table. Say which, in the ADR, before building
+either.
+
+⚠️ **Listing every game on the landing page publishes the name and creator of every game to anybody
+who loads the site**, and that is a genuine change rather than a screen. Today a join code is the
+only way to learn a game *exists*: `games.getByCode` is a point lookup and there is no list query at
+all. The threat model in [CLAUDE.md](../CLAUDE.md) scopes this — the audience is a small group of
+trusted colleagues, and a game *name* is not a secret the way a scene name or a creature name is —
+but it is the first thing this app would publish without a code, so it wants a line in an ADR and an
+amendment to [requirements.md](requirements.md) rather than being slipped in behind a UI change.
+Three specific things to settle there: whether the list is every game or only recent ones, whether
+`createdByName` is published beside it, and what a `games.list` payload may carry — it must be built
+from a projection like `publicGameValidator`, because that document holds the DM code and the
+recovery hash.
+
+### The DM's Tokens tab
+
+**The token-list bullet moves forward out of the DM-tooling milestone**, the way the control bullet
+moved into the last one, and for a related reason: the seats-and-sheets milestone gave the DM a
+selector that reaches every *sheet* in the game, and left the *coins* reachable only by finding them
+on the map. A creature with no token, or a token on a layer that is not being shown, is currently
+unreachable.
+
+A **Tokens** tab beside Sheets, listing every token in the game with:
+
+- which character, NPC or monster it is bound to, and the control to **rebind or unbind** it
+- its **art**, and the control to change it
+- which **seats control it** — the same relation the Sheets tab's grant panel writes, read the other
+  way round, from the token rather than from the creature
+- its layer, size and tint
+
+⚠️ **The grant relation must not get a second writer.** `board.setControllers` is the one mutation,
+and `effectiveControllersOf` in `convex/lib/board.ts` is the one rule; a Tokens tab that computed
+"who controls this" for itself would be the second implementation ADR 0009 spent the milestone
+removing. Read `controllerIds` and `grantedPlayerIds` off the payload, as the grant panel does.
+
+### Two small things found by using it
+
+- **The name at the top of the Sheets and Character panels is body text and should be a title.**
+  It is the answer to "whose sheet am I looking at", which is the question the whole panel exists to
+  answer, and it currently reads at the same weight as the fields under it.
+- **Nothing deletes a game.** The dev deployment has seventy-one, thirty-five of them left by
+  `npm run test:smoke`, which creates one per run and can only clean up the scene and tokens it made.
+  Deleting a game is on the game-editor and admin milestone and stays there — but the smoke script
+  leaving one behind every run is this project's own litter, and a `games.remove` gated on the DM
+  code would let the script clean up after itself. Worth doing here **only if** the authorisation
+  question is genuinely one line; if it turns into "who may delete a game", it belongs downstream.
+
+**Deliberately not done here:**
+
+- **No accounts.** The landing page lists games and asks for codes; it does not know who you are.
+  [ADR 0002](adr/0002-defer-user-accounts.md) is unchanged and this is not a step towards it — a
+  list of games plus a code is still a bearer credential, not an identity.
+- **No rolling.** Still the next milestone, including the initiative control below.
+- **No layer rework and no fog of war** — still the DM-tooling milestone, even though the Tokens tab
+  will make the missing layer control obvious.
+
+**Acceptance:** a returning DM opens the site, sees their game in the list, clicks *Join as DM*,
+enters the game code and then the DM code, and lands on the board **already in DM mode** — no visit
+to Settings. A returning player picks their own name off the list of seats rather than retyping it,
+and lands on the same seat with the same character. A new player joins, gets a character and chooses
+its race and class. The DM opens the Tokens tab, rebinds a coin from one creature to another, changes
+its art, and grants it to a second player without going near the map.
+
+**Amend [requirements.md](requirements.md)** for the games list, if it lands as described: the
+*Accounts and games* section describes joining by code alone.
+
+---
+
+## Milestone 9 — Rolls, feed and dice
 
 The bit that makes it feel like a game.
 
@@ -1162,8 +1293,15 @@ The bit that makes it feel like a game.
 - Ad-hoc dice roller in the game tools.
 - 3D dice via `@3d-dice/dice-box`, visible to everyone, with the roller's token shown on screen.
 - d20 crit handling: screen shake + red alarm on a 1, celebration + fireworks on a 20.
-- **A weapon rolls twice** — a to-hit and a damage — which is the shape the previous milestone put on
-  `SheetEntry` for exactly this reason. An action rolls once. A passive is declared and rolls nothing,
+- **Initiative, rolled from the Sheets selector rather than from a sheet.** A roll control on each
+  row of the DM's grouped selector — the same rows that already carry hit points — so rolling
+  initiative for six goblins is six clicks in one list instead of six sheets opened and closed.
+  This is the `HpControls`-on-a-row idea applied to the other thing a DM does to a whole encounter
+  at once, and it is cheap because the row and its subscription already exist. It wants somewhere to
+  *put* the number, which is the initiative tracker on the tools milestone — until that lands the
+  roll goes to the feed like any other, which is still faster than what it replaces.
+- **A weapon rolls twice** — a to-hit and a damage — which is the shape the sheet-taxonomy milestone
+  put on `SheetEntry` for exactly this reason. An action rolls once. A passive is declared and rolls nothing,
   so clicking one announces it and pushes to the feed without any dice.
 
 ### The roll announcement over the map, and why it is not decoration
@@ -1197,32 +1335,37 @@ a passive announces it and adds a feed line with no dice.
 
 ### 🎲 This is the first playable session
 
-With Milestones 1–8 you can run a real game: a map with tokens, characters built by choosing rather
+With Milestones 1–9 you can run a real game: a map with tokens, characters built by choosing rather
 than by filling in a form, monsters picked off a shelf rather than typed in, sheets that roll, shared
 dice, and a feed. The DM works around the missing tooling manually. **Consider actually playing here
 before building more** — a session will tell you what's genuinely missing faster than guessing.
 
 ---
 
-## Milestone 9 — DM tooling
+## Milestone 10 — DM tooling
 
 The four bold items at the end were **requested after playing Milestone 2**. The rest was always
-here — except the token-control bullet, which **moved forward into the seats-and-sheets milestone**
-once control stopped being about dragging a coin and started deciding which sheets a player is sent.
+here — except two bullets that moved forward, both for the same kind of reason. The **token-control**
+bullet went to the seats-and-sheets milestone once control stopped being about dragging a coin and
+started deciding which sheets a player is sent; the **token list** went to the getting-to-the-table
+milestone once the sheet selector made it the only thing in the game with no way to reach it.
 
-- DM panel: the token list, the modal image library and the music selector. **Most of this bullet has
-  already been built by the three milestones that grew into it**, and what is left is smaller than it
-  reads. Milestone 3 left `Tabs` as a seam rather than a panel; Milestone 5 filled the NPC tab with the
+- ~~DM panel: the token list~~ — **moved forward into the getting-to-the-table milestone.** What is
+  left of this bullet is the modal image library and the music selector. **Most of it has already
+  been built by the four milestones that grew into it**, and what remains is smaller than it reads.
+  Milestone 3 left `Tabs` as a seam rather than a panel; Milestone 5 filled the NPC tab with the
   bestiary picker; the layout milestone moved the whole thing into the right-hand panel and split it
-  into DM-tools tabs; the seats-and-sheets milestone then took the sheets and the creatures back out
-  of it into a tab of their own. So this is three more tabs inside a panel that exists, not a panel.
+  into DM-tools tabs; the seats-and-sheets milestone took the sheets and the creatures back out of it
+  into a tab of their own, leaving DM tools holding Map alone. So this is two more tabs inside a
+  panel that exists, not a panel.
 - DM can click any sheet item to roll on a player's behalf.
 - Scene switching — changes the visible board for everyone in the game.
 - Modal image pop-up: DM opens an image for the whole group, and closes it for everyone.
-- DM can move any token on any layer, including player tokens. The mutation already allows this, and
-  the seats-and-sheets milestone gave the DM a selector that reaches a creature without finding its
-  coin first; what is still missing is a way to reach a token bound to nothing on a layer that is not
-  being shown.
+- DM can move any token on any layer, including player tokens. The mutation already allows this, the
+  seats-and-sheets milestone gave the DM a selector that reaches a creature without finding its coin
+  first, and the getting-to-the-table milestone's Tokens tab reaches a coin bound to nothing on a
+  layer that is not being shown. **So what is left of this bullet is the moving**, not the reaching —
+  which is the layer work below rather than a control of its own.
 - **Layers, done properly — Background, Player, GM, bottom to top.** They behave like an image
   editor's: an object belongs to one layer, and you see through the upper layers to what is below.
   Players see Background and Player, and may only interact with their own tokens on Player. The GM
@@ -1263,7 +1406,7 @@ a corridor is fogged has no position rows for what is standing in it.
 
 ---
 
-## Milestone 10 — Tools and polish
+## Milestone 11 — Tools and polish
 
 - Ruler tool, measuring in squares (1 square = 5 feet).
 - Multi-colour marker + eraser on the board. **DM only** — players must not have this.
@@ -1275,7 +1418,7 @@ marker tool available.
 
 ---
 
-## Milestone 11 — Game editor and admin
+## Milestone 12 — Game editor and admin
 
 - Libraries: maps/boards, modal images, tokens and music. **NPC sheets are no longer on this list** —
   the bestiary moved forward to Milestone 5, because a monster's sheet feeds the roll path as much as a
