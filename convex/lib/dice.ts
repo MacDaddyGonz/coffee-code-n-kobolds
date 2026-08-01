@@ -17,7 +17,7 @@
 // the top of it says the same thing from the other side.
 //
 // The grammar this file evaluates is `ROLL_PATTERN` in lib/sheet.ts and nothing wider.
-// Milestone 3 fixed the grammar and validated a corpus against it precisely so that the
+// The sheets milestone fixed the grammar and validated a corpus against it precisely so that the
 // evaluator could land on top of content already known to conform; this module is the
 // second half of that bet being collected.
 
@@ -181,8 +181,14 @@ export type RollModifiers = Readonly<Record<RollModifierToken, number>>
  * Frozen and shared because it is returned rather than built: nothing may mutate a
  * resolved modifier set, and a Convex isolate outlives the request that warmed it — the
  * hazard `creatureExtras` in lib/resolve.ts copies its arrays against.
+ *
+ * Exported for one caller: `feed.rollDice`, the ad-hoc dice tray, which has no character
+ * to resolve a token against and refuses an expression containing one — so by the time it
+ * reaches `evaluateRoll` this set is *provably* unused rather than merely a plausible
+ * default. `modifiersFor` below is the only other reader, and for it the same value means
+ * something different: a creature's tokens genuinely are worth nothing.
  */
-const NO_MODIFIERS: RollModifiers = Object.freeze({
+export const NO_MODIFIERS: RollModifiers = Object.freeze({
   STR: 0,
   DEX: 0,
   CON: 0,

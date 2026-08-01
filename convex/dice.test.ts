@@ -32,9 +32,9 @@ import {
 import type { PcSheet } from './lib/sheet'
 
 /**
- * MILESTONE 9'S EVALUATOR, AGAINST EVERY EXPRESSION THE GAME CAN PRODUCE.
+ * THE EVALUATOR, AGAINST EVERY EXPRESSION THE GAME CAN PRODUCE.
  *
- * The corpora are the test. Milestone 3 fixed the roll grammar and validated three corpora
+ * The corpora are the test. The sheets milestone fixed the roll grammar and validated three corpora
  * against it a milestone before anything could evaluate one, on the stated bet that the
  * evaluator would then land on content already known to conform — so this suite collects
  * that bet by enumerating the expressions **at runtime** rather than naming a handful of
