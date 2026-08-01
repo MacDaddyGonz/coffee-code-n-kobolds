@@ -463,7 +463,21 @@ async function playerPayloads(
     'scenes.active': await t.query(api.scenes.active, { code }),
     'games.getByCode': await t.query(api.games.getByCode, { code }),
     'players.list': await t.query(api.players.list, { code }),
-    'players.listNames': await t.query(api.players.listNames, { code }),
+    /**
+     * ⚠️ **The one query in the sweep that is not scoped to this game, and it is here
+     * as a replacement rather than an addition.** `players.listNames` used to hold this
+     * slot; it is gone, because the name gate mounted it beside `players.list {code}`
+     * for a strict subset of the same rows. Deleting the line would have shrunk the
+     * sweep silently, which is the failure mode a sweep exists to prevent — so the new
+     * public query a client can reach with **no credential at all** takes its place.
+     *
+     * `games.list` reads *every* game in the deployment rather than the one this fixture
+     * built, so the scan now also proves the cross-game read carries nothing: the
+     * creature's name and its hit points are in a game whose join code this caller is
+     * not even supplying, and a projection that leaked a field would leak it from all
+     * thirty rows at once.
+     */
+    'games.list': await t.query(api.games.list, {}),
   }
 }
 

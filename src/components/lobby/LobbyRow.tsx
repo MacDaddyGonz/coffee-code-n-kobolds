@@ -4,10 +4,16 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
 /**
- * The list-row shape the lobby cards and the name gate share. Wrap the rows in
- * `<LobbyRows>`, render each as a `<LobbyRow>`, and use `<LobbyRowSkeletons>` for
- * the loading state — `<LobbyRoster>`, `<LobbyCharacters>` and `<NameGate>` all
- * draw the same list and had three copies of these class strings between them.
+ * The list-row shape the lobby cards, the seat picker and the landing page share.
+ * Wrap the rows in `<LobbyRows>`, render each as a `<LobbyRow>`, and use
+ * `<LobbyRowSkeletons>` for the loading state — `<LobbyRoster>`,
+ * `<LobbyCharacters>`, `<SeatPicker>` and `<GameList>` all draw the same list and
+ * had three copies of these class strings between them before this existed.
+ *
+ * `<GameList>` is the first consumer outside a game, which is worth naming because it
+ * is what settled the shape as *a list row* rather than *a lobby row*: an icon, a
+ * name, a badge, a sub-line and a control or two on the right is the same furniture
+ * whether the thing listed is a seat, a character or a whole game.
  */
 
 /** `compact` is the name gate's shorter row; the lobby cards use `default`. */

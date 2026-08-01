@@ -6,6 +6,7 @@ import { describe, expect, test } from 'vitest'
 
 import { api } from './_generated/api'
 import type { Id } from './_generated/dataModel'
+import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
 import { MAX_TOKENS_PER_GAME } from './lib/games'
 import { cellOf, snapToGrid } from './lib/grid'
 import type { Grid, Point } from './lib/grid'
@@ -246,6 +247,30 @@ async function boardFixture(t: Harness) {
   expect(typeof secret.artUrl).toBe('string')
 
   return { ...game, sceneId, openToken, secretToken, secret }
+}
+
+/**
+ * One token off the real query as the **DM** receives it, by id.
+ *
+ * The player-side twin is `tokenPayload` in the Milestone 7 section below, and the two
+ * are deliberately separate calls rather than one with an optional `dmCode`: every test
+ * that reaches for either is asserting something about the difference between the two
+ * audiences, so which one is being read should be legible at the call site rather than
+ * hidden in an argument.
+ *
+ * It throws rather than returning undefined because every caller wants the row: a
+ * `find` that quietly answered `undefined` would turn "the DM lost sight of their own
+ * token" into a passing assertion about `undefined.artUrl` being absent.
+ */
+async function dmTokenPayload(
+  t: Harness,
+  game: { code: string; dmCode: string },
+  tokenId: Id<'tokens'>,
+) {
+  const tokens = await t.query(api.board.tokens, { code: game.code, dmCode: game.dmCode })
+  const token = tokens.find((row) => row._id === tokenId)
+  if (!token) throw new Error(`token ${tokenId} is not in the DM payload`)
+  return token
 }
 
 describe('the DM layer never reaches a player', () => {
@@ -999,6 +1024,64 @@ describe('placements survive a scene switch', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// The argument corpora that BOTH token validators are run over
+// ---------------------------------------------------------------------------
+//
+// One array per field, at module scope, and **the sharing is the mechanism rather than a
+// tidy-up.** `board.addToken` and `board.updateToken` check a name, a size and a tint
+// through one module-private `requireTokenAppearance`, so the set of names, sizes and
+// tints a DM may *create* is the set they may *change to*. The way that stops being true
+// is not a refactor anybody notices: it is two test corpora that were identical the day
+// they were written and then had a case added to one of them. A tint accepted by the edit
+// path and refused by the create path is a hole with no file you can read to see it.
+//
+// So each refusal test below runs the same array through both mutations and compares the
+// two refusals with `toEqual` — kind *and* message — rather than settling for both being
+// BadInput. That is the assertion that fails if somebody re-inlines the checks, because
+// two copies can both refuse `'#fff'` while wording it differently, and a DM reading the
+// second wording is reading a second implementation of the same rule.
+
+/**
+ * Not `#rrggbb`. The tint is handed straight to a Konva fill, so the pattern is strict:
+ * a CSS colour function or a `url(...)` would be a string the browser interprets on every
+ * other player's screen, put there by whoever runs the game.
+ */
+const UNUSABLE_TINTS = [
+  'red',
+  '#fff',
+  '#FFF',
+  'c0392b',
+  '#c0392',
+  '#c0392bb',
+  '#GGGGGG',
+  '',
+  ' #c0392b',
+]
+
+/** `#rrggbb` in either case, which both mutations store verbatim rather than normalising. */
+const USABLE_TINTS = ['#c0392b', '#C0392B', '#000000', '#ffffff']
+
+/**
+ * Outside 1–8, or not a whole number of squares at all.
+ *
+ * NaN and Infinity belong in here rather than in a separate non-finite test, and that is
+ * the reason `updateToken` needs no `requireFinite` of its own: `isUsableTokenSize` tests
+ * `Number.isInteger`, which is already `false` for both, so a second check could not fire
+ * and this project does not keep guards that cannot fail.
+ */
+const UNUSABLE_SIZES = [0, -1, 1.5, 2.5, 9, 100, Number.NaN, Number.POSITIVE_INFINITY]
+
+/**
+ * Blank once whitespace is collapsed, or past the character-name limit a token borrows.
+ *
+ * ⚠️ The over-long entry is **new**, and hoisting the array is what made its absence
+ * visible: the `addToken` test has been named *rejects a blank or over-long name* since
+ * Milestone 2 and only ever sent blanks. A corpus read by two mutations gets read
+ * properly, which is a second thing the sharing buys.
+ */
+const UNUSABLE_NAMES = ['', '   ', '\t\n ', 'x'.repeat(MAX_CHARACTER_NAME_LENGTH + 1)]
+
 describe('board.addToken', () => {
   test('snaps the given point before inserting the placement', async () => {
     const t = harness()
@@ -1084,7 +1167,7 @@ describe('board.addToken', () => {
     const game = await makeGame(t)
     const sceneId = await makeScene(t, game.code, game.dmCode)
 
-    for (const tint of ['red', '#fff', '#FFF', 'c0392b', '#c0392', '#c0392bb', '#GGGGGG', '', ' #c0392b']) {
+    for (const tint of UNUSABLE_TINTS) {
       await expectKind(addToken(t, game.code, game.dmCode, sceneId, { tint }), 'BadInput')
     }
     expect(await t.query(api.board.tokens, { code: game.code })).toEqual([])
@@ -1095,7 +1178,7 @@ describe('board.addToken', () => {
     const game = await makeGame(t)
     const sceneId = await makeScene(t, game.code, game.dmCode)
 
-    for (const tint of ['#c0392b', '#C0392B', '#000000', '#ffffff']) {
+    for (const tint of USABLE_TINTS) {
       const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { tint })
       expect((await tokenRow(t, tokenId))?.tint).toBe(tint)
     }
@@ -1106,7 +1189,7 @@ describe('board.addToken', () => {
     const game = await makeGame(t)
     const sceneId = await makeScene(t, game.code, game.dmCode)
 
-    for (const sizeSquares of [0, -1, 1.5, 2.5, 9, 100, Number.NaN, Number.POSITIVE_INFINITY]) {
+    for (const sizeSquares of UNUSABLE_SIZES) {
       await expectKind(addToken(t, game.code, game.dmCode, sceneId, { sizeSquares }), 'BadInput')
     }
     expect(await t.query(api.board.tokens, { code: game.code })).toEqual([])
@@ -1129,9 +1212,10 @@ describe('board.addToken', () => {
     const game = await makeGame(t)
     const sceneId = await makeScene(t, game.code, game.dmCode)
 
-    for (const name of ['', '   ', '\t\n ']) {
+    for (const name of UNUSABLE_NAMES) {
       await expectKind(addToken(t, game.code, game.dmCode, sceneId, { name }), 'BadInput')
     }
+    expect(await t.query(api.board.tokens, { code: game.code })).toEqual([])
   })
 
   test('rejects a characterId from another game', async () => {
@@ -1260,6 +1344,627 @@ describe('board.addToken', () => {
     // or the last tokens added are invisible while still being movable by id.
     const visible = await t.query(api.board.tokens, { code: game.code, dmCode: game.dmCode })
     expect(visible).toHaveLength(MAX_TOKENS_PER_GAME)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The four token-edit mutations: cosmetics, two secrecy writes, and the art
+// ---------------------------------------------------------------------------
+//
+// Until these landed, nothing edited a token except `setControllers`: a DM who mistyped a
+// name deleted the coin and made another one, and a coin bound to nothing — or sitting on
+// a layer nobody is being shown — was unreachable from every screen in the app.
+//
+// They are four mutations rather than one, and these are four describes rather than one,
+// because of what *kind* of fact each one writes. An absolute multi-field write is right
+// for cosmetics — one appearance, one form, one commit — and wrong for `layer` and
+// `characterId`, because with those folded in every rename would carry a layer value, and
+// a client sending a stale one would reveal an ambush as a side effect of fixing a typo.
+// `setArt` is separate again for a third reason: it is the only token write that destroys
+// data outside the row it patches.
+//
+// Two things are asserted elsewhere on purpose rather than four times over here. The DM
+// gate is one table-driven loop in the `DM gating` describe further down, because all four
+// share `requireDm` → `requireMovableToken(…, true)` → argument checks → a writer. And
+// what a rebind does to the *derived* half of control is beside the Milestone 7 control
+// tests at the bottom of this file, where the fixture that can express it already lives.
+//
+// One thing is deliberately **not** asserted anywhere: the no-op suppression on
+// `setTokenAppearance`, `setTokenLayer` and `setTokenCharacter`. A skipped patch and an
+// identical patch leave byte-identical documents, so nothing observable through the public
+// API can tell them apart — what the suppression saves is a subscription invalidation,
+// which is not a thing the API can be asked about. The reasoning is at the writers, and
+// this project does not keep guards that cannot fail. `replaceTokenArt`'s early return is
+// a different animal and is tested twice below, because skipping *that* one destroys the
+// art.
+
+/**
+ * ⚠️ **The defaults here are real values, not *leave this field alone*.**
+ *
+ * `board.updateToken` is absolute, the shape `scenes.updateGrid` has: all three cosmetic
+ * fields travel on every call whether or not the caller cares about them, because a name,
+ * a size and a colour are one appearance edited in one form, and committing them
+ * separately would show the table a coin nobody chose in between. So a test that names
+ * only the tint is still renaming the token to `Guard` and resizing it to 1 square.
+ *
+ * That is used deliberately by the refusal tests below: each starts from a token whose
+ * three fields all differ from these defaults, so a write that landed when it should have
+ * been refused shows up in the row comparison in *any* of the three fields rather than
+ * only in the one the test was about.
+ */
+async function updateToken(
+  t: Harness,
+  game: { code: string; dmCode: string },
+  tokenId: Id<'tokens'>,
+  fields: { name?: string; sizeSquares?: number; tint?: string } = {},
+) {
+  await t.mutation(api.board.updateToken, {
+    code: game.code,
+    dmCode: game.dmCode,
+    tokenId,
+    name: fields.name ?? 'Guard',
+    sizeSquares: fields.sizeSquares ?? 1,
+    tint: fields.tint ?? TINT,
+  })
+}
+
+async function setLayer(
+  t: Harness,
+  game: { code: string; dmCode: string },
+  tokenId: Id<'tokens'>,
+  layer: 'player' | 'dm',
+) {
+  await t.mutation(api.board.setLayer, { code: game.code, dmCode: game.dmCode, tokenId, layer })
+}
+
+/** `null` unbinds — a **required** argument, so there is one spelling of "none". */
+async function setCharacter(
+  t: Harness,
+  game: { code: string; dmCode: string },
+  tokenId: Id<'tokens'>,
+  characterId: Id<'characters'> | null,
+) {
+  await t.mutation(api.board.setCharacter, {
+    code: game.code,
+    dmCode: game.dmCode,
+    tokenId,
+    characterId,
+  })
+}
+
+/** `null` clears the art, and clearing it deletes the blob. See `replaceTokenArt`. */
+async function setArt(
+  t: Harness,
+  game: { code: string; dmCode: string },
+  tokenId: Id<'tokens'>,
+  imageId: Id<'_storage'> | null,
+) {
+  await t.mutation(api.board.setArt, { code: game.code, dmCode: game.dmCode, tokenId, imageId })
+}
+
+/**
+ * One token whose name, size and tint all differ from `updateToken`'s defaults, so a
+ * refused write that quietly landed is visible in the row comparison whichever field it
+ * touched. Shared by the three refusal tests below.
+ */
+async function appearanceFixture(t: Harness) {
+  const game = await makeGame(t)
+  const sceneId = await makeScene(t, game.code, game.dmCode)
+  const tokenId = await addToken(t, game.code, game.dmCode, sceneId, {
+    name: 'Village Guard',
+    sizeSquares: 3,
+    tint: '#000000',
+  })
+  return { ...game, sceneId, tokenId }
+}
+
+describe('board.updateToken', () => {
+  test('refuses every unusable tint exactly as addToken does, and leaves the row alone', async () => {
+    const t = harness()
+    const fixture = await appearanceFixture(t)
+    const before = await tokenRow(t, fixture.tokenId)
+
+    for (const tint of UNUSABLE_TINTS) {
+      const refusal = await refusalOf(updateToken(t, fixture, fixture.tokenId, { tint }))
+      expect(refusal.kind).toBe('BadInput')
+      // Byte-identical to the create path's refusal, because there is one
+      // `requireTokenAppearance` rather than two copies that agreed when they were
+      // written. See the note above the corpora.
+      expect(refusal).toEqual(
+        await refusalOf(addToken(t, fixture.code, fixture.dmCode, fixture.sceneId, { tint })),
+      )
+    }
+
+    expect(await tokenRow(t, fixture.tokenId)).toEqual(before)
+  })
+
+  test('refuses every unusable size exactly as addToken does, and leaves the row alone', async () => {
+    const t = harness()
+    const fixture = await appearanceFixture(t)
+    const before = await tokenRow(t, fixture.tokenId)
+
+    for (const sizeSquares of UNUSABLE_SIZES) {
+      const refusal = await refusalOf(updateToken(t, fixture, fixture.tokenId, { sizeSquares }))
+      expect(refusal.kind).toBe('BadInput')
+      expect(refusal).toEqual(
+        await refusalOf(
+          addToken(t, fixture.code, fixture.dmCode, fixture.sceneId, { sizeSquares }),
+        ),
+      )
+    }
+
+    expect(await tokenRow(t, fixture.tokenId)).toEqual(before)
+  })
+
+  test('refuses every unusable name exactly as addToken does, and leaves the row alone', async () => {
+    const t = harness()
+    const fixture = await appearanceFixture(t)
+    const before = await tokenRow(t, fixture.tokenId)
+
+    for (const name of UNUSABLE_NAMES) {
+      const refusal = await refusalOf(updateToken(t, fixture, fixture.tokenId, { name }))
+      expect(refusal.kind).toBe('BadInput')
+      expect(refusal).toEqual(
+        await refusalOf(addToken(t, fixture.code, fixture.dmCode, fixture.sceneId, { name })),
+      )
+    }
+
+    expect(await tokenRow(t, fixture.tokenId)).toEqual(before)
+  })
+
+  /**
+   * The accepted ends of both ranges, round-tripped through the stored row *and* through
+   * the query the board actually draws from — the second is the one a client would notice
+   * being wrong, and a projection that dropped a field would still leave the row correct.
+   *
+   * 1 and 8 are the inclusive bounds `isUsableTokenSize` allows. Both tint cases are
+   * stored verbatim rather than normalised: Konva does not care, and rewriting what
+   * somebody typed is a change nobody asked for.
+   */
+  test('round-trips a size of 1 and of 8, and a tint in either case', async () => {
+    const t = harness()
+    const fixture = await appearanceFixture(t)
+
+    for (const sizeSquares of [1, 8]) {
+      for (const tint of USABLE_TINTS) {
+        const name = `Ogre ${sizeSquares} ${tint}`
+        await updateToken(t, fixture, fixture.tokenId, { name, sizeSquares, tint })
+
+        expect(await tokenRow(t, fixture.tokenId)).toMatchObject({ name, sizeSquares, tint })
+        const [payload] = await t.query(api.board.tokens, { code: fixture.code })
+        expect(payload).toMatchObject({ name, sizeSquares, tint })
+      }
+    }
+  })
+
+  /**
+   * The limit is inclusive, and it is the *character* name limit rather than a fourth
+   * number for a client to have to know about — a token names a creature.
+   *
+   * The padded name is the second half of the same assertion, and it is about the writer
+   * rather than the check. `requireTokenAppearance` hands back all three fields
+   * normalised, and `setTokenAppearance` patches the object it was handed rather than
+   * reaching back into the raw arguments; a stored name with the DM's stray spaces still
+   * in it is precisely the bug that arrangement exists to remove.
+   */
+  test('accepts a name of exactly MAX_CHARACTER_NAME_LENGTH, and stores it collapsed', async () => {
+    const t = harness()
+    const fixture = await appearanceFixture(t)
+
+    const exact = 'x'.repeat(MAX_CHARACTER_NAME_LENGTH)
+    await updateToken(t, fixture, fixture.tokenId, { name: exact })
+    expect((await tokenRow(t, fixture.tokenId))?.name).toBe(exact)
+
+    await updateToken(t, fixture, fixture.tokenId, { name: '  Sir   Robin  ' })
+    expect((await tokenRow(t, fixture.tokenId))?.name).toBe('Sir Robin')
+  })
+})
+
+describe('board.setLayer', () => {
+  /**
+   * ⚠️ **The broadest secrecy write on the board**, asserted the way this file asserts
+   * every secret: a substring scan of the serialised payload, with a positive control
+   * beside it so the scan cannot pass on an empty fixture.
+   *
+   * Not a length check, for the reason the first describe in this file gives. A length
+   * check is satisfied the moment the array empties, so it keeps passing when the hidden
+   * coin arrives nested inside a legitimate row — a sibling field, an expanded position, a
+   * debugging echo of the arguments. The id, the name and the art URL are each
+   * independently enough to tell a player where the ambush is.
+   *
+   * **Both halves of the board are scanned, and the placement is most of the secret.** A
+   * position row pointing at a hidden token says *something is standing there*, which is
+   * what the DM was hiding in the first place. It goes because each placement is hydrated
+   * back to its token and decided by the same `maySee`, with nothing written to the
+   * position row at all.
+   */
+  test('hiding a token empties both of the player’s payloads and neither of the DM’s', async () => {
+    const t = harness()
+    const fixture = await boardFixture(t)
+    // Captured from the DM's own view before the flip, so the scan hunts for the real
+    // signed URL rather than for an invented string.
+    const open = await dmTokenPayload(t, fixture, fixture.openToken)
+    expect(typeof open.artUrl).toBe('string')
+
+    await setLayer(t, fixture, fixture.openToken, 'dm')
+    expect((await tokenRow(t, fixture.openToken))?.layer).toBe('dm')
+
+    for (const payload of [
+      await t.query(api.board.tokens, { code: fixture.code }),
+      await t.query(api.board.positions, { code: fixture.code, sceneId: fixture.sceneId }),
+    ]) {
+      const serialised = JSON.stringify(payload) ?? ''
+      expect(serialised).not.toContain(fixture.openToken)
+      expect(serialised).not.toContain('Village Guard')
+      expect(serialised).not.toContain(open.artUrl as string)
+    }
+
+    // The positive control, and the reason the scan above is a statement about the
+    // audience rather than about the fixture having emptied: all three strings are still
+    // in the DM's payloads, and so is the placement.
+    const dmTokens = JSON.stringify(
+      await t.query(api.board.tokens, { code: fixture.code, dmCode: fixture.dmCode }),
+    )
+    expect(dmTokens).toContain(fixture.openToken)
+    expect(dmTokens).toContain('Village Guard')
+    expect(dmTokens).toContain(open.artUrl as string)
+    const dmPositions = JSON.stringify(
+      await t.query(api.board.positions, {
+        code: fixture.code,
+        sceneId: fixture.sceneId,
+        dmCode: fixture.dmCode,
+      }),
+    )
+    expect(dmPositions).toContain(fixture.openToken)
+  })
+
+  test('flipping it back to the player layer restores the coin, its position and its art', async () => {
+    const t = harness()
+    const fixture = await boardFixture(t)
+    const before = await placement(t, fixture.sceneId, fixture.openToken)
+    const open = await dmTokenPayload(t, fixture, fixture.openToken)
+
+    await setLayer(t, fixture, fixture.openToken, 'dm')
+    expect(await t.query(api.board.tokens, { code: fixture.code })).toEqual([])
+
+    await setLayer(t, fixture, fixture.openToken, 'player')
+
+    const restored = await t.query(api.board.tokens, { code: fixture.code })
+    expect(restored.map((token) => token._id)).toEqual([fixture.openToken])
+    expect(restored[0]).toMatchObject({ name: 'Village Guard', artUrl: open.artUrl })
+    // ⚠️ The placement was never deleted, and that is what makes the round trip a reveal
+    // rather than a re-placement: hiding a token filters the row out of the player's
+    // payload, it does not take the coin off the map. A DM who hides a carefully arranged
+    // encounter and reveals it again gets the arrangement back.
+    expect(await placement(t, fixture.sceneId, fixture.openToken)).toEqual(before)
+    expect(
+      await t.query(api.board.positions, { code: fixture.code, sceneId: fixture.sceneId }),
+    ).toEqual([{ tokenId: fixture.openToken, x: before!.x, y: before!.y }])
+  })
+
+  /**
+   * The other direction, and the one the mutation exists for: the ambush the DM prepared
+   * before the session arrives on every player's board in one write, in the square it was
+   * already standing in.
+   */
+  test('revealing a DM-layer token publishes its name, art and position', async () => {
+    const t = harness()
+    const fixture = await boardFixture(t)
+
+    // The precondition, which is the whole of the first describe in this file.
+    expect(JSON.stringify(await t.query(api.board.tokens, { code: fixture.code }))).not.toContain(
+      'Ambush Skeleton',
+    )
+
+    await setLayer(t, fixture, fixture.secretToken, 'player')
+
+    const asPlayer = await t.query(api.board.tokens, { code: fixture.code })
+    expect([...asPlayer.map((token) => token._id)].sort()).toEqual(
+      [fixture.openToken, fixture.secretToken].sort(),
+    )
+    const revealed = asPlayer.find((token) => token._id === fixture.secretToken)
+    expect(revealed?.name).toBe('Ambush Skeleton')
+    expect(revealed?.artUrl).toBe(fixture.secret.artUrl)
+
+    const positions = await t.query(api.board.positions, {
+      code: fixture.code,
+      sceneId: fixture.sceneId,
+    })
+    expect([...positions.map((row) => row.tokenId)].sort()).toEqual(
+      [fixture.openToken, fixture.secretToken].sort(),
+    )
+  })
+
+  /**
+   * The same parity `moveToken` and `removeToken` keep, through the same shared
+   * `TOKEN_NOT_FOUND`. A DM has no existence oracle to gain here, so the value is the
+   * parity itself: one call site quietly wording its own refusal is how a shared constant
+   * becomes four literals again.
+   */
+  test('a vanished token and another game’s token refuse identically', async () => {
+    const t = harness()
+    const fixture = await boardFixture(t)
+    const other = await makeGame(t, 'Other Table', 'Sam')
+    const otherScene = await makeScene(t, other.code, other.dmCode, 'Their Map')
+    const theirToken = await addToken(t, other.code, other.dmCode, otherScene, { name: 'Theirs' })
+    const ghost = await vanishedTokenId(t)
+
+    const vanished = await refusalOf(setLayer(t, fixture, ghost, 'dm'))
+    expect(vanished.kind).toBe('TokenNotFound')
+    expect(await refusalOf(setLayer(t, fixture, theirToken, 'dm'))).toEqual(vanished)
+
+    // The other table's coin is still on the layer its own DM put it on — this game's DM
+    // code does not reach it.
+    expect((await tokenRow(t, theirToken))?.layer).toBe('player')
+  })
+})
+
+describe('board.setCharacter', () => {
+  /**
+   * The check is `getCharacterInGame`, the same line `addToken` runs, so the two refuse an
+   * id from another table identically and neither can leave a coin on this board standing
+   * for somebody else's hero. Asserted from both ends, as the `addToken` equivalent is:
+   * the refusal, and the binding that did not move.
+   */
+  test('refuses a characterId from another game and writes nothing', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    const thorin = await makeCharacter(t, game, 'Thorin')
+    const tokenId = await addToken(t, game.code, game.dmCode, sceneId, {
+      name: 'Thorin',
+      characterId: thorin,
+    })
+    const other = await makeGame(t, 'Other Table', 'Sam')
+    const theirs = await makeCharacter(t, other, 'Their Hero')
+
+    await expectKind(setCharacter(t, game, tokenId, theirs), 'CharacterNotFound')
+
+    expect((await tokenRow(t, tokenId))?.characterId).toBe(thorin)
+    const [payload] = await t.query(api.board.tokens, { code: game.code })
+    expect(payload.characterId).toBe(thorin)
+  })
+
+  /**
+   * ⚠️ **`null` as a present key, never a dropped field**, which is the same distinction
+   * `board.tokens` already makes for `artUrl`: `undefined` is not a Convex value, so an
+   * optional column has to become *something* on the way out, and a client reading
+   * `token.characterId === undefined` as "unbound" would be reading the absence of a field
+   * rather than the answer to a question.
+   *
+   * The stored side is the opposite spelling on purpose. `setTokenCharacter` patches
+   * `undefined`, which is what `detachCharacterFromTokens` writes when a character is
+   * deleted, so the two routes to an unbound token leave one shape of row rather than two
+   * for the smoke script's field-by-field rebuild to report as *present on one side only*.
+   */
+  test('null unbinds, and the payload reports characterId: null as a present key', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    const thorin = await makeCharacter(t, game, 'Thorin')
+    const tokenId = await addToken(t, game.code, game.dmCode, sceneId, {
+      name: 'Thorin',
+      characterId: thorin,
+    })
+
+    await setCharacter(t, game, tokenId, null)
+
+    expect((await tokenRow(t, tokenId))?.characterId).toBeUndefined()
+    const [payload] = await t.query(api.board.tokens, { code: game.code })
+    expect(payload).toHaveProperty('characterId', null)
+    expect(Object.keys(payload)).toContain('characterId')
+
+    // The character document is untouched: the pointer runs token → character, so
+    // unbinding is a fact about the coin and never about the creature.
+    expect(
+      (await t.query(api.characters.list, { code: game.code, dmCode: game.dmCode })).map(
+        (character) => character._id,
+      ),
+    ).toEqual([thorin])
+  })
+
+  test('binds a coin that stood for nothing, and rebinds a coin that stood for somebody', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    const thorin = await makeCharacter(t, game, 'Thorin')
+    const balin = await makeCharacter(t, game, 'Balin')
+    const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { name: 'Loose Barrel' })
+    expect((await tokenRow(t, tokenId))?.characterId).toBeUndefined()
+
+    await setCharacter(t, game, tokenId, thorin)
+    expect((await tokenRow(t, tokenId))?.characterId).toBe(thorin)
+    expect((await t.query(api.board.tokens, { code: game.code }))[0].characterId).toBe(thorin)
+
+    await setCharacter(t, game, tokenId, balin)
+    expect((await tokenRow(t, tokenId))?.characterId).toBe(balin)
+    expect((await t.query(api.board.tokens, { code: game.code }))[0].characterId).toBe(balin)
+  })
+})
+
+describe('board.setArt', () => {
+  /**
+   * The pair from `addToken`'s equivalent test, plus the half only an *edit* can get
+   * wrong: the art the token was already drawing has to survive a refused swap, or a
+   * rejected upload becomes a way to blank a coin.
+   *
+   * The byte count is read out of storage rather than taken as an argument, because it is
+   * the client being checked — CLAUDE.md invariant 6 is a promise about what is in
+   * storage, and a limit only the browser applies is one a client bug silently removes.
+   * The refused blob then survives because a Convex mutation is one transaction: the
+   * `ctx.storage.delete` that would tidy up after a throw is rolled back with the throw
+   * itself, so cleaning up is `files.discard`'s job because that is the call that commits.
+   * See ADR 0004.
+   */
+  test('refuses art over MAX_TOKEN_BYTES, keeps the old art, leaves the blob', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    const original = await storeImage(t, 'original-art')
+    const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { imageId: original })
+    const huge = await storeImage(t, 'huge-token', MAX_TOKEN_BYTES + 1)
+
+    const refusal = await refusalOf(setArt(t, game, tokenId, huge))
+    expect(refusal.kind).toBe('BadInput')
+    // Byte-identical to `addToken`'s, for the reason the appearance corpora are shared:
+    // one `requireTokenArt`, so the blobs a DM may create a token from are exactly the
+    // blobs they may change it to.
+    expect(refusal).toEqual(
+      await refusalOf(addToken(t, game.code, game.dmCode, sceneId, { imageId: huge })),
+    )
+
+    expect((await tokenRow(t, tokenId))?.imageId).toBe(original)
+    expect(await blobExists(t, original)).toBe(true)
+    expect(await blobExists(t, huge)).toBe(true)
+
+    // The client's catch calls this, and it is the call that commits.
+    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId: huge })
+    expect(await blobExists(t, huge)).toBe(false)
+    // And the cleanup could not have taken the live art with it even if the client had
+    // mis-sequenced it: `discard` refuses a blob a token still points at, which is the
+    // guard the whole swap path below depends on.
+    expect(await blobExists(t, original)).toBe(true)
+  })
+
+  /**
+   * A storage id that resolves to nothing is what a retried upload path produces —
+   * `files.discard` ran and then the write was attempted again with the same id. Pointing
+   * a token at it would leave a blank coin forever, so it is refused rather than stored,
+   * exactly as `addToken` and `scenes.create` refuse one.
+   */
+  test('refuses a storage id that is no longer in storage, and keeps the old art', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    const original = await storeImage(t, 'original-art')
+    const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { imageId: original })
+    const gone = await storeImage(t, 'gone-token')
+    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId: gone })
+    expect(await blobExists(t, gone)).toBe(false)
+
+    await expectKind(setArt(t, game, tokenId, gone), 'BadInput')
+
+    expect((await tokenRow(t, tokenId))?.imageId).toBe(original)
+    expect(await blobExists(t, original)).toBe(true)
+  })
+
+  /**
+   * The swap itself, and the three facts that make it a *replacement*: the row points at
+   * the new blob, the old blob is gone, and the URL the board draws from changed.
+   *
+   * The URLs really do differ because `storeImage` writes distinct bytes per label —
+   * convex-test derives a stored file's URL from the SHA-256 of its contents, so two
+   * identical blobs would share one URL and this assertion would pass for the wrong
+   * reason.
+   */
+  test('a swap deletes the old blob, keeps the new one, and changes the art URL', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    const original = await storeImage(t, 'original-art')
+    const replacement = await storeImage(t, 'replacement-art')
+    const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { imageId: original })
+    const before = await dmTokenPayload(t, game, tokenId)
+
+    await setArt(t, game, tokenId, replacement)
+
+    expect((await tokenRow(t, tokenId))?.imageId).toBe(replacement)
+    expect(await blobExists(t, original)).toBe(false)
+    expect(await blobExists(t, replacement)).toBe(true)
+    const after = await dmTokenPayload(t, game, tokenId)
+    expect(typeof after.artUrl).toBe('string')
+    expect(after.artUrl).not.toBe(before.artUrl)
+  })
+
+  test('imageId: null clears the art, deletes the blob, and reports artUrl: null', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    const original = await storeImage(t, 'original-art')
+    const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { imageId: original })
+
+    await setArt(t, game, tokenId, null)
+
+    expect((await tokenRow(t, tokenId))?.imageId).toBeUndefined()
+    expect(await blobExists(t, original)).toBe(false)
+    const [payload] = await t.query(api.board.tokens, { code: game.code })
+    expect(payload).toHaveProperty('artUrl', null)
+
+    // Idempotent, and for the same reason the guard below exists rather than by luck:
+    // `previous === imageId` is true of `null === null`, so a second clear is not a second
+    // delete of a blob that has already gone.
+    await setArt(t, game, tokenId, null)
+    expect((await tokenRow(t, tokenId))?.imageId).toBeUndefined()
+  })
+
+  /**
+   * ⚠️ **THE DATA-LOSS GUARD, AND THE MOST VALUABLE TEST IN THIS DESCRIBE.**
+   *
+   * `replaceTokenArt` patches the row and then deletes the blob it *was* pointing at,
+   * unconditionally. Without its `previous === imageId` early return, re-submitting the id
+   * a token already carries would patch the row to point at that blob and then delete the
+   * blob — leaving a coin drawing nothing, holding a valid-looking `imageId`, with nothing
+   * in the app able to explain why afterwards. The DM's art picker is one double-click
+   * away from producing exactly that call, and the failure is silent: the mutation
+   * succeeds, and the picture disappears.
+   *
+   * It is also the one no-op suppression in this milestone that is **observable**, which
+   * is why it is the one that is tested. The other three writers skip an identical patch,
+   * and a skipped patch and an identical patch leave byte-identical documents; see the
+   * note at the top of this section.
+   */
+  test('setting the same imageId twice leaves the art intact', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    const original = await storeImage(t, 'sticky-art')
+    const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { imageId: original })
+    const before = await dmTokenPayload(t, game, tokenId)
+    expect(typeof before.artUrl).toBe('string')
+
+    await setArt(t, game, tokenId, original)
+    await setArt(t, game, tokenId, original)
+
+    expect(await blobExists(t, original)).toBe(true)
+    expect((await tokenRow(t, tokenId))?.imageId).toBe(original)
+    // Through the query too, because the row pointing at a deleted blob is the shape the
+    // bug takes: `getUrl` of a blob that has gone is null, and the board draws a plain
+    // tinted coin for that exactly as it does for a token with no art at all.
+    const after = await dmTokenPayload(t, game, tokenId)
+    expect(typeof after.artUrl).toBe('string')
+    expect(after.artUrl).toBe(before.artUrl)
+  })
+
+  /**
+   * The reference moved with the pointer, asserted from `files.discard`'s side.
+   *
+   * This is the mirror image of the refused-blob case above and is easy to get backwards:
+   * `discard` cannot be the way the *old* art is removed, because it refuses any blob a
+   * token still points at. So the only transaction permitted to delete the outgoing blob
+   * is the one that stops referencing it, which is why the delete lives inside
+   * `replaceTokenArt` and why a client sequencing it the other way round is simply told
+   * the image is in use.
+   */
+  test('files.discard refuses the new blob after a swap, and the old one has already gone', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    const original = await storeImage(t, 'original-art')
+    const replacement = await storeImage(t, 'replacement-art')
+    const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { imageId: original })
+
+    await setArt(t, game, tokenId, replacement)
+
+    await expectKind(
+      t.mutation(api.files.discard, {
+        code: game.code,
+        dmCode: game.dmCode,
+        imageId: replacement,
+      }),
+      'BadInput',
+    )
+    expect(await blobExists(t, replacement)).toBe(true)
+    expect(await blobExists(t, original)).toBe(false)
   })
 })
 
@@ -1402,6 +2107,97 @@ describe('DM gating', () => {
     // Nothing was added and nothing was removed.
     const tokens = await t.query(api.board.tokens, { code: fixture.code, dmCode: fixture.dmCode })
     expect(tokens.map((token) => token.name).sort()).toEqual(['Ambush Skeleton', 'Village Guard'])
+  })
+
+  /**
+   * ⚠️ **One loop over four mutations rather than four copies of the describe above, and
+   * the table is the point.**
+   *
+   * Every one of these begins `requireDm` → `requireMovableToken(…, true)`, where the
+   * literal `true` is discharged by the line above it and by nothing else. That is one
+   * property shared by four handlers, so it wants one assertion parameterised four ways: a
+   * hand-written describe each is four places for the fifth token mutation to be forgotten,
+   * and the one that gets forgotten is the one written in a hurry — which is also the one
+   * most likely to have the pair in the wrong order.
+   *
+   * Every argument below differs from what the fixture's token already stores — a
+   * different name, size, tint, layer, character and blob — so a write that landed is
+   * visible in the row comparison whichever field it touched. `toEqual` on the whole
+   * document rather than a field-by-field check, for the same reason: a gate that leaked
+   * one patch through is a gate that leaked, whatever it happened to write.
+   */
+  test('the four token-edit mutations refuse a wrong, empty or foreign DM code', async () => {
+    const t = harness()
+    const fixture = await boardFixture(t)
+    const other = await makeGame(t, 'Other Table', 'Sam')
+    const thorin = await makeCharacter(t, fixture, 'Thorin')
+    const spareArt = await storeImage(t, 'spare-art')
+    const before = await tokenRow(t, fixture.openToken)
+
+    const edits: { name: string; call: (dmCode: string) => Promise<unknown> }[] = [
+      {
+        name: 'updateToken',
+        call: (dmCode) =>
+          t.mutation(api.board.updateToken, {
+            code: fixture.code,
+            dmCode,
+            tokenId: fixture.openToken,
+            name: 'Intruder',
+            sizeSquares: 4,
+            tint: '#ffffff',
+          }),
+      },
+      {
+        name: 'setLayer',
+        call: (dmCode) =>
+          t.mutation(api.board.setLayer, {
+            code: fixture.code,
+            dmCode,
+            tokenId: fixture.openToken,
+            layer: 'dm',
+          }),
+      },
+      {
+        name: 'setCharacter',
+        call: (dmCode) =>
+          t.mutation(api.board.setCharacter, {
+            code: fixture.code,
+            dmCode,
+            tokenId: fixture.openToken,
+            characterId: thorin,
+          }),
+      },
+      {
+        name: 'setArt',
+        call: (dmCode) =>
+          t.mutation(api.board.setArt, {
+            code: fixture.code,
+            dmCode,
+            tokenId: fixture.openToken,
+            imageId: spareArt,
+          }),
+      },
+    ]
+
+    for (const edit of edits) {
+      for (const dmCode of [twiddle(fixture.dmCode), '', '   ', other.dmCode]) {
+        await expectKind(edit.call(dmCode), 'NotDm')
+        expect(await tokenRow(t, fixture.openToken), `${edit.name} wrote the row`).toEqual(before)
+      }
+    }
+
+    // `setArt` is the one of the four that destroys data outside the row, so the gate has
+    // to be asserted in storage as well: neither the art the token is drawing nor the blob
+    // the refused call was pointing at may have been touched.
+    expect(await blobExists(t, spareArt)).toBe(true)
+    expect(await blobExists(t, before!.imageId!)).toBe(true)
+    // And the same statement made where it actually matters. The row comparison above
+    // already covers `layer`, but `setLayer` is a secrecy write and this is the payload
+    // whose contents are the secret, so it is worth reading the answer off the query a
+    // player's client subscribes to rather than only off the document behind it.
+    expect(
+      (await t.query(api.board.tokens, { code: fixture.code })).map((token) => token._id),
+    ).toEqual([fixture.openToken])
   })
 
   test('games.start and games.returnToLobby refuse a wrong DM code', async () => {
@@ -1633,6 +2429,149 @@ describe('board.tokens carries both halves of the control rule', () => {
     const deduped = await tokenPayload(t, fixture, fixture.heroToken)
     expect([...deduped.controllerIds].sort()).toEqual([ana, ben].sort())
     expect([...deduped.grantedPlayerIds].sort()).toEqual([ana, ben].sort())
+  })
+})
+
+describe('board.setCharacter moves the derived half of control and writes nothing', () => {
+  /**
+   * ⚠️ **THE NO-MIGRATION PAIR, AND THE WHOLE REASON `setTokenCharacter` MUST NOT TOUCH
+   * `controllerIds`.**
+   *
+   * A grant is of the token; the claim holder is composed *in* by `effectiveControllersOf`
+   * from whatever the token points at now. So a rebind changes who may move a coin without
+   * anything being written about who may move it — and these two tests are the assertion
+   * that the derived half really is derived. Migrating the array on a rebind instead would
+   * write the derived half down, which is the denormalisation ADR 0004 refused for `layer`
+   * for the same reason, and the bug that follows is a token still listing the seat that
+   * played the creature it is no longer bound to: a stale grant that authorises a real drag
+   * and that the DM's dialog renders as a box it has no way to explain.
+   *
+   * ⚠️ **This is also the sharpest reason `publicTokenValidator` carries two fields rather
+   * than one.** `controllerIds` moves here and `grantedPlayerIds` does not, in the same
+   * write, with nothing written to the token to make either true. A dialog handed only the
+   * effective set would have to subtract the claim holder back out to know which boxes it
+   * may untick — the control rule, re-implemented in the browser, where nothing checks it
+   * against the server's.
+   */
+  test('binding to a claimed hero adds the holder and leaves the grants alone', async () => {
+    const t = harness()
+    const fixture = await controlFixture(t)
+    const { code, ana, ben, thorin, looseToken } = fixture
+    await t.mutation(api.characters.claim, { code, playerId: ana, characterId: thorin })
+    await setControllers(t, fixture, looseToken, [ben])
+
+    // The precondition: Ben by grant, Ana nowhere, because the barrel is nobody's.
+    expect((await tokenPayload(t, fixture, looseToken)).controllerIds).toEqual([ben])
+
+    await setCharacter(t, fixture, looseToken, thorin)
+
+    const bound = await tokenPayload(t, fixture, looseToken)
+    expect([...bound.controllerIds].sort()).toEqual([ana, ben].sort())
+    // Exactly what the DM wrote, and only that. The difference between the two arrays *is*
+    // the derived half.
+    expect(bound.grantedPlayerIds).toEqual([ben])
+    expect((await tokenRow(t, looseToken))?.controllerIds).toEqual([ben])
+  })
+
+  test('rebinding away drops the holder while the grants stay byte-identical', async () => {
+    const t = harness()
+    const fixture = await controlFixture(t)
+    const { code, sceneId, ana, ben, thorin, looseToken } = fixture
+    const balin = await makeCharacter(t, fixture, 'Balin')
+    await t.mutation(api.characters.claim, { code, playerId: ana, characterId: thorin })
+    await setControllers(t, fixture, looseToken, [ben])
+    await setCharacter(t, fixture, looseToken, thorin)
+    const granted = (await tokenRow(t, looseToken))?.controllerIds
+
+    await setCharacter(t, fixture, looseToken, balin)
+
+    const rebound = await tokenPayload(t, fixture, looseToken)
+    expect(rebound.controllerIds).toEqual([ben])
+    expect(rebound.grantedPlayerIds).toEqual([ben])
+    expect((await tokenRow(t, looseToken))?.controllerIds).toEqual(granted)
+
+    // The write path agrees with the payload, because both resolve through the one
+    // `effectiveControllersOf`: Ana's control was withdrawn by the pointer moving, and
+    // nothing told her so.
+    await expectKind(
+      t.mutation(api.board.moveToken, {
+        code,
+        sceneId,
+        tokenId: looseToken,
+        x: 300,
+        y: 900,
+        settle: true,
+        playerId: ana,
+      }),
+      'TokenNotYours',
+    )
+    // Ben still may, which is what makes the assertion above about the *derived* half
+    // rather than about control having collapsed.
+    await t.mutation(api.board.moveToken, {
+      code,
+      sceneId,
+      tokenId: looseToken,
+      x: 1200,
+      y: 300,
+      settle: true,
+      playerId: ben,
+    })
+    expect(await placement(t, sceneId, looseToken)).toMatchObject(
+      snapToGrid({ x: 1200, y: 300 }, GRID, 1),
+    )
+  })
+
+  /**
+   * **An unattached token is the DM's** — the correction Milestone 2 shipped after the
+   * first real session, reached by a third route. Control used to be *assumed* for a token
+   * with no character attached, which meant the whole table could shove the DM's monsters
+   * around, since every creature the DM adds is unattached by construction.
+   *
+   * Unbinding is now a way to produce that state deliberately, and it collapses a
+   * claim-only token to the empty array rather than to whoever held it a moment ago.
+   */
+  test('unbinding a claim-only token collapses controllerIds to the empty array', async () => {
+    const t = harness()
+    const fixture = await controlFixture(t)
+    const { code, sceneId, ana, thorin, heroToken } = fixture
+    await t.mutation(api.characters.claim, { code, playerId: ana, characterId: thorin })
+    expect((await tokenPayload(t, fixture, heroToken)).controllerIds).toEqual([ana])
+
+    await setCharacter(t, fixture, heroToken, null)
+
+    const unbound = await tokenPayload(t, fixture, heroToken)
+    expect(unbound.controllerIds).toEqual([])
+    expect(unbound.grantedPlayerIds).toEqual([])
+    expect(unbound.characterId).toBeNull()
+    // Nothing was stored to say so, in either direction: the claim is still on Ana's seat,
+    // and the token simply no longer points at what she is playing.
+    expect((await tokenRow(t, heroToken))?.controllerIds).toBeUndefined()
+
+    await expectKind(
+      t.mutation(api.board.moveToken, {
+        code,
+        sceneId,
+        tokenId: heroToken,
+        x: 700,
+        y: 700,
+        settle: true,
+        playerId: ana,
+      }),
+      'TokenNotYours',
+    )
+    // The DM still moves it, which is the whole point of the default.
+    await t.mutation(api.board.moveToken, {
+      code,
+      dmCode: fixture.dmCode,
+      sceneId,
+      tokenId: heroToken,
+      x: 700,
+      y: 700,
+      settle: true,
+    })
+    expect(await placement(t, sceneId, heroToken)).toMatchObject(
+      snapToGrid({ x: 700, y: 700 }, GRID, 1),
+    )
   })
 })
 

@@ -87,25 +87,6 @@ export const list = query({
 })
 
 /**
- * The seat list shown by the name gate before anyone commits to a name, so a
- * player whose storage was cleared can pick their existing seat instead of
- * creating a near-duplicate by typing `Mikey` where they once typed `Mike`.
- *
- * Deliberately just the names — nothing here is privileged, and anyone holding
- * the join code can already see the roster from inside the lobby.
- */
-export const listNames = query({
-  args: { code: v.string() },
-  returns: v.array(v.object({ displayName: v.string(), isDm: v.boolean() })),
-  handler: async (ctx, args) => {
-    const game = await findGameByCode(ctx, args.code)
-    if (!game) return []
-    const seats = await listSeats(ctx, game._id)
-    return seats.map((seat) => ({ displayName: seat.displayName, isDm: seat.isDm }))
-  },
-})
-
-/**
  * Changing a display name changes the identity key, so the caller must store the
  * new name — otherwise the next visit creates a fresh seat.
  */

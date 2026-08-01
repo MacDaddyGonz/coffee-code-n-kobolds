@@ -11,10 +11,10 @@ import { HitDiceControls } from '@/components/sheet/HitDiceControls'
 import { PcSheetForm } from '@/components/sheet/PcSheetForm'
 import { PresetSheetView } from '@/components/sheet/PresetSheetView'
 import { RestControls } from '@/components/sheet/RestControls'
-import { SheetField } from '@/components/sheet/SheetFields'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { PublicSheet, PublicVitals } from '@convex/lib/characters'
@@ -467,35 +467,70 @@ export function CharacterSheetEditor({
     <>
       <EditorBody>
         <div className="flex flex-col gap-3">
-          <SheetField id="character-name" label="Name">
-            <div className="flex items-center gap-2">
-              <Input
-                id="character-name"
-                value={name}
-                maxLength={MAX_CHARACTER_NAME_LENGTH}
-                aria-invalid={nameProblem !== null || undefined}
-                disabled={saving}
-                autoComplete="off"
-                onChange={(event) => setName(event.target.value)}
-              />
-              {/* The *resolved* kind, because that is the one a reader means. A preset
-                  resolves to a hero, and a badge reading "preset" would name the storage
-                  form rather than the character.
+          {/* **This is the panel's title, and the question it answers is "whose sheet am
+              I looking at" — the one question the whole panel exists to answer.** It used
+              to be a `SheetField`, so the name read at exactly the weight of the armour
+              class three rows down, and both the player's Character tab and the DM's
+              Sheets tab inherited that: a list of fields with a name somewhere in it
+              rather than a sheet belonging to somebody.
 
-                  **"Creature" rather than "NPC" or "Monster", and the vagueness is
-                  deliberate.** `kind` has two values where the DM's headings have three,
-                  and the field that tells an innkeeper from an owlbear is `group`, which
-                  a *resolved* sheet does not carry — a linked creature is grouped by the
-                  corpus category of its entry, which is read on the server and never
-                  travels. Printing one of the two names here would therefore be a guess
-                  that is wrong about half the DM's shelf, and copy that guesses is worse
-                  than copy that does not. The control that does answer it is on the form
-                  below. */}
-              <Badge variant={saved.sheet.kind === 'npc' ? 'secondary' : 'outline'}>
-                {saved.sheet.kind === 'npc' ? 'Creature' : 'Player character'}
-              </Badge>
-            </div>
-          </SheetField>
+              ⚠️ **Do not tidy this back into a labelled field, and do not add a heading
+              above one either.** The name has to appear exactly once — a heading over a
+              small captioned box below it is the same string twice, two things to keep in
+              step, and the shorter of the two is the one that would go stale. So the
+              input keeps every bit of its behaviour and gives up only its chrome: the
+              border goes transparent (rather than away, so the row does not move by a
+              pixel when it is there), the fill goes, the padding shrinks to almost
+              nothing, and the type becomes the `font-heading` idiom one step up from the
+              `text-sm` `<h3>`s further down the sheet and one step below `GameHeader`'s
+              `text-xl`.
+
+              What it deliberately does **not** give up is the focus ring or
+              `aria-invalid`. A box that reads as text and can still be typed into is only
+              honest if it says so the moment you reach it with the keyboard, and an empty
+              name still has to be able to turn red — `nameProblem` disables Save, and the
+              field it is about is this one.
+
+              Not a real `<h2>` wrapped round the input, either: a heading whose entire
+              content is a form control is a heading with no accessible name, and it would
+              trade a working label for markup that only looks more correct. The `Name`
+              label therefore stays and goes `sr-only`, which is what keeps the input's
+              accessible name — `LobbyRenameForm` and `BestiaryPicker`'s search box take
+              the same position, for the same reason. `htmlFor` was always the part doing
+              the work; the visible caption never was. */}
+          <div className="flex items-center gap-2">
+            <Label htmlFor="character-name" className="sr-only">
+              Name
+            </Label>
+            <Input
+              id="character-name"
+              // `md:text-lg` as well as `text-lg`, because `Input`'s own class list drops
+              // to `md:text-sm` at the breakpoint this app is always past.
+              className="font-heading h-auto border-transparent px-1 py-0.5 text-lg font-semibold disabled:bg-transparent md:text-lg dark:bg-transparent dark:disabled:bg-transparent"
+              value={name}
+              maxLength={MAX_CHARACTER_NAME_LENGTH}
+              aria-invalid={nameProblem !== null || undefined}
+              disabled={saving}
+              autoComplete="off"
+              onChange={(event) => setName(event.target.value)}
+            />
+            {/* The *resolved* kind, because that is the one a reader means. A preset
+                resolves to a hero, and a badge reading "preset" would name the storage
+                form rather than the character.
+
+                **"Creature" rather than "NPC" or "Monster", and the vagueness is
+                deliberate.** `kind` has two values where the DM's headings have three,
+                and the field that tells an innkeeper from an owlbear is `group`, which
+                a *resolved* sheet does not carry — a linked creature is grouped by the
+                corpus category of its entry, which is read on the server and never
+                travels. Printing one of the two names here would therefore be a guess
+                that is wrong about half the DM's shelf, and copy that guesses is worse
+                than copy that does not. The control that does answer it is on the form
+                below. */}
+            <Badge variant={saved.sheet.kind === 'npc' ? 'secondary' : 'outline'}>
+              {saved.sheet.kind === 'npc' ? 'Creature' : 'Player character'}
+            </Badge>
+          </div>
           <FieldError message={nameProblem} />
 
           {/* Hit points are not part of the sheet and are not saved with it. They live

@@ -23,6 +23,21 @@ import {
  * The code is checked here, before navigating, so a mistyped code reports itself
  * next to the field it was typed into rather than on a game screen that says the
  * game does not exist.
+ *
+ * ⚠️ **Load-bearing rather than vestigial, now that `<GameList>` sits above it.** The
+ * list is capped server-side at `MAX_GAMES_ON_LANDING` — thirty — and the dev
+ * deployment already holds seventy-one games, so truncation is an ordinary state and
+ * not an edge case. This panel is what makes the cap costless: a game off the end of
+ * the list is still perfectly joinable, because the join code was always the thing
+ * that admits you and the list publishes none. It is also the only way in to a game
+ * whose row you are not meant to be reading off a shared screen at all.
+ *
+ * It keeps its own `getByCode` subscription and its own name field rather than
+ * borrowing the dialog's steps, and that is the right call for a shape that is
+ * genuinely different: here the code is the *only* thing identifying the game, so
+ * there is no row's `_id` to check it against and nothing for `verdictOf`'s
+ * wrong-game arm to compare. One form with two fields is the correct amount of
+ * screen for that.
  */
 export function JoinGamePanel() {
   const navigate = useNavigate()
@@ -46,8 +61,10 @@ export function JoinGamePanel() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Join a game</CardTitle>
-        <CardDescription>You will need the code from whoever is running it.</CardDescription>
+        <CardTitle>Join with a code</CardTitle>
+        <CardDescription>
+          For a game that is not in the list — the code is all you need.
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <form

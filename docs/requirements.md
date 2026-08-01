@@ -166,6 +166,52 @@ no longer inside a tab named for the DM's plumbing. One further split falls out 
 correction: **the DM does not play a character**, so where a player sees a *Character* tab the DM
 sees the *Sheets* tab instead of it, not as well.
 
+#### Getting to the table — 2026-08-01 — [ADR 0010](adr/0010-the-way-in-and-the-dms-coins.md)
+
+Two amendments, and **neither is a change to the rule set** — nothing was added to the *Included*
+list and nothing was lifted from the *Excluded* list. The first is the only entry in this section
+that records something the application now **publishes**, which is why it is stated at length rather
+than as a line. The second corrects a description of the **screen**. Nothing new is adjudicated,
+evaluated or rolled, and no ADR is superseded.
+
+**"Games are joined with a Game code" — still true, and no longer the only way to learn a game
+exists.** *Accounts and games* below describes joining as an exchange of a code and nothing else, and
+that was literally the whole of it: `games.getByCode` was a point lookup, there was no list query of
+any kind, and a game you had made but whose code you had lost was unreachable. A landing page now
+lists the **thirty most recently created** games — name, who created it, and when — with a *Join as
+player* and a *Join as DM* button beside each.
+
+⚠️ **The code still admits you, and that distinction is the whole of the change.** Choosing either
+button asks for the game code first, so a row on the landing page says only that a game *exists*. The
+join code is deliberately **absent from that payload** — printing it beside the name would make the
+list a directory of open doors rather than a list of games — as is the DM code, the recovery salt and
+the recovery hash, which are excluded by construction rather than by anybody remembering.
+
+What is genuinely new is the audience. Before this, everything this application would tell you needed
+a join code, and a join code is a bearer credential shared by everybody at one table. **After it, a
+game's name, its creator's display name, its age and whether it is in play are readable by anybody who
+loads the site with no credential at all.** The threat model in [CLAUDE.md](../CLAUDE.md) scopes that
+rather than excusing it — the audience is a small group of trusted colleagues, and a game name is not
+a secret the way a scene name or a creature name is — but it is recorded here because it is the first
+thing this app has ever published without a code, and because the way that sort of thing arrives
+unnoticed is behind a screen.
+
+Two smaller consequences of the same page. A returning player now **picks their seat off a list**,
+each row showing the character it holds, rather than retyping a display name from memory and hoping
+the normalisation matches — which is [ADR 0003](adr/0003-player-identity-without-accounts.md)'s
+idempotence made visible instead of merely true. And a returning DM enters their DM code **at the
+door** and lands already elevated; the elevate and recovery controls stay in *Settings* as well,
+because a DM whose browser loses its code mid-campaign needs a way in that is not a screen they have
+already left.
+
+**"A new player provides their name and selects their race and class" — the DM makes the character
+and the player builds on it.** Read on its own, that sentence describes a player creating a character,
+which the entry above has the DM doing. Both are true in the order they happen: the DM creates the
+character, the player claims an unclaimed one from the table, and **then** chooses its race and class
+on the sheet, which they may do for as long as it is unlocked. Nothing about who may *create* one
+changed, `characters.create` still demands the DM code on every path, and no ADR was superseded to
+make this work — the permission to choose a race and a class on an unlocked sheet was already there.
+
 ## Accounts and games
 
 - Users create an account by providing an email address.

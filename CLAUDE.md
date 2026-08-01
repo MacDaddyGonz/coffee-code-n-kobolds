@@ -241,6 +241,20 @@ a caller with no seat. **The line moved by one deliberate act, not by a relaxati
 written into `requireMovableToken` and `requireEditableCharacter` as well as here so the next reader
 does not have to discover it.
 
+⚠️ **There is now a third audience, and until recently there were two.** Everything above reasons
+about a caller holding the join code (a bearer credential the whole table shares) or the DM code. The
+set of things reachable with **no credential at all** used to be empty, and is now exactly this: for
+the thirty most recently created games, the game's **name**, its creator's **display name**, its
+creation time and whether it is in play — `games.list`, which is the one query in this application a
+browser may call having typed nothing. Every other field of that document, the **join code included**,
+is absent from the payload by construction, which is why the projection is derived from
+`publicGameValidator` and why the test pinning its exact key set is not optional (invariant 8 — a
+subtractive spec across two audiences only guarantees the fields it names). Scoped rather than
+excused: a game name is not a secret the way a scene name or a creature name is. See
+[ADR 0010](docs/adr/0010-the-way-in-and-the-dms-coins.md). **Anything else that would be readable
+with no credential is a new decision and needs one**, because this is the boundary where "the code
+still admits you" either holds or has quietly stopped holding.
+
 The line: **not sending a secret is nearly free, so it is required; proving who is asking is not, so
 it is out of scope.** That still holds exactly as written — a secret the DM has *not* published is
 still not sent, and never hidden in the browser instead. Read this as licence to ship DM data to

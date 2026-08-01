@@ -1158,7 +1158,80 @@ editing the text, as the three amendments before it were:
 
 ---
 
-## Milestone 8 — Getting to the table, and the DM's tokens
+## ✅ Milestone 8 — Getting to the table, and the DM's tokens
+
+**Done.** The decisions are recorded in
+[ADR 0010](adr/0010-the-way-in-and-the-dms-coins.md). Six things it settled that the section below
+planned differently or did not plan at all, so read them together:
+
+- **The seat list at the door needed no new payload, and deleting one was the actual win.**
+  The section below treats "show the seats that already exist" as a new audience to check, and
+  `players.list` already carried every field it wanted — including the character each seat holds,
+  already filtered through `playerCharacterNames`. What the check found instead was that the name
+  gate had been mounting `players.listNames { code }` beside a hook already holding
+  `players.list { code }`: different arguments, so a second cache entry, a second socket and a second
+  server execution, for a strict subset of rows already on the wire. One seat-picker component
+  serves both doors from one subscription, `listNames` is gone, and the creature-and-reserved filter
+  now has one place to keep applying rather than two — where it is also, now, the thing stopping the
+  **front page of the site** naming a monster.
+- **Editing a coin is four mutations and not one.** The section below asks for a Tokens tab with
+  rebind, art, controllers, layer, size and tint, which reads as one form and therefore one absolute
+  write. Two of those six fields decide what players may know, and folding them in means every
+  rename carries a layer and a binding — so a client sending a stale one would reveal an ambush as a
+  side effect of fixing a typo. `updateToken` takes the cosmetics; `setLayer`, `setCharacter` and
+  `setArt` each say in their name what they moved.
+- **Two existing assertions were working around the missing layer mutation, and both said so in a
+  comment.** The convex-test case that flips a granted token's layer moved it with a raw database
+  patch under a docblock reading *"no mutation changes it"*, and `board-smoke.mjs` § 28 added a
+  **second token** under a comment saying *"there is no mutation that re-layers a token"*. Both were
+  true when written. [ADR 0009](adr/0009-who-plays-what-and-what-control-grants.md) promises that
+  property is asserted twice, in the two places this project asserts secrets; only now is it the
+  **same round trip** in both, driven through the public API rather than around it.
+- **A no-op unbind would have invalidated the whole table's board.** The binding writer's
+  suppression compares `(token.characterId ?? null)` against the argument rather than the raw stored
+  field. Without the normalisation, re-submitting an unbind on an already-unbound token patches
+  `undefined` over `undefined` — a write, therefore an invalidation of `board.tokens` for every
+  client at the table, from a form submission that changed nothing.
+- **A comment claimed a security property the codebase does not have.** `checkDmCode`'s first draft
+  justified its single failure shape as what stops join codes being enumerated. `games.getByCode`
+  has always been exactly that oracle, because a join code is not a secret — it is the credential
+  everybody at the table holds. A comment asserting a defence that does not exist is worse than no
+  comment, because whoever next weakens the thing it describes will read it and believe they are
+  covered.
+- **The Tokens tab cannot say where a coin stands, and the absence is more awkward than predicted.**
+  Deliberate — a placement field would fold `tokenPositions` into the low-churn subscription and
+  invert invariant 2 — but for a DM with two scenes, a row reading *bound to nothing · 1 square* is
+  genuinely ambiguous about whether the coin is on a map at all. **Left as an open question**, with
+  the shape of the answer noted: a per-token *count*, no coordinates, in a query of its own.
+
+**Acceptance, as met:** a returning DM opens the site, sees their game listed with its creator and
+its age, clicks *Join as DM*, enters the game code and then the DM code, and lands on the board
+already elevated — no visit to Settings, and Settings still holds both controls. A mistyped DM code
+reports itself under the field it was typed into rather than on a board that has silently demoted
+you. A code that opens a *different* game is refused even when the two games share a name, because
+the check compares `_id`. A returning player picks their own seat off a list showing the character
+each one holds. A new player claims an unclaimed character, is returned to the Character tab, and
+chooses its race and class there with no rule changed. The DM opens Tokens, sees every coin including
+the unbound ones and the DM-layer ones, rebinds one, swaps its art and grants it to a second seat
+without going near the map. The name at the top of a sheet reads as a title and appears exactly once.
+
+`games.list` carries no join code — asserted by key set as well as by substring, because a
+six-character code from a 31-letter alphabet can occur by chance inside an `_id` — no DM code, no
+salt and no recovery hash, each with a positive control that the payload is not simply empty. A
+rebind moves sight with the token: the granted seat that could read the old creature's sheet cannot
+afterwards, reads the new one's, receives the `exact` variant of its hit points, and **nothing was
+written to `controllerIds`** to make any of it true. `npm run lint` is clean, **1207 tests pass**,
+and `npm run test:smoke` passes **156/156** against the real dev deployment across three consecutive
+runs, leaving no orphaned upload behind — the art swap being the first operation in this project that
+could strip a blob of its last reference.
+
+**Amendments to [requirements.md](requirements.md) written**, as the four before them were: *Accounts
+and games*' joining-by-code-alone, and the new player selecting their race and class. Neither is a
+rule-set change and the entry says so. The threat model in [CLAUDE.md](../CLAUDE.md) gained a **third
+audience** — it reasoned about join-code holders and DM-code holders, and the set reachable with no
+credential at all used to be empty.
+
+**The original plan follows.**
 
 **Inserted after playing with the deployed seats-and-sheets build**, and it is the same shape of
 correction the last one was: the model is now right and the *way in* to it is not. Three of the four

@@ -32,6 +32,7 @@ import {
   MIN_MAX_HP,
   MIN_SPELL_LEVEL,
   CHARACTER_GROUPS,
+  CHARACTER_GROUP_LABELS,
   CREATURE_GROUPS,
   CREATURE_GROUP_CHOICES,
   characterGroupValidator,
@@ -2339,5 +2340,26 @@ describe('normaliseSheet carries a creature’s group', () => {
     }
     const labels = CREATURE_GROUPS.map((group) => CREATURE_GROUP_CHOICES[group].label)
     expect(new Set(labels).size).toBe(CREATURE_GROUPS.length)
+  })
+
+  /**
+   * The record the DM's sheet selector and the token editor's rebind select both iterate,
+   * pinned on the same three terms as the one above — because a `Record` keyed by the union
+   * catches a *missing* group at compile time and says nothing about the order, about a key
+   * left blank, or about two groups printing the same word.
+   *
+   * The last of those is what makes this worth a test rather than a comment now that there is
+   * one record instead of three: two headings reading *Monsters* is a selector where a DM
+   * cannot tell which list they are looking at, and it would be one typo in one file that
+   * every screen inherits at once. That inheritance is the point of consolidating them, and it
+   * cuts both ways.
+   */
+  test('every character group has a heading, in list order, all distinct', () => {
+    expect(Object.keys(CHARACTER_GROUP_LABELS)).toEqual([...CHARACTER_GROUPS])
+    for (const group of CHARACTER_GROUPS) {
+      expect(CHARACTER_GROUP_LABELS[group].trim(), group).not.toBe('')
+    }
+    const headings = CHARACTER_GROUPS.map((group) => CHARACTER_GROUP_LABELS[group])
+    expect(new Set(headings).size).toBe(CHARACTER_GROUPS.length)
   })
 })

@@ -16,6 +16,13 @@ export type TableTabProps = {
   onRenameSeat: (displayName: string) => Promise<void>;
   /** Give up this seat and drop back to the name gate. Owned by useSeat. */
   onLeaveSeat: () => Promise<void>;
+  /**
+   * Where a successful claim leads. Threaded straight through to `LobbyCharacters`,
+   * which carries the reasoning; this tab adds nothing to it and deliberately does not
+   * decide the destination, because the destination is a tab and a tab body does not own
+   * the strip above it.
+   */
+  onClaimed?: () => void;
 };
 
 /**
@@ -44,6 +51,7 @@ export function TableTab({
   dm,
   onRenameSeat,
   onLeaveSeat,
+  onClaimed,
 }: TableTabProps): ReactElement {
   const seats = useQuery(api.players.list, { code });
   const characters = useQuery(api.characters.list, { code });
@@ -64,6 +72,7 @@ export function TableTab({
         playerId={playerId}
         characters={characters}
         dm={dm}
+        onClaimed={onClaimed}
       />
     </TabBody>
   );

@@ -37,12 +37,34 @@ function read(key: string): string | null {
   }
 }
 
-function write(key: string, value: string | null) {
+/**
+ * `false` when the browser refused the write, which is the whole of what a caller
+ * can learn about storage being off.
+ *
+ * ⚠️ **A return value rather than a `storageAvailable()` probe, and the difference is
+ * not stylistic.** A probe answers a question about a *different* write — a test key
+ * written at some other moment — and the two can disagree: Safari's private mode has
+ * historically allowed `setItem` and thrown only once a quota is reached, an
+ * extension can revoke access between the probe and the real call, and a quota that
+ * is nearly full fails on a long value and not on a short one. The truth wanted here
+ * is *did this write land*, and the only moment that is knowable is the moment it
+ * happens.
+ *
+ * Every existing caller ignores it and is meant to: forgetting a camera position or
+ * a pane width is not worth a sentence on screen. The two callers that do read it
+ * are the ones where the forgetting is *visible later and confusing then* — a DM who
+ * lands as a plain player, a player who is asked their name again after picking their
+ * own seat off a list — and being told at the door is what turns either into an
+ * explanation rather than a bug.
+ */
+function write(key: string, value: string | null): boolean {
   try {
     if (value === null) window.localStorage.removeItem(key)
     else window.localStorage.setItem(key, value)
+    return true
   } catch {
     // Storage disabled. The app works; it just forgets.
+    return false
   }
 }
 
@@ -61,10 +83,21 @@ export function getDisplayNameForGame(code: string): string | null {
   return read(KEY.displayNameFor(code))
 }
 
-export function rememberDisplayName(code: string, displayName: string) {
-  write(KEY.displayNameFor(code), displayName)
-  write(KEY.lastDisplayName, displayName)
-  write(KEY.lastGameCode, code)
+/**
+ * Which seat this browser is in one game, plus the two global prefills.
+ *
+ * Returns whether all three landed. The three results are collected into locals
+ * before they are combined rather than `&&`-ed inline, because `&&` short-circuits:
+ * a first failure would skip the other two writes, which is exactly wrong here.
+ * These are three independent keys and a browser that can take some of them should
+ * be given all of the ones it can — the per-game name is what avoids the name gate
+ * next visit, and the two prefills are worth having even if it does not.
+ */
+export function rememberDisplayName(code: string, displayName: string): boolean {
+  const seat = write(KEY.displayNameFor(code), displayName)
+  const lastName = write(KEY.lastDisplayName, displayName)
+  const lastCode = write(KEY.lastGameCode, code)
+  return seat && lastName && lastCode
 }
 
 export function forgetDisplayName(code: string) {
@@ -79,8 +112,15 @@ export function getDmCode(code: string): string | null {
   return read(KEY.dmCodeFor(code))
 }
 
-export function rememberDmCode(code: string, dmCode: string) {
-  write(KEY.dmCodeFor(code), dmCode)
+/**
+ * Returns whether the code was actually kept. The landing page's DM door reads it:
+ * the door's entire promise is that you arrive already elevated, and this write is
+ * the whole mechanism — `useDm`'s restore effect reads the key back once the seat
+ * resolves. A browser that refused it lands the DM as a plain player, so the door
+ * says so before navigating rather than leaving them to discover it.
+ */
+export function rememberDmCode(code: string, dmCode: string): boolean {
+  return write(KEY.dmCodeFor(code), dmCode)
 }
 
 export function forgetDmCode(code: string) {
