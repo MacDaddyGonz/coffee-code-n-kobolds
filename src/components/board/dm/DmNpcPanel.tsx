@@ -8,7 +8,6 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
-import { cn } from '@/lib/utils'
 import { BestiaryPicker } from './BestiaryPicker'
 import {
   DmCharacterRowsSkeleton,
@@ -21,8 +20,6 @@ export type DmNpcPanelProps = {
   code: string
   /** Present means this browser holds it; every call below re-verifies it server-side. */
   dmCode: string
-  /** So the board can position this without this file knowing where. */
-  className?: string
 }
 
 /**
@@ -50,11 +47,11 @@ export type DmNpcPanelProps = {
  * The list itself is `useDmCharacterRows` and `NpcCharacterSection`, shared with the Sheets
  * tab, so the two tabs differ in their heading and their prose and in nothing else.
  */
-export function DmNpcPanel({ code, dmCode, className }: DmNpcPanelProps) {
+export function DmNpcPanel({ code, dmCode }: DmNpcPanelProps) {
   const rows = useDmCharacterRows(code, dmCode)
 
   return (
-    <Card className={cn('w-full', className)}>
+    <Card className="w-full">
       <CardHeader>
         <CardTitle>NPCs and monsters</CardTitle>
         <CardDescription>

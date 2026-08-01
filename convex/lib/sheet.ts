@@ -172,6 +172,29 @@ export const ROLL_PATTERN =
 export const MAX_ROLL_DICE = 20
 
 /**
+ * The longest a roll expression may be, which the grammar itself does not bound.
+ *
+ * Forty is comfortably past the longest anything in the three corpora writes —
+ * `1d20+STR+CHA+PROF` is seventeen — and well short of a string worth storing forty
+ * of on a sheet. See the note in `rollProblem`.
+ */
+export const MAX_ROLL_LENGTH = 40
+
+/**
+ * The prefix every to-hit starts with. **One** d20 and exactly one, because that is
+ * what a to-hit is: you roll a die against an armour class and add your modifiers.
+ *
+ * Advantage and disadvantage are a *toggle* applied at the moment of rolling rather
+ * than a second die written into the expression, which is why this is `1d20` and not
+ * anything up to `2d20` — a stored `2d20+STR` would be advantage spelled into the
+ * content, permanently, for everybody holding that sheet.
+ *
+ * Read by both halves so they cannot disagree: `toHitFromBonus` builds a to-hit with
+ * it and `toHitProblem` refuses one that does not start with it.
+ */
+export const TO_HIT_PREFIX = '1d20'
+
+/**
  * Uppercases and strips whitespace, so `2d6 + wis` typed into a custom entry
  * becomes `2d6+WIS`: modifier tokens upper, the die separator lower, whatever case
  * it arrived in.
@@ -323,12 +346,48 @@ export const hitDiceValidator = v.object({
 export type HitDice = Infer<typeof hitDiceValidator>
 
 /**
+ * WHAT SHAPE OF ROLL A LINE ON A SHEET IS — and therefore what happens when
+ * somebody clicks it.
+ *
+ * **The category describes the rolling, not the fiction.** A spell falls in all
+ * three: Fire Bolt is a `weapon` because you have to land it before it burns
+ * anything, Fireball is an `action` because it simply goes off, and Shield is a
+ * `passive` because you declare it and it is up. Sorting by what a thing *is*
+ * would put all twenty-four spells in one bucket and tell the roll path nothing.
+ *
+ * - **`weapon` — two rolls.** A to-hit and then a damage. This is the one
+ *   `roll: string | null` could not express, and the only reason `toHit` exists.
+ * - **`action` — one roll.** Divine Smite, Cure Wounds, a dragon's breath.
+ * - **`passive` — no roll.** Lay on Hands, Giant's Might, Rage. Declared, not
+ *   rolled.
+ *
+ * The dice milestone reads this for the announcement wording — a `weapon`
+ * "attacks with their", an `action` "uses" — and for how many dice to throw.
+ * Nothing evaluates a roll here; the field is stored and validated a milestone
+ * before anything parses it, exactly as the roll grammar itself was.
+ */
+export const SHEET_ENTRY_CATEGORIES = ['weapon', 'action', 'passive'] as const
+export type SheetEntryCategory = (typeof SHEET_ENTRY_CATEGORIES)[number]
+
+/**
+ * Spelled out by hand beside the list above rather than derived from it, the way
+ * `creatureSkillsValidator` sits beside `SKILL_KEYS`. A Convex validator is a value
+ * and the list is a type, and the one test pinning the two together is cheaper than
+ * the generic that would build one from the other.
+ */
+export const sheetEntryCategoryValidator = v.union(
+  v.literal('weapon'),
+  v.literal('action'),
+  v.literal('passive'),
+)
+
+/**
  * One line on a sheet: a feat, a spell, or an NPC's action.
  *
  * **One shape for all three**, and that is the decision that keeps a reduced NPC
  * sheet from becoming a second copy of everything. The two sheet variants differ in
- * what they hold; they do not differ in what a *line* is, so Milestone 6 gets one
- * roll path rather than a fork, and the picker, the list and the editor are each
+ * what they hold; they do not differ in what a *line* is, so the dice milestone gets
+ * one roll path rather than a fork, and the picker, the list and the editor are each
  * written once.
  *
  * `catalogueKey` records where the line came from and is not a pointer: the entry
@@ -341,12 +400,69 @@ export const sheetEntryValidator = v.object({
   id: v.string(),
   name: v.string(),
   text: v.string(),
+  /**
+   * The **damage or the effect** — what the line does once it has happened. Not the
+   * to-hit, which is `toHit` below and is a separate field precisely so that the
+   * dice work aims at two targets rather than splitting one string.
+   */
   roll: v.union(v.string(), v.null()),
   /** Spell level, 0 for a cantrip. Null on a feat or an NPC action. */
   level: v.union(v.number(), v.null()),
   catalogueKey: v.union(v.string(), v.null()),
+  // ⚠️ BOTH OPTIONAL BECAUSE `characters.sheet` ALREADY HOLDS ENTRIES WITHOUT THEM,
+  // AND ADDING A REQUIRED FIELD TO A POPULATED TABLE FAILS THE SCHEMA PUSH.
+  //
+  // **The fourth occasion** — `games.status`, then `skillProficiencies` and `speed`
+  // on the PC sheet, then the five on the NPC sheet, now these — and the first on a
+  // type whose field-by-field rebuilds have twice silently discarded a newly added
+  // field. Read both through exactly one accessor, `categoryOf` and `toHitOf`, so
+  // the default for an entry written before this milestone lives in one place.
+  //
+  // **Absent, never null**, and the rule that decides it is worth stating once
+  // because this file now contains both spellings. `roll`, `level` and
+  // `catalogueKey` say "none" with `null` because they are *required*, and a
+  // required field needs a value meaning none. An optional field already has one, so
+  // a second would be two states for one meaning — which every field-by-field
+  // rebuild below would then have to agree about, and which `firstDifference` in
+  // scripts/board-smoke.mjs reports as `present on one side only`.
+  category: v.optional(sheetEntryCategoryValidator),
+  /**
+   * The roll that lands a weapon. `1d20+STR+PROF` on a hero; `1d20+4` on a monster,
+   * whose reduced sheet has no ability scores for a token to resolve against.
+   *
+   * **Only a weapon has one**, and `entriesProblem` refuses it on anything else — so
+   * a stored to-hit that nothing will ever read cannot exist, and `toHitOf` fails
+   * closed against one written by a deployment this one has not heard of.
+   */
+  toHit: v.optional(v.string()),
 })
 export type SheetEntry = Infer<typeof sheetEntryValidator>
+
+/**
+ * A sheet entry as **content** declares it: no per-character `id`, and the category
+ * answered rather than defaulted.
+ *
+ * ⚠️ **`category` is required here and optional on `sheetEntryValidator`, and the
+ * asymmetry is the point.** The stored field has to be optional, because
+ * `characters.sheet` already holds entries without one. But content is written,
+ * reviewed and compiled with the code, so there is no old content — and making it
+ * required is what turns "recategorise every entry in three corpora" from a job
+ * somebody has to remember into a list `npm run lint` prints. `categoryOf`'s default
+ * exists for documents written before this milestone, not as a way for an author to
+ * skip the question.
+ *
+ * `toHit` stays optional, because most entries are not weapons and six hundred
+ * literals saying `toHit: undefined` would be noise — and `undefined` in a content
+ * literal is a habit this codebase does not want. That a weapon has one is enforced
+ * by `entriesProblem`, which every entry in all three corpora already goes through.
+ *
+ * Declared here rather than in `library/types.ts` so that `lib/races.ts` can take it
+ * too: that module is imported by the browser for its dropdown, and `bundleGuard`
+ * and `corpusGuard` both refuse a specifier naming a corpus directory.
+ */
+export type ContentEntry = Omit<SheetEntry, 'id' | 'category'> & {
+  category: SheetEntryCategory
+}
 
 /**
  * The full D&D Lite sheet: six stats, saving throws, AC, HP, hit dice, feats and
@@ -425,6 +541,15 @@ export const npcSheetValidator = v.object({
   // saving that stops two sheet kinds becoming two of everything, and the reason the
   // dice milestone gets one roll path instead of a fork. Widening it for a monster-only
   // concern spends that on the one creature in a hundred whose claw and bite differ.
+  //
+  // ⚠️ **That shape has since been widened, and this reduction survived it.** An entry
+  // now carries a `category` and a weapon carries a `toHit`, because a to-hit paired
+  // with a damage is a shape `roll: string | null` could not express for *anything* —
+  // a hero's greatsword as much as a goblin's scimitar. ADR 0007 left the door open
+  // for exactly that revisit, and the answer keeps its decision rather than reversing
+  // it: there is still one attack bonus per creature, and `resolveBestiary` composes
+  // every attack's to-hit *from* this field through `toHitFromBonus`. Nothing is
+  // stored per attack, so there is still nowhere for a claw and a bite to disagree.
   speed: v.optional(v.number()),
   passivePerception: v.optional(v.number()),
   attackBonus: v.optional(v.number()),
@@ -634,13 +759,207 @@ export function isMonsterSheet(sheet: StoredSheet | undefined): boolean {
   }
 }
 
+/**
+ * HOW MANY ROLLS A CATEGORY PROMISES. The one place the category union is switched
+ * on.
+ *
+ * **An allow-list of the shapes that exist, not a deny-list of the ones that do
+ * not**, for the reason written out at length on `isMonsterSheet` above: this
+ * codebase learned that a discriminator test whose wrongness is invisible to the
+ * compiler will eventually be the one guarding something. The `never` assignment
+ * makes `npm run lint` fail on a fourth category rather than letting one be quietly
+ * handled as something else.
+ *
+ * ⚠️ **The compile-time refusal is the whole of the guard, and the runtime default is
+ * unreachable from the save path.** An earlier version of this comment claimed
+ * otherwise — that an unknown category would be read as a passive and an entry
+ * carrying rolls therefore refused on save — and that is simply not what happens:
+ * every caller reaches this through `categoryOf`, which has already replaced an
+ * unrecognised value with the *derived* default, so a document written by a newer
+ * deployment is stored under the shape its rolls actually have and is accepted.
+ *
+ * That is the better outcome and it is worth being clear that it is the one we get.
+ * Nothing here guards a secret — this union decides how many dice a click throws, not
+ * who may see a stat block — so the conservative move is to keep the entry and
+ * describe it by what it demonstrably is, rather than to refuse a DM's save during
+ * the seconds a deploy is rolling out. The `never` arm below is what actually holds
+ * the line: a fourth category fails `npm run lint` here and in
+ * `SHEET_ENTRY_CATEGORY_LABELS`, so the question gets asked before anything ships.
+ * The runtime `return` is the answer that promises least, kept for the branch the
+ * compiler cannot see.
+ */
+export type EntryRollShape = { readonly toHit: boolean; readonly roll: boolean }
+
+// Three shared frozen values rather than an object literal per arm. This runs once
+// per entry inside `entriesProblem`, which the sheet editor re-runs on every
+// keystroke over as many as forty entries — so a fresh object per call is up to
+// eighty allocations a keypress for three constants. Frozen because they are handed
+// to callers who have no business editing them, and declared here rather than inline
+// so the switch below stays the thing a reader looks at.
+const WEAPON_SHAPE: EntryRollShape = Object.freeze({ toHit: true, roll: true })
+const ACTION_SHAPE: EntryRollShape = Object.freeze({ toHit: false, roll: true })
+const PASSIVE_SHAPE: EntryRollShape = Object.freeze({ toHit: false, roll: false })
+
+export function rollShapeOf(category: SheetEntryCategory): EntryRollShape {
+  switch (category) {
+    case 'weapon':
+      return WEAPON_SHAPE
+    case 'action':
+      return ACTION_SHAPE
+    case 'passive':
+      return PASSIVE_SHAPE
+    default: {
+      const unknownCategory: never = category
+      void unknownCategory
+      return PASSIVE_SHAPE
+    }
+  }
+}
+
+/**
+ * The heading each category gets on a sheet, in the order the sections appear.
+ *
+ * A `Record` keyed by the union rather than a switch, which is a second
+ * exhaustiveness check for free: a fourth category fails to compile here as well as
+ * at the `never` above. Two mechanical refusals is the right number for the union a
+ * whole milestone turns on.
+ */
+export const SHEET_ENTRY_CATEGORY_LABELS: Record<SheetEntryCategory, string> = {
+  weapon: 'Weapons',
+  action: 'Actions',
+  passive: 'Passives',
+}
+
+/**
+ * What to call the roll that is **not** the to-hit, per category.
+ *
+ * A weapon's is its *damage*, and calling it that is what keeps the two rolls on one
+ * row tellable apart — by a reader now, and by the dice work, which makes each one
+ * clickable and would otherwise offer two things labelled the same. Every other
+ * category has one roll and no ambiguity to resolve, so it keeps the plain word.
+ *
+ * A `Record` beside the section labels above rather than a ternary at each call site,
+ * for the same reason as those: the entry list and the entry picker each need it, one
+ * imports from the other so neither could own it, and two spellings of a label are
+ * two labels that can disagree. It also earns the same compile-time refusal — a
+ * fourth category that had no answer here would otherwise fall silently to "Roll".
+ */
+export const SHEET_ENTRY_ROLL_LABELS: Record<SheetEntryCategory, string> = {
+  weapon: 'Damage',
+  action: 'Roll',
+  passive: 'Roll',
+}
+
 // ---------------------------------------------------------------------------
 // The optional fields, each read through exactly one accessor
 //
-// Every field on either sheet variant that the schema could not require is read from
-// here and nowhere else, so the default for a document written before the field existed
-// lives in one place per field. There are seven now, which is why they have a section.
+// Every field on either sheet variant — and now on an entry — that the schema could
+// not require is read from here and nowhere else, so the default for a document
+// written before the field existed lives in one place per field. There are nine now,
+// which is why they have a section.
 // ---------------------------------------------------------------------------
+
+/**
+ * WHAT SHAPE OF ROLL THIS ENTRY IS. The only place the optional `category` is read.
+ *
+ * **The default is derived rather than constant, and the derivation is not a
+ * guess.** An entry written before this milestone already records the one fact the
+ * category turns on: whether it rolls anything. `roll === null` *is* the definition
+ * of a passive, so reading it restates a stored fact rather than inventing one — and
+ * it is the only default under which every entry that already exists satisfies the
+ * coherence rules `entriesProblem` now enforces. A constant would break one half of
+ * the legacy corpus whichever constant it was: `'action'` makes Rage, Action Surge
+ * and Lay on Hands into things that announce "uses" and then roll nothing, and would
+ * make every sheet holding one unsaveable on its next edit; `'passive'` makes
+ * Fireball unclickable.
+ *
+ * ⚠️ **`weapon` can never be a default.** It is the only category that *asserts a
+ * second field exists*, so defaulting to it would promise a `toHit` no legacy entry
+ * has and every consumer would have to re-check anyway — at which point the category
+ * has stopped being a discriminator and become a hint. It cannot be derived even in
+ * principle: nothing distinguishes a greatsword's `1d8+STR` from Cure Wounds'
+ * `2d8+WIS`, so a guess would announce a heal as an attack.
+ *
+ * A stored value outside the union reads as the default too — the stance `speedOf`
+ * takes on a non-finite number, for the same reason `isMonsterSheet` keeps a runtime
+ * default at all: a schema push is not atomic, and in that window an unknown
+ * category must not be allowed to claim a roll exists.
+ */
+export function categoryOf(entry: SheetEntry): SheetEntryCategory {
+  const stored = entry.category
+  if (stored !== undefined && (SHEET_ENTRY_CATEGORIES as readonly string[]).includes(stored)) {
+    return stored
+  }
+  return categoryForRoll(entry.roll)
+}
+
+/**
+ * The category a line with this roll and nothing else to go on must be. **The one
+ * statement of the rule `categoryOf` defaults to**, split out so that the two callers
+ * who cannot ask `categoryOf` are not left restating it.
+ *
+ * They cannot ask because `categoryOf` takes a `SheetEntry` and both of them are
+ * building a `ContentEntry`, which has no `id` yet: `abilityEntry` in lib/resolve.ts
+ * turns a bestiary ability into a line, and the entry fixture in the character tests
+ * builds one from a roll. Both had written the rule out again, and the third copy
+ * **had already drifted** — it asked whether the roll survived trimming where the
+ * other two asked only whether it was null, so a whitespace-only roll was a passive to
+ * one and an action to the others.
+ *
+ * ⚠️ That drift is worse than it looks, because `entriesProblem`'s arity rule is
+ * anchored to this exact derivation — its note says the rule is safe against existing
+ * rows precisely *because* it is this default restated. A copy that disagrees mints
+ * entries the validator then refuses, and it surfaces as a DM's creature failing to
+ * save rather than as a failing test.
+ */
+export function categoryForRoll(roll: string | null): SheetEntryCategory {
+  return roll === null ? 'passive' : 'action'
+}
+
+/**
+ * The only place the optional `toHit` is read. **Null on anything that is not a
+ * weapon**, whatever the document says.
+ *
+ * Unreachable through a validated sheet — `entriesProblem` refuses a to-hit on an
+ * action or a passive — and kept for the reason `isMonsterSheet`'s runtime default
+ * is kept: this is what runs in the seconds after a deploy, when a document written
+ * by newer code is read by older code. A to-hit that outlives its category is a roll
+ * nobody asked for, arriving on a line that announces "uses".
+ */
+export function toHitOf(entry: SheetEntry): string | null {
+  // Asked as "does this category carry a to-hit" rather than "is it the weapon",
+  // because those are the same question today and the second one stops being right
+  // the moment a fourth category is added. `rollShapeOf` is the place that decides,
+  // and it is the place the compiler makes somebody answer.
+  if (!rollShapeOf(categoryOf(entry)).toHit) return null
+  return entry.toHit === undefined || entry.toHit === '' ? null : entry.toHit
+}
+
+/**
+ * A to-hit built from a flat bonus. `1d20+4`, `1d20-2`, and a bare `1d20` at zero.
+ *
+ * For a creature, whose reduced sheet carries one `attackBonus` for the whole thing
+ * and no ability scores for a token to resolve against. The bestiary composes its
+ * attacks' to-hit through this rather than storing one per attack, which is what
+ * leaves ADR 0007's decision standing: there is still exactly one attack bonus per
+ * creature, and this is that bonus spelled as a roll.
+ *
+ * ⚠️ **Never `1d20+0`.** `ROLL_PATTERN` would accept it — `\d{1,3}` matches `0` — so
+ * the grammar is not the guard here and the check has to be explicit. Tested before
+ * formatting, which also catches `-0`: `Math.round(-0.3)` produces it and `-0 === 0`
+ * is true, so one comparison handles both. `scaleRoll` refuses `+0` at the identical
+ * point for the identical reason.
+ */
+export function toHitFromBonus(bonus: number): string {
+  if (!Number.isFinite(bonus)) return TO_HIT_PREFIX
+  const whole = Math.round(bonus)
+  if (whole === 0) return TO_HIT_PREFIX
+  const out = `${TO_HIT_PREFIX}${whole < 0 ? '-' : '+'}${Math.abs(whole)}`
+  // The last word belongs to the grammar rather than to the arithmetic, exactly as
+  // it does at the foot of `scaleRoll`. Both attack-bonus bounds fit `\d{1,3}`, so
+  // this is unreachable through a validated sheet.
+  return isValidRoll(out) ? out : TO_HIT_PREFIX
+}
 
 /** All thirteen false. A fresh object each call — see the note on `defaultPcSheet`. */
 export function noSkills(): SkillProficiencies {
@@ -1068,9 +1387,50 @@ export function messageAtField(
  * how to say so.
  */
 export function rollProblem(roll: string): string | null {
+  // ⚠️ **The grammar has a ceiling on the dice and none on the length.**
+  // `ROLL_PATTERN`'s trailing `(?:[+-]…)*` repeats without limit, so `1d6+1+1+1…` a
+  // thousand times over is a *valid* roll — and there are now two such fields on
+  // every one of up to forty entries. Cheap to close, and closed here rather than in
+  // the pattern because a regex that counted its own terms would stop being readable
+  // for a rule nobody needs to see spelled that way.
+  if (roll.length > MAX_ROLL_LENGTH) {
+    return `Keep a roll to ${MAX_ROLL_LENGTH} characters or fewer.`
+  }
   return isValidRoll(roll)
     ? null
     : `"${roll}" is not a roll. Try something like 1d8+WIS, 2d6 or 1d20+PROF.`
+}
+
+/**
+ * A to-hit has to be a d20 roll, and the shared grammar does not say so.
+ *
+ * `rollProblem` accepts anything the roll grammar accepts, which is correct for a
+ * damage expression and too permissive for this one: `2d6+STR` passes it happily, and
+ * a to-hit of two d6 is not a to-hit. The field's own documentation has always said
+ * `1d20+STR+PROF` or `1d20+4` — this is that contract enforced rather than merely
+ * described, which is the difference this codebase keeps insisting on.
+ *
+ * Unreachable from generated content: `toHitFromBonus` only ever emits a `1d20`, and
+ * both corpora are asserted to start with one. It is reachable by a DM typing into
+ * the entry editor or an override diff, which is exactly who this catches.
+ *
+ * Exported for that last reason. The picker that *creates* entries has to be able to
+ * ask the same question the server will, or it enables an Add button on a value the
+ * save then refuses — and the whole point of a client-side check here is to spare
+ * somebody a refusal, never to authorise anything.
+ */
+export function toHitProblem(toHit: string): string | null {
+  const grammar = rollProblem(toHit)
+  if (grammar) return grammar
+
+  // Two ways to not be a d20 and one sentence for both, written once. The prefix has
+  // to be there, and — because the grammar also allows a d100 — whatever follows it
+  // has to be a sign or nothing at all, or `1d200` would pass on the prefix alone.
+  const rest = toHit.startsWith(TO_HIT_PREFIX) ? toHit.slice(TO_HIT_PREFIX.length) : null
+  if (rest === null || (rest !== '' && rest[0] !== '+' && rest[0] !== '-')) {
+    return `A roll to hit is one d20 and its modifiers. Try something like ${TO_HIT_PREFIX}+STR+PROF.`
+  }
+  return null
 }
 
 /**
@@ -1153,6 +1513,10 @@ export function normaliseSheet(sheet: CharacterSheet): CharacterSheet {
 
 function normaliseEntry(entry: SheetEntry): SheetEntry {
   const roll = entry.roll === null ? null : normaliseRoll(entry.roll)
+  // Through `normaliseRoll` for the reason `roll` is: a hand-typed `1d20 + str` and a
+  // picked `1d20+STR` must end up byte-identical rather than merely equivalent. It
+  // cannot throw, so it is safe on every keystroke in the editor.
+  const toHit = entry.toHit === undefined ? undefined : normaliseRoll(entry.toHit)
   return {
     id: entry.id.trim(),
     name: collapseWhitespace(entry.name),
@@ -1162,6 +1526,26 @@ function normaliseEntry(entry: SheetEntry): SheetEntry {
     roll: roll === '' ? null : roll,
     level: entry.level === null ? null : Math.round(entry.level),
     catalogueKey: entry.catalogueKey === null ? null : entry.catalogueKey.trim() || null,
+    // ⚠️ **THE FOURTH TIME, AND THE FIRST ON THIS FUNCTION.** `normaliseSheet` above
+    // carries the note twice over: a field added to a validator and not added to the
+    // rebuild is silently discarded on every write, with the form still showing the
+    // value it just binned, and only `npm run test:smoke` has ever caught it. These
+    // two are the largest exposure that trap has had, because this entry shape is
+    // shared across a hero's feats, a hero's spells, a monster's actions and both
+    // override diffs — six array positions, all fixed by this one function.
+    //
+    // Conditional spreads rather than `field: undefined`: `undefined` is not a Convex
+    // value, so naming a key and giving it that is a different write from omitting
+    // it. `withoutUndefined` is the repair for a shape built by *spreading* and this
+    // one is not — the distinction `normaliseCreatureSkills` already draws.
+    //
+    // The category is deliberately **not materialised** for an entry that has none.
+    // Absent stays a legal state for as long as the schema says the field is
+    // optional, and a normaliser that filled it in would leave `categoryOf`'s default
+    // reachable only by documents nobody has saved — which is how a default becomes
+    // untested code that nobody notices is wrong.
+    ...(entry.category === undefined ? {} : { category: entry.category }),
+    ...(toHit === undefined || toHit === '' ? {} : { toHit }),
   }
 }
 
@@ -1436,6 +1820,64 @@ function entriesProblem(
     if (entry.roll !== null) {
       const roll = rollProblem(entry.roll)
       if (roll) return { path: `${path}.roll`, message: roll }
+    }
+    // ⚠️ **An empty box is a missing value, not a malformed one**, and the form is the
+    // reason that distinction earns a line. `normaliseEntry` drops an empty to-hit
+    // before any mutation sees one, so this is unreachable from a write — but
+    // `sheetProblem` also drives the editor as somebody types, and a weapon whose
+    // to-hit field is simply blank should be told *"a weapon needs a roll to hit
+    // with"* rather than *`"" is not a roll`*. Reading it as absent hands the sentence
+    // to the arity rule below, which is the one that knows what is wanted.
+    const toHit = entry.toHit === '' ? undefined : entry.toHit
+
+    // The grammar first, so a malformed to-hit gets the sentence saying what is wrong
+    // with it rather than the one about which category may carry one.
+    if (toHit !== undefined) {
+      const problem = toHitProblem(toHit)
+      if (problem) return { path: `${path}.toHit`, message: problem }
+    }
+
+    // ⚠️ **The arity rule — the definition of the discriminator, not a cap.**
+    //
+    // A cap belongs to the content that it describes: `MAX_SHEET_ENTRIES` stays here
+    // at forty while "at most three attacks" lives in the bestiary's own test, because
+    // three is a rule about what makes a *library entry* fast to run at the table and
+    // a DM hand-building a boss with five legendary actions is not doing anything
+    // wrong. This is not that. A passive carrying a roll is a value the roll path will
+    // never read, and a weapon with no to-hit is a category lying about its shape to
+    // the one function that switches on it. The nearest precedent is
+    // `storedSheetProblem` refusing an archetype below level 2: two stored fields that
+    // contradict each other make a document nothing can render.
+    //
+    // **Every entry written before this milestone satisfies all four**, because
+    // `categoryOf`'s derived default is this rule restated — a legacy entry with no
+    // roll reads as a passive and has none, one with a roll reads as an action and has
+    // one, and neither has ever had a to-hit. That is why the default is derived, and
+    // it is what makes adding these checks safe against a table that already has rows.
+    const shape = rollShapeOf(categoryOf(entry))
+    if (shape.toHit && toHit === undefined) {
+      return {
+        path: `${path}.toHit`,
+        message: 'A weapon needs a roll to hit with. Try something like 1d20+STR+PROF.',
+      }
+    }
+    if (!shape.toHit && toHit !== undefined) {
+      return {
+        path: `${path}.toHit`,
+        message: 'Only a weapon rolls to hit. Make it a weapon, or clear the to-hit roll.',
+      }
+    }
+    if (shape.roll && entry.roll === null) {
+      return {
+        path: `${path}.roll`,
+        message: 'A weapon and an action both roll something. Give it a roll, or make it a passive.',
+      }
+    }
+    if (!shape.roll && entry.roll !== null) {
+      return {
+        path: `${path}.roll`,
+        message: 'A passive is declared rather than rolled. Clear the roll, or make it an action.',
+      }
     }
     if (
       entry.level !== null &&

@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { toast } from 'sonner'
 
@@ -13,9 +12,11 @@ import { useBoard } from '@/hooks/useBoard'
 import { useBoardCamera } from '@/hooks/useBoardCamera'
 import { useBoardKeys } from '@/hooks/useBoardKeys'
 import type { Dm } from '@/hooks/useDm'
+import { useHpTarget } from '@/hooks/useHpTarget'
 import { useSmoothPositions, useTokenMove } from '@/hooks/useTokenMove'
 import { useTokenSelection } from '@/hooks/useTokenSelection'
 import { useHpActions } from '@/hooks/useVitals'
+import { cn } from '@/lib/utils'
 import type { Id } from '@convex/_generated/dataModel'
 
 export type BoardProps = {
@@ -25,12 +26,13 @@ export type BoardProps = {
   /** The character this seat is playing, which decides which token it may drag. */
   myCharacterId: Id<'characters'> | null
   /**
-   * The DM's map panel, rendered over the canvas. A slot rather than something this
-   * component builds, because the panel is DM-only and its own owner: the board has
-   * no business knowing what is in it, and a player's board is given nothing to put
-   * here. `Game.tsx` fills it — see `MapSetupOverlay`.
+   * Merged over the base classes, which no longer include an edge of their own. The
+   * board is the contents of a pane rather than a card floating on a page, so the
+   * border and the corner belong to the shell that owns the pane — drawing one here
+   * as well is two rules describing the same line, and they disagree the first time
+   * either moves.
    */
-  children?: ReactNode
+  className?: string
 }
 
 /**
@@ -39,7 +41,8 @@ export type BoardProps = {
  * Almost nothing happens in this file, which is the point. Secrecy was settled
  * server-side before any of this data arrived (ADR 0004), the drawing belongs to
  * `BoardStage` and `TokenLayer`, and the movement rules are `useTokenMove`'s. What
- * is left here is wiring five hooks to each other in the one order that works.
+ * is left here is wiring a handful of hooks to each other in the one order that
+ * works.
  *
  * That order is the only interesting thing about it. Selection reads the board,
  * movement is told what selection is pointing at, and the smoothing is told what
@@ -47,8 +50,12 @@ export type BoardProps = {
  * canvas: joined to the server's positions, then overridden by whatever this
  * browser is doing with the mouse. Getting those two the wrong way round would let
  * the echo of your own drag fight the drag.
+ *
+ * The hit point target comes last of the three for the same reason and reads the
+ * *smoothed* array, because it anchors something to a coin rather than deciding
+ * what a key press moves.
  */
-export function Board({ code, dm, playerId, myCharacterId, children }: BoardProps) {
+export function Board({ code, dm, playerId, myCharacterId, className }: BoardProps) {
   // The board's outer element, which is what "does the map have focus?" means for
   // the keyboard, and how the smoothing loop finds its way to the Konva stage. The
   // focusable container is `BoardStage`'s own div inside it, so both questions are
@@ -88,23 +95,27 @@ export function Board({ code, dm, playerId, myCharacterId, children }: BoardProp
   const hp = useHpActions({ code, dmCode: dm.dmCode, playerId })
 
   /**
-   * The selected token, re-read from the smoothed array rather than taken from
-   * `selection.selectedToken`.
+   * Which token the hit point editor is open on — its own question, asked by
+   * clicking a health bar, and no longer whatever the arrow keys happen to be
+   * pointed at.
    *
-   * They are the same creature but not the same position: selection reads the
-   * board before the interpolation, so anchoring the popover to it would leave the
-   * control sitting where the server last said a token was while the coin slides to
-   * where it now is — most visible on somebody else's drag, which is exactly when
-   * the DM is watching that token.
+   * Selecting a token is how you pick it up to move it, and that is not a request
+   * to edit its hit points: the editor used to appear under a creature the moment
+   * you touched it, over the squares you were dragging towards. Worse, it made the
+   * editor unreachable for a case that is entirely legitimate — `canEditHp` has no
+   * layer clause where `canMove` requires the player layer, so a hero the DM has
+   * moved onto the DM layer could not be selected by their own player and so could
+   * not have their hit points adjusted from the board at all. Asking the right
+   * question closes that without a special case for it.
+   *
+   * Handed the **smoothed** array, deliberately. The board before interpolation is
+   * the same creature but not the same position, so anchoring to it would leave the
+   * panel where the server last said a token was while the coin slides to where it
+   * now is — most visible during somebody else's drag, which is exactly when the DM
+   * is watching that token.
    */
-  const selectedTokenId = selection.selectedTokenId
-  const hpToken = useMemo(
-    () =>
-      selectedTokenId === null
-        ? null
-        : tokens.find((token) => token._id === selectedTokenId) ?? null,
-    [tokens, selectedTokenId],
-  )
+  const hpTarget = useHpTarget(tokens)
+  const hpToken = hpTarget.hpToken
 
   // Hoisted out of the JSX so `TokenLayer` is handed the same function every render.
   // A fresh arrow there would have been a changed prop on every coin on every frame
@@ -114,13 +125,36 @@ export function Board({ code, dm, playerId, myCharacterId, children }: BoardProp
     [selection.select],
   )
 
+  // Not wrapped, on purpose: `open` is already built once and held for the life of
+  // the hook, so an arrow around it here would add exactly the fresh identity per
+  // render that the note above is about.
+  const onOpenHp = hpTarget.open
+
+  // A click on the map closes both. It is the "I am done with this creature"
+  // gesture, and leaving the editor open over bare map after the highlight has gone
+  // would be a panel pointing at nothing.
+  const onBackgroundClick = useCallback(() => {
+    selection.clear()
+    hpTarget.clear()
+  }, [selection.clear, hpTarget.clear])
+
+  // Innermost first. Escape closes the editor if it is open and clears the
+  // selection otherwise, so one press undoes one thing and the token you were
+  // moving is still selected afterwards. A dialog or sheet opened from a panel
+  // portals out of this subtree entirely and handles its own Escape before either
+  // of these hears about it, which is why there is no third case here.
+  const onEscape = useCallback(() => {
+    if (hpTarget.hpTokenId !== null) hpTarget.clear()
+    else selection.clear()
+  }, [hpTarget.hpTokenId, hpTarget.clear, selection.clear])
+
   useBoardKeys({
     containerRef,
     camera,
     selectedTokenId: selection.selectedTokenId,
     onNudge: move.nudge,
     onNudgeEnd: move.endNudge,
-    onDeselect: selection.clear,
+    onEscape,
   })
 
   // The server's own wording, and a toast rather than a panel: a refused move is
@@ -145,15 +179,12 @@ export function Board({ code, dm, playerId, myCharacterId, children }: BoardProp
   const drawable = scene !== null && scene.imageUrl !== null
 
   return (
-    <div
-      ref={containerRef}
-      className="bg-muted/40 relative min-h-0 flex-1 overflow-hidden rounded-xl border"
-    >
+    <div ref={containerRef} className={cn('bg-muted/40 relative overflow-hidden', className)}>
       {board.loading ? (
-        <Skeleton className="absolute inset-0 rounded-xl" />
+        <Skeleton className="absolute inset-0" />
       ) : drawable && scene ? (
         <>
-          <BoardStage scene={scene} camera={camera} onBackgroundClick={selection.clear}>
+          <BoardStage scene={scene} camera={camera} onBackgroundClick={onBackgroundClick}>
             <TokenLayer
               tokens={tokens}
               scene={scene}
@@ -166,6 +197,7 @@ export function Board({ code, dm, playerId, myCharacterId, children }: BoardProp
               onDragStart={move.onDragStart}
               onDragMove={move.onDragMove}
               onDragEnd={move.onDragEnd}
+              onOpenHp={onOpenHp}
             />
           </BoardStage>
           {/*
@@ -176,7 +208,13 @@ export function Board({ code, dm, playerId, myCharacterId, children }: BoardProp
             that very pointer. It comes straight back on the drop, at which point the
             token is where it is going to stay and the control is worth aiming at.
           */}
-          {hpToken && hpToken.canEditHp && move.heldTokenId !== hpToken._id ? (
+          {/*
+            No `canEditHp` test here any more. `useHpTarget` asks it of the current
+            board every render as part of resolving the token at all, so a client
+            that may not edit these hit points has no token to be handed — which is
+            the same discipline `useTokenSelection` applies to the highlight.
+          */}
+          {hpToken && move.heldTokenId !== hpToken._id ? (
             <TokenHpPopover
               token={hpToken}
               scene={scene}
@@ -200,7 +238,6 @@ export function Board({ code, dm, playerId, myCharacterId, children }: BoardProp
       ) : (
         <BoardEmpty scene={scene} isDm={board.isDm} />
       )}
-      {children}
     </div>
   )
 }

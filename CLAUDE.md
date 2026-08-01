@@ -143,6 +143,25 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    `true`, which is fail-closed: a schema push is not atomic, so a document written by a newer
    deployment can be read by an older one, and in that window a secret must read as a secret.
 
+   **There is now a second discriminated union on the same type, and it got the same treatment.**
+   `SheetEntry.category` is `weapon | action | passive`, and `rollShapeOf` in `convex/lib/sheet.ts`
+   is the one place it is switched on — an allow-list with a `never` arm, beside a
+   `Record<SheetEntryCategory, string>` of labels that fails to compile for a fourth member too.
+   Two mechanical refusals is the right number for a union a whole milestone turns on. Nothing here
+   guards a secret, so unlike `isMonsterSheet` the runtime default is unreachable and says so; the
+   compile-time refusal is the whole of the guard. **The renderer iterates
+   `SHEET_ENTRY_CATEGORIES` rather than naming three categories in JSX**, because three `filter`
+   calls is the formulation where a fourth category leaves an entry stored, counted against
+   `MAX_SHEET_ENTRIES`, and invisible with no row to delete it.
+
+   **One convention this settled, worth knowing before adding a tenth optional field.** A `SheetEntry`
+   now spells "none" two ways, and which one is not a preference: `roll`, `level` and `catalogueKey`
+   use `null` because they are *required*, and a required field needs a value meaning none;
+   `category` and `toHit` use *absence* because the schema push forced them optional, and an optional
+   field already has a spelling for none. Adding a second is two states for one meaning, which every
+   field-by-field rebuild then has to agree about and which `board-smoke.mjs` reports as
+   `present on one side only`. See [ADR 0008](docs/adr/0008-one-shell-and-what-a-sheet-entry-is.md).
+
 ### Threat model — what the invariants above are for, and where the line is
 
 The audience is a small group of trusted colleagues. That **scopes** the invariants rather than
@@ -203,6 +222,16 @@ after, and the app adjudicates nothing with it — a stepper that changes eight 
 same act as typing into eight fields, done in one motion. The DM override has exactly this character
 and needed no amendment either. The test for whether that stays true is simple: **the moment one of
 these fields changes a number a player rolls against without the DM asking it to, it needs one.**
+
+**The sheet taxonomy lifted no exclusion either, and the amendment it did write is not to the rule
+set at all.** `SheetEntry` gained a category — `weapon | action | passive` — and a weapon gained a
+to-hit, which sounds like a rule and is the opposite: it is the spec's own sentence *"clicking an
+item on a character sheet sends the roll to the game feed"* made precise enough to implement, since
+three kinds of item behave differently and the spec assumed one. **A to-hit that was already written
+into 763 descriptions as prose became a field**, and nothing new is adjudicated, evaluated or
+rolled. The two amendments in [docs/requirements.md](docs/requirements.md) record a change to the
+*screen* — the sheet and DM panels stop being slide-outs — and a clarification of what a sheet item
+is. See [ADR 0008](docs/adr/0008-one-shell-and-what-a-sheet-entry-is.md).
 
 ## Commands
 

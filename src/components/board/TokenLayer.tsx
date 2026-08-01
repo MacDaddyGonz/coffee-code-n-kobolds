@@ -30,6 +30,8 @@ export type TokenLayerProps = {
   onDragStart?: (token: BoardToken) => void
   onDragMove?: (token: BoardToken, point: Point) => void
   onDragEnd?: (token: BoardToken, point: Point) => void
+  /** A click on a coin's health bar. The id comes back, not the token — see `TokenCoinProps`. */
+  onOpenHp: (tokenId: Id<'tokens'>) => void
 }
 
 /**
@@ -57,6 +59,7 @@ export function TokenLayer({
   onDragStart,
   onDragMove,
   onDragEnd,
+  onOpenHp,
 }: TokenLayerProps) {
   // On `tokens` alone, because that is the only thing any of it depends on. A pan
   // changes neither which tokens exist nor where they are, and paying for three
@@ -85,6 +88,7 @@ export function TokenLayer({
         onDragStart={onDragStart}
         onDragMove={onDragMove}
         onDragEnd={onDragEnd}
+        onOpenHp={onOpenHp}
       />
     ))
 

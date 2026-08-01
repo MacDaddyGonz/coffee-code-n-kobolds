@@ -10,7 +10,6 @@ import {
 } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
-import { cn } from '@/lib/utils'
 import { api } from '@convex/_generated/api'
 import { GridCalibrator } from './GridCalibrator'
 import { SceneSelect } from './SceneSelect'
@@ -21,8 +20,6 @@ export type MapSetupPanelProps = {
   code: string
   /** Present means this browser holds it; every call below re-verifies it server-side. */
   dmCode: string
-  /** So the board can position this over the canvas without this file knowing where. */
-  className?: string
 }
 
 /**
@@ -38,14 +35,14 @@ export type MapSetupPanelProps = {
  * scene names, and `scenes.active` for the one board everybody is looking at.
  * Taking the active scene from the open query rather than threading
  * `game.activeSceneId` in is what keeps this component's props to a code and a
- * secret, so the board can drop it in as an overlay with nothing else to hand.
+ * secret, so the Map tab mounts it with nothing else to hand.
  */
-export function MapSetupPanel({ code, dmCode, className }: MapSetupPanelProps) {
+export function MapSetupPanel({ code, dmCode }: MapSetupPanelProps) {
   const scenes = useQuery(api.scenes.list, { code, dmCode })
   const active = useQuery(api.scenes.active, { code })
 
   return (
-    <Card className={cn('w-full', className)}>
+    <Card className="w-full">
       <CardHeader>
         <CardTitle>Map setup</CardTitle>
         <CardDescription>

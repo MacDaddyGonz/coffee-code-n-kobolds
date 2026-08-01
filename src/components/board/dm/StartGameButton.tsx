@@ -20,18 +20,27 @@ export type StartGameButtonProps = {
 }
 
 /**
- * The switch between the lobby and the board, for everybody at once.
+ * Whether the map is on everyone's screen, switched for the whole table at once.
  *
  * `status` lives on the game document precisely so this is one write rather than a
  * message per client: everyone is already subscribed to the game, so they all turn
  * over together. That is worth saying on the button, because "start" reads like a
  * personal action and this one moves five other people mid-sentence.
  *
- * Only the return is behind a confirmation, and the asymmetry is deliberate.
- * Starting is what the DM came here to do and lands everyone somewhere useful;
- * returning yanks a table off a board they are playing on, so it earns a second
- * click. Nothing is lost either way — scenes, tokens and positions all survive, so
- * this is a view for the group rather than a reset.
+ * ⚠️ **The wording no longer says "lobby", and the mutation still does.** There used
+ * to be a lobby *screen* that the board replaced; now there is one shell that is
+ * always the same shape, and stopping the game swaps the map out of the left pane for
+ * a line of text while the roster, the characters and the DM's tools stay exactly
+ * where they were. So "back to the lobby" named a place the player would no longer
+ * arrive at. `games.returnToLobby` keeps its name because it is an API that other
+ * things call and its meaning — put the game back in the `lobby` status — is
+ * unchanged; only what the person sees is renamed.
+ *
+ * Only stopping is behind a confirmation, and the asymmetry is deliberate. Starting
+ * is what the DM came here to do and lands everyone somewhere useful; stopping takes
+ * a table off a board they are playing on, so it earns a second click. Nothing is
+ * lost either way — scenes, tokens and positions all survive, so this is a view for
+ * the group rather than a reset.
  */
 export function StartGameButton({ code, dmCode, status, hasScene }: StartGameButtonProps) {
   const start = useMutation(api.games.start)
@@ -45,14 +54,14 @@ export function StartGameButton({ code, dmCode, status, hasScene }: StartGameBut
       <ConfirmDialog
         trigger={
           <Button type="button" variant="outline" size="sm" disabled={busy}>
-            Back to the lobby
+            Stop the game
           </Button>
         }
-        title="Send everyone back to the lobby?"
+        title="Take the map off everyone's screen?"
         description={
-          'Everyone at the table leaves the board, not just you. The map, the tokens and where they are all standing are untouched, so starting again puts the game back exactly as it is now.'
+          'Everyone at the table loses the map, not just you. The map, the tokens and where they are all standing are untouched, so starting again puts the game back exactly as it is now.'
         }
-        confirmLabel="Everyone back to the lobby"
+        confirmLabel="Stop the game for everyone"
         confirmVariant="default"
         busy={action.pending === 'returnToLobby'}
         onConfirm={() =>

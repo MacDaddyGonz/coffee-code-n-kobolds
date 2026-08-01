@@ -20,8 +20,9 @@ const GAP_BELOW_COIN = 24
 
 export type TokenHpPopoverProps = {
   /**
-   * The selected token, taken from the *smoothed* board array so the control is
-   * anchored where the coin is drawn rather than where the server last said it was.
+   * The token whose health bar was clicked, taken from the *smoothed* board array
+   * so the control is anchored where the coin is drawn rather than where the server
+   * last said it was.
    */
   token: BoardToken
   /** For the coin's size in image-space pixels — `gridSize` squares across. */
@@ -33,7 +34,7 @@ export type TokenHpPopoverProps = {
 
 /**
  * The `+`/`−` controls requirements.md asks for on a health bar — as HTML over the
- * canvas, for the currently selected token only.
+ * canvas, opened by clicking the bar they belong to.
  *
  * Both halves of that are decisions worth defending.
  *
@@ -45,10 +46,15 @@ export type TokenHpPopoverProps = {
  * goblin's hit points would be the mouse. One HTML control gives real buttons, the
  * number field the stepper needs, and focus behaviour nobody has to write.
  *
- * **The selected token only.** It follows what the arrow keys are already pointed
- * at, so there is one thing on screen claiming to be the current creature rather
- * than two competing notions of it, and the board stays a board rather than a
- * scattering of floating panels.
+ * **One at a time, and opened by the bar rather than by the selection.** Still one
+ * panel — two would overlap and neither would obviously belong to a creature — but
+ * it is now aimed by clicking the thing it edits. Selecting a token is how you pick
+ * it up to move it, and following the selection meant this appeared under a
+ * creature the instant you touched it, covering the squares you were dragging
+ * towards, on every drag whether or not anybody had asked about hit points. The
+ * bar is the smallest target that unambiguously names both the creature and the
+ * intention. `useHpTarget` holds the choice; `TokenHealthBar` answers the ADR that
+ * rejected the shapes-on-the-coin reading, which this is not.
  *
  * The cost of positioning HTML over a canvas is that this element has to move with
  * the camera, so it re-renders on every frame of a pan while the popover is open —
@@ -97,9 +103,12 @@ export function TokenHpPopover({ token, scene, camera, onAdjust }: TokenHpPopove
   return (
     // `pointer-events-none` on the wrapper, `auto` on the card. The wrapper is a
     // zero-size anchor here rather than a full-bleed layer, so it swallows very
-    // little either way — but the failure it prevents is the one from
-    // `MapSetupOverlay`: anything over the canvas that eats a click is a token the
-    // DM cannot pick up, with nothing on screen to explain why.
+    // little either way — but the failure it guards against has been paid for once
+    // already on this board and is worth restating rather than citing: anything
+    // laid over the canvas that eats a click is a token the DM cannot pick up, and
+    // it fails silently, because a transparent box has nothing on screen to explain
+    // why the map has stopped responding. Every overlay here opts *out* of the
+    // pointer by default and opts back in only where it draws something to click.
     <div
       className="pointer-events-none absolute top-0 left-0"
       style={{

@@ -692,7 +692,52 @@ hand-built NPC offers no CR stepper.
 
 ---
 
-## Milestone 6 — The screen, and what a sheet entry is
+## ✅ Milestone 6 — The screen, and what a sheet entry is
+
+**Done.** The decisions are recorded in
+[ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md). Six things it settled that the section
+below planned differently or did not plan at all, so read them together:
+
+- **The bestiary needed no content edits at all.** The section below says "every attack and ability
+  across the 129 entries", and that turned out to be work the corpus had already done: it separates
+  `attacks` from `abilities`, so an attack is a `weapon`, an ability with a roll is an `action` and
+  one without is a `passive`, all read off the structure in `lib/resolve.ts`. 159 hand edits avoided,
+  and with them 159 chances to disagree.
+- **A creature's to-hit is composed from its one `attackBonus`, after the DM's overrides are
+  merged** — and that ordering is not a detail. `resolveBestiary` built its actions *before* calling
+  `withCreatureOverrides`, which patches `attackBonus` and leaves `actions` alone, so composing in
+  the original order gives a creature whose sheet reads +12 and whose every weapon rolls +4. Both
+  come from the same payload, so nothing on screen looks wrong. Found by reading the plan
+  adversarially before any code existed.
+- **The category is required on content and optional in the database**, and that asymmetry is what
+  made the bulk work tractable. The schema push forces optional; content has no history, so
+  requiring it there turned "recategorise everything" into a list `npm run lint` prints. It printed
+  763 entries and the job was done when the list was empty.
+- **`categoryOf`'s default is derived, not constant**, and a constant would have made every
+  hand-built sheet in every existing game unsaveable on its next edit — a failure that first appears
+  to a DM mid-session. See invariant 9 in [CLAUDE.md](../CLAUDE.md) and the ADR.
+- **A to-hit is validated as a d20 roll**, which the shared grammar does not say. The field was
+  documented as `1d20+STR+PROF` and checked only against the grammar every damage expression shares,
+  so `2d6+STR` saved cleanly. A contract stated in a comment and enforced nowhere, found by the
+  agent writing the tests rather than the one writing the code.
+- **`forceMount` does not hide a Radix tab.** The plan asserted an elaborate CSS specificity trap
+  that does not exist; what actually happens is that `forceMount` makes `present` always true, so
+  `hidden` is never applied and the panel simply stays on screen. The character sheet rendered below
+  the feed on every tab, with lint clean and 1,082 tests green. **Found by opening the app in a
+  browser**, which has now been true of every milestone.
+
+**Acceptance, as met:** the map canvas measures exactly its pane at 1280×800, 1920×1080 and
+2560×1440, follows the divider live, and the page does not scroll. The divider holds its position
+across a reload, clamps at 576 px and at the window less 480. Every seat appears bottom-right with
+its character's name under a coloured initial derived from `nameKeyFor`. A fighter's sheet lists
+thirteen skills alphabetically and splits its feats under Weapons, Actions and Passives, with the
+longsword showing `1d20+STR+PROF` and `1d8+STR+2` separately and no to-hit left in its prose.
+Clicking a token selects it and does not open the hit-point editor; clicking its health bar opens
+the editor and does not move the token. `npm run test:smoke` passes 109/109 against the real dev
+deployment, including an entry sent with neither new field coming back with neither, and its
+positive control.
+
+**The original plan follows.**
 
 **Inserted after the first look at the deployed app**, and it is two jobs in one milestone because
 both are prerequisites for the dice rather than polish that could follow them.

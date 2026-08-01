@@ -1,16 +1,24 @@
 import { describe, expect, test } from 'vitest'
 
-import { MAX_LIBRARY_LEVEL, SUBCLASS_LEVEL, findClass, type ClassKey } from './classes'
+import {
+  CLASSES,
+  MAX_LIBRARY_LEVEL,
+  SUBCLASS_LEVEL,
+  findClass,
+  type ClassKey,
+} from './classes'
 import { LIBRARY, librarySheet } from './library'
-import { race } from './races'
+import { RACE_KEYS, race } from './races'
 import { presetExtras, presetOf, resolveSheet } from './resolve'
 import {
   MAX_LEVEL,
   MIN_LEVEL,
   SPEED_FEET,
+  categoryOf,
   defaultNpcSheet,
   defaultPcSheet,
   noSkills,
+  rollShapeOf,
   sheetProblem,
   skillProficienciesOf,
   speedOf,
@@ -568,5 +576,263 @@ describe('a preset the store would accept always resolves to a sheet it would ac
       expect(elf.abilities.dex, classKey).toBe((source?.abilities.dex ?? 0) + 2)
       expect(elf.feats.some((e) => e.name === race('elf').traitName), classKey).toBe(true)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The entry taxonomy across the three layers
+//
+// ⚠️ **`category` and `toHit` are optional on a `SheetEntry`, so every assertion
+// here has to be about presence rather than value.** A `withId` that rebuilt an
+// entry field by field instead of spreading it would drop both, and the resolved
+// sheet would still validate, still render and still pass every other test in
+// this file — the lines would simply have quietly reverted to their pre-milestone
+// shape on the way through the resolver.
+// ---------------------------------------------------------------------------
+
+describe('the category survives every layer of resolution', () => {
+  /** The trait `applyRace` mints for every race, whichever race it is. */
+  function traitOf(sheet: PcSheet, key: string): SheetEntry {
+    const found = sheet.feats.find((line) => line.id === `race:${key}`)
+    if (!found) throw new Error(`no trait line for ${key}`)
+    return found
+  }
+
+  /**
+   * **A race trait is a `passive`, and that is the only coherent answer rather
+   * than a choice.** It is built out of `traitName` and `traitText` and has no
+   * roll by construction, so `entriesProblem` would refuse it as anything else. A
+   * race whose trait genuinely rolls something grants a feat or a spell instead,
+   * which is exactly what the Dragonborn's breath weapon already does.
+   *
+   * Asserted for all eight rather than for one, because the trait is minted in a
+   * single place and a regression there is a regression for every character in
+   * every game at once.
+   */
+  test('every race trait resolves to a passive that carries no rolls', () => {
+    for (const key of RACE_KEYS) {
+      const sheet = resolve(preset({ race: key }))
+      const trait = traitOf(sheet, key)
+      const built = trait as unknown as Record<string, unknown>
+      expect(trait.category, key).toBe('passive')
+      expect(trait.roll, key).toBeNull()
+      expect('toHit' in built, `${key} trait carries a to-hit`).toBe(false)
+      expect(trait.name, key).toBe(race(key).traitName)
+    }
+  })
+
+  /** Anti-vacuity: eight races, eight traits, and the lookup really found them. */
+  test('and there is a trait line for every one of the eight', () => {
+    expect(RACE_KEYS.length).toBe(8)
+    const found = RACE_KEYS.map((key) => traitOf(resolve(preset({ race: key })), key).name)
+    expect(new Set(found).size).toBe(RACE_KEYS.length)
+  })
+
+  /**
+   * ⚠️ **The granted entries, which are the ones that could actually lose a
+   * category.** The trait is built inside `applyRace` with `category: 'passive'`
+   * written in the literal, so it cannot be dropped; a granted feat or spell is
+   * declared in `races.ts` and copied through `withId`, which is a spread — and a
+   * spread is exactly what stops being one when somebody "tidies" it into a
+   * field-by-field rebuild.
+   *
+   * Compared against the source entry rather than against a hard-coded string, so
+   * the test says "the category the corpus declared arrived on the sheet" rather
+   * than "the sheet says passive", which would keep passing over a resolver that
+   * had stopped reading the corpus at all.
+   */
+  test('a granted feat or spell keeps the category its race declared', () => {
+    let checked = 0
+    for (const key of RACE_KEYS) {
+      const chosen = race(key)
+      const sheet = resolve(preset({ race: key }))
+      const granted = [
+        ...(chosen.grantedFeats ?? []).map((source) => ({ source, list: sheet.feats })),
+        ...(chosen.grantedSpells ?? []).map((source) => ({ source, list: sheet.spells })),
+      ]
+      for (const { source, list } of granted) {
+        checked += 1
+        const line = list.find((candidate) => candidate.name === source.name)
+        expect(line, `${key}: ${source.name} missing from the resolved sheet`).toBeDefined()
+        const built = line as unknown as Record<string, unknown>
+        expect('category' in built, `${key}: ${source.name} lost its category`).toBe(true)
+        expect(line?.category, `${key}: ${source.name}`).toBe(source.category)
+        expect('toHit' in built, `${key}: ${source.name} to-hit key`).toBe(
+          source.toHit !== undefined,
+        )
+        expect(line?.toHit, `${key}: ${source.name}`).toBe(source.toHit)
+        // And it really came through the race layer, under the race prefix.
+        expect(line?.id.startsWith(`race-${key}:`), `${key}: ${source.name} id ${line?.id}`).toBe(
+          true,
+        )
+      }
+    }
+    // Not vacuous: two races grant entries — the Tiefling a cantrip and the
+    // Dragonborn a breath weapon — and this loop would be empty if either lost it.
+    expect(checked).toBeGreaterThanOrEqual(2)
+  })
+
+  /** The two grants, named, so the loop above is anchored to something concrete. */
+  test('the Dragonborn’s breath weapon is an action and the Tiefling’s cantrip a passive', () => {
+    const dragonborn = resolve(preset({ race: 'dragonborn' }))
+    const breath = dragonborn.feats.find((line) => line.name === 'Breath Weapon')
+    expect(breath?.category).toBe('action')
+    expect(breath?.roll).not.toBeNull()
+    expect('toHit' in (breath as unknown as Record<string, unknown>)).toBe(false)
+
+    const tiefling = resolve(preset({ race: 'tiefling' }))
+    const cantrip = tiefling.spells.find((line) => line.name === 'Thaumaturgy')
+    expect(cantrip?.category).toBe('passive')
+    expect(cantrip?.roll).toBeNull()
+  })
+
+  /**
+   * The library layer, for completeness — `withId` is one function and serves all
+   * three sources, so a rebuild there would take the premade sheets with it. Every
+   * `lib:` line on a resolved sheet has to carry the category its `LibrarySheet`
+   * declared, and a weapon has to arrive with its to-hit intact.
+   */
+  test('a library entry keeps the category and to-hit its sheet declared', () => {
+    const at = { classKey: 'fighter' as ClassKey, subclassKey: 'champion', level: 3 }
+    const found = librarySheet(at.classKey, at.subclassKey, at.level)
+    expect(found, 'the fixture sheet is missing').toBeDefined()
+    const sheet = resolve(preset({ ...at, race: 'human' }))
+
+    let checked = 0
+    for (const source of [...(found?.feats ?? []), ...(found?.spells ?? [])]) {
+      const line = [...sheet.feats, ...sheet.spells].find(
+        (candidate) => candidate.id.startsWith('lib:') && candidate.name === source.name,
+      )
+      expect(line, `${source.name} missing`).toBeDefined()
+      const built = line as unknown as Record<string, unknown>
+      checked += 1
+      expect('category' in built, `${source.name} lost its category`).toBe(true)
+      expect(line?.category, source.name).toBe(source.category)
+      expect('toHit' in built, `${source.name} to-hit key`).toBe(source.toHit !== undefined)
+      expect(line?.toHit, source.name).toBe(source.toHit)
+    }
+    expect(checked).toBeGreaterThan(0)
+    // The Champion at 3 really does have a weapon, so the to-hit half above is
+    // exercised rather than being a loop over passives.
+    expect(
+      [...sheet.feats, ...sheet.spells].some(
+        (line) => line.id.startsWith('lib:') && line.category === 'weapon',
+      ),
+    ).toBe(true)
+  })
+
+  /**
+   * ⚠️ **The DM's own entries are appended unmodified**, which is what makes an
+   * override the last word. `withOverrides` spreads `extraFeats` and `extraSpells`
+   * straight onto the resolved lists — it does not mint an id, does not derive a
+   * category and does not compose a to-hit — so a weapon the DM wrote arrives on
+   * the sheet byte for byte as it was stored.
+   *
+   * Asserted with `toEqual` against the stored object rather than field by field,
+   * so a field the merge starts dropping in future fails here without anybody
+   * having to add it to a list.
+   */
+  test('the DM’s extra entries arrive exactly as they were stored', () => {
+    const weapon = entry({
+      id: 'dm-weapon',
+      name: 'Ancestral Greatsword',
+      text: 'A blade the party found in the barrow.',
+      roll: '2d6+STR',
+      category: 'weapon',
+      toHit: '1d20+STR+PROF',
+    })
+    const declared = entry({
+      id: 'dm-boon',
+      name: 'The Duke’s Favour',
+      text: 'Doors open in the capital.',
+      roll: null,
+      category: 'passive',
+    })
+    const spell = entry({
+      id: 'dm-spell',
+      name: 'Borrowed Fire',
+      text: 'Once a day, from the amulet.',
+      roll: '3d6',
+      level: 2,
+      category: 'action',
+    })
+
+    const sheet = resolve(
+      preset({ overrides: { extraFeats: [weapon, declared], extraSpells: [spell] } }),
+    )
+
+    expect(sheet.feats.find((line) => line.id === 'dm-weapon')).toEqual(weapon)
+    expect(sheet.feats.find((line) => line.id === 'dm-boon')).toEqual(declared)
+    expect(sheet.spells.find((line) => line.id === 'dm-spell')).toEqual(spell)
+
+    // Presence of the keys, separately, because `toEqual` treats an absent key and
+    // a key holding `undefined` as the same thing and Convex does not.
+    const stored = sheet.feats.find((line) => line.id === 'dm-weapon') as unknown as
+      Record<string, unknown>
+    expect('category' in stored).toBe(true)
+    expect('toHit' in stored).toBe(true)
+    const plain = sheet.feats.find((line) => line.id === 'dm-boon') as unknown as
+      Record<string, unknown>
+    expect('toHit' in plain).toBe(false)
+
+    // And the whole sheet is still storable, which is what the arity rule decides.
+    expect(sheetProblem(sheet)).toBeNull()
+  })
+
+  /**
+   * A legacy override entry — neither field — is appended just as unmodified, and
+   * must not acquire a category on the way through. This is the shape a preset
+   * stored before this milestone actually holds.
+   */
+  test('and a pre-milestone extra entry is not given a category on the way through', () => {
+    const legacy: SheetEntry = {
+      id: 'dm-old',
+      name: 'A gift from before',
+      text: 'Stored in Milestone 4.',
+      roll: '1d6',
+      level: null,
+      catalogueKey: null,
+    }
+    expect('category' in (legacy as unknown as Record<string, unknown>)).toBe(false)
+
+    const sheet = resolve(preset({ overrides: { extraFeats: [legacy] } }))
+    const line = sheet.feats.find((candidate) => candidate.id === 'dm-old') as unknown as
+      Record<string, unknown>
+    expect(line).toBeDefined()
+    expect('category' in line).toBe(false)
+    expect('toHit' in line).toBe(false)
+    expect(sheetProblem(sheet)).toBeNull()
+  })
+
+  /**
+   * And the whole resolved sheet satisfies the arity rule at every coordinate the
+   * library covers, for every race — which is the property the three layers have
+   * to hold *jointly*. Each layer is coherent on its own above; this is the one
+   * that would catch a race trait landing on a class whose sheet already used the
+   * id, or an override merged into the wrong list.
+   */
+  test('and every resolved combination satisfies the arity rule', () => {
+    const problems: string[] = []
+    for (const key of RACE_KEYS) {
+      for (const definition of CLASSES) {
+        for (const level of [MIN_LEVEL, SUBCLASS_LEVEL, MAX_LIBRARY_LEVEL]) {
+          const subclassKey = level < SUBCLASS_LEVEL ? null : definition.subclasses[0].key
+          const sheet = resolve(
+            preset({ race: key, classKey: definition.key, subclassKey, level }),
+          )
+          const problem = sheetProblem(sheet)
+          if (problem) {
+            problems.push(`${key}/${definition.key}/${level}: ${problem.path} — ${problem.message}`)
+          }
+          for (const line of [...sheet.feats, ...sheet.spells]) {
+            const shape = rollShapeOf(categoryOf(line))
+            const where = `${key}/${definition.key}/${level} → ${line.name}`
+            if (shape.toHit !== (line.toHit !== undefined)) problems.push(`${where} toHit`)
+            if (shape.roll !== (line.roll !== null)) problems.push(`${where} roll`)
+          }
+        }
+      }
+    }
+    expect(problems).toEqual([])
   })
 })

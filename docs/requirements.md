@@ -82,6 +82,45 @@ is a live constraint rather than a stale one — two of the Battle Master's best
 Trip Attack and Pushing Attack, were left out of the library because of it, and their dice went to
 manoeuvres that do the same job without knocking anybody prone.
 
+#### The screen and the sheet taxonomy — 2026-08-01 — [ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md)
+
+Two amendments, and neither is to the rule set — which is why they are stated separately from the
+one above. The first corrects a description of the **screen**; the second names a distinction the
+spec always relied on and never wrote down.
+
+**"Slide-out panel" — no longer true of either panel.** The *Game board screen* section above lists
+the player character sheet panel and the DM panel as *slide-out* panels, and the *Player mode*
+section says a player "can toggle the character sheet panel". Both are now **tabs in a persistent
+right-hand panel**, beside the game feed and the DM's tools, with a draggable divider between that
+panel and the map.
+
+The reason is the feed. The spec asks for a game feed *and* a character sheet, and a player who
+clicks a roll on their sheet is the one person at the table who cannot see the feed line they just
+created — because the two now share a panel. That is a real cost, and it is paid deliberately: the
+alternative is a third floating overlay competing with the map for the same corner. What buys it
+back is the floating roll announcement over the map, which the dice work adds and which everyone
+sees, including the person who rolled. So this is one requirement's presentation changed to make
+another requirement work, rather than a preference.
+
+Nothing in the lists of *what the panels contain* moved. The DM panel is still tabbed and still
+holds what it held; the character sheet still shows a character sheet.
+
+**A sheet item is one of three things, and the spec assumed it without saying so.** *"Clicking an
+item on a character sheet sends the roll to the game feed"* is written as though every item has one
+roll. Three do not behave that way: a **weapon** is a to-hit *and* a damage — two rolls — an
+**action** rolls once, and a **passive** is declared and rolls nothing at all. Every entry now
+records which it is, and a weapon carries its to-hit as a second field rather than as a sentence a
+parser would have to find inside its description.
+
+This is not a rule being added. Nothing is adjudicated with it, no roll is evaluated, and the dice
+are still the next milestone's work — it is the spec's own sentence made precise enough to
+implement, and the wording of the roll announcement is generated from it rather than written per
+entry.
+
+**Skills are listed alphabetically now**, thirteen of them, each annotated with its ability —
+`Athletics (STR)` — rather than grouped under ability headings. The grouping made a reader learn
+the grouping before they could find a skill; the annotation answers the same question in place.
+
 ## Accounts and games
 
 - Users create an account by providing an email address.

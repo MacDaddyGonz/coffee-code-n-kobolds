@@ -5,6 +5,7 @@ import { HpControls } from '@/components/HpControls'
 import type { BuilderSelections } from '@/components/sheet/CharacterBuilder'
 import { CharacterBuilder } from '@/components/sheet/CharacterBuilder'
 import { CreatureEntryMissing, CreatureSheetView } from '@/components/sheet/CreatureSheetView'
+import { EditorBody, EditorFooter } from '@/components/sheet/EditorColumn'
 import { HitDiceControls } from '@/components/sheet/HitDiceControls'
 import { NpcSheetForm } from '@/components/sheet/NpcSheetForm'
 import { PcSheetForm } from '@/components/sheet/PcSheetForm'
@@ -15,7 +16,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
-import { SheetFooter } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { PublicSheet, PublicVitals } from '@convex/lib/characters'
 import { MAX_CHARACTER_NAME_LENGTH, collapseWhitespace } from '@convex/lib/codes'
@@ -461,7 +461,7 @@ export function CharacterSheetEditor({
 
   return (
     <>
-      <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-4">
+      <EditorBody>
         <div className="flex flex-col gap-3">
           <SheetField id="character-name" label="Name">
             <div className="flex items-center gap-2">
@@ -552,9 +552,9 @@ export function CharacterSheetEditor({
         ) : null}
 
         {sheetBody()}
-      </div>
+      </EditorBody>
 
-      <SheetFooter>
+      <EditorFooter>
         <span className="text-muted-foreground min-w-0 flex-1 text-xs">
           {failure ? (
             <span className="text-destructive" role="alert">
@@ -576,7 +576,7 @@ export function CharacterSheetEditor({
         >
           {saving ? 'Saving…' : 'Save sheet'}
         </Button>
-      </SheetFooter>
+      </EditorFooter>
     </>
   )
 }

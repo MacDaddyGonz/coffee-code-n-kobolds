@@ -18,12 +18,16 @@ import {
   MAX_ENTRY_ID_LENGTH,
   MAX_ENTRY_NAME_LENGTH,
   MAX_ENTRY_TEXT_LENGTH,
+  MAX_ROLL_LENGTH,
   MAX_SPELL_LEVEL,
   MIN_SPELL_LEVEL,
+  SHEET_ENTRY_CATEGORIES,
   isValidRoll,
+  normaliseRoll,
+  rollShapeOf,
   sheetProblem,
 } from './sheet'
-import type { PcSheet, PresetSheet, SheetEntry } from './sheet'
+import type { PcSheet, PresetSheet, SheetEntry, SheetEntryCategory } from './sheet'
 
 // ---------------------------------------------------------------------------
 // The seventy-two, enumerated once.
@@ -401,6 +405,180 @@ describe('entries', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// The entry taxonomy
+//
+// ⚠️ **Every assertion here is about seven hundred and eleven entries, and both
+// of the fields it is about are optional on the stored shape.** A sweep that
+// dropped `category` on the way in would leave each entry looking like a legacy
+// entry, which is a shape everything downstream is required to accept — so these
+// are written to fail on absence, and the anti-vacuity gate below is what stops
+// them passing over a corpus they never read.
+// ---------------------------------------------------------------------------
+
+describe('the category on a premade entry', () => {
+  const ALL = SHEETS.flatMap(({ label, sheet }) =>
+    entriesOf(sheet).map((entry) => ({ label, entry })),
+  )
+
+  /** The tokens a to-hit may reference, and the one it must reference alongside them. */
+  const ABILITY_TOKEN = /\b(STR|DEX|CON|INT|WIS|CHA)\b/
+  const PROFICIENCY_TOKEN = /\bPROF\b/
+
+  /**
+   * ⚠️ **The anti-vacuity gate, and it is load-bearing rather than decorative.**
+   *
+   * `category` is required on a `LibraryEntry` and optional on the `SheetEntry` it
+   * becomes, so a corpus that had lost the field would still typecheck everywhere
+   * it is *read* — and every loop below would then be iterating entries whose
+   * category is `undefined`, comparing it against nothing and passing. The count
+   * is pinned by hand, and all three categories are asserted to exist, because a
+   * mass re-categorisation is the failure that leaves every per-entry rule below
+   * still satisfied.
+   */
+  test('every one of the 711 entries names one of the three categories', () => {
+    // Copied out of the corpus by hand, not derived from it.
+    expect(ALL.length).toBe(711)
+    for (const { label, entry } of ALL) {
+      expect(SHEET_ENTRY_CATEGORIES, `${label}: ${entry.name}`).toContain(entry.category)
+    }
+    // And all three are actually used, so no loop below is filtering to nothing.
+    const used = new Set<SheetEntryCategory>(ALL.map(({ entry }) => entry.category))
+    expect([...used].sort()).toEqual([...SHEET_ENTRY_CATEGORIES].sort())
+  })
+
+  /**
+   * **The coherence rule, over the whole corpus at once.** `entriesProblem`
+   * enforces the identical thing on save, but it stops at the first problem on a
+   * sheet — so the resolution test at the foot of this file would report one
+   * offender out of seventy-two sheets and say nothing about the rest. This
+   * reports all of them, which is what a corpus-wide re-categorisation needs.
+   */
+  test('every entry carries exactly the rolls its category promises', () => {
+    const wrong: string[] = []
+    for (const { label, entry } of ALL) {
+      const shape = rollShapeOf(entry.category)
+      const where = `${label}: ${entry.name} (${entry.category})`
+      if (shape.toHit !== (entry.toHit !== undefined)) {
+        wrong.push(`${where} toHit ${entry.toHit ?? 'absent'}`)
+      }
+      if (shape.roll !== (entry.roll !== null)) {
+        wrong.push(`${where} roll ${entry.roll ?? 'absent'}`)
+      }
+    }
+    expect(wrong).toEqual([])
+  })
+
+  test('no action and no passive carries a to-hit', () => {
+    const stray = ALL.filter(({ entry }) => entry.category !== 'weapon' && entry.toHit !== undefined)
+      .map(({ label, entry }) => `${label}: ${entry.name} (${entry.category})`)
+    expect(stray).toEqual([])
+  })
+
+  /**
+   * A to-hit is a d20 roll, which the *validator* does not enforce — `entriesProblem`
+   * asks only that it satisfies the shared grammar, so `2d6+STR` would be stored as
+   * a to-hit without complaint. The corpus is where that discipline is actually
+   * kept, so it is asserted here.
+   *
+   * Normalisation is checked alongside for the reason rules.test.ts gives about the
+   * damage: the resolver copies the string verbatim onto the sheet, so one that is
+   * valid but not already normalised would be stored as something other than what
+   * the library says.
+   */
+  test('every weapon rolls 1d20 to hit, in already-normalised form', () => {
+    const weapons = ALL.filter(({ entry }) => entry.category === 'weapon')
+    expect(weapons.length).toBeGreaterThan(0)
+    for (const { label, entry } of weapons) {
+      const toHit = entry.toHit
+      const where = `${label}: ${entry.name}`
+      expect(toHit, `${where} has no to-hit`).toBeDefined()
+      expect(isValidRoll(toHit as string), `${where} → ${toHit}`).toBe(true)
+      expect((toHit as string).startsWith('1d20'), `${where} → ${toHit}`).toBe(true)
+      expect(normaliseRoll(toHit as string), where).toBe(toHit)
+      expect((toHit as string).length, where).toBeLessThanOrEqual(MAX_ROLL_LENGTH)
+      // A weapon rolls damage as well as landing — the other half of its arity.
+      expect(entry.roll, `${where} has no damage`).not.toBeNull()
+    }
+  })
+
+  /**
+   * ⚠️ **The two legitimate shapes, and the mixed one that is refused.**
+   *
+   * A hero's to-hit scales off an ability *and* their proficiency — `1d20+STR+PROF`
+   * — because a hero has both. The ranger's Animal Companion has neither: it is a
+   * creature attacking on a flat number the sheet states outright, exactly as a
+   * monster does, so `1d20+5` is correct for it.
+   *
+   * What is refused is the mix: an ability token with no `PROF` beside it. That is
+   * a hero's to-hit with the proficiency bonus forgotten, which is a number two to
+   * four points too low at every level and looks entirely plausible on a sheet.
+   * Nothing else in the corpus would catch it — it is a valid roll, it is a d20
+   * roll, and it resolves.
+   */
+  test("a weapon's to-hit either carries PROF or names no ability at all", () => {
+    const mixed: string[] = []
+    for (const { label, entry } of ALL) {
+      if (entry.category !== 'weapon') continue
+      const toHit = entry.toHit as string
+      if (ABILITY_TOKEN.test(toHit) && !PROFICIENCY_TOKEN.test(toHit)) {
+        mixed.push(`${label}: ${entry.name} → ${toHit}`)
+      }
+    }
+    expect(mixed).toEqual([])
+  })
+
+  /**
+   * Both shapes are actually present, so the rule above is a rule rather than a
+   * description of a corpus that only ever writes one of them. If the flat shape
+   * disappeared, the test above would collapse into "every weapon carries PROF" —
+   * which is a different and stricter rule that nobody decided to adopt.
+   */
+  test('and both of those shapes really occur in the corpus', () => {
+    const toHits = ALL.filter(({ entry }) => entry.category === 'weapon').map(
+      ({ entry }) => entry.toHit as string,
+    )
+    expect(toHits.some((toHit) => PROFICIENCY_TOKEN.test(toHit))).toBe(true)
+    expect(toHits.some((toHit) => !ABILITY_TOKEN.test(toHit) && !PROFICIENCY_TOKEN.test(toHit)))
+      .toBe(true)
+  })
+
+  /**
+   * ⚠️ **The prose never states the to-hit**, which rules.ts states as a rule for
+   * the catalogue and which applies to the library for the identical reason: a
+   * number written in both a sentence and a field is two places for it to disagree
+   * the moment a player edits their copy, and a line reading `+4 to hit` beside a
+   * `toHit` of `1d20+6` is worse than one that says nothing.
+   *
+   * Scoped to weapons, deliberately. The Champion's Improved Critical explains that
+   * "a 19 on the d20 is a critical hit for you", which is a rule about the die and
+   * not a to-hit the entry is quoting — and it is a passive, so it has no `toHit`
+   * for anything to disagree with.
+   */
+  test('no weapon states a to-hit or a d20 in its prose', () => {
+    const offenders: string[] = []
+    for (const { label, entry } of ALL) {
+      if (entry.category !== 'weapon') continue
+      if (/\bto hit\b/i.test(entry.text)) offenders.push(`${label}: ${entry.name} says "to hit"`)
+      if (/1d20/.test(entry.text)) offenders.push(`${label}: ${entry.name} names 1d20`)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  /** The positive control, so the empty set above is a tripwire rather than a blind spot. */
+  test('and the sweep reads every weapon and its patterns do find a needle', () => {
+    const weapons = ALL.filter(({ entry }) => entry.category === 'weapon')
+    expect(weapons.length).toBeGreaterThan(50)
+    for (const { entry } of weapons) expect(typeof entry.text).toBe('string')
+
+    expect(/\bto hit\b/i.test('A melee swing, +7 to hit, reach 5 ft.')).toBe(true)
+    expect(/1d20/.test('Roll 1d20+STR+PROF against its armour class.')).toBe(true)
+    // And the exemption the scoping relies on is real: the passive that mentions a
+    // d20 would fail a corpus-wide version of this sweep.
+    expect(/1d20/.test('A 19 on the d20 is a critical hit for you as well as a 20.')).toBe(false)
+  })
+})
+
 describe('entries taken from the catalogue', () => {
   const KEYED = SHEETS.flatMap(({ label, sheet }) =>
     entriesOf(sheet)
@@ -459,8 +637,28 @@ describe('entries taken from the catalogue', () => {
    * and the spell `level` say *which* catalogue entry this is and are held
    * exactly — the name doubly so, since ids derive from it. The `text` and the
    * `roll` are the copy, and the copy is meant to be edited.
+   *
+   * ---
+   *
+   * ⚠️ **`category` joins `name` and `level` on the identity side, and `toHit`
+   * joins `text` and `roll` on the copy side.** The split is the same one, applied
+   * to the two new fields, and it falls out of what each field is *for*.
+   *
+   * A category says what happens when the line is clicked — whether the dice work
+   * throws one roll or two, and whether the announcement reads "attacks with their"
+   * or "uses". A spell cannot be a `weapon` in the picker and an `action` on a
+   * cleric's sheet, because that is not a tailored copy, it is two different things
+   * wearing one name. So a disagreement here is drift and is reported as such.
+   *
+   * A to-hit is exempt for precisely the reason the damage roll is, and the same
+   * sentence in rules.ts sanctions it: the catalogue "names the commonest" ability
+   * for a spell cast by classes keyed off different ones. A cleric's Guiding Bolt
+   * lands on `WIS` and a wizard's on `INT`, and both are correct. Requiring
+   * equality would force the library to be wrong about half its classes — which is
+   * the argument that was already accepted for `roll`, and a to-hit is the same
+   * kind of number.
    */
-  test('match the catalogue on name and level, but may tailor text and roll', () => {
+  test('match the catalogue on name, level and category, but may tailor text, roll and to-hit', () => {
     const drifted: string[] = []
     for (const { label, entry } of KEYED) {
       const source = catalogueEntry(entry.catalogueKey as string)
@@ -468,13 +666,41 @@ describe('entries taken from the catalogue', () => {
       const where = `${label}: ${entry.catalogueKey}`
       if (entry.name !== source.name) drifted.push(`${where} name: ${entry.name}`)
       if (entry.level !== source.level) drifted.push(`${where} level: ${entry.level}`)
+      if (entry.category !== source.category) {
+        drifted.push(`${where} category: ${entry.category} (catalogue says ${source.category})`)
+      }
       // A tailored description is still a description, so the bounds hold.
       expect(entry.text.length, `${where} text empty`).toBeGreaterThan(0)
       if (entry.roll !== null) {
         expect(isValidRoll(entry.roll), `${where} roll ${entry.roll}`).toBe(true)
       }
+      // A tailored to-hit is still a to-hit. Its *presence* is not tailorable —
+      // that is decided by the category, which is held exactly one line up — so
+      // this also catches a keyed weapon whose to-hit went missing in the copy.
+      if (source.category === 'weapon') {
+        expect(entry.toHit, `${where} lost its to-hit`).toBeDefined()
+        expect(isValidRoll(entry.toHit as string), `${where} toHit ${entry.toHit}`).toBe(true)
+      } else {
+        expect(entry.toHit, `${where} gained a to-hit`).toBeUndefined()
+      }
     }
     expect(drifted).toEqual([])
+  })
+
+  /**
+   * The category half of the rule above is only meaningful if a keyed entry could
+   * in principle disagree — so this asserts the comparison is actually running over
+   * something, and that the catalogue and the library between them use more than
+   * one category among the keyed entries. A `KEYED` list that had gone all-passive
+   * would make the identity check above true and empty.
+   */
+  test('and the keyed entries span more than one category', () => {
+    const categories = new Set(KEYED.map(({ entry }) => entry.category))
+    expect(KEYED.length).toBeGreaterThan(10)
+    expect(categories.size).toBeGreaterThan(1)
+    for (const { label, entry } of KEYED) {
+      expect(SHEET_ENTRY_CATEGORIES, `${label}: ${entry.name}`).toContain(entry.category)
+    }
   })
 
   /**

@@ -38,6 +38,7 @@ import {
   MIN_LEVEL,
   MIN_MAX_HP,
   SPEED_FEET,
+  categoryForRoll,
   defaultNpcSheet,
   defaultPcSheet,
   isMonsterSheet,
@@ -156,16 +157,48 @@ function npcSheet(overrides: Partial<NpcSheet> = {}): NpcSheet {
   return { ...defaultNpcSheet(), ...overrides }
 }
 
-/** One line on a sheet. Valid by default, so a test only states what it is testing. */
+/**
+ * One line on a sheet. Valid by default, so a test only states what it is testing.
+ *
+ * ⚠️ **It supplies `category` and, where one is owed, `toHit`.** A fixture that
+ * omitted them would leave every assertion under it vacuous with respect to the two
+ * fields Milestone 6 added: `categoryOf` would answer from the roll, `toHitOf` would
+ * answer null, and nothing below would ever have put either on the wire.
+ *
+ * **The category is derived from the roll rather than fixed**, and that is not
+ * convenience — a constant breaks this helper's call sites in one direction or the
+ * other, because `entriesProblem` now enforces arity both ways. `'action'` would make
+ * every `sheetEntry({ roll: null })` an action promising a roll it has not got;
+ * `'passive'` would make the default entry a passive carrying one. Deriving restates
+ * the same rule `categoryOf`'s legacy default restates, so a fixture stays coherent
+ * whatever a caller does to its roll.
+ *
+ * The derivation asks whether the roll **survives normalisation**, not merely whether
+ * it is null: `roll: '   '` is stored as null, so an entry carrying one is a passive
+ * by the time anything validates it.
+ *
+ * A `weapon` is given a to-hit to go with it. Pass `toHit: undefined` explicitly to
+ * build the incoherent entry an arity refusal needs.
+ */
 function sheetEntry(overrides: Partial<SheetEntry> = {}): SheetEntry {
+  const roll = overrides.roll === undefined ? '1d10+2' : overrides.roll
+  // Normalised first, then through the one statement of the rule. The normalisation
+  // is this fixture's own concern — `roll: '   '` is stored as null, so an entry
+  // carrying one is a passive by the time anything validates it — but the *rule* is
+  // `categoryForRoll`, shared with `categoryOf` and with the bestiary resolver so the
+  // three cannot drift apart.
+  const category =
+    overrides.category ?? categoryForRoll(roll !== null && roll.trim() !== '' ? roll : null)
   return {
     id: 'entry-1',
     name: 'Second Wind',
     text: 'Regain hit points as a bonus action.',
-    roll: '1d10+2',
     level: null,
     catalogueKey: null,
+    ...(category === 'weapon' ? { toHit: '1d20+STR+PROF' } : {}),
     ...overrides,
+    roll,
+    category,
   }
 }
 
@@ -1661,6 +1694,358 @@ describe('sheet round trips', () => {
     expect(stored.abilities.str).toBe(14)
     expect(stored.hitDice.count).toBe(3)
     expect(stored.spells[0].level).toBe(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Milestone 6: what shape of roll a line is
+//
+// `category` and `toHit` are optional on `sheetEntryValidator`, which means a
+// deployment will store an entry that has neither, one, or both — the schema cannot
+// tell a coherent line from an incoherent one. `entriesProblem` is what does, and it
+// is an *arity* rule rather than a bound: a weapon promises two rolls, an action one,
+// a passive none, and an entry that does not keep its promise is a line the roll path
+// cannot describe. These are the tests for that promise.
+// ---------------------------------------------------------------------------
+
+describe('sheet entry categories and to-hit rolls', () => {
+  /**
+   * The four arity violations, each blaming the field that is wrong.
+   *
+   * The `path` is asserted rather than the sentence for the reason
+   * `expectSheetProblem` gives — but here it carries a second load. Two of these
+   * four are refused by the *same* pair of rules read in opposite directions, and a
+   * check that only asserted "something was refused" would pass on an
+   * implementation that blamed `roll` for a missing to-hit. The form marks one
+   * field, so the field is the contract.
+   *
+   * Driven through `updateSheet` rather than `create` because that is the mutation a
+   * sheet that already exists goes through, and because it lets each case assert the
+   * stored document is untouched — a refusal that half-wrote a sheet would be worse
+   * than one that accepted it.
+   */
+  const arityViolations: [string, SheetEntry, string][] = [
+    [
+      'a weapon with no roll to hit with',
+      sheetEntry({ id: 'w', name: 'Greatsword', roll: '2d6+STR', category: 'weapon', toHit: undefined }),
+      'feats[0].toHit',
+    ],
+    [
+      'an action carrying a to-hit',
+      sheetEntry({ id: 'a', name: 'Fireball', roll: '8d6', category: 'action', toHit: '1d20+INT+PROF' }),
+      'feats[0].toHit',
+    ],
+    [
+      'a weapon with no damage roll',
+      sheetEntry({ id: 'w', name: 'Greatsword', roll: null, category: 'weapon', toHit: '1d20+STR+PROF' }),
+      'feats[0].roll',
+    ],
+    [
+      'a passive carrying a roll',
+      sheetEntry({ id: 'p', name: 'Rage', roll: '1d4', category: 'passive' }),
+      'feats[0].roll',
+    ],
+  ]
+
+  for (const [label, entry, path] of arityViolations) {
+    test(`updateSheet refuses ${label}, blaming ${path}`, async () => {
+      const t = convexTest(schema, modules)
+      const { code, dmCode } = await makeGame(t)
+      const characterId = await makeCharacter(t, code, 'Subject')
+      const before = (await rawCharacter(t, characterId))?.sheet
+
+      await expectSheetProblem(
+        t.mutation(api.characters.updateSheet, {
+          code,
+          characterId,
+          dmCode,
+          sheet: pcSheet({ feats: [entry] }),
+        }),
+        path,
+      )
+      expect((await rawCharacter(t, characterId))?.sheet).toEqual(before)
+    })
+  }
+
+  /**
+   * The same rule read against a monster's list, because `actions` is the third array
+   * position sharing this entry shape and the only one whose sheet variant is the
+   * secret. A rule enforced on `feats` and not on `actions` would be enforced on the
+   * half of the corpus nobody hides.
+   */
+  test('updateSheet refuses a monster action carrying a to-hit it may not have', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const characterId = await makeNpc(t, code, dmCode, 'Ogre')
+
+    await expectSheetProblem(
+      t.mutation(api.characters.updateSheet, {
+        code,
+        characterId,
+        dmCode,
+        sheet: npcSheet({
+          actions: [
+            sheetEntry({ id: 'act', name: 'Fire Breath', roll: '6d6', category: 'action', toHit: '1d20+6' }),
+          ],
+        }),
+      }),
+      'actions[0].toHit',
+    )
+  })
+
+  /**
+   * The length cap `rollProblem` now applies, aimed at the field that did not exist
+   * when the cap was written. `ROLL_PATTERN`'s trailing `(?:[+-]…)*` repeats without
+   * limit, so this string is a perfectly *valid* roll and only the cap refuses it —
+   * and there are now two such fields on each of up to forty entries.
+   */
+  test('updateSheet refuses a to-hit past the length cap even though the grammar accepts it', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const characterId = await makeCharacter(t, code, 'Subject')
+    // `1d20` plus nineteen `+1` terms: 42 characters, every one of them legal.
+    const longToHit = `1d20${'+1'.repeat(19)}`
+    expect(longToHit.length).toBeGreaterThan(40)
+
+    await expectSheetProblem(
+      t.mutation(api.characters.updateSheet, {
+        code,
+        characterId,
+        dmCode,
+        sheet: pcSheet({
+          feats: [sheetEntry({ id: 'w', name: 'Rapier', category: 'weapon', toHit: longToHit })],
+        }),
+      }),
+      'feats[0].toHit',
+    )
+  })
+
+  /**
+   * ⚠️ **Absence has to be storable, and an empty string is not how you say it.**
+   *
+   * `undefined` is not a Convex value, so an entry naming `toHit` and giving it `''`
+   * is a different document from one that omits the key — and the second is the only
+   * one that means "this line does not roll to hit". `normaliseEntry` is what turns
+   * the first into the second, so the assertion is about the *key*, not the value:
+   * `expect(entry.toHit).toBeUndefined()` would pass on a stored empty string.
+   */
+  test('an empty to-hit is stored as no to-hit key at all', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const characterId = await makePc(
+      t,
+      code,
+      'Thorin',
+      pcSheet({
+        feats: [sheetEntry({ id: 'a', name: 'Fireball', roll: '8d6', category: 'action', toHit: '' })],
+      }),
+    )
+
+    const stored = (await rawCharacter(t, characterId))?.sheet
+    expect(stored?.kind).toBe('pc')
+    if (stored?.kind !== 'pc') return
+    expect('toHit' in stored.feats[0]).toBe(false)
+    // The category is not treated the same way and must still be there — without this
+    // the check above passes on a normaliser that dropped both.
+    expect(stored.feats[0].category).toBe('action')
+  })
+
+  /**
+   * The positive of the two above: a weapon keeps both fields, through the mutation,
+   * the stored document and the query the panel actually reads.
+   */
+  test('a weapon round-trips through the sheet query with both fields intact', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const weapon = sheetEntry({
+      id: 'feat-rapier',
+      name: 'Rapier',
+      text: 'A light, quick blade.',
+      roll: '1d8+DEX',
+      category: 'weapon',
+      toHit: '1d20+DEX+PROF',
+    })
+    const characterId = await makePc(t, code, 'Nightingale', pcSheet({ feats: [weapon] }))
+
+    const stored = (await rawCharacter(t, characterId))?.sheet
+    expect(stored?.kind === 'pc' ? stored.feats[0] : null).toEqual(weapon)
+
+    const read = (await readSheet(t, code, characterId, { dmCode }))?.sheet
+    expect(read?.kind).toBe('pc')
+    if (read?.kind !== 'pc') return
+    expect(read.feats[0].category).toBe('weapon')
+    expect(read.feats[0].toHit).toBe('1d20+DEX+PROF')
+  })
+
+  /**
+   * A to-hit goes through `normaliseRoll` exactly as a damage roll does, so a
+   * hand-typed `1d20 + dex + prof` and a picked `1d20+DEX+PROF` end up byte-identical
+   * rather than merely equivalent. The `DEX` here is deliberate: it is the one
+   * modifier token containing a `D`, and the separator-lowercasing bug that ate every
+   * Dexterity roll would eat every Dexterity *to-hit* the same way — which is most of
+   * them, since a finesse weapon is the common case.
+   */
+  test('a to-hit is normalised on the way in, whitespace and casing included', async () => {
+    const t = convexTest(schema, modules)
+    const { code } = await makeGame(t)
+    const characterId = await makePc(
+      t,
+      code,
+      'Thorin',
+      pcSheet({
+        feats: [
+          sheetEntry({
+            id: 'w',
+            name: 'Rapier',
+            roll: '1d8+DEX',
+            category: 'weapon',
+            toHit: '1d20 + dex + prof',
+          }),
+        ],
+      }),
+    )
+
+    const stored = (await rawCharacter(t, characterId))?.sheet
+    expect(stored?.kind === 'pc' ? stored.feats[0].toHit : null).toBe('1d20+DEX+PROF')
+  })
+
+  /**
+   * ⚠️ **THE ONE THAT DECIDES WHETHER THIS MILESTONE CAN SHIP.**
+   *
+   * `characters.sheet` already holds entries written before either field existed, in
+   * both roll shapes, in every game anybody has played. `entriesProblem`'s arity rule
+   * is new and runs over the *whole* sheet on every save — so if a legacy entry does
+   * not satisfy it, every hand-built sheet in every existing game becomes unsaveable
+   * on its next edit, and the DM finds out by clicking Save.
+   *
+   * It is safe only because `categoryOf`'s default is *derived*: an entry with no roll
+   * reads as a passive and has none, one with a roll reads as an action and has one,
+   * and neither has ever had a to-hit. That is the arity rule restated, which is why
+   * the default cannot be a constant. This test is what holds that claim down.
+   *
+   * The entries are written as literals rather than through `sheetEntry`, which now
+   * supplies a category — a fixture that helpfully filled the field in would be
+   * testing the opposite of the thing named above.
+   */
+  test('a legacy sheet with neither field on any entry is still accepted and still saves', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const legacyFeats: SheetEntry[] = [
+      {
+        id: 'legacy-rage',
+        name: 'Rage',
+        text: 'Declared, not rolled. Written before a category was a thing.',
+        roll: null,
+        level: null,
+        catalogueKey: null,
+      },
+      {
+        id: 'legacy-smite',
+        name: 'Divine Smite',
+        text: 'Radiant damage on a hit already landed.',
+        roll: '2d8',
+        level: null,
+        catalogueKey: null,
+      },
+    ]
+    const legacySpells: SheetEntry[] = [
+      {
+        id: 'legacy-shield',
+        name: 'Shield',
+        text: 'Declared as a reaction.',
+        roll: null,
+        level: 1,
+        catalogueKey: 'shield',
+      },
+      {
+        id: 'legacy-fire-bolt',
+        name: 'Fire Bolt',
+        text: 'A mote of fire.',
+        roll: '1d10',
+        level: 0,
+        catalogueKey: 'fire-bolt',
+      },
+    ]
+    const legacy = pcSheet({ feats: legacyFeats, spells: legacySpells })
+
+    const characterId = await makePc(t, code, 'Milestone Three', legacy)
+    const stored = (await rawCharacter(t, characterId))?.sheet
+    expect(stored).toEqual(legacy)
+
+    // Stored as it was: no category was materialised on the way in. A normaliser that
+    // filled the field in would leave `categoryOf`'s default reachable only by
+    // documents nobody has saved, which is how a default becomes untested code.
+    expect(stored?.kind).toBe('pc')
+    if (stored?.kind !== 'pc') return
+    for (const entry of [...stored.feats, ...stored.spells]) {
+      expect('category' in entry).toBe(false)
+      expect('toHit' in entry).toBe(false)
+    }
+
+    // And the edit that follows. This is the click that would fail.
+    await t.mutation(api.characters.updateSheet, {
+      code,
+      characterId,
+      dmCode,
+      sheet: { ...legacy, maxHp: 42 },
+    })
+    const resaved = (await rawCharacter(t, characterId))?.sheet
+    expect(resaved).toEqual({ ...legacy, maxHp: 42 })
+  })
+
+  /**
+   * The same claim for a monster's list, and for the DM's two override diffs — the
+   * other three of the six array positions this entry shape occupies. An override is
+   * where an entry arrives from outside the picker, so a rule that held on a sheet
+   * and not in an override would hold exactly where nothing types by hand.
+   */
+  test('a legacy NPC action and a hand-written override entry are both still saveable', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const legacyAction: SheetEntry = {
+      id: 'legacy-club',
+      name: 'Greatclub',
+      text: 'Melee attack, +6 to hit, reach 5 feet — written when the bonus lived in the prose.',
+      roll: '2d8+3',
+      level: null,
+      catalogueKey: 'npc-greatclub',
+    }
+    const npcId = await makeNpc(t, code, dmCode, 'Ogre', npcSheet({ actions: [legacyAction] }))
+    expect((await rawCharacter(t, npcId))?.sheet).toEqual(npcSheet({ actions: [legacyAction] }))
+
+    const overrides: PresetOverrides = {
+      extraFeats: [
+        {
+          id: 'dm-boon',
+          name: 'Boon of the Ninth Step',
+          text: 'A gift from the DM, written before categories existed.',
+          roll: '1d6',
+          level: null,
+          catalogueKey: null,
+        },
+      ],
+    }
+    const heroId = await makeCharacter(t, code, 'Nightingale')
+    await t.mutation(api.characters.updateSheet, {
+      code,
+      characterId: heroId,
+      dmCode,
+      sheet: {
+        kind: 'preset',
+        race: 'elf',
+        classKey: 'rogue',
+        subclassKey: null,
+        level: 1,
+        locked: false,
+        overrides,
+      } satisfies PresetSheet,
+    })
+    const storedPreset = (await rawCharacter(t, heroId))?.sheet
+    expect(storedPreset?.kind).toBe('preset')
+    if (storedPreset?.kind !== 'preset') return
+    const stored = storedPreset.overrides?.extraFeats?.[0]
+    expect(stored).toEqual(overrides.extraFeats?.[0])
+    expect(stored && 'category' in stored).toBe(false)
   })
 })
 

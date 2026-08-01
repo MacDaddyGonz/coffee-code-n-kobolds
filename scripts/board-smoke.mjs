@@ -22,6 +22,18 @@
 // deployment accepts the shapes, and that the numbers coming back are ones nobody
 // sent. The library values it compares against are copied by hand for that reason.
 //
+// ⚠️ **Milestone 6 is the largest exposure the silently-dropped-field trap has had.**
+// Two optional fields — `category` and `toHit` — landed on `sheetEntryValidator`, which
+// is the one shape shared by a hero's feats, a hero's spells, a monster's actions and
+// both override diffs: six array positions, all rebuilt field by field by a single
+// `normaliseEntry`. That trap has shipped twice (`skillProficiencies`, then `speed`) and
+// this script is the only thing that has ever caught it, because the dropped value
+// round-trips through a validator that permits it to be absent and so the local suite
+// stays green. Everything the entry sections below assert therefore comes in pairs: an
+// entry sent WITH both fields that must come back with both, and a sibling sent with
+// NEITHER that must come back with neither key present. Absence is a storable state on a
+// real deployment or it is not, and only a real deployment can say.
+//
 //   node scripts/board-smoke.mjs
 //
 // Plain .mjs on purpose: no tsx, no new dependency, nothing to install.
@@ -61,9 +73,13 @@ const CATALOGUE = {
   fireBolt: {
     key: 'fire-bolt',
     name: 'Fire Bolt',
-    text: 'A mote of fire hurled at one target within 120 feet. Make a ranged spell attack; on a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
+    text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
     roll: '1d10',
     level: 0,
+    // A spell that has to land before it burns anything, which is the shape a single
+    // `roll` could not express and the reason `toHit` exists.
+    category: 'weapon',
+    toHit: '1d20+INT+PROF',
   },
   cureWounds: {
     key: 'cure-wounds',
@@ -71,6 +87,7 @@ const CATALOGUE = {
     text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
     roll: '2d8+WIS',
     level: 1,
+    category: 'action',
   },
   fireball: {
     key: 'fireball',
@@ -78,6 +95,7 @@ const CATALOGUE = {
     text: 'A roaring sphere of flame fills a 20-foot radius around a point within 150 feet, going round corners to do it. Each creature there takes the damage, halved on a successful Dexterity saving throw. Another 1d6 per slot level above 3rd.',
     roll: '8d6',
     level: 3,
+    category: 'action',
   },
   secondWind: {
     key: 'second-wind',
@@ -85,6 +103,7 @@ const CATALOGUE = {
     text: 'A bonus action, once per rest, to catch your breath and regain hit points. Add your fighter level to the die.',
     roll: '1d10',
     level: null,
+    category: 'action',
   },
   actionSurge: {
     key: 'action-surge',
@@ -92,13 +111,21 @@ const CATALOGUE = {
     text: 'Once per rest, take one extra action on your turn — a whole second action, not a bonus action.',
     roll: null,
     level: null,
+    category: 'passive',
   },
+  // ⚠️ **The `+6 to hit` clause is gone from the prose and the number now lives in
+  // `toHit`.** Recopied by hand from lib/rules.ts, along with the six other NPC weapons
+  // that had the identical clause removed. A stale copy here would fail this script over
+  // a change that was correct, and a smoke test that cries wolf is one the group learns
+  // to ignore — which costs more than the coverage it was protecting.
   greatclub: {
     key: 'npc-greatclub',
     name: 'Greatclub',
-    text: 'Melee attack, +6 to hit, reach 5 feet, bludgeoning damage — an ogre with a tree trunk, and enough to fell a first-level character outright.',
+    text: 'Melee attack, reach 5 feet, bludgeoning damage — an ogre with a tree trunk, and enough to fell a first-level character outright.',
     roll: '2d8+3',
     level: null,
+    category: 'weapon',
+    toHit: '1d20+6',
   },
   multiattack: {
     key: 'npc-multiattack',
@@ -106,10 +133,20 @@ const CATALOGUE = {
     text: 'The creature takes two of its attacks on its turn instead of one. Roll each of them separately from its other entries.',
     roll: null,
     level: null,
+    category: 'passive',
   },
 }
 
-/** A catalogue entry copied onto a sheet, which is what the picker does: a copy, never a pointer. */
+/**
+ * A catalogue entry copied onto a sheet, which is what the picker does: a copy, never a
+ * pointer.
+ *
+ * `toHit` is spread conditionally rather than written as `undefined`, because
+ * `undefined` is not a Convex value: naming the key and handing it that is a different
+ * write from omitting the key, and only the second is what "this line does not roll to
+ * hit" means. Getting this wrong here would make the key-absence checks below assert
+ * nothing.
+ */
 function entryFrom(catalogue, id) {
   return {
     id,
@@ -118,10 +155,19 @@ function entryFrom(catalogue, id) {
     roll: catalogue.roll,
     level: catalogue.level,
     catalogueKey: catalogue.key,
+    category: catalogue.category,
+    ...(catalogue.toHit === undefined ? {} : { toHit: catalogue.toHit }),
   }
 }
 
-/** A hand-typed entry, filled in by the caller. Everything the picker does not supply. */
+/**
+ * A hand-typed entry, filled in by the caller. Everything the picker does not supply.
+ *
+ * ⚠️ **It deliberately supplies no `category`**, so an entry built by it is shaped
+ * exactly like one written before Milestone 6 — which is the state every sheet in every
+ * existing game is in, and the state this script has to prove a real deployment can
+ * store. A caller that wants a category names one; the default is the legacy shape.
+ */
 function customEntry(fields) {
   return { roll: null, level: null, catalogueKey: null, ...fields }
 }
@@ -135,6 +181,15 @@ function customEntry(fields) {
  * collapsed into one. Already normalised — no stray whitespace, rolls in the casing
  * `normaliseRoll` produces — so anything the deployment changes is a real change
  * rather than the server tidying up after us.
+ *
+ * ⚠️ **The feat list is now one of each category and one entry with no category at
+ * all**, and the pairing is the whole design rather than variety for its own sake.
+ * `firstDifference` reports `present on one side only`, so a `category` or a `toHit`
+ * dropped by a field-by-field rebuild fails by name against the three that carry them —
+ * and `feat-aether-bolt`, which carries neither, is what proves *absence* survives the
+ * round trip rather than being filled in. Neither half means anything without the
+ * other: the first passes on a deployment that materialised a category for everything,
+ * the second on one that discarded every new field it was sent.
  */
 const PC_NAME = 'Sköll Emberkin 🎲'
 const PC_SHEET = {
@@ -149,12 +204,49 @@ const PC_SHEET = {
   feats: [
     entryFrom(CATALOGUE.secondWind, 'feat-second-wind'),
     entryFrom(CATALOGUE.actionSurge, 'feat-action-surge'),
+    // THE NEGATIVE. Neither new field, exactly as every entry written before
+    // Milestone 6 is, and the one this script asserts comes back with neither key
+    // present. See `LEGACY_FEAT_ID` and the check in section 6.
     customEntry({
       id: 'feat-aether-bolt',
       name: 'Æther Bolt 🜁🔥',
       text: 'Éclair d’æther — 2d8 de dégâts radiants, et la cible brille. ✨ 火 🐉',
       roll: '2d8+CHA',
     }),
+    // THE POSITIVE CONTROL, and the hand-written weapon. Two rolls: one to land it and
+    // one for what it does. Written out in full rather than built by a helper, because
+    // a fixture derived from the code under test would agree with a mangled rebuild as
+    // readily as with a correct one.
+    {
+      id: 'feat-runeblade',
+      name: 'Runeblade of the Ember Skald',
+      text: 'A two-handed blade cut with fire runes. Swung with Strength, and the runes take light on a hit.',
+      roll: '2d6+STR',
+      level: null,
+      catalogueKey: null,
+      category: 'weapon',
+      toHit: '1d20+STR+PROF',
+    },
+    // The hand-written action: one roll, no to-hit, and it simply goes off.
+    {
+      id: 'feat-verse-of-mending',
+      name: 'Verse of Mending',
+      text: 'A sung stanza that closes a wound on an ally within thirty feet. Nothing is aimed and nothing is resisted.',
+      roll: '1d8+CHA',
+      level: null,
+      catalogueKey: null,
+      category: 'action',
+    },
+    // The hand-written passive: declared, not rolled.
+    {
+      id: 'feat-stone-stance',
+      name: 'Stone Stance',
+      text: 'Set your feet and you are not moved against your will while you hold the ground you are standing on.',
+      roll: null,
+      level: null,
+      catalogueKey: null,
+      category: 'passive',
+    },
   ],
   spells: [
     entryFrom(CATALOGUE.fireBolt, 'spell-fire-bolt'),
@@ -224,6 +316,22 @@ const ROGUE = {
     maxHp: 10,
     hitDice: { count: 1, faces: 8 },
     featCount: 5,
+    /**
+     * The Rogue's first weapon, copied by hand out of `convex/lib/library/rogue.ts`.
+     *
+     * ⚠️ **This is the only thing that proves the library's new field survives the two
+     * copies resolution makes of every entry** — `withId`'s spread in lib/resolve.ts,
+     * and the race overlay's rebuild of the feat list on top of it. A `toHit` dropped
+     * by either would leave a weapon on a hero's sheet that announces an attack and
+     * has nothing to roll for it, and no other check in this script would notice: the
+     * feat *count* would still be right.
+     *
+     * `1d20+DEX+PROF` and not `1d20+STR+PROF`, which is the detail that makes it worth
+     * copying rather than deriving. A rapier is a finesse weapon aimed with Dexterity,
+     * and `DEX` is the one modifier token containing a `D` — the token `normaliseRoll`
+     * has already destroyed once.
+     */
+    weapon: { name: 'Rapier', roll: '1d8+DEX', toHit: '1d20+DEX+PROF' },
   },
   thief2: { maxHp: 17, hitDice: { count: 2, faces: 8 }, featCount: 7 },
   thief3: { maxHp: 24, hitDice: { count: 3, faces: 8 }, featCount: 7 },
@@ -270,6 +378,28 @@ function presetSheet(fields) {
  * its deviation from its row is preserved. The four d20 columns are **deltas**, because
  * 1.23× of an armour class is not a statement about anything. Mixing the two up is the
  * single easiest way to get a scaler wrong, so both kinds are worked out separately below.
+ *
+ * ⚠️ **`toHit` IS WORKED FROM `atk` AS A DELTA, AND THE WORKING IS WRITTEN OUT** — because
+ * reading it as a ratio gives three plausible-looking numbers that are all wrong, and a
+ * fixture derived from `toHitFromBonus` would agree with a broken composition exactly as
+ * readily as with a correct one.
+ *
+ *   The Dire Wolf is written at CR 1 with an attack bonus of 4. The benchmark `atk` at
+ *   CR 1 is 4, so its deviation from its own row is 4 − 4 = 0, and the scaled bonus at
+ *   any rating is that row's `atk` plus 0:
+ *
+ *     CR 1 → 4 + (4 − 4) = 4   → `1d20+4`
+ *     CR 4 → 6 + (4 − 4) = 6   → `1d20+6`
+ *     CR 6 → 7 + (4 − 4) = 7   → `1d20+7`
+ *
+ *   As a ratio it would have been 4 × 6/4 = 6 at CR 4 — which coincides — and
+ *   4 × 7/4 = 7 at CR 6, which also coincides, *because this creature sits exactly on its
+ *   row*. That coincidence is the trap: the two readings agree on every number here and
+ *   would diverge on any creature with a deviation, so the arithmetic above is the one
+ *   that is actually being asserted and it is written out so nobody re-derives it the
+ *   other way. The `attackBonus` figures in the three statlines below are the same three
+ *   numbers and have been since Milestone 5 — the to-hit is that bonus spelled as a roll,
+ *   which is exactly the claim `toHitFromBonus` makes and exactly what is checked.
  */
 const WOLF = {
   key: 'dire-wolf',
@@ -287,6 +417,12 @@ const WOLF = {
     speed: 50,
     skills: { perception: 3, stealth: 4 },
     damage: '2d6+3',
+    toHit: '1d20+4',
+    // Every attack in the corpus is a weapon by construction — the entry separates
+    // `attacks` from `abilities`, and an attack is the thing that has to land before its
+    // damage applies. Asserted rather than assumed, because it is read off the structure
+    // rather than declared on a hundred and fifty-nine hand-written attacks.
+    category: 'weapon',
   },
   /** 31 × 70/26 = 83.46… → 83, and +2 on every d20 column. Damage 16/8 = 2.0× exactly. */
   atCr4: {
@@ -298,6 +434,8 @@ const WOLF = {
     speed: 50,
     skills: { perception: 5, stealth: 6 },
     damage: '4d6+6',
+    toHit: '1d20+6',
+    category: 'weapon',
   },
   /** 31 × 120/26 = 143.07… → 143, and +3 on every d20 column. Damage 25/8 = 3.125×. */
   atCr6: {
@@ -309,6 +447,8 @@ const WOLF = {
     speed: 50,
     skills: { perception: 6, stealth: 7 },
     damage: '6d6+10',
+    toHit: '1d20+7',
+    category: 'weapon',
   },
   /** The composed opening of the resolved Bite at each rating, from `attackText`. */
   biteAtCr1: 'Melee. 2d6+3 piercing damage.',
@@ -336,8 +476,24 @@ const INNKEEPER = {
     'Three of her regulars have been paying in thin old silver of the Verrow mint, coin nobody has struck in four generations, and all three of them work the deep shift at the Hallow Delve. She keeps a jar of it under the bar and has told nobody, because the Ledger House in Greyhallow would want to know where it came from and so would the revenue.',
 }
 
-/** The DM's thumb on a creature, in the one field section 19 overrides. */
+/** The DM's thumb on a creature, in the two fields section 19 overrides. */
 const DM_CREATURE_ARMOUR_CLASS = 25
+/**
+ * ⚠️ **The second override, and the one this script exists for.**
+ *
+ * A creature carries **one** `attackBonus` for the whole of itself and every attack's
+ * to-hit is composed *from* it, so the two are one number spelled twice — and a merge
+ * that patches the field while the composition has already happened gives a sheet
+ * reading +12 whose every weapon rolls +7. Nothing on screen looks wrong enough to
+ * investigate: both readings come back on the same payload, from the same query, and the
+ * DM sees a consistent-looking creature that hits eight points softer than its own
+ * statline says.
+ *
+ * 12 rather than a round number for the reason 271 and 137 are what they are: it cannot
+ * be produced by coincidence out of the benchmark table, whose `atk` column runs 4, 6, 7.
+ */
+const DM_CREATURE_ATTACK_BONUS = 12
+const DM_CREATURE_TO_HIT = '1d20+12'
 
 /**
  * The eight numbers a rating shift moves, pulled off a resolved sheet in one shape so
@@ -346,8 +502,16 @@ const DM_CREATURE_ARMOUR_CLASS = 25
  * `damage` is read off the first action's `roll` rather than its `text`, because the roll
  * is what Milestone 6 will aim dice at and the text is the sentence a person reads. Both
  * are asserted; only one of them is a value.
+ *
+ * ⚠️ **`toHit` and `category` travel here rather than being checked on their own**, so a
+ * change to either is *named* by `firstDifference` — `statline.toHit: stored "1d20+7",
+ * wanted "1d20+12"` — instead of collapsing into a boolean that says a shift went wrong
+ * somewhere. That naming is the whole reason a statline object exists at all, and the
+ * to-hit is now the number in it most likely to move on its own: it is the only one
+ * derived from another field rather than scaled from a benchmark row.
  */
 function statlineOf(sheet) {
+  const first = sheet.actions[0]
   return {
     maxHp: sheet.maxHp,
     armourClass: sheet.armourClass,
@@ -356,7 +520,9 @@ function statlineOf(sheet) {
     passivePerception: sheet.passivePerception,
     speed: sheet.speed,
     skills: sheet.skills,
-    damage: sheet.actions[0] && sheet.actions[0].roll,
+    damage: first && first.roll,
+    toHit: first && first.toHit,
+    category: first && first.category,
   }
 }
 
@@ -699,17 +865,84 @@ async function main() {
       drift ?? `name ${JSON.stringify(storedPc.name)}`,
     )
 
+    // ⚠️ **ABSENCE, ASSERTED AS ABSENCE.** `firstDifference` above already reports a
+    // dropped field as `present on one side only`, which covers the three entries that
+    // carry a category. What it cannot do on its own is tell a deployment that stores
+    // an omitted optional field as omitted from one that helpfully materialises it —
+    // both sides would have to differ for that to show, and a materialised `category`
+    // on an entry the fixture sent without one *does* differ, but only if the fixture
+    // is right about which entry is which. So the two are pulled out by id and asserted
+    // directly, on the KEY rather than on the value: `entry.toHit === undefined` is true
+    // of a stored empty string as well, and an empty string is not how absence is said.
+    //
+    // This is the half of the pair convex-test cannot answer at all. `undefined` is not
+    // a Convex value, so whether the client library drops the key, the deployment
+    // refuses the write, or the field comes back as `null` is a question only a real
+    // round trip settles.
+    const storedFeats = storedPc && storedPc.sheet.feats ? storedPc.sheet.feats : []
+    const legacyFeat = storedFeats.find((entry) => entry.id === 'feat-aether-bolt')
+    const weaponFeat = storedFeats.find((entry) => entry.id === 'feat-runeblade')
+    check(
+      'an entry sent with neither new field came back with neither key present',
+      legacyFeat && !('category' in legacyFeat) && !('toHit' in legacyFeat),
+      legacyFeat ? `keys: ${Object.keys(legacyFeat).sort().join(', ')}` : 'no legacy feat came back',
+    )
+    check(
+      'its sibling, sent with both, came back with both',
+      weaponFeat &&
+        weaponFeat.category === 'weapon' &&
+        weaponFeat.toHit === '1d20+STR+PROF' &&
+        weaponFeat.roll === '2d6+STR',
+      weaponFeat
+        ? `positive control — without it the check above passes on a deployment that discarded everything; got ${JSON.stringify(weaponFeat.category)} / ${JSON.stringify(weaponFeat.toHit)}`
+        : 'no weapon feat came back',
+    )
+    check(
+      'the action and the passive kept their categories and neither grew a to-hit',
+      storedFeats.some(
+        (entry) =>
+          entry.id === 'feat-verse-of-mending' &&
+          entry.category === 'action' &&
+          !('toHit' in entry),
+      ) &&
+        storedFeats.some(
+          (entry) =>
+            entry.id === 'feat-stone-stance' &&
+            entry.category === 'passive' &&
+            entry.roll === null &&
+            !('toHit' in entry),
+        ),
+      `${storedFeats.length} feats, categories ${JSON.stringify(storedFeats.map((entry) => entry.category ?? null))}`,
+    )
+
     // 7. The forty-entry cap, which is the largest thing this application asks a
     // document to hold. Convex has opinions about document size and nesting depth
     // that convex-test does not, and eighty objects inside a union inside an
     // optional field is where they would first be heard.
+    // Every filler carries a category and alternate ones carry a to-hit as well, so the
+    // deployment is asked to store eighty entries each two fields wider than the shape
+    // that fitted before — which is the point of the section. Nesting depth and document
+    // size are things Convex has opinions about and convex-test has none, and a list at
+    // its cap is where a rounding error in either would first be heard.
     const filler = (prefix, index) =>
-      customEntry({
-        id: `${prefix}-${index}`,
-        name: `${prefix} ${index}`,
-        text: 'Filler, so the deployment is asked to store a list at its cap.',
-        roll: index % 2 === 0 ? '1d6+2' : null,
-      })
+      customEntry(
+        index % 2 === 0
+          ? {
+              id: `${prefix}-${index}`,
+              name: `${prefix} ${index}`,
+              text: 'Filler, so the deployment is asked to store a list at its cap.',
+              roll: '1d6+2',
+              category: 'weapon',
+              toHit: '1d20+3',
+            }
+          : {
+              id: `${prefix}-${index}`,
+              name: `${prefix} ${index}`,
+              text: 'Filler, so the deployment is asked to store a list at its cap.',
+              roll: null,
+              category: 'passive',
+            },
+      )
     const cappedFeats = Array.from({ length: 40 }, (_, index) => filler('feat', index))
     const cappedSpells = Array.from({ length: 40 }, (_, index) => filler('spell', index))
     const cappedSheet = { ...PC_SHEET, feats: cappedFeats, spells: cappedSpells }
@@ -729,6 +962,20 @@ async function main() {
       'characters:updateSheet stored forty feats and forty spells',
       cappedBack && cappedBack.sheet.feats.length === 40 && cappedBack.sheet.spells.length === 40,
       cappedBack ? `${cappedBack.sheet.feats.length} + ${cappedBack.sheet.spells.length}` : 'no sheet',
+    )
+    // And that the two extra fields survived at the cap rather than only in a list of
+    // three. A document-size or nesting limit would not fail the length check above —
+    // the write would simply have been refused, or a field quietly lost.
+    const cappedEntries = cappedBack
+      ? [...cappedBack.sheet.feats, ...cappedBack.sheet.spells]
+      : []
+    check(
+      'every one of the eighty came back two fields wider, half of them with a to-hit',
+      cappedEntries.length === 80 &&
+        cappedEntries.every((entry) => entry.category === 'weapon' || entry.category === 'passive') &&
+        cappedEntries.filter((entry) => entry.toHit === '1d20+3').length === 40 &&
+        cappedEntries.filter((entry) => !('toHit' in entry)).length === 40,
+      `${cappedEntries.filter((entry) => 'toHit' in entry).length} of ${cappedEntries.length} carry a to-hit`,
     )
     await refuses('the deployment refused a forty-first entry', () =>
       client.mutation('characters:updateSheet', {
@@ -972,6 +1219,97 @@ async function main() {
         },
       }),
     )
+    // ⚠️ **THE ARITY RULE AND THE LITERAL UNION, AGAINST THE REAL BOUNDARY.** Every
+    // one of the six below is a value convex-test would store without a word: `'trap'`
+    // is an ordinary string, `'1d7'` is an ordinary string, and an entry carrying a
+    // field its category does not admit is a perfectly well-typed object. Two different
+    // mechanisms refuse them and it matters which is which — the first is Convex's own
+    // argument validation refusing a member that is not in `sheetEntryCategoryValidator`,
+    // which is the only thing that demonstrates the literal union actually reached the
+    // deployment rather than merely being written down; the other five are
+    // `entriesProblem` running server-side on a normalised sheet.
+    const badEntrySheets = [
+      [
+        'a category that is not one of the three',
+        customEntry({
+          id: 'feat-trap',
+          name: 'Pit Trap',
+          text: 'A fourth category nobody declared.',
+          roll: '1d6',
+          category: 'trap',
+        }),
+      ],
+      [
+        'a to-hit on a die nobody owns',
+        customEntry({
+          id: 'feat-d7',
+          name: 'Sevenfold Blade',
+          text: 'Aimed with a die that does not exist.',
+          roll: '1d6',
+          category: 'weapon',
+          toHit: '1d7',
+        }),
+      ],
+      [
+        'a passive carrying a roll',
+        customEntry({
+          id: 'feat-loud-passive',
+          name: 'Stone Stance',
+          text: 'Declared rather than rolled, and then rolling something.',
+          roll: '1d6',
+          category: 'passive',
+        }),
+      ],
+      [
+        'an action carrying a to-hit',
+        customEntry({
+          id: 'feat-aimed-action',
+          name: 'Verse of Mending',
+          text: 'Nothing is aimed, and it is aimed anyway.',
+          roll: '1d8+CHA',
+          category: 'action',
+          toHit: '1d20+CHA+PROF',
+        }),
+      ],
+      [
+        'a weapon with no to-hit',
+        customEntry({
+          id: 'feat-blind-weapon',
+          name: 'Runeblade',
+          text: 'A weapon is the one category that asserts a second field exists.',
+          roll: '2d6+STR',
+          category: 'weapon',
+        }),
+      ],
+      [
+        // Distinct from the one above, and this is the pair that decides whether
+        // absence has exactly one spelling. `normaliseEntry` drops an empty to-hit
+        // before anything validates it, so this arrives at `entriesProblem` as the case
+        // above — which is the intended behaviour, and is only *observable* through a
+        // refusal. If it were ever stored instead, `toHitOf` would answer null on a
+        // weapon while the stored document said otherwise.
+        'a weapon whose to-hit is an empty string',
+        customEntry({
+          id: 'feat-empty-to-hit',
+          name: 'Runeblade',
+          text: 'An empty string is not how a field says it is absent.',
+          roll: '2d6+STR',
+          category: 'weapon',
+          toHit: '',
+        }),
+      ],
+    ]
+    for (const [label, entry] of badEntrySheets) {
+      await refuses(`characters:updateSheet refused ${label}`, () =>
+        client.mutation('characters:updateSheet', {
+          code,
+          dmCode,
+          characterId: pc.characterId,
+          sheet: { ...cappedSheet, feats: [entry] },
+        }),
+      )
+    }
+
     const survivor = await client.query('characters:sheet', {
       code,
       dmCode,
@@ -979,8 +1317,17 @@ async function main() {
     })
     check(
       'every refused sheet left the stored one exactly as it was',
-      survivor && survivor.sheet.feats.length === 40 && survivor.sheet.abilities.str === 17,
-      survivor ? `${survivor.sheet.feats.length} feats, str ${survivor.sheet.abilities.str}` : 'no sheet',
+      survivor &&
+        survivor.sheet.feats.length === 40 &&
+        survivor.sheet.abilities.str === 17 &&
+        // The two new fields on the entry that was there before the refusals, so a
+        // partial write that replaced the list with a one-entry sheet and then threw
+        // cannot pass this by getting the length right.
+        survivor.sheet.feats[0].category === 'weapon' &&
+        survivor.sheet.feats[0].toHit === '1d20+3',
+      survivor
+        ? `${survivor.sheet.feats.length} feats, str ${survivor.sheet.abilities.str}, first ${JSON.stringify(survivor.sheet.feats[0].category)} / ${JSON.stringify(survivor.sheet.feats[0].toHit)}`
+        : 'no sheet',
     )
 
     // 13. MILESTONE 4, WHICH IS THE MOST THIS APPLICATION HAS EVER ASKED A
@@ -1053,6 +1400,46 @@ async function main() {
         (built
           ? `${built.className}, AC ${built.armourClass}, ${built.maxHp} hp, ${built.hitDice.count}d${built.hitDice.faces}, ${built.feats.length} feats`
           : 'no sheet came back'),
+    )
+
+    // ⚠️ **THE LIBRARY'S OWN TO-HIT, THROUGH TWO REBUILDS.** A premade hero's feats are
+    // copied by `withId`'s spread in lib/resolve.ts and then copied again by the race
+    // overlay, which rebuilds the list to append the racial trait. A field added to the
+    // library's entry type and dropped by either copy leaves a weapon on the sheet that
+    // announces an attack and has nothing to roll for it — and no other check here would
+    // notice, because the feat *count* would still be right. Compared against a value
+    // copied out of `convex/lib/library/rogue.ts` by hand for the reason every other
+    // library number in this section is.
+    const libraryWeapon = built
+      ? built.feats.find((entry) => entry.name === ROGUE.base.weapon.name)
+      : null
+    check(
+      "the library's weapon reached the resolved sheet with its own to-hit",
+      libraryWeapon &&
+        libraryWeapon.category === 'weapon' &&
+        libraryWeapon.toHit === ROGUE.base.weapon.toHit &&
+        libraryWeapon.roll === ROGUE.base.weapon.roll,
+      libraryWeapon
+        ? `${libraryWeapon.name}: ${JSON.stringify(libraryWeapon.toHit)} / ${JSON.stringify(libraryWeapon.roll)}, wanted ${JSON.stringify(ROGUE.base.weapon.toHit)} / ${JSON.stringify(ROGUE.base.weapon.roll)}`
+        : `no ${ROGUE.base.weapon.name} among ${built ? built.feats.map((entry) => entry.name).join(', ') : '—'}`,
+    )
+    // The race's own contribution, which is the entry the overlay *adds* rather than
+    // copies — and a passive by construction, since a trait is built from two strings
+    // and has no roll. Without this the check above passes on an overlay that dropped
+    // the category from everything it appended.
+    check(
+      'the racial trait arrived as a passive with no roll and no to-hit',
+      built &&
+        built.feats.some(
+          (entry) =>
+            entry.id.startsWith('race:') &&
+            entry.category === 'passive' &&
+            entry.roll === null &&
+            !('toHit' in entry),
+        ),
+      built
+        ? `race entries ${JSON.stringify(built.feats.filter((entry) => entry.id.startsWith('race:')).map((entry) => [entry.id, entry.category ?? null]))}`
+        : 'no sheet came back',
     )
 
     // THE ARITHMETIC THAT IS EASY TO APPLY TWICE. A race is added on top of a
@@ -1599,6 +1986,20 @@ async function main() {
 
     // An override is the DM's last word, and the scale happens before it — so a boss-fight
     // armour class stays bumped through a shift while everything unpinned moves.
+    //
+    // ⚠️ **`attackBonus` is overridden alongside it, and that is the ordering bug nothing
+    // else in this repo would catch.** Every attack's to-hit is composed *from* this one
+    // field, and `withCreatureOverrides` patches the field while leaving `actions`
+    // untouched — so composing the to-hit before the merge rather than after gives a
+    // creature whose sheet reads +12 and whose every weapon rolls +7. The local suite
+    // cannot see it: both numbers come back on the same payload, from the same query, and
+    // the panel draws a creature that looks entirely self-consistent. The DM finds out
+    // when the boss misses all night.
+    //
+    // The armour class is what makes the check a pair. It is overridden *and* not derived
+    // from anything, so it proves the merge ran at all — without it, a resolver that
+    // ignored the whole override object would pass the to-hit assertion by leaving the
+    // corpus's +7 in both places and agreeing with itself.
     await client.mutation('characters:updateSheet', {
       code,
       dmCode,
@@ -1607,7 +2008,30 @@ async function main() {
         kind: 'bestiary',
         entryKey: WOLF.key,
         cr: 4,
-        overrides: { armourClass: DM_CREATURE_ARMOUR_CLASS },
+        overrides: {
+          armourClass: DM_CREATURE_ARMOUR_CLASS,
+          attackBonus: DM_CREATURE_ATTACK_BONUS,
+          // The sixth and last array position `sheetEntryValidator` occupies, and the
+          // only one where a *hand-written* weapon reaches a creature. Two things are
+          // being asked at once: that a DM's own entry round-trips both new fields
+          // through `normaliseCreatureOverrides`, and that resolution leaves it exactly
+          // as written rather than composing over it. The second is the interesting
+          // one — the corpus's attacks all take the creature's one bonus, and a
+          // resolver that rewrote every weapon on the sheet rather than every weapon it
+          // built would silently retune a line the DM typed a number into.
+          extraActions: [
+            {
+              id: 'dm-witchfire-brand',
+              name: 'Witchfire Brand',
+              text: 'A brand the DM handed this one for tonight, aimed on its own bonus rather than the creature’s.',
+              roll: '3d8+2',
+              level: null,
+              catalogueKey: null,
+              category: 'weapon',
+              toHit: '1d20+9',
+            },
+          ],
+        },
       },
     })
     await client.mutation('characters:setCreatureCr', {
@@ -1619,24 +2043,86 @@ async function main() {
     const wolfAtSix = await readSheet(wolf.characterId)
     const sixDrift = wolfAtSix
       ? firstDifference(
-          { ...WOLF.atCr6, armourClass: DM_CREATURE_ARMOUR_CLASS },
+          {
+            ...WOLF.atCr6,
+            armourClass: DM_CREATURE_ARMOUR_CLASS,
+            attackBonus: DM_CREATURE_ATTACK_BONUS,
+            toHit: DM_CREATURE_TO_HIT,
+          },
           statlineOf(wolfAtSix.sheet),
           'statline',
         )
       : 'no sheet came back'
     check(
-      "the DM's pinned armour class survived a shift while the rest of the statline moved",
+      "the DM's pinned numbers survived a shift while the rest of the statline moved",
       wolfAtSix &&
         sixDrift === null &&
         wolfAtSix.creature.overrides &&
         wolfAtSix.creature.overrides.armourClass === DM_CREATURE_ARMOUR_CLASS &&
-        wolfAtSix.creature.overriddenFields.length === 1 &&
-        wolfAtSix.creature.overriddenFields[0] === 'armourClass' &&
+        wolfAtSix.creature.overrides.attackBonus === DM_CREATURE_ATTACK_BONUS &&
+        wolfAtSix.creature.overriddenFields.length === 3 &&
+        wolfAtSix.creature.overriddenFields.includes('armourClass') &&
+        wolfAtSix.creature.overriddenFields.includes('attackBonus') &&
+        wolfAtSix.creature.overriddenFields.includes('extraActions') &&
         wolfAtSix.sheet.actions[0].text.startsWith(WOLF.biteAtCr6),
       sixDrift ??
         (wolfAtSix
-          ? `AC ${wolfAtSix.sheet.armourClass} against the corpus's ${WOLF.atCr6.armourClass}, ${wolfAtSix.sheet.maxHp} hp`
+          ? `AC ${wolfAtSix.sheet.armourClass} against the corpus's ${WOLF.atCr6.armourClass}, ${wolfAtSix.sheet.maxHp} hp, pinned ${JSON.stringify(wolfAtSix.creature.overriddenFields)}`
           : 'no sheet came back'),
+    )
+    // ⚠️ **THE SAME NUMBER, READ IN BOTH PLACES, ASSERTED TO AGREE.** Stated on its own
+    // rather than left inside the statline drift above, because this is the failure that
+    // would otherwise be reported as "some field moved" — and because the claim is not
+    // that either value is right, it is that the two are **one number spelled twice** and
+    // moved together. A creature carries exactly one `attackBonus` (ADR 0007), and every
+    // weapon on its sheet is that bonus written as a roll. `1d20+12` against a stated +12
+    // is the whole of what is being checked; the arithmetic is `toHitFromBonus`'s and is
+    // deliberately not restated here, only the agreement is.
+    //
+    // Every attack the corpus contributed, not merely the first: `statlineOf` reads
+    // `actions[0]`, so a resolver that composed the first attack from the merged bonus
+    // and the rest from the scaled one would sail past everything above. Honest about
+    // the reach of that — a Dire Wolf has exactly one attack, so the `every` below is
+    // one entry wide today and is written this way because the *next* fixture is not.
+    // What is genuinely more than one wide is the discrimination: the DM's own weapon is
+    // on this sheet too and must be left alone, which is the check after it.
+    const corpusAttacks = wolfAtSix
+      ? wolfAtSix.sheet.actions.filter((entry) => entry.id.startsWith('atk:'))
+      : []
+    check(
+      "the creature's attack bonus and every attack's to-hit moved together",
+      wolfAtSix &&
+        wolfAtSix.sheet.attackBonus === DM_CREATURE_ATTACK_BONUS &&
+        corpusAttacks.length > 0 &&
+        corpusAttacks.every(
+          (entry) => entry.category === 'weapon' && entry.toHit === DM_CREATURE_TO_HIT,
+        ) &&
+        // The positive control, and it is not ceremony: without it this passes on a
+        // deployment where the override was ignored entirely and both readings sat at
+        // the corpus's +7, agreeing with each other and with nothing else.
+        WOLF.atCr6.toHit !== DM_CREATURE_TO_HIT,
+      wolfAtSix
+        ? `sheet ${wolfAtSix.sheet.attackBonus}, ${corpusAttacks.length} attacks rolling ${JSON.stringify([...new Set(corpusAttacks.map((entry) => entry.toHit))])}, against the unoverridden ${WOLF.atCr6.toHit}`
+        : 'no sheet came back',
+    )
+    // And the DM's own entry, left exactly as written. `+9` is neither the creature's
+    // overridden `+12` nor the corpus's scaled `+7`, so a resolver that recomposed every
+    // weapon it found — rather than every weapon it built — changes this and nothing
+    // else on the sheet.
+    const dmWeapon = wolfAtSix
+      ? wolfAtSix.sheet.actions.find((entry) => entry.id === 'dm-witchfire-brand')
+      : null
+    check(
+      "the DM's own weapon kept the to-hit the DM typed, not the creature's",
+      dmWeapon &&
+        dmWeapon.category === 'weapon' &&
+        dmWeapon.toHit === '1d20+9' &&
+        dmWeapon.roll === '3d8+2' &&
+        // Appended after the corpus's own, which is the order the sheet shows.
+        wolfAtSix.sheet.actions[wolfAtSix.sheet.actions.length - 1].id === 'dm-witchfire-brand',
+      dmWeapon
+        ? `${JSON.stringify(dmWeapon.toHit)} against the creature's ${DM_CREATURE_TO_HIT}`
+        : `no DM action among ${wolfAtSix ? wolfAtSix.sheet.actions.map((entry) => entry.id).join(', ') : '—'}`,
     )
     const rescaledAgain = await dmVitalsFor(wolf.characterId)
     check(

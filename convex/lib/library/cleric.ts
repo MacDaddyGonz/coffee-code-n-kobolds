@@ -55,6 +55,7 @@ export const CLERIC: ClassLibrary = {
         text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
         roll: '1d20+WIS+PROF',
         level: null,
+        category: 'action',
         catalogueKey: null,
       },
       {
@@ -62,6 +63,7 @@ export const CLERIC: ClassLibrary = {
         text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
         roll: null,
         level: null,
+        category: 'passive',
         catalogueKey: null,
       },
     ],
@@ -71,6 +73,7 @@ export const CLERIC: ClassLibrary = {
         text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
         roll: '1d8',
         level: 0,
+        category: 'action',
         catalogueKey: 'sacred-flame',
       },
       {
@@ -78,6 +81,7 @@ export const CLERIC: ClassLibrary = {
         text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
         roll: '1d4',
         level: 0,
+        category: 'action',
         catalogueKey: 'guidance',
       },
       {
@@ -85,6 +89,7 @@ export const CLERIC: ClassLibrary = {
         text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
         roll: '2d8+WIS',
         level: 1,
+        category: 'action',
         catalogueKey: 'cure-wounds',
       },
     ],
@@ -127,6 +132,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
             roll: '1d20+WIS+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -134,6 +140,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -141,6 +148,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Once between rests you may call on your god directly. For now the one use is Turn Undead: every undead within 30 feet that can see or hear you makes a Wisdom saving throw, and on a failure it is turned for a minute — it keeps well away from you and can neither attack you nor cast a spell at you until somebody harms it.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -148,6 +156,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Your healing runs deeper than anybody else\'s. Whenever you restore hit points to a creature with a prayer of 1st level or higher, that creature regains an extra 2 hit points, plus 1 more for each level of the slot you spent. It applies to every target of the spell, every time, and you never have to remember to switch it on.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -157,6 +166,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
             roll: '1d8',
             level: 0,
+            category: 'action',
             catalogueKey: 'sacred-flame',
           },
           {
@@ -164,6 +174,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
             roll: '1d4',
             level: 0,
+            category: 'action',
             catalogueKey: 'guidance',
           },
           {
@@ -171,6 +182,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+WIS',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -178,6 +190,7 @@ export const CLERIC: ClassLibrary = {
             text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
             roll: '2d4+WIS',
             level: 1,
+            category: 'action',
             catalogueKey: 'healing-word',
           },
           {
@@ -185,6 +198,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
             roll: '1d4',
             level: 1,
+            category: 'action',
             catalogueKey: 'bless',
           },
         ],
@@ -222,6 +236,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
             roll: '1d20+WIS+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -229,6 +244,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -236,6 +252,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Once between rests you may call on your god directly, choosing either Turn Undead or Preserve Life below. Turn Undead: every undead within 30 feet that can see or hear you makes a Wisdom saving throw, and on a failure it is turned for a minute — it keeps well away from you and can neither attack you nor cast a spell at you until somebody harms it.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -243,6 +260,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Your healing runs deeper than anybody else\'s. Whenever you restore hit points to a creature with a prayer of 1st level or higher, that creature regains an extra 2 hit points, plus 1 more for each level of the slot you spent. It applies to every target of the spell, every time, and you never have to remember to switch it on.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -250,6 +268,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Your domain\'s use of Channel Divinity. Hold up your holy symbol and restore hit points equal to five times your cleric level, divided between any creatures you choose within 30 feet. It will not take a creature past half its hit point maximum, and it does nothing for undead or constructs.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -257,6 +276,7 @@ export const CLERIC: ClassLibrary = {
             text: 'This level let you raise an ability score, and Wisdom was the obvious one: 15 becomes 17. Every spell save your enemies make is a point harder, every heal that scales with Wisdom is a point bigger, and your Insight and Perception each improve by 1.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -266,6 +286,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
             roll: '1d8',
             level: 0,
+            category: 'action',
             catalogueKey: 'sacred-flame',
           },
           {
@@ -273,6 +294,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
             roll: '1d4',
             level: 0,
+            category: 'action',
             catalogueKey: 'guidance',
           },
           {
@@ -280,6 +302,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+WIS',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -287,6 +310,7 @@ export const CLERIC: ClassLibrary = {
             text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
             roll: '2d4+WIS',
             level: 1,
+            category: 'action',
             catalogueKey: 'healing-word',
           },
           {
@@ -294,6 +318,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
             roll: '1d4',
             level: 1,
+            category: 'action',
             catalogueKey: 'bless',
           },
           {
@@ -301,6 +326,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Three creatures gain 5 hit points, to both their current and their maximum, for eight hours. Another 5 for each slot level above 2nd.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: 'aid',
           },
           {
@@ -308,6 +334,8 @@ export const CLERIC: ClassLibrary = {
             text: 'A bonus action conjures a floating spectral weapon for a minute. On this turn and each turn after, a bonus action moves it 20 feet and attacks with it.',
             roll: '1d8+WIS',
             level: 2,
+            category: 'weapon',
+            toHit: '1d20+WIS+PROF',
             catalogueKey: 'spiritual-weapon',
           },
         ],
@@ -345,6 +373,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
             roll: '1d20+WIS+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -352,6 +381,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -359,6 +389,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Once between rests you may call on your god directly, choosing either Turn Undead or Preserve Life below. Turn Undead: every undead within 30 feet that can see or hear you makes a Wisdom saving throw, and on a failure it is turned for a minute — it keeps well away from you and can neither attack you nor cast a spell at you until somebody harms it.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -366,6 +397,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Your healing runs deeper than anybody else\'s. Whenever you restore hit points to a creature with a prayer of 1st level or higher, that creature regains an extra 2 hit points, plus 1 more for each level of the slot you spent. It applies to every target of the spell, every time, and you never have to remember to switch it on.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -373,6 +405,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Your domain\'s use of Channel Divinity. Hold up your holy symbol and restore hit points equal to five times your cleric level, divided between any creatures you choose within 30 feet. It will not take a creature past half its hit point maximum, and it does nothing for undead or constructs.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -380,6 +413,7 @@ export const CLERIC: ClassLibrary = {
             text: 'This level let you raise an ability score, and Wisdom was the obvious one: 15 becomes 17. Every spell save your enemies make is a point harder, every heal that scales with Wisdom is a point bigger, and your Insight and Perception each improve by 1.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -389,6 +423,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
             roll: '1d8',
             level: 0,
+            category: 'action',
             catalogueKey: 'sacred-flame',
           },
           {
@@ -396,6 +431,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
             roll: '1d4',
             level: 0,
+            category: 'action',
             catalogueKey: 'guidance',
           },
           {
@@ -403,6 +439,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+WIS',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -410,6 +447,7 @@ export const CLERIC: ClassLibrary = {
             text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
             roll: '2d4+WIS',
             level: 1,
+            category: 'action',
             catalogueKey: 'healing-word',
           },
           {
@@ -417,6 +455,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
             roll: '1d4',
             level: 1,
+            category: 'action',
             catalogueKey: 'bless',
           },
           {
@@ -424,6 +463,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Three creatures gain 5 hit points, to both their current and their maximum, for eight hours. Another 5 for each slot level above 2nd.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: 'aid',
           },
           {
@@ -431,6 +471,8 @@ export const CLERIC: ClassLibrary = {
             text: 'A bonus action conjures a floating spectral weapon for a minute. On this turn and each turn after, a bonus action moves it 20 feet and attacks with it.',
             roll: '1d8+WIS',
             level: 2,
+            category: 'weapon',
+            toHit: '1d20+WIS+PROF',
             catalogueKey: 'spiritual-weapon',
           },
           {
@@ -438,6 +480,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a creature that died within the last minute and it returns to life with 1 hit point. It does not regrow anything it lost, and the diamond you spend is gone.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: 'revivify',
           },
           {
@@ -445,6 +488,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Spectral guardians in your god\'s image swirl in a 15-foot radius around you for ten minutes, while you concentrate. Any creature you are hostile to that starts its turn among them takes radiant damage, halved on a successful Wisdom saving throw. Your friends walk through them untouched, so this is a fight-long effect you cast once and then forget about.',
             roll: '3d8',
             level: 3,
+            category: 'action',
             catalogueKey: null,
           },
         ],
@@ -482,6 +526,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
             roll: '1d20+WIS+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -489,6 +534,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -496,6 +542,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Twice between rests now, rather than once, and you choose Turn Undead or Preserve Life each time. Turn Undead: every undead within 30 feet that can see or hear you makes a Wisdom saving throw, and on a failure it is turned for a minute — it keeps well away from you and can neither attack you nor cast a spell at you until somebody harms it.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -503,6 +550,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Your healing runs deeper than anybody else\'s. Whenever you restore hit points to a creature with a prayer of 1st level or higher, that creature regains an extra 2 hit points, plus 1 more for each level of the slot you spent. It applies to every target of the spell, every time, and you never have to remember to switch it on.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -510,6 +558,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Your domain\'s use of Channel Divinity. Hold up your holy symbol and restore hit points equal to five times your cleric level, divided between any creatures you choose within 30 feet. It will not take a creature past half its hit point maximum, and it does nothing for undead or constructs.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -517,6 +566,7 @@ export const CLERIC: ClassLibrary = {
             text: 'The healing you hand out comes back to you. Whenever you restore hit points to somebody else with a prayer of 1st level or higher, you regain 2 hit points yourself, plus 1 more for each level of the slot you spent — so looking after the party is now also how you look after yourself.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -524,6 +574,7 @@ export const CLERIC: ClassLibrary = {
             text: 'This level let you raise an ability score, and Wisdom was the obvious one: 15 becomes 17. Every spell save your enemies make is a point harder, every heal that scales with Wisdom is a point bigger, and your Insight and Perception each improve by 1.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -533,6 +584,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
             roll: '1d8',
             level: 0,
+            category: 'action',
             catalogueKey: 'sacred-flame',
           },
           {
@@ -540,6 +592,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
             roll: '1d4',
             level: 0,
+            category: 'action',
             catalogueKey: 'guidance',
           },
           {
@@ -547,6 +600,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+WIS',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -554,6 +608,7 @@ export const CLERIC: ClassLibrary = {
             text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
             roll: '2d4+WIS',
             level: 1,
+            category: 'action',
             catalogueKey: 'healing-word',
           },
           {
@@ -561,6 +616,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
             roll: '1d4',
             level: 1,
+            category: 'action',
             catalogueKey: 'bless',
           },
           {
@@ -568,6 +624,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Three creatures gain 5 hit points, to both their current and their maximum, for eight hours. Another 5 for each slot level above 2nd.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: 'aid',
           },
           {
@@ -575,6 +632,8 @@ export const CLERIC: ClassLibrary = {
             text: 'A bonus action conjures a floating spectral weapon for a minute. On this turn and each turn after, a bonus action moves it 20 feet and attacks with it.',
             roll: '1d8+WIS',
             level: 2,
+            category: 'weapon',
+            toHit: '1d20+WIS+PROF',
             catalogueKey: 'spiritual-weapon',
           },
           {
@@ -582,6 +641,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a creature that died within the last minute and it returns to life with 1 hit point. It does not regrow anything it lost, and the diamond you spend is gone.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: 'revivify',
           },
           {
@@ -589,6 +649,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Spectral guardians in your god\'s image swirl in a 15-foot radius around you for ten minutes, while you concentrate. Any creature you are hostile to that starts its turn among them takes radiant damage, halved on a successful Wisdom saving throw. Your friends walk through them untouched, so this is a fight-long effect you cast once and then forget about.',
             roll: '3d8',
             level: 3,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -596,6 +657,7 @@ export const CLERIC: ClassLibrary = {
             text: 'For a minute, while you concentrate, any number of creatures you choose have advantage on Wisdom saving throws and on death saving throws, and every spell or effect that heals them restores the very highest the dice could have given. Cast this first and your Cure Wounds stops being a gamble.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -603,6 +665,7 @@ export const CLERIC: ClassLibrary = {
             text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: 'dispel-magic',
           },
         ],
@@ -645,6 +708,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
             roll: '1d20+WIS+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -652,6 +716,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -659,6 +724,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Once between rests you may call on your god directly. For now the one use is Turn Undead: every undead within 30 feet that can see or hear you makes a Wisdom saving throw, and on a failure it is turned for a minute — it keeps well away from you and can neither attack you nor cast a spell at you until somebody harms it.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -666,6 +732,7 @@ export const CLERIC: ClassLibrary = {
             text: 'A reaction, a number of times between rests equal to your Wisdom modifier. When a creature you can see attacks you, answer it with a sudden flare of light and that attack roll has disadvantage. You need not be able to see the attacker, but a creature that cannot be dazzled by light is unaffected. This is your armour: you wear less of it than a Life cleric on purpose.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -675,6 +742,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
             roll: '1d8',
             level: 0,
+            category: 'action',
             catalogueKey: 'sacred-flame',
           },
           {
@@ -682,6 +750,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
             roll: '1d4',
             level: 0,
+            category: 'action',
             catalogueKey: 'guidance',
           },
           {
@@ -689,6 +758,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+WIS',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -696,13 +766,16 @@ export const CLERIC: ClassLibrary = {
             text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
             roll: '3d6',
             level: 1,
+            category: 'action',
             catalogueKey: 'burning-hands',
           },
           {
             name: 'Guiding Bolt',
-            text: 'A lance of light on a ranged spell attack against one creature within 120 feet. The next attack made against that creature before your next turn has advantage.',
+            text: 'A lance of light against one creature within 120 feet. The next attack made against that creature before your next turn has advantage.',
             roll: '4d6',
             level: 1,
+            category: 'weapon',
+            toHit: '1d20+WIS+PROF',
             catalogueKey: 'guiding-bolt',
           },
         ],
@@ -740,6 +813,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
             roll: '1d20+WIS+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -747,6 +821,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -754,6 +829,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Once between rests you may call on your god directly, choosing either Turn Undead or Radiance of the Dawn below. Turn Undead: every undead within 30 feet that can see or hear you makes a Wisdom saving throw, and on a failure it is turned for a minute — it keeps well away from you and can neither attack you nor cast a spell at you until somebody harms it.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -761,6 +837,7 @@ export const CLERIC: ClassLibrary = {
             text: 'A reaction, a number of times between rests equal to your Wisdom modifier. When a creature you can see attacks you, answer it with a sudden flare of light and that attack roll has disadvantage. You need not be able to see the attacker, but a creature that cannot be dazzled by light is unaffected. This is your armour: you wear less of it than a Life cleric on purpose.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -768,6 +845,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Your domain\'s use of Channel Divinity. Hold up your holy symbol and sunlight bursts out 30 feet around you, sweeping away any magical darkness it touches. Every creature you are hostile to in that space takes the damage, halved on a successful Constitution saving throw — and add your cleric level to whatever the dice give.',
             roll: '2d10',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -775,6 +853,7 @@ export const CLERIC: ClassLibrary = {
             text: 'This level let you raise an ability score, and Wisdom was the obvious one: 15 becomes 17. Every spell save your enemies make is a point harder, Warding Flare works one more time between rests, and your Insight and Perception each improve by 1.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -784,6 +863,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
             roll: '1d8',
             level: 0,
+            category: 'action',
             catalogueKey: 'sacred-flame',
           },
           {
@@ -791,6 +871,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
             roll: '1d4',
             level: 0,
+            category: 'action',
             catalogueKey: 'guidance',
           },
           {
@@ -798,6 +879,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+WIS',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -805,13 +887,16 @@ export const CLERIC: ClassLibrary = {
             text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
             roll: '3d6',
             level: 1,
+            category: 'action',
             catalogueKey: 'burning-hands',
           },
           {
             name: 'Guiding Bolt',
-            text: 'A lance of light on a ranged spell attack against one creature within 120 feet. The next attack made against that creature before your next turn has advantage.',
+            text: 'A lance of light against one creature within 120 feet. The next attack made against that creature before your next turn has advantage.',
             roll: '4d6',
             level: 1,
+            category: 'weapon',
+            toHit: '1d20+WIS+PROF',
             catalogueKey: 'guiding-bolt',
           },
           {
@@ -819,13 +904,16 @@ export const CLERIC: ClassLibrary = {
             text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
             roll: '2d4+WIS',
             level: 1,
+            category: 'action',
             catalogueKey: 'healing-word',
           },
           {
             name: 'Scorching Ray',
-            text: 'Three rays of fire, aimed at one target or split between several, each needing its own ranged spell attack. The damage listed is for a single ray.',
+            text: 'Three rays of fire, aimed at one target or split between several, each rolled separately. The damage listed is for a single ray.',
             roll: '2d6',
             level: 2,
+            category: 'weapon',
+            toHit: '1d20+WIS+PROF',
             catalogueKey: 'scorching-ray',
           },
         ],
@@ -863,6 +951,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
             roll: '1d20+WIS+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -870,6 +959,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -877,6 +967,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Once between rests you may call on your god directly, choosing either Turn Undead or Radiance of the Dawn below. Turn Undead: every undead within 30 feet that can see or hear you makes a Wisdom saving throw, and on a failure it is turned for a minute — it keeps well away from you and can neither attack you nor cast a spell at you until somebody harms it.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -884,6 +975,7 @@ export const CLERIC: ClassLibrary = {
             text: 'A reaction, a number of times between rests equal to your Wisdom modifier. When a creature you can see attacks you, answer it with a sudden flare of light and that attack roll has disadvantage. You need not be able to see the attacker, but a creature that cannot be dazzled by light is unaffected. This is your armour: you wear less of it than a Life cleric on purpose.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -891,6 +983,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Your domain\'s use of Channel Divinity. Hold up your holy symbol and sunlight bursts out 30 feet around you, sweeping away any magical darkness it touches. Every creature you are hostile to in that space takes the damage, halved on a successful Constitution saving throw — and add your cleric level to whatever the dice give.',
             roll: '2d10',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -898,6 +991,7 @@ export const CLERIC: ClassLibrary = {
             text: 'This level let you raise an ability score, and Wisdom was the obvious one: 15 becomes 17. Every spell save your enemies make is a point harder, Warding Flare works one more time between rests, and your Insight and Perception each improve by 1.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -907,6 +1001,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
             roll: '1d8',
             level: 0,
+            category: 'action',
             catalogueKey: 'sacred-flame',
           },
           {
@@ -914,6 +1009,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
             roll: '1d4',
             level: 0,
+            category: 'action',
             catalogueKey: 'guidance',
           },
           {
@@ -921,6 +1017,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+WIS',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -928,13 +1025,16 @@ export const CLERIC: ClassLibrary = {
             text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
             roll: '3d6',
             level: 1,
+            category: 'action',
             catalogueKey: 'burning-hands',
           },
           {
             name: 'Guiding Bolt',
-            text: 'A lance of light on a ranged spell attack against one creature within 120 feet. The next attack made against that creature before your next turn has advantage.',
+            text: 'A lance of light against one creature within 120 feet. The next attack made against that creature before your next turn has advantage.',
             roll: '4d6',
             level: 1,
+            category: 'weapon',
+            toHit: '1d20+WIS+PROF',
             catalogueKey: 'guiding-bolt',
           },
           {
@@ -942,13 +1042,16 @@ export const CLERIC: ClassLibrary = {
             text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
             roll: '2d4+WIS',
             level: 1,
+            category: 'action',
             catalogueKey: 'healing-word',
           },
           {
             name: 'Scorching Ray',
-            text: 'Three rays of fire, aimed at one target or split between several, each needing its own ranged spell attack. The damage listed is for a single ray.',
+            text: 'Three rays of fire, aimed at one target or split between several, each rolled separately. The damage listed is for a single ray.',
             roll: '2d6',
             level: 2,
+            category: 'weapon',
+            toHit: '1d20+WIS+PROF',
             catalogueKey: 'scorching-ray',
           },
           {
@@ -956,6 +1059,7 @@ export const CLERIC: ClassLibrary = {
             text: 'A roaring sphere of flame fills a 20-foot radius around a point within 150 feet, going round corners to do it. Each creature there takes the damage, halved on a successful Dexterity saving throw. Another 1d6 per slot level above 3rd.',
             roll: '8d6',
             level: 3,
+            category: 'action',
             catalogueKey: 'fireball',
           },
           {
@@ -963,6 +1067,7 @@ export const CLERIC: ClassLibrary = {
             text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: 'dispel-magic',
           },
         ],
@@ -1000,6 +1105,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
             roll: '1d20+WIS+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -1007,6 +1113,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -1014,6 +1121,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Twice between rests now, rather than once, and you choose Turn Undead or Radiance of the Dawn each time. Turn Undead: every undead within 30 feet that can see or hear you makes a Wisdom saving throw, and on a failure it is turned for a minute — it keeps well away from you and can neither attack you nor cast a spell at you until somebody harms it.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -1021,6 +1129,7 @@ export const CLERIC: ClassLibrary = {
             text: 'A reaction, a number of times between rests equal to your Wisdom modifier. When a creature you can see attacks you, answer it with a sudden flare of light and that attack roll has disadvantage. You need not be able to see the attacker, but a creature that cannot be dazzled by light is unaffected. This is your armour: you wear less of it than a Life cleric on purpose.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -1028,6 +1137,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Your flare now guards the people beside you. When a creature you can see attacks an ally within 30 feet of you, you may spend the same reaction to give that attack roll disadvantage instead. Same uses between rests — you simply choose each time whether to save yourself or somebody else.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -1035,6 +1145,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Your domain\'s use of Channel Divinity. Hold up your holy symbol and sunlight bursts out 30 feet around you, sweeping away any magical darkness it touches. Every creature you are hostile to in that space takes the damage, halved on a successful Constitution saving throw — and add your cleric level to whatever the dice give.',
             roll: '2d10',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -1042,6 +1153,7 @@ export const CLERIC: ClassLibrary = {
             text: 'This level let you raise an ability score, and Wisdom was the obvious one: 15 becomes 17. Every spell save your enemies make is a point harder, Warding Flare works one more time between rests, and your Insight and Perception each improve by 1.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -1051,6 +1163,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
             roll: '1d8',
             level: 0,
+            category: 'action',
             catalogueKey: 'sacred-flame',
           },
           {
@@ -1058,6 +1171,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
             roll: '1d4',
             level: 0,
+            category: 'action',
             catalogueKey: 'guidance',
           },
           {
@@ -1065,6 +1179,7 @@ export const CLERIC: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+WIS',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -1072,13 +1187,16 @@ export const CLERIC: ClassLibrary = {
             text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
             roll: '3d6',
             level: 1,
+            category: 'action',
             catalogueKey: 'burning-hands',
           },
           {
             name: 'Guiding Bolt',
-            text: 'A lance of light on a ranged spell attack against one creature within 120 feet. The next attack made against that creature before your next turn has advantage.',
+            text: 'A lance of light against one creature within 120 feet. The next attack made against that creature before your next turn has advantage.',
             roll: '4d6',
             level: 1,
+            category: 'weapon',
+            toHit: '1d20+WIS+PROF',
             catalogueKey: 'guiding-bolt',
           },
           {
@@ -1086,6 +1204,7 @@ export const CLERIC: ClassLibrary = {
             text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
             roll: '2d4+WIS',
             level: 1,
+            category: 'action',
             catalogueKey: 'healing-word',
           },
           {
@@ -1093,13 +1212,16 @@ export const CLERIC: ClassLibrary = {
             text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'detect-magic',
           },
           {
             name: 'Scorching Ray',
-            text: 'Three rays of fire, aimed at one target or split between several, each needing its own ranged spell attack. The damage listed is for a single ray.',
+            text: 'Three rays of fire, aimed at one target or split between several, each rolled separately. The damage listed is for a single ray.',
             roll: '2d6',
             level: 2,
+            category: 'weapon',
+            toHit: '1d20+WIS+PROF',
             catalogueKey: 'scorching-ray',
           },
           {
@@ -1107,6 +1229,7 @@ export const CLERIC: ClassLibrary = {
             text: 'A roaring sphere of flame fills a 20-foot radius around a point within 150 feet, going round corners to do it. Each creature there takes the damage, halved on a successful Dexterity saving throw. Another 1d6 per slot level above 3rd.',
             roll: '8d6',
             level: 3,
+            category: 'action',
             catalogueKey: 'fireball',
           },
           {
@@ -1114,6 +1237,7 @@ export const CLERIC: ClassLibrary = {
             text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: 'dispel-magic',
           },
           {
@@ -1121,6 +1245,7 @@ export const CLERIC: ClassLibrary = {
             text: 'A 60-foot sphere of true daylight blazes out from a point you choose or from an object you touch, with dim light for 60 feet beyond that. Any darkness made by a spell of 3rd level or lower in the sphere is swept away. It lasts an hour, and if you put it on something carryable the light goes wherever the party does.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: null,
           },
         ],

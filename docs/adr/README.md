@@ -14,3 +14,5 @@ being overwritten.
 | [0004](0004-board-authorisation-and-layers.md) | Board authorisation, layers and where a token's position lives | Accepted |
 | [0005](0005-character-sheets-and-hit-point-secrecy.md) | Character sheets, where current hit points live, and two shapes of secret | Accepted |
 | [0006](0006-premade-character-library.md) | A premade character library, and resolving a sheet from stored selections | Accepted |
+| [0007](0007-monster-bestiary-and-cr-scaling.md) | A monster bestiary, and scaling a creature to a challenge rating | Accepted |
+| [0008](0008-one-shell-and-what-a-sheet-entry-is.md) | One shell instead of floating panels, and what a sheet entry is | Accepted |

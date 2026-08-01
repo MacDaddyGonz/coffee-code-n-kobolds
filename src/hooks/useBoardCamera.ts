@@ -235,6 +235,34 @@ export function useBoardCamera({
     setRenderedCamera(next)
   }, [code, sceneId, imageWidth, imageHeight, viewportWidth, viewportHeight])
 
+  /**
+   * Re-clamp when the viewport changes shape.
+   *
+   * `clampCamera` runs inside `commit` and nowhere else, so it sees pans, zooms and
+   * arrow keys — and not a resize, which changes the bounds without anybody
+   * touching the camera. A pane with a draggable divider makes that reachable in
+   * one gesture: drag it hard to the left and the map is left sitting mostly
+   * outside its own pane, with no cue about what happened and no way back but
+   * panning until it reappears. Committing the camera unchanged is enough, because
+   * the clamp is the whole of what `commit` does to it.
+   *
+   * **Re-clamped and never re-fitted.** A camera is what the viewer chose to look
+   * at; re-fitting on a resize would throw that away every time somebody nudged the
+   * divider, which is the opposite of the behaviour the remembered camera exists
+   * for.
+   *
+   * Declared after the restore-or-fit above so it cannot race it. Effects run in
+   * order within a commit, so on the render where the viewport is first measured
+   * that one has already established the camera and set `settledFor`; the guard
+   * here then means this never fires against a camera that is still `{1, 0, 0}`
+   * waiting to be fitted.
+   */
+  useEffect(() => {
+    if (!sceneId || settledFor.current !== sceneId) return
+    if (viewportWidth <= 0 || viewportHeight <= 0) return
+    commit(cameraRef.current)
+  }, [commit, sceneId, viewportWidth, viewportHeight])
+
   const zoomToScale = useCallback(
     (scale: number) => {
       const centre = { x: viewportWidth / 2, y: viewportHeight / 2 }
@@ -316,6 +344,29 @@ export function useBoardCamera({
       // other shortcuts, still a click on a focused button, which is why this asks
       // about buttons and `useBoardKeys` does not.
       if (e.code !== 'Space' || e.repeat || isTypingElement(e.target, { buttons: true })) return
+
+      // Gated on the board holding focus, the same containment test `useBoardKeys`
+      // makes, and it is load-bearing rather than tidy now that panels sit beside
+      // the map all the time instead of over it. This is bound to the *window*, so
+      // without it a space press with focus on anything non-typing in the other
+      // pane — a badge, a label, a card, or `<body>` after a click on empty
+      // background — put the whole board into pan mode. That reads through to
+      // `draggable` on every token, so one person idly holding space in a panel
+      // stopped everyone at the table dragging anything, silently and with nothing
+      // on screen to explain it.
+      //
+      // `containerRef` is `Board`'s outer div and not `BoardStage`'s focusable one
+      // inside it, deliberately — containment is the question, not identity, so the
+      // zoom buttons count as the board while `isTypingElement` above keeps a
+      // focused button from swallowing the space that clicks it.
+      //
+      // The cost is that space does nothing until the board has been clicked once.
+      // That is the right trade: `BoardStage` takes focus on pointer-down, so
+      // anybody who has touched the map at all already has it, and the alternative
+      // is a modifier that fires from anywhere on the page.
+      const container = containerRef.current
+      if (!container?.contains(document.activeElement)) return
+
       e.preventDefault()
       setSpacePanning(true)
     }
@@ -327,17 +378,32 @@ export function useBoardCamera({
     // and no way to tell what is wrong.
     const release = () => setSpacePanning(false)
 
+    // Focus moving *within* the document is the case the two above cannot see: the
+    // window never blurs and the tab never hides, so tabbing out of the board with
+    // space held leaves pan mode on with the keyup going to somebody else. Read off
+    // `relatedTarget`, which is where focus is going — at `focusout` time
+    // `document.activeElement` is usually still `<body>` and has not caught up.
+    const onFocusOut = (e: FocusEvent) => {
+      const container = containerRef.current
+      if (!container) return
+      const next = e.relatedTarget
+      if (next instanceof Node && container.contains(next)) return
+      release()
+    }
+
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
     window.addEventListener('blur', release)
     document.addEventListener('visibilitychange', release)
+    document.addEventListener('focusout', onFocusOut)
     return () => {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', release)
       document.removeEventListener('visibilitychange', release)
+      document.removeEventListener('focusout', onFocusOut)
     }
-  }, [])
+  }, [containerRef])
 
   return {
     camera,
