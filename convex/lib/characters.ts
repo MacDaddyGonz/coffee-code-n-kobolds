@@ -32,6 +32,10 @@ import {
   tierValidator,
 } from './creatures'
 import { MAX_CHARACTERS_PER_GAME } from './games'
+// A pure inversion of a roster this module is handed, not a read: the `players` table
+// belongs to lib/players.ts and the claim pointer with it, so the map that turns
+// seat → character back into character → seat is built there and imported here.
+import { holderByCharacter } from './players'
 import type { BestiarySheet, CharacterSheet, StoredSheet } from './sheet'
 // `resolveSheet` rather than `characterSheet`, and that one substitution is the
 // whole of what Milestone 4 changed in this file. Everything below still asks for a
@@ -107,9 +111,9 @@ function characterNotFound(): ConvexError<typeof CHARACTER_NOT_FOUND> {
  * which is a widening with an author rather than a hole. `convex/characters.ts` and
  * `lib/board.ts` carry the same amendment beside their own advisory-ceiling notes.
  *
- * **The set is composed with `visibleCharacterIds` and never substituted for it.**
- * It arrives from `controlledCharacterIds` in lib/board.ts, which builds it from the
- * *visible* token set — so a grant written onto a DM-layer token contributes nothing
+ * **The set is composed with the sight rule and never substituted for it.**
+ * It arrives from `boardCharacterAccess` in lib/board.ts, which builds it from the
+ * *visible* token set in the same pass — so a grant written onto a DM-layer token contributes nothing
  * for a player, because the token was already filtered out one module over. Sight of
  * the coin is still the precondition for sight of the sheet; a grant only decides what
  * a player may read about a creature they can already see standing there.
@@ -531,10 +535,10 @@ export async function publicCharacters(
 ): Promise<PublicCharacter[]> {
   const characters = await allCharacters(ctx, gameId)
 
-  // Built from the seats we were handed rather than a lookup per character.
-  const holderByCharacter = new Map(
-    seats.filter((seat) => seat.characterId).map((seat) => [seat.characterId!, seat]),
-  )
+  // Built from the seats we were handed rather than a lookup per character, and built
+  // by lib/players.ts because the claim pointer is that module's — see
+  // `holderByCharacter`, which is where that reasoning now lives for all three callers.
+  const holders = holderByCharacter(seats)
 
   // Characters arrive oldest-first: Convex appends _creationTime to every index.
   return characters
@@ -543,7 +547,7 @@ export async function publicCharacters(
         maySeeCharacter(character, isDm) && (isDm || !isReservedCharacter(character)),
     )
     .map((character) => {
-      const holder = holderByCharacter.get(character._id) ?? null
+      const holder = holders.get(character._id) ?? null
       return {
         _id: character._id,
         name: character.name,
@@ -743,12 +747,12 @@ export function currentHpOf(
  * Sending a band for every NPC in the game would leak a *count* — a player reading
  * twelve entries knows the DM has twelve monsters prepared, which is the same
  * category of spoiler as the scene names ADR 0004 refused to send. The set comes
- * from `visibleCharacterIds` in lib/board.ts, so the question "may I see this
+ * from `boardCharacterAccess` in lib/board.ts, so the question "may I see this
  * creature at all?" is still answered by the token choke point rather than
  * re-decided here.
  *
  * ⚠️ **`controlled` is a deliberate, narrow widening of this milestone's headline
- * secret, and it is bounded by `visibleCharacterIds` in the same breath.** A player the
+ * secret, and the same one pass bounds it.** A player the
  * DM has granted a creature receives its **exact** hit points rather than a band. That
  * is not a softening of the rule but the other half of what a grant means: `HpControls`
  * renders its `−`/`+` only on the `exact` variant, on the stated grounds that a caller

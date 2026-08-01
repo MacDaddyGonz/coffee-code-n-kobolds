@@ -25,8 +25,10 @@ import { describe, expect, test } from 'vitest'
  * Running the sweep per pair buys a second thing that a single merged list would
  * not: each reader is swept against the *other* pair's tables. `lib/board.ts` may
  * not read `characters`, and `lib/characters.ts` may not read `tokens` — the two
- * choke points meet only through the narrow crossing `visibleCharacterIds` makes,
- * a set of ids and never a `Doc`.
+ * choke points meet only through the narrow crossing `boardCharacterAccess` makes,
+ * two sets of ids and never a `Doc`. (ADR 0005 knows that crossing by the name of
+ * its sight half alone, `visibleCharacterIds`; a grant gave it a second question to
+ * answer about the same rows, and answering both in one pass retired the name.)
  *
  * Note which half of Milestone 3 this is. An NPC's *sheet* is a leaked row and
  * needs a choke point; an NPC's exact *hit points* are a leaked field, and are

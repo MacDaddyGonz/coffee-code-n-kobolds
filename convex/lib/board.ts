@@ -16,7 +16,7 @@ import { ConvexError, v, type Infer } from 'convex/values'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import { MAX_PLACEMENTS_PER_SCENE, MAX_SCENES_PER_GAME, MAX_TOKENS_PER_GAME } from './games'
-import { findClaimHolder } from './players'
+import { findClaimHolder, holderByCharacter } from './players'
 import type { Grid, Point } from './grid'
 import { cellOf, centreOfCell, snapToGrid } from './grid'
 
@@ -135,7 +135,7 @@ export function grantedControllersOf(token: Doc<'tokens'>): Id<'players'>[] {
  *
  * Every consumer of "who may move this?" resolves through here — `requireMovableToken`
  * with the one holder it looked up, `publicTokens` with a holder off the map it built,
- * `controlledCharacterIds` with the same map — so the browser's `canMove`, the refusal
+ * `boardCharacterAccess` with the same map — so the browser's `canMove`, the refusal
  * on the write path and the sheets a granted player is sent cannot come to disagree
  * about what control is. There is exactly one rule and three callers, rather than three
  * comparisons that were identical when they were written.
@@ -218,16 +218,13 @@ export async function publicTokens(
   const tokens = await visibleTokens(ctx, gameId, isDm)
 
   // Built once from the seats we were handed rather than a claim lookup per token,
-  // which is the same idiom `publicCharacters` uses and matters more here: a board
-  // holds up to MAX_TOKENS_PER_GAME rows, so the per-token form would be two hundred
-  // index reads on a subscription every client in the game holds open.
-  const holderByCharacter = new Map(
-    seats.filter((seat) => seat.characterId).map((seat) => [seat.characterId!, seat]),
-  )
+  // and built by lib/players.ts because the claim pointer is that module's — see
+  // `holderByCharacter`, which carries the reasoning this comment used to hold.
+  const holders = holderByCharacter(seats)
 
   return await Promise.all(
     tokens.map(async (token) => {
-      const holder = token.characterId ? holderByCharacter.get(token.characterId) ?? null : null
+      const holder = token.characterId ? holders.get(token.characterId) ?? null : null
       return {
         _id: token._id,
         name: token.name,
@@ -251,62 +248,113 @@ export async function publicTokens(
 }
 
 /**
- * The characters standing on tokens this caller may see.
+ * THE CROSSING between the two choke points, in one pass over the board: which
+ * characters this caller may be told about, and which of those they control.
  *
- * The only thing that crosses this module's boundary is a filtered set of ids —
- * never a `Doc<'tokens'>` — which is the same narrow crossing `tokenReferencesImage`
- * makes below, and it is what lets `characters.vitals` be built out of both choke
- * points without either one reading the other's tables.
+ * The only thing that leaves this module is two filtered sets of ids — never a
+ * `Doc<'tokens'>` — which is the same narrow crossing `tokenReferencesImage` makes
+ * below, and it is what lets `characters.vitals` be built out of both choke points
+ * without either one reading the other's tables.
  *
- * It exists to close a leak that is easy to miss. A health bar needs hit points for
- * every creature on the board, and the obvious way to serve one is to send a band
- * for every NPC in the game — which quietly publishes a *count*. A player reading
- * twelve entries knows the DM has twelve monsters prepared for tonight, and that is
- * the same category of spoiler as the scene names ADR 0004 refused to send. Scoping
- * to what the caller can already see on the board means a hidden creature
- * contributes nothing at all: not a row, not a band, not a number in a length.
+ * **This is what ADR 0005 and CLAUDE.md's invariant 8 call `visibleCharacterIds`.** That
+ * function was the sight half alone, and it is gone: once a second question had to be
+ * asked about the same two hundred rows, keeping a separate entry point for each answer
+ * meant reading the board twice. The name survives in the ADRs, which are history and are
+ * not edited after the fact; the live prose names this one.
+ *
+ * **`visible` closes a leak that is easy to miss.** A health bar needs hit points for
+ * every creature on the board, and the obvious way to serve one is to send a band for
+ * every NPC in the game — which quietly publishes a *count*. A player reading twelve
+ * entries knows the DM has twelve monsters prepared for tonight, and that is the same
+ * category of spoiler as the scene names ADR 0004 refused to send. Scoping to what the
+ * caller can already see means a hidden creature contributes nothing at all: not a
+ * row, not a band, not a number in a length.
+ *
+ * **`controlled` is the second door, and it answers a different question.** `visible`
+ * is *whose health bar may this caller be shown*; `controlled` is *whose sheet may
+ * they open, and whose hit points may they change*. They are composed, never
+ * substituted: control is added to sight, and the sight rule in `maySeeCharacter`
+ * still runs first.
+ *
+ * ⚠️ **One traversal, and that is what makes ADR 0009's structural claim true rather
+ * than coincidental.** The ADR says `controlled` is a subset of `visible` *by
+ * construction*, and that there is deliberately no second layer test here because
+ * adding one would be the signal that the composition had been broken above. That was
+ * only ever a claim about two functions which each called `visibleTokens` and happened
+ * to filter identically — two traversals that agreed. Now the subset property is the
+ * loop: an id can only enter `controlled` on an iteration that has already put it into
+ * `visible`. A grant written onto a DM-layer token therefore contributes nothing to a
+ * player, because `visibleTokens` dropped that row before the loop began. The DM moves
+ * the token to the player layer and the sheet arrives with it; the DM moves it back and
+ * the sheet goes.
+ *
+ * It is also the reason this exists at all. `characters.vitals` re-runs on every point
+ * of damage, once per distinct cache entry at the table, and it wants both sets — which
+ * was two `take(MAX_TOKENS_PER_GAME)` range reads and two `maySee` passes over the same
+ * two hundred rows to produce two answers from one iteration.
+ *
+ * ⚠️ **`playerId === undefined` gives an empty `controlled`. Fail closed.** A caller
+ * with no seat is an anonymous client, not a caller who controls everything, and this is
+ * the argument that widens access to a secret, so its absent case is the refusing one.
+ * Note that this is not identity: a `playerId` is routing (ADR 0003), so this widens what
+ * *that seat* may read to anybody who passes that seat's id. That residual is accepted
+ * deliberately and is written out in full on `requireMovableToken` below.
+ *
+ * ⚠️ **`controlled` is skipped entirely for the DM, and that is safe only because every
+ * consumer of it short-circuits on `isDm` first.** `maySeeCharacter` returns true for the
+ * DM before it looks at the set, `visibleVitals` sends the DM exact numbers on the same
+ * test, and `requireEditableCharacter` returns before it asks. An empty set for the DM is
+ * therefore unobservable, and building one would mean a holder map and a controller
+ * comparison per token for an answer nothing reads. A future caller that consults
+ * `controlled` *before* `isDm` would have to change this.
  */
-export async function visibleCharacterIds(
+export async function boardCharacterAccess(
   ctx: QueryCtx,
   gameId: Id<'games'>,
   isDm: boolean,
-): Promise<Set<Id<'characters'>>> {
+  seats: Doc<'players'>[],
+  playerId?: Id<'players'>,
+): Promise<{ visible: Set<Id<'characters'>>; controlled: Set<Id<'characters'>> }> {
   const tokens = await visibleTokens(ctx, gameId, isDm)
 
-  const ids = new Set<Id<'characters'>>()
+  const visible = new Set<Id<'characters'>>()
+  const controlled = new Set<Id<'characters'>>()
+
+  // Null rather than an empty map when there is no control question to answer, so the
+  // loop below skips the whole comparison rather than looking every token up in a map
+  // that cannot match. See the warnings above for both of the cases that get here. The
+  // seat id rides along inside it rather than being re-tested in the loop, which is how
+  // the narrowing survives: one null check answers "is there a control question?" and
+  // "which seat is asking?" together.
+  const control =
+    playerId !== undefined && !isDm ? { playerId, holders: holderByCharacter(seats) } : null
+
   for (const token of tokens) {
-    if (token.characterId) ids.add(token.characterId)
+    const characterId = token.characterId
+    if (!characterId) continue
+    visible.add(characterId)
+    if (control === null) continue
+    // The same rule `publicTokens` projects through and `requireMovableToken` refuses
+    // by, so what the browser drew as draggable, what the server accepts, and what a
+    // granted seat is allowed to read are one function rather than three that agreed
+    // when they were written.
+    const holder = control.holders.get(characterId) ?? null
+    if (effectiveControllersOf(token, holder).includes(control.playerId)) {
+      controlled.add(characterId)
+    }
   }
-  return ids
+
+  return { visible, controlled }
 }
 
 /**
- * The characters standing on tokens **this seat controls**. The second narrow
- * crossing out of this module, beside `visibleCharacterIds` above.
+ * The control half alone. For `resolveEditableCharacter` in `convex/characters.ts`, which
+ * reaches the grant question about **one named character** — the sheet panel opening it,
+ * or a mutation about to write to it — and so has no use for the sight set beside it.
  *
- * Same discipline as its neighbour and for the same reason: a set of ids leaves,
- * never a `Doc<'tokens'>`, so `lib/characters.ts` can widen what a granted player is
- * allowed to see without either choke point reading the other's tables. What
- * `visibleCharacterIds` answers is *whose health bar may this caller be shown*; this
- * answers *whose sheet is this caller allowed to open, and whose hit points may they
- * change*. They are composed, never substituted: control is added to sight, and the
- * sight rule in `maySeeCharacter` still runs first.
- *
- * ⚠️ **This is built from `visibleTokens`, and that composition is what the whole
- * feature rests on.** A grant written on a DM-layer token contributes nothing to a
- * player's set, because the token was filtered out one line above — so "sight follows
- * the token" is true structurally rather than by anybody remembering to check the
- * layer here. The DM moves the token to the player layer and the sheet arrives with
- * it; the DM moves it back and the sheet goes. There is deliberately no second layer
- * test in this function, and adding one would be the signal that the composition had
- * been broken somewhere above.
- *
- * ⚠️ **`playerId === undefined` gives the empty set. Fail closed.** A caller with no
- * seat is an anonymous client, not a caller who controls everything, and this is the
- * argument that widens access to a secret — so its absent case is the refusing one.
- * Note that this is not identity: a `playerId` is routing (ADR 0003), so this widens
- * what *that seat* may read to anybody who passes that seat's id. That residual is
- * accepted deliberately and is written out in full on `requireMovableToken` below.
+ * Same discipline as its sibling: a set of ids leaves, never a `Doc<'tokens'>`, so
+ * `lib/characters.ts` can widen what a granted player is allowed to see without either
+ * choke point reading the other's tables.
  */
 export async function controlledCharacterIds(
   ctx: QueryCtx,
@@ -315,22 +363,7 @@ export async function controlledCharacterIds(
   seats: Doc<'players'>[],
   playerId?: Id<'players'>,
 ): Promise<Set<Id<'characters'>>> {
-  if (playerId === undefined) return new Set()
-
-  const tokens = await visibleTokens(ctx, gameId, isDm)
-
-  const holderByCharacter = new Map(
-    seats.filter((seat) => seat.characterId).map((seat) => [seat.characterId!, seat]),
-  )
-
-  const ids = new Set<Id<'characters'>>()
-  for (const token of tokens) {
-    const characterId = token.characterId
-    if (!characterId) continue
-    const holder = holderByCharacter.get(characterId) ?? null
-    if (effectiveControllersOf(token, holder).includes(playerId)) ids.add(characterId)
-  }
-  return ids
+  return (await boardCharacterAccess(ctx, gameId, isDm, seats, playerId)).controlled
 }
 
 /**

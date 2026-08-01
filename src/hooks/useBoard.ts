@@ -133,10 +133,12 @@ export function useBoard(args: {
   // numbers, and a game whose DM has not uploaded a map yet still has a party.
   //
   // The seat is passed for the same advisory reason it appears in the rule below,
-  // and it changes what comes back: a creature the DM has granted this seat arrives
-  // with *exact* hit points rather than a band, which is what makes `canEditHp`
-  // above a control the player can actually use instead of a bar with no buttons.
-  // See `vitalsArgs`.
+  // and for a player it changes what comes back: a creature the DM has granted this
+  // seat arrives with *exact* hit points rather than a band, which is what makes
+  // `canEditHp` above a control the player can actually use instead of a bar with no
+  // buttons. For a DM `vitalsArgs` drops it — the answer does not depend on the seat
+  // — so this hook and the sheet panels share one cache entry rather than holding two
+  // copies of the same rows and patching them separately. See `vitalsArgs`.
   const { of: vitalsOf } = useVitals(code, dmCode, playerId)
 
   const isDm = dmCode !== null

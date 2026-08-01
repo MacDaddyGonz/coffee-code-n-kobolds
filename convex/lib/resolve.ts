@@ -62,6 +62,7 @@ import {
   SPEED_FEET,
   attackBonusOf,
   categoryForRoll,
+  creatureGroupOf,
   defaultNpcSheet,
   defaultPcSheet,
   isMonsterSheet,
@@ -173,7 +174,13 @@ export function groupOf(doc: { sheet?: StoredSheet }): CharacterGroup {
     case 'npc':
       // Absent means nobody was asked — every creature typed in before this field
       // existed, and `defaultNpcSheet`, which deliberately omits it. See that function.
-      return stored.group ?? 'npc'
+      //
+      // The default is `creatureGroupOf`'s rather than a `?? 'npc'` written out here,
+      // because the two sheet forms have to draw the same answer and cannot call this
+      // function: lib/resolve.ts imports both corpora, which `bundleGuard.test.ts`
+      // forbids `src/` from reaching. lib/sheet.ts is the half of the question that is
+      // safe in a browser.
+      return creatureGroupOf(stored)
     case 'bestiary': {
       // A retired key resolves to a monster rather than throwing, exactly as
       // `resolveBestiary` keeps a retired creature readable: this runs inside

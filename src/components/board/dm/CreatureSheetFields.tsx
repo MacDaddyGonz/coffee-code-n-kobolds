@@ -1,6 +1,6 @@
 import { useId } from 'react'
 
-import { Button } from '@/components/ui/button'
+import { CreatureGroupToggle } from '@/components/sheet/CreatureGroupToggle'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { parseNumber } from '@/lib/utils'
@@ -16,6 +16,7 @@ import {
   MAX_MAX_HP,
   MIN_ARMOUR_CLASS,
   MIN_MAX_HP,
+  creatureGroupOf,
   defaultNpcSheet,
   normaliseSheet,
   sheetProblem,
@@ -41,15 +42,26 @@ export type CreatureStats = { armourClass: string; maxHp: string; group: Creatur
  * says a new creature starts on. Two copies of "12 and 10" would drift the first
  * time either side was tuned.
  *
- * The group cannot come from there — `defaultNpcSheet()` deliberately omits it, because
- * on a *document* absent means "nobody was asked" — so it is stated here as `'npc'`,
- * matching what `groupOf` reads an absent field as. The default the DM is shown and the
- * default the server would have applied are therefore the same answer, which is the only
- * arrangement in which leaving the control alone is not a surprise.
+ * The group comes from the same sheet, through the accessor rather than off the field.
+ * `defaultNpcSheet()` deliberately omits `group`, because on a *document* absent means
+ * "nobody was asked" — and reading that silence is exactly `creatureGroupOf`'s job. So the
+ * default the DM is shown and the default the server would have applied are the same
+ * answer **by construction**, which is the only arrangement in which leaving the control
+ * alone is not a surprise.
+ *
+ * ⚠️ This line used to be `group: 'npc'` under a comment asserting it agreed with
+ * `groupOf`. A comment claiming two constants match is what CLAUDE.md invariant 9 argues
+ * against — nothing checks it, and the failure it guards against is silent: a default
+ * changed on one side files every creature made from the other under the wrong heading,
+ * which nobody sees until they go looking for an owlbear under NPCs.
  */
 export function defaultCreatureStats(): CreatureStats {
   const sheet = defaultNpcSheet()
-  return { armourClass: String(sheet.armourClass), maxHp: String(sheet.maxHp), group: 'npc' }
+  return {
+    armourClass: String(sheet.armourClass),
+    maxHp: String(sheet.maxHp),
+    group: creatureGroupOf(sheet),
+  }
 }
 
 /**
@@ -118,7 +130,9 @@ export type CreatureSheetFieldsProps = {
  * reason.** There are two callers, and a question asked in only one of them files every
  * creature made from the other under NPCs whatever it is — silently, because a wrong
  * group is a misfiled row rather than an error. Asking it once, in the component both
- * callers already render, is what makes "both dialogs ask" true by construction.
+ * callers already render, is what makes "both dialogs ask" true by construction. The
+ * control itself is `CreatureGroupToggle`, shared one level further out with the full
+ * sheet editor, so that the same question is also the same *answer* wherever it is asked.
  *
  * `useId` rather than fixed ids: both call sites can be mounted at once — the panel
  * is over the board while a dialog is open on top of it — and two labels pointing at
@@ -164,44 +178,16 @@ export function CreatureSheetFields({ stats, onChange, disabled }: CreatureSheet
         </div>
       </div>
 
-      {/* Two buttons rather than a select, matching the layer control the token dialog
-          draws a few fields above this one: a choice between two things reads better as
-          two things than as a list with one of them hidden.
-
-          Nothing about secrecy turns on the answer — both values are DM-only, and a
-          player is sent neither — so a wrong one is a row under the wrong heading and
-          never a published stat block. That is what makes a default safe here at all;
-          compare the layer control, where the two answers differ by whether an ambush
-          survives, and which is why that one has an alert under it and this has a
-          sentence. */}
-      <div className="flex flex-col gap-2">
-        <Label>Is this an NPC or a monster?</Label>
-        <div className="grid grid-cols-2 gap-2">
-          <Button
-            type="button"
-            variant={stats.group === 'npc' ? 'default' : 'outline'}
-            aria-pressed={stats.group === 'npc'}
-            disabled={disabled}
-            onClick={() => onChange({ ...stats, group: 'npc' })}
-          >
-            NPC
-          </Button>
-          <Button
-            type="button"
-            variant={stats.group === 'monster' ? 'default' : 'outline'}
-            aria-pressed={stats.group === 'monster'}
-            disabled={disabled}
-            onClick={() => onChange({ ...stats, group: 'monster' })}
-          >
-            Monster
-          </Button>
-        </div>
-        <p className="text-muted-foreground text-xs">
-          Which of your two lists it sits under — an innkeeper is an NPC, an owlbear is a
-          monster. Neither reaches a player either way, and it can be moved later from its
-          own sheet.
-        </p>
-      </div>
+      {/* The buttons, their labels and the sentence under them all live in
+          `CreatureGroupToggle`, shared with the full sheet editor — which is where the
+          argument for iterating the union rather than writing out two buttons is
+          written, along with why a default is safe for this question and not for the
+          layer control a few fields above it. */}
+      <CreatureGroupToggle
+        value={stats.group}
+        disabled={disabled}
+        onChange={(group) => onChange({ ...stats, group })}
+      />
     </div>
   )
 }

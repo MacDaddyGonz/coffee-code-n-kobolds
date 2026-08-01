@@ -51,7 +51,16 @@ The vocabulary is settled, written down, and the code changed to match it rather
 | **Character** | one player character in one game, assigned to one player | not a template, and not owned by an identity |
 | **NPC** | one non-combat or ally creature. DM only | not a character, and not assignable to a seat |
 | **Monster** | one hostile creature. DM only | as above |
+| **Creature** | an NPC or a monster — the word for whichever of the two you do not yet know | not a character, ever. The umbrella covers the DM's two and stops there |
 | **Token** | a coin on the board, optionally bound to one of the above | **not the creature.** A token is where something stands; the sheet is what it is |
+
+**Creature earns a row because the code leans on it hardest**, and the first draft of this table
+left it out. The rename sweep produced `CreatureCreateDialog`, `CreatureSheetForm`,
+`CreatureSheetFields`, `CreatureGroup` and a `Creature` badge, all using the word as the umbrella —
+and a badge on a resolved sheet says *Creature* precisely because at that point the group is not on
+the payload and guessing would be worse than not saying. A word doing that much work with no
+definition is how the next milestone's roll announcement ends up choosing one per call site, which
+is the condition this table exists to end.
 
 The bolded line is the one that pays for the rest. A player sees a **Character** tab; the DM sees a
 **Sheets** tab *instead of* it, not as well. A tab offering the DM a character is a tab offering

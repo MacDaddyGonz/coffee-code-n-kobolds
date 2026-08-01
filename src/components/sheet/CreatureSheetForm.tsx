@@ -1,4 +1,5 @@
 import { FieldError } from '@/components/FieldError'
+import { CreatureGroupToggle } from '@/components/sheet/CreatureGroupToggle'
 import { SheetEntryList } from '@/components/sheet/SheetEntryList'
 import {
   DerivedStat,
@@ -8,7 +9,6 @@ import {
   marksField,
   speedHint,
 } from '@/components/sheet/SheetFields'
-import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { NPC_ACTIONS } from '@convex/lib/rules'
 // ⚠️ `NpcSheet`, `NPC_ACTIONS` and `MAX_NPC_NOTES_LENGTH` keep their names deliberately.
@@ -17,8 +17,8 @@ import { NPC_ACTIONS } from '@convex/lib/rules'
 // named for the value on the wire. This file is named for what a DM reads, and the two
 // words are no longer the same word: an NPC and a monster are both creatures, and `group`
 // is the field that says which.
-import type { CreatureGroup, NpcSheet, SheetProblem } from '@convex/lib/sheet'
-import { MAX_NPC_NOTES_LENGTH, messageAtField, speedOf } from '@convex/lib/sheet'
+import type { NpcSheet, SheetProblem } from '@convex/lib/sheet'
+import { MAX_NPC_NOTES_LENGTH, creatureGroupOf, messageAtField, speedOf } from '@convex/lib/sheet'
 
 export type CreatureSheetFormProps = {
   sheet: NpcSheet
@@ -55,13 +55,14 @@ export function CreatureSheetForm({ sheet, problem, disabled, onChange }: Creatu
 
   const speed = speedOf(sheet)
 
-  // What the document says, or what `groupOf` reads out of its silence. A creature built
-  // before the field existed — or by any rebuild with nobody to ask — stores no group at
-  // all, and drawing that as *neither* button pressed would invite the DM to "fix" a row
-  // that is already filed correctly. Pressing either one writes a real value, so the
-  // absence is only ever displayed and is never round-tripped as `undefined`, which is
-  // not a Convex value.
-  const group: CreatureGroup = sheet.group ?? 'npc'
+  // What the document says, or what `creatureGroupOf` reads out of its silence — the same
+  // accessor `groupOf` answers with on the server, so this form and the DM's sheet list
+  // cannot draw one creature two ways. A creature built before the field existed, or by
+  // any rebuild with nobody to ask, stores no group at all, and showing that as *no*
+  // button pressed would invite the DM to "fix" a row that is already filed correctly.
+  // Pressing one writes a real value, so the absence is only ever displayed and is never
+  // round-tripped as `undefined`, which is not a Convex value.
+  const group = creatureGroupOf(sheet)
 
   return (
     <div className="flex flex-col gap-5">
@@ -75,40 +76,16 @@ export function CreatureSheetForm({ sheet, problem, disabled, onChange }: Creatu
           It is a *display* discriminator and not a secrecy one: both values are DM-only,
           so a wrong answer moves a heading and never publishes a stat block. Compare
           `isMonsterSheet`, which decides whether a document is refused to a player at
-          all, is answered from `kind` and is untouched by this control. */}
-      <div className="flex min-w-0 flex-col gap-1">
-        <span id="creature-group-label" className="text-muted-foreground text-xs font-medium">
-          Which list
-        </span>
-        <div
-          role="group"
-          aria-labelledby="creature-group-label"
-          className="grid max-w-md grid-cols-2 gap-2"
-        >
-          <Button
-            type="button"
-            variant={group === 'npc' ? 'default' : 'outline'}
-            aria-pressed={group === 'npc'}
-            disabled={disabled}
-            onClick={() => set({ group: 'npc' })}
-          >
-            NPC
-          </Button>
-          <Button
-            type="button"
-            variant={group === 'monster' ? 'default' : 'outline'}
-            aria-pressed={group === 'monster'}
-            disabled={disabled}
-            onClick={() => set({ group: 'monster' })}
-          >
-            Monster
-          </Button>
-        </div>
-        <span className="text-muted-foreground text-xs">
-          Which heading it sits under in your sheet list. An innkeeper is an NPC, an owlbear
-          is a monster; neither reaches a player either way.
-        </span>
-      </div>
+          all, is answered from `kind` and is untouched by this control.
+
+          The control is shared with the create dialogs — same buttons, same wording, one
+          copy — and iterates the union rather than naming its members; see
+          `CreatureGroupToggle`. */}
+      <CreatureGroupToggle
+        value={group}
+        disabled={disabled}
+        onChange={(next) => set({ group: next })}
+      />
 
       <div className="grid grid-cols-3 gap-3">
         <SheetField id="creature-ac" label="Armour class">

@@ -101,12 +101,16 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
      convention. `claim`, `assign` and `rename` pass nothing deliberately, which is how each of them
      says a grant must not widen it; adding the argument "for consistency" changes what all three
      mean.
-   - **Composed with the existing rule, never substituted for it.** The set arrives from
-     `controlledCharacterIds`, which is the **second narrow crossing** out of `convex/lib/board.ts`
-     beside `visibleCharacterIds` — a `Set` of character ids leaves, never a `Doc<'tokens'>`. It is
-     built from `visibleTokens`, so a grant on a DM-layer token contributes nothing to a player's
-     set: sight follows the token, structurally, and there is deliberately no second layer test
-     inside it. `playerId === undefined` gives the empty set.
+   - **Composed with the existing rule, never substituted for it.** Both sets come out of
+     `boardCharacterAccess` in `convex/lib/board.ts` — **the** crossing between the two choke
+     points, in **one pass** over the board, handing back `{ visible, controlled }`. A `Set` of
+     character ids leaves, never a `Doc<'tokens'>`. One pass is what makes the composition
+     structural rather than coincidental: an id can only enter `controlled` on an iteration that
+     already put it in `visible`, so a grant on a DM-layer token contributes nothing to a player —
+     `visibleTokens` dropped that row before the loop began. Sight follows the token, and there is
+     deliberately no second layer test inside it. `playerId === undefined` gives the empty set.
+     (ADR 0005 calls the sight half `visibleCharacterIds`; that function is gone, because asking a
+     second question about the same two hundred rows should not read them twice.)
    - **It carries hit points and stops at authorship.** `visibleVitals` sends a controller the
      `exact` variant rather than a band, and `requireEditableCharacter` takes an explicit
      `allowControl` — true on the five hit-point paths, false on `updateSheet`. A granted pet takes

@@ -512,7 +512,44 @@ export type PcSheet = Infer<typeof pcSheetValidator>
 export const CREATURE_GROUPS = ['npc', 'monster'] as const
 export type CreatureGroup = (typeof CREATURE_GROUPS)[number]
 
+/**
+ * Spelled out by hand beside the list above rather than derived from it, on the
+ * convention `sheetEntryCategoryValidator` states: a Convex validator is a value and
+ * the list is a type, and one test pinning the two together is cheaper than the
+ * generic that would build one from the other. `sheet.test.ts` is that test, and it
+ * pins `characterGroupValidator` below in the same breath.
+ */
 export const creatureGroupValidator = v.union(v.literal('npc'), v.literal('monster'))
+
+/**
+ * WHAT THE DM IS CHOOSING BETWEEN: the word on the button, and the example beside it.
+ *
+ * A `Record` keyed by the union rather than two buttons written out in JSX — the
+ * idiom `SHEET_ENTRY_CATEGORY_LABELS` uses further down this file, and the one
+ * CLAUDE.md invariant 9 argues for. `CreatureGroupToggle` iterates `CREATURE_GROUPS`
+ * against this, so a third group arrives in both create dialogs and in the sheet
+ * editor with a button of its own; two hand-written buttons would have left it
+ * **stored, counted and unselectable**, which is exactly the failure a category with
+ * no section heading would have been.
+ *
+ * ⚠️ **The sibling union got this and this one did not**, which is why it is worth
+ * spelling out. `CHARACTER_GROUPS` has been iterated through a `Record` of headings
+ * since the change that added both, and `CREATURE_GROUPS` was declared in the same
+ * change and read by nothing.
+ *
+ * The hint is a whole clause rather than a bare noun, so that the sentence under the
+ * control can be joined from however many groups there are. It used to be two
+ * hand-written sentences, one per call site, already differing in wording.
+ *
+ * Prose in a Convex module for the same reason as `ABILITY_NAMES` and the two entry
+ * label records: the alternative is one copy per screen, and copies of a label are
+ * labels that can disagree. Nothing here is sent to a player — see the note on the
+ * union above.
+ */
+export const CREATURE_GROUP_CHOICES: Record<CreatureGroup, { label: string; hint: string }> = {
+  npc: { label: 'NPC', hint: 'an innkeeper is an NPC' },
+  monster: { label: 'Monster', hint: 'an owlbear is a monster' },
+}
 
 /**
  * The reduced NPC sheet. A monster gets AC, hit points, an initiative bonus and a
@@ -577,13 +614,10 @@ export const npcSheetValidator = v.object({
   // on these two sheet kinds already makes.
   //
   // Sixth optional field on this validator and the same reason as the five above.
-  // Read through `groupOf` in lib/resolve.ts and nowhere else; absent means `'npc'`.
-  //
-  // ⚠️ **This is a display discriminator and not a security one**, which is what makes a
-  // default safe here at all. Both values are DM-only — a player receives neither an
-  // `npc` nor a `monster` row — so getting it wrong misfiles a row and never publishes
-  // one. Compare `isMonsterSheet` below, whose default is fail-closed because getting
-  // *that* wrong publishes a dragon. Do not merge the two questions.
+  // Read through `creatureGroupOf` below and nowhere else, which is where the default and
+  // the reason a default is safe at all are both written down. `groupOf` in
+  // lib/resolve.ts is that accessor's one backend caller and answers the wider question
+  // — which of the DM's *three* headings a character of any kind sits under.
   group: v.optional(creatureGroupValidator),
 })
 export type NpcSheet = Infer<typeof npcSheetValidator>
@@ -622,6 +656,7 @@ export const characterKindValidator = v.union(v.literal('pc'), v.literal('npc'))
 export const CHARACTER_GROUPS = ['character', 'npc', 'monster'] as const
 export type CharacterGroup = (typeof CHARACTER_GROUPS)[number]
 
+/** Hand-spelled beside the list, and pinned against it by a test — see `creatureGroupValidator`. */
 export const characterGroupValidator = v.union(
   v.literal('character'),
   v.literal('npc'),
@@ -908,7 +943,7 @@ export const SHEET_ENTRY_ROLL_LABELS: Record<SheetEntryCategory, string> = {
 //
 // Every field on either sheet variant — and now on an entry — that the schema could
 // not require is read from here and nowhere else, so the default for a document
-// written before the field existed lives in one place per field. There are nine now,
+// written before the field existed lives in one place per field. There are ten now,
 // which is why they have a section.
 // ---------------------------------------------------------------------------
 
@@ -1105,6 +1140,38 @@ export function saveDcOf(sheet: CharacterSheet): number | null {
  */
 export function creatureSkillsOf(sheet: CharacterSheet): CreatureSkills {
   return (sheet.kind === 'npc' ? sheet.skills : undefined) ?? {}
+}
+
+/**
+ * The only place the optional `group` is read. **Absent means nobody was asked**, which
+ * is every creature typed in before the field existed and every sheet `defaultNpcSheet`
+ * builds — and unanswered reads as `'npc'`.
+ *
+ * ⚠️ **This is a display discriminator and not a security one, and that is what makes a
+ * default safe here at all.** Both values are DM-only — a player is sent neither an `npc`
+ * nor a `monster` row, because `maySeeCharacter` refused the whole document before
+ * anybody asked which heading it went under — so a wrong answer misfiles a row and can
+ * never publish one. Compare `isMonsterSheet` above, whose runtime default is fail-closed
+ * because getting *that* wrong publishes a dragon. Do not merge the two questions, and do
+ * not copy this function's tolerance across to that one.
+ *
+ * **`NpcSheet` rather than `CharacterSheet`**, which is the one place this accessor's
+ * shape differs from the five beside it. A hero has no group and no field to put one in,
+ * so a `CharacterSheet` signature would have to invent an answer for a kind the question
+ * does not apply to; every caller has already narrowed. `groupOf` in lib/resolve.ts is
+ * the backend's, from inside its `npc` arm, and the two creature forms are the browser's.
+ *
+ * A stored value outside the union reads as the default too, the stance `categoryOf` and
+ * `speedOf` take and for the same reason: a schema push is not atomic, so a document
+ * written by a newer deployment can be read by an older one, and in that window an
+ * unrecognised heading must still land under one that exists.
+ */
+export function creatureGroupOf(sheet: NpcSheet): CreatureGroup {
+  const stored = sheet.group
+  if (stored !== undefined && (CREATURE_GROUPS as readonly string[]).includes(stored)) {
+    return stored
+  }
+  return 'npc'
 }
 
 /**

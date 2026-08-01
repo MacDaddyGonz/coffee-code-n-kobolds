@@ -16,14 +16,27 @@ import { errorMessage } from '@/lib/errors'
  * shows up as a health bar that flicks to the new number and then back again a
  * tenth of a second later.
  *
- * ⚠️ **`playerId` is part of the key now, and leaving it off is not a shortcut — it
- * is a different answer.** `characters.vitals` sends *exact* hit points for a
- * creature this seat has been granted control of and a *band* for one it has not,
- * and it cannot know which seat is asking unless it is told. A subscription built
+ * ⚠️ **For a player, `playerId` is part of the key, and leaving it off is not a
+ * shortcut — it is a different answer.** `characters.vitals` sends *exact* hit points
+ * for a creature this seat has been granted control of and a *band* for one it has
+ * not, and it cannot know which seat is asking unless it is told. A subscription built
  * without the id gets bands for the party's pet, and `HpControls` draws no `−`/`+`
  * on a band — so the granted player is handed a sheet they may write to and no
  * control to write with. The id authorises nothing (invariant 7); the server
  * re-derives the grant from the token table either way.
+ *
+ * ⚠️ **For the DM it is dropped, and that is a correctness fix rather than a saving.**
+ * `visibleVitals` short-circuits every per-seat term on `isDm` — the visible-NPC set
+ * and the granted set are both behind `!isDm` — so a DM's answer is byte-identical
+ * whichever seat is named, and naming one only mints a second cache entry holding the
+ * same rows. Two entries is two socket subscriptions and two server executions per
+ * point of damage in the browser that causes most of it, but the sharp end is the
+ * optimistic update: `useDmCharacterRows` and the DM's `CharacterSheetView` pass no
+ * seat, so a `−5` from the sheet list used to patch one entry while the map's health
+ * bar read the other and sat still until the round trip landed. This builder exists
+ * precisely so the writer and the reader cannot disagree about arguments, and it was
+ * being satisfied *within* each hook and violated *between* them. Deciding here means
+ * every caller agrees by construction and none of them has to know the rule.
  *
  * Both optional arguments are **omitted rather than passed as `undefined`** when
  * absent, because `undefined` is not a Convex value: the two spellings are the same
@@ -32,11 +45,8 @@ import { errorMessage } from '@/lib/errors'
  * memoises on `JSON.stringify`, which is order-sensitive.
  */
 export function vitalsArgs(code: string, dmCode: string | null, playerId: Id<'players'> | null) {
-  return {
-    code,
-    ...(playerId === null ? {} : { playerId }),
-    ...(dmCode === null ? {} : { dmCode }),
-  }
+  if (dmCode !== null) return { code, dmCode }
+  return playerId === null ? { code } : { code, playerId }
 }
 
 export type Vitals = PublicVitals
@@ -62,9 +72,10 @@ export type VitalsByCharacter = {
  * reasoning that split positions off the token document (CLAUDE.md invariant 2).
  *
  * `playerId` is which seat is asking, and `null` means *ask as nobody in
- * particular* — which is the right answer for the DM's own list, where the DM code
- * is what opens every row anyway. Anywhere a seat is reading its own screen, pass
- * the seat: see `vitalsArgs` for what the omission actually costs.
+ * particular*. Anywhere a seat is reading its own screen, pass the seat: see
+ * `vitalsArgs` for what the omission actually costs a player. A DM may pass either —
+ * the builder drops it, because the DM code has already opened every row and a second
+ * cache entry holding identical rows is the only thing the seat would buy.
  */
 export function useVitals(
   code: string,
@@ -150,10 +161,12 @@ export function useHpActions(args: {
   const adjustHp = useMemo(
     () =>
       rawAdjustHp.withOptimisticUpdate((store, mutationArgs) => {
-        // ⚠️ The same three arguments the reading component passed, or this patches
-        // an entry nobody is watching. `playerId` joining the key is exactly the
-        // kind of change that breaks this silently — the bar simply stops moving
-        // until the server answers — which is why there is one builder.
+        // ⚠️ The same three arguments the reading component passed, through the same
+        // builder, or this patches an entry nobody is watching. `playerId` joining the
+        // key is exactly the kind of change that breaks this silently — the bar simply
+        // stops moving until the server answers — and a DM writing from one panel while
+        // reading in another is how it actually happened. The builder is what makes the
+        // two agree; calling it is not optional here.
         const key = vitalsArgs(code, dmCode, playerId)
         const current = store.getQuery(api.characters.vitals, key)
         if (!current) return

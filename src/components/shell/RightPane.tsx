@@ -120,11 +120,18 @@ export const RightPane = memo(function RightPane({
   selectedCharacterId,
   // ⚠️ `onSelectToken` is on the props type above and is deliberately *not*
   // destructured. Every selection this pane makes names a creature — the DM's
-  // selector calls `onSelectCharacter` with the token that creature happens to have
-  // — and picking a bare token is the map's gesture, not a panel's. It stays on the
-  // type because `GameShell` hands both panes the same three handlers and taking it
-  // off would make that call site an error; an unread binding here would be one too,
-  // under `noUnusedLocals`.
+  // selector calls `onSelectCharacter` with the token that creature happens to have —
+  // and picking a bare token is the map's gesture, not a panel's. So it is **reserved
+  // for a future reader**, kept because `GameShell` hands both panes the same three
+  // handlers and threading a fourth back through when a panel does want one is more
+  // churn than leaving the door open.
+  //
+  // That is the honest reason, and it replaces a wrong one: this used to claim that
+  // taking it off the type would make `GameShell`'s call site an error. It would not —
+  // every prop there is passed by name rather than spread, so deleting it from both
+  // places compiles. The only part that was true is the last clause: an unread
+  // *binding* here would fail `noUnusedLocals`, which is why the prop is left out of
+  // the destructuring rather than named and ignored.
   onSelectCharacter,
   onClearSelection,
   onRenameSeat,
@@ -147,12 +154,35 @@ export const RightPane = memo(function RightPane({
    *
    * `board.tokens` is the low-churn half of the board deliberately (invariant 2):
    * positions live in their own query, so nobody's drag re-renders this panel.
+   *
+   * ⚠️ **Skipped until the game is running.** In the lobby there is no board to select
+   * from and nothing here reads the array — but the query is not free to ask: it
+   * resolves a signed storage URL per token, server-side, for a payload with no reader.
+   * Every consumer below already handles `undefined`, because it is what the first
+   * frame of a running game looks like anyway. `MapPane` mounts `Board` on the same
+   * condition (plus an active scene), so this either shares that subscription's cache
+   * entry or is the only holder of it, never a second one.
    */
-  const tokens = useQuery(api.board.tokens, tokensArgs(code, dm.dmCode))
+  const tokens = useQuery(
+    api.board.tokens,
+    game.status === 'playing' ? tokensArgs(code, dm.dmCode) : 'skip',
+  )
 
-  // Two facts about the selected token, from one pass. What it is bound to decides
-  // the focus below; its name is what the player's tab prints when it is bound to
-  // nothing, and neither is worth a second `find` over the same array.
+  /**
+   * The selected token, found **once for the whole panel**.
+   *
+   * Three facts hang off it: what it is bound to decides the focus below, its name is
+   * what the player's tab prints when it is bound to nothing, and it is the coin the
+   * DM's grant panel edits. All three used to `find` it separately — here, in
+   * `SheetsTab`'s `grantToken`, and again in `SheetRegion` — over the same array for
+   * the same answer, because only the *id* was passed down.
+   *
+   * ⚠️ So the token goes down, not the id. Handing a fresh object across this boundary
+   * would normally be the thing the memo note above forbids; it is safe precisely
+   * because `SheetsTab` is *inside* the boundary, where identity costs nothing — and
+   * the identity is stable regardless, since this is an element of the query's own
+   * array rather than a new object.
+   */
   const selectedToken = useMemo(
     () => tokens?.find((token) => token._id === selectedTokenId) ?? null,
     [tokens, selectedTokenId],
@@ -229,7 +259,7 @@ export const RightPane = memo(function RightPane({
               dmCode={dm.dmCode}
               focus={focus}
               tokens={tokens}
-              selectedTokenId={selectedTokenId}
+              selectedToken={selectedToken}
               onSelectCharacter={onSelectCharacter}
               onClearSelection={onClearSelection}
             />

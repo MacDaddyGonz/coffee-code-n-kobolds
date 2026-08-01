@@ -5,19 +5,22 @@ import { cn } from '@/lib/utils'
 /**
  * The two halves of the character sheet editor's fixed-height column.
  *
- * **Promoted out of `ui/sheet.tsx`, which opens with a warning against exactly the
- * import that used to be here.** `CharacterSheetEditor` reached for `SheetFooter` —
- * a *drawer* part, in a file whose first paragraph is about the two senses of the
- * word "sheet" — because a slide-out drawer was the only place the editor was ever
- * mounted. That drawer has since gone: the editor's hosts are the tabs of the shell's
- * right-hand panel, which are fixed-height columns already. A layout part borrowed from
- * a host is a part that describes the host rather than the thing being laid out, and
- * the borrowed one has now outlived the host it was borrowed from — which is the
- * argument, demonstrated.
+ * **Promoted out of the shadcn drawer primitive, and it has now outlived it
+ * entirely.** `CharacterSheetEditor` reached for that file's `SheetFooter` — a
+ * *drawer* part, from a primitive whose whole opening paragraph was about the two
+ * senses of the word "sheet" — because a slide-out drawer was the only place the
+ * editor was ever mounted. That drawer went first: the editor's hosts are the tabs of
+ * the shell's right-hand panel, which are fixed-height columns already. Then the
+ * primitive itself went, once nothing in the application imported it. A layout part
+ * borrowed from a host is a part that describes the host rather than the thing being
+ * laid out — and this is that argument demonstrated twice over, since what remained
+ * after both removals is exactly these two divs.
  *
  * So they are named for what the editor needs — a body and a footer — and the classes
- * are unchanged. `ui/sheet.tsx` keeps its own `SheetFooter`; this is not a rename of
- * that one.
+ * are the drawer's unchanged, which is why nothing about the editor moved when its
+ * host did. ⚠️ Re-adding the primitive is `npx shadcn add sheet`, and it would arrive
+ * with a `SheetFooter` of its own: these two are not a rename of that one, and an
+ * editor reaching back into it for a layout part would be the same mistake again.
  */
 
 /**

@@ -362,9 +362,13 @@ export const setControllers = mutation({
     // Every id checked against this game before any of it is written. A stray seat from
     // another game would be a grant nothing in this game can render, name or revoke —
     // `players.leave` sweeps by game, so it would never be cleaned up either.
-    for (const playerId of args.playerIds) {
-      await getSeatInGame(ctx, game._id, playerId)
-    }
+    //
+    // Concurrent because none of the lookups depends on another: awaiting them in a loop
+    // made the round trips sequential, and the array is already bounded above by
+    // MAX_SEATS_PER_GAME. `getSeatInGame` throws on the first bad id either way — a
+    // rejected `Promise.all` is still one refusal, and which of several bad ids is named
+    // is not a promise this mutation makes.
+    await Promise.all(args.playerIds.map((playerId) => getSeatInGame(ctx, game._id, playerId)))
 
     await setTokenControllers(ctx, token._id, args.playerIds)
     return null

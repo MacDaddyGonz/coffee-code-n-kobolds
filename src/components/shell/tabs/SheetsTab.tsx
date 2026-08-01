@@ -30,18 +30,22 @@ export type SheetsTabProps = {
   focus: SheetFocus
   /**
    * The board's tokens, from the pane's own `board.tokens` subscription rather than a
-   * second one. Three questions are asked of them here — which coin a chosen creature is
-   * standing on, what to call a selected token that carries no sheet, and which coin the
-   * grant panel is editing — and three props carrying three answers would be the same
-   * array taken apart upstairs and reassembled here.
+   * second one. One question is asked of the whole array here — which coin is a given
+   * creature standing on — and the array is what it takes to answer it. `undefined`
+   * before the subscription lands, and for the whole of the lobby, where the pane skips
+   * the query outright.
    */
   tokens: PublicToken[] | undefined
   /**
-   * Which token the shell has selected. Only used to *prefer* it as the grant target: a
-   * creature may have two coins on the board, and the one the DM clicked is the one they
-   * mean.
+   * The token the shell has selected, **already found**. `RightPane` needs it for the
+   * focus and holds the one `find` over the array; passing the id instead had this file
+   * and `SheetRegion` below each repeat that search for the same answer.
+   *
+   * Two things below want it: the grant panel prefers it as its target — a creature may
+   * have two coins on the board, and the one the DM clicked is the one they mean — and
+   * `SheetRegion`'s *this token carries no sheet* arm is naming it.
    */
-  selectedTokenId: Id<'tokens'> | null
+  selectedToken: PublicToken | null
   onSelectCharacter: (characterId: Id<'characters'>, tokenId: Id<'tokens'> | null) => void
   onClearSelection: () => void
 }
@@ -113,7 +117,7 @@ export function SheetsTab({
   dmCode,
   focus,
   tokens,
-  selectedTokenId,
+  selectedToken,
   onSelectCharacter,
   onClearSelection,
 }: SheetsTabProps): ReactElement {
@@ -137,11 +141,16 @@ export function SheetsTab({
     return map
   }, [tokens])
 
-  // The two ids out of the focus, taken apart here rather than passed around as the
-  // object: `focus` is rebuilt on every render of the pane above, so a memo that
-  // depended on it would recompute every time and quietly stop being a memo.
+  // The focused character id, taken out of the union once because three things below
+  // ask for it — and taken apart here rather than passing `focus` around, since it is
+  // rebuilt on every render of the pane above and a memo depending on it would
+  // recompute every time and quietly stop being a memo.
+  //
+  // Its old sibling `focusedTokenId` is gone. In the `tokenWithoutSheet` arm the focus's
+  // token *is* the shell's selected token — `sheetFocusOf` copies the id straight
+  // through — so looking it up again over `tokens` was the second of three searches for
+  // one answer, and `selectedToken` is now that answer, arrived already found.
   const focusedCharacterId = focus.kind === 'character' ? focus.characterId : null
-  const focusedTokenId = focus.kind === 'tokenWithoutSheet' ? focus.tokenId : null
 
   /**
    * The coin the grant panel edits: the selected one when it belongs to the creature on
@@ -149,16 +158,22 @@ export function SheetsTab({
    * has clicked on. All three are the same question — *which token is this panel talking
    * about* — and the order is what makes a DM who clicked the second goblin get the
    * second goblin.
+   *
+   * A plain expression and not a `useMemo`, now that the searching is gone. This tab is
+   * *inside* `RightPane`'s memo boundary, which is what that boundary is for, so it
+   * renders only when something it reads has genuinely changed — and the result is
+   * either `selectedToken` or an element of `tokenByCharacter`, so the identity is
+   * stable across those renders anyway. A memo would be a dependency list to keep
+   * correct in exchange for nothing.
    */
-  const grantToken = useMemo(() => {
-    if (focusedTokenId !== null) {
-      return (tokens ?? []).find((token) => token._id === focusedTokenId) ?? null
-    }
-    if (focusedCharacterId === null) return null
-    const selected = (tokens ?? []).find((token) => token._id === selectedTokenId) ?? null
-    if (selected?.characterId === focusedCharacterId) return selected
-    return tokenByCharacter.get(focusedCharacterId) ?? null
-  }, [focusedTokenId, focusedCharacterId, selectedTokenId, tokenByCharacter, tokens])
+  const grantToken =
+    focus.kind === 'tokenWithoutSheet'
+      ? selectedToken
+      : focusedCharacterId === null
+        ? null
+        : selectedToken?.characterId === focusedCharacterId
+          ? selectedToken
+          : (tokenByCharacter.get(focusedCharacterId) ?? null)
 
   return (
     // Not a `TabBody`: this tab is three regions of its own rather than one scrolling
@@ -269,7 +284,7 @@ export function SheetsTab({
           code={code}
           dmCode={dmCode}
           focus={focus}
-          tokens={tokens}
+          selectedToken={selectedToken}
           onClearSelection={onClearSelection}
         />
       </div>
@@ -293,18 +308,23 @@ export function SheetsTab({
  * The three arms are `SheetFocus`'s own, and they are read here rather than re-derived:
  * `sheetFocusOf` decides in one place, and the ⚠️ on that function is about the three
  * call sites that would otherwise each learn the rules separately.
+ *
+ * It takes the selected token rather than the board's array, because the only thing the
+ * array was ever for here was finding that one token — and the `tokenWithoutSheet` arm's
+ * `focus.tokenId` is the selected id by construction, so the search could only ever have
+ * produced what the caller already held.
  */
 function SheetRegion({
   code,
   dmCode,
   focus,
-  tokens,
+  selectedToken,
   onClearSelection,
 }: {
   code: string
   dmCode: string
   focus: SheetFocus
-  tokens: PublicToken[] | undefined
+  selectedToken: PublicToken | null
   onClearSelection: () => void
 }): ReactElement {
   if (focus.kind === 'character') {
@@ -323,8 +343,6 @@ function SheetRegion({
   }
 
   if (focus.kind === 'tokenWithoutSheet') {
-    const token = tokens?.find((row) => row._id === focus.tokenId) ?? null
-
     return (
       <div className="text-muted-foreground flex flex-col items-start gap-2 p-4 text-sm">
         {/* **Named, rather than an empty panel.** A door marker or a summoned wolf
@@ -332,10 +350,12 @@ function SheetRegion({
             and silently leaving the last creature on screen is how a DM ends up
             adjusting a goblin they are no longer looking at. */}
         <p>
-          <span className="text-foreground font-medium">{token?.name ?? 'That token'}</span> is on
-          the board but carries no sheet — there is nothing behind it to show, and nothing to
-          roll. Bind it to a creature from the token dialog on the Map tab, or pick a sheet from
-          the list above.
+          <span className="text-foreground font-medium">
+            {selectedToken?.name ?? 'That token'}
+          </span>{' '}
+          is on the board but carries no sheet — there is nothing behind it to show, and nothing
+          to roll. Bind it to a creature from the token dialog on the Map tab, or pick a sheet
+          from the list above.
         </p>
         {/* The one place a *Deselect* is offered, and only here. Everywhere else the
             gesture is clicking empty map, which is what the copy points at — but this

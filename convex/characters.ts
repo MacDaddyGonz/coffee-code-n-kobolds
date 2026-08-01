@@ -4,9 +4,9 @@ import type { Doc, Id } from './_generated/dataModel'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import {
+  boardCharacterAccess,
   controlledCharacterIds,
   detachCharacterFromTokens,
-  visibleCharacterIds,
 } from './lib/board'
 import {
   // The one refusal, shared: "no such character", "that one is in another game", "that
@@ -87,7 +87,29 @@ import {
 // payload without Convex throwing. One leak of each shape, one tool for each.
 
 /**
- * The character this caller may change, or a throw.
+ * What the rule below answered: the character, or which of three refusals it was.
+ *
+ * A verdict rather than a throw, because there are two callers wanting two shapes of the
+ * one rule — see `findEditableCharacter` and `requireEditableCharacter`. The refusing
+ * variants carry only what the wording needs, so the *query* form can discard all of it
+ * and answer `null` without a `try` wide enough to swallow a genuine fault as well.
+ *
+ * `unseen` and `noSeat` are deliberately different verdicts even though both end as a
+ * refusal: `unseen` is the shared `CHARACTER_NOT_FOUND`, which an NPC's existence
+ * requires, and `noSeat` is an ordinary "only the DM can do that" about a hero the caller
+ * can perfectly well see.
+ */
+type EditVerdict =
+  | { ok: true; character: Doc<'characters'> }
+  /** No such character, one in another game, or a creature this caller may not see. */
+  | { ok: false; reason: 'unseen' }
+  /** Visible, but the caller sent no `playerId`, so no claim can speak for them. */
+  | { ok: false; reason: 'noSeat' }
+  /** Visible, and somebody else's — `holder` is null when nobody is playing it. */
+  | { ok: false; reason: 'notYours'; holder: Doc<'players'> | null }
+
+/**
+ * THE EDIT RULE, in one place, asked once and shaped twice.
  *
  * Refuses an NPC to anybody without the DM code **or a grant**, with the same error a
  * fabricated id gets — an NPC's existence is a spoiler, so the error channel gets no
@@ -101,10 +123,15 @@ import {
  * ⚠️ **`allowControl` splits the write paths in two, and the split is the decision
  * rather than a knob.** A grant gives a seat **sight and hit points, not authorship**:
  *
- * - `true` for `adjustHp`, `setHp`, `adjustHitDice`, `longRest` and `setPerRest`. A
- *   granted pet takes damage from the player holding its lead, which is the entire point
- *   of handing it to them; a grant that could not spend a hit point would be a sheet to
- *   look at.
+ * - `true` for `adjustHp`, `setHp`, `adjustHitDice`, `longRest` and `setPerRest`, and for
+ *   the `characters.sheet` query. A granted pet takes damage from the player holding its
+ *   lead, which is the entire point of handing it to them; a grant that could not spend a
+ *   hit point would be a sheet to look at, and `HpControls` would render no `−`/`+`
+ *   beside it. `adjustHitDice` is the odd one of the five and says `true` anyway: a
+ *   granted creature has no hit dice at all — `changeHitDiceRemaining` returns zero for
+ *   anything that is not a `pc` — so the grant reaches a path with nothing on the other
+ *   side of it, and saying so keeps the five hit-point writes one rule rather than four
+ *   and an exception.
  * - `false` for `updateSheet`. A granted monster is not a stat block a player rewrites.
  *   Nothing about lending somebody a wolf for a fight says they may change what a wolf
  *   is, and the DM's own numbers on it are the DM's.
@@ -129,66 +156,156 @@ import {
  * opened deliberately by the DM, and closing the residual needs identity rather than
  * another check. See ADR 0002 and the threat model in CLAUDE.md.
  */
-async function requireEditableCharacter(
+async function resolveEditableCharacter(
   ctx: QueryCtx,
   game: Doc<'games'>,
   characterId: Id<'characters'>,
   isDm: boolean,
   playerId: Id<'players'> | undefined,
   { allowControl }: { allowControl: boolean },
-): Promise<Doc<'characters'>> {
-  // Read up front rather than after the visibility check, because a granted creature is
-  // invisible *without* the set: `maySeeCharacter` would refuse a wolf before anybody got
-  // as far as asking who is holding its lead. Skipped entirely for the DM, for an
-  // authorship path, and for a caller with no seat — so the roster read happens only on
-  // the paths that can actually use it.
+): Promise<EditVerdict> {
+  // The DM's path is one point get and nothing else. `maySeeCharacter` returns true for
+  // the DM before it looks at a grant, so a roster read here would be a range read whose
+  // answer is discarded — and `characters.sheet` is force-mounted, so putting the whole
+  // `players` range and the whole `tokens` range into its read set made every join,
+  // rename, claim, release, `addToken` and `setControllers` re-push the entire sheet to
+  // the DM. That is precisely the re-push splitting hit points off this query prevented.
+  if (isDm) {
+    const character = await findVisibleCharacter(ctx, game._id, characterId, true)
+    return character ? { ok: true, character } : { ok: false, reason: 'unseen' }
+  }
+
+  // ⚠️ **Two point gets, concurrently, and the common path stops here.** A player
+  // clicking `−1` on their own hero is the case this ordering is for: the claim is the
+  // rule that says whose character this *is*, it is answerable from one indexed lookup,
+  // and building the grant set first — as this used to — meant a `listSeats` range read
+  // and a `tokens` range read on every one of the five hit-point mutations, in a fight,
+  // discarded a line later. What is left in that transaction's read set is two documents,
+  // so a concurrent join, rename, `addToken` or `setControllers` no longer conflicts with
+  // an in-flight hit-point write.
   //
-  // The cost is one bounded `listSeats` range read in the transaction's read set, which
-  // makes a concurrent join or rename an OCC conflict against a hit-point write. That is
-  // the trade `requireMovableToken` explicitly refuses to make, and the difference is the
-  // write rate: a drag commits ten times a second and invariant 2 is about exactly that,
-  // whereas hit points change a few times a round. Retrying that is free.
-  const controlled =
-    allowControl && !isDm && playerId !== undefined
-      ? await controlledCharacterIds(
-          ctx,
-          game._id,
-          isDm,
-          await listSeats(ctx, game._id),
-          playerId,
-        )
-      : undefined
+  // Concurrent because neither read depends on the other: `findClaimHolder` is indexed on
+  // the character id the caller supplied, not on the document it resolves to.
+  const [seen, holder] = await Promise.all([
+    findVisibleCharacter(ctx, game._id, characterId, false),
+    findClaimHolder(ctx, characterId),
+  ])
 
-  const character = await requireVisibleCharacter(ctx, game._id, characterId, isDm, controlled)
-  if (isDm) return character
+  // ⚠️ `holder !== null` rather than `holder?._id === playerId`, which is the same
+  // comparison with one wrong answer in it: for a caller who sent no `playerId`, asking an
+  // unclaimed hero, both sides are `undefined` and the character is theirs. The seat has
+  // to exist for a claim to mean anything.
+  if (seen && holder !== null && holder._id === playerId) return { ok: true, character: seen }
 
-  if (playerId === undefined) {
-    throw new ConvexError({
-      kind: 'CharacterNotYours',
-      message: 'Only the DM can change that character.',
-    })
+  // The grant, consulted after the claim, and now *read* after it too. Reaching the board
+  // is the expensive half of this function and it can only ever widen the answer, so it
+  // happens on fall-through and only where it could change one: an authorship path is not
+  // widened by a grant, and a caller with no seat has nothing for a grant to be attached
+  // to (`boardCharacterAccess` would fail closed and hand back the empty set anyway).
+  //
+  // The cost, when it is paid, is a bounded `listSeats` range read *and* a bounded
+  // `tokens` range read in the transaction's read set — so a concurrent join, rename,
+  // claim, `addToken` or `setControllers` becomes an OCC conflict against this write. That
+  // is the trade `requireMovableToken` explicitly refuses to make, and the difference is
+  // the write rate: a drag commits ten times a second and invariant 2 is about exactly
+  // that, whereas a grant path is a player poking a shared pet. Retrying that is free.
+  if (allowControl && playerId !== undefined) {
+    const controlled = await controlledCharacterIds(
+      ctx,
+      game._id,
+      false,
+      await listSeats(ctx, game._id),
+      playerId,
+    )
+
+    // Re-asked with the set in hand only when the pre-grant answer was "no such
+    // character", because a granted creature is invisible *without* it —
+    // `maySeeCharacter` refuses a wolf before anybody gets as far as asking who is
+    // holding its lead. A hero was already visible, so there is nothing to re-decide.
+    const character =
+      seen ?? (await findVisibleCharacter(ctx, game._id, characterId, false, controlled))
+
+    if (character && controlled.has(character._id)) return { ok: true, character }
+    if (!character) return { ok: false, reason: 'unseen' }
+    // The refusal names the holder rather than the grant, which is the useful half for
+    // the player who hit it.
+    return { ok: false, reason: 'notYours', holder }
   }
 
-  const holder = await findClaimHolder(ctx, character._id)
-  if (holder?._id === playerId) return character
+  // Visibility is refused ahead of everything else, so an NPC and a fabricated id stay one
+  // answer even for a caller who has no seat to be refused for.
+  if (!seen) return { ok: false, reason: 'unseen' }
+  if (playerId === undefined) return { ok: false, reason: 'noSeat' }
+  return { ok: false, reason: 'notYours', holder }
+}
 
-  // The grant, consulted after the claim. What is ordered here is which rule answers
-  // rather than which read happens — the set was already needed above, to make a granted
-  // creature visible at all — and the claim reads first because it is the rule that says
-  // whose character this *is*. The refusal below then names the holder rather than the
-  // grant, which is the useful half for the player who hit it.
-  if (controlled?.has(character._id)) return character
+/**
+ * The rule above as a question: the character this caller may change, or null.
+ *
+ * For queries, which paint a screen — the same finding/requiring pairing this codebase
+ * already keeps for `findVisibleCharacter`/`requireVisibleCharacter` and
+ * `findSceneInGame`/`getSceneInGame`. One rule, two shapes.
+ *
+ * Every refusal collapses to the same `null`, which is the point: an unknown id, another
+ * seat's hero and an ungranted NPC must be indistinguishable, and the *reason* the
+ * verdict carries is for the throwing form's wording rather than for a caller to branch
+ * on. Written as a verdict rather than by catching what `requireEditableCharacter` throws
+ * because a `try` wide enough to swallow every refusal is also wide enough to swallow a
+ * genuine fault and report it as "no such character".
+ */
+async function findEditableCharacter(
+  ctx: QueryCtx,
+  game: Doc<'games'>,
+  characterId: Id<'characters'>,
+  isDm: boolean,
+  playerId: Id<'players'> | undefined,
+  options: { allowControl: boolean },
+): Promise<Doc<'characters'> | null> {
+  const verdict = await resolveEditableCharacter(ctx, game, characterId, isDm, playerId, options)
+  return verdict.ok ? verdict.character : null
+}
 
-  if (!holder) {
-    throw new ConvexError({
-      kind: 'CharacterNotYours',
-      message: 'Nobody is playing that character yet, so only the DM can change it.',
-    })
+/**
+ * The same rule as a demand: the character this caller may change, or a throw.
+ *
+ * For mutations, which have nothing to render, so a refusal should fail loudly and say
+ * which refusal it was. The wording is the whole of what this adds — see `EditVerdict`
+ * for why `unseen` is the shared `CHARACTER_NOT_FOUND` while the other two are not.
+ */
+async function requireEditableCharacter(
+  ctx: QueryCtx,
+  game: Doc<'games'>,
+  characterId: Id<'characters'>,
+  isDm: boolean,
+  playerId: Id<'players'> | undefined,
+  options: { allowControl: boolean },
+): Promise<Doc<'characters'>> {
+  const verdict = await resolveEditableCharacter(ctx, game, characterId, isDm, playerId, options)
+  if (verdict.ok) return verdict.character
+
+  switch (verdict.reason) {
+    case 'unseen':
+      throw new ConvexError(CHARACTER_NOT_FOUND)
+    case 'noSeat':
+      throw new ConvexError({
+        kind: 'CharacterNotYours',
+        message: 'Only the DM can change that character.',
+      })
+    case 'notYours':
+      throw new ConvexError({
+        kind: 'CharacterNotYours',
+        message: verdict.holder
+          ? `${verdict.holder.displayName} is playing that character.`
+          : 'Nobody is playing that character yet, so only the DM can change it.',
+      })
+    default: {
+      // Exhaustive on purpose: a fifth verdict added without wording fails `npm run lint`
+      // here rather than falling through to a refusal nobody chose.
+      const unknownReason: never = verdict
+      void unknownReason
+      throw new ConvexError(CHARACTER_NOT_FOUND)
+    }
   }
-  throw new ConvexError({
-    kind: 'CharacterNotYours',
-    message: `${holder.displayName} is playing that character.`,
-  })
 }
 
 /**
@@ -317,50 +434,33 @@ export const sheet = query({
     const game = await findGameByCode(ctx, args.code)
     if (!game) return null
 
-    // Concurrent: whether this caller holds the DM code and who is sitting at the table
-    // are independent questions, exactly as in `list` above.
-    const [{ isDm }, seats] = await Promise.all([
-      resolveDmAccess(ctx, args.code, args.dmCode),
-      listSeats(ctx, game._id),
-    ])
+    const { isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
 
-    // The grant, resolved through the token choke point rather than re-decided here:
-    // `controlledCharacterIds` is built from the tokens this caller may see, so a grant
-    // written onto a DM-layer token contributes nothing and a fabricated `playerId` of a
-    // seat with no grants contributes nothing either. No seat at all is an empty set.
-    const controlled = await controlledCharacterIds(ctx, game._id, isDm, seats, args.playerId)
-
-    // The *finding* form, so every refusal is the same empty answer rather than an
-    // error dialog on somebody's screen — and, more to the point, so an unknown id,
-    // another seat's hero and an NPC are one indistinguishable outcome. Written as
-    // a null-check rather than by catching what `requireEditableCharacter` throws:
-    // a `try` wide enough to swallow every refusal is also wide enough to swallow a
-    // genuine fault and report it as "no such character".
-    const character = await findVisibleCharacter(ctx, game._id, args.characterId, isDm, controlled)
-    if (!character) return null
-
-    if (!isDm) {
-      // ⚠️ **The second gate is what keeps "a player cannot read another player's hero"
-      // true, and it is not implied by the first.** A hero belonging to somebody else is
-      // perfectly visible to `maySeeCharacter` — it is a `pc`, which is the whole of that
-      // predicate's player-facing rule — so without this the grant work above would have
-      // quietly opened every sheet at the table. There is an existing test for exactly
-      // this and it must keep passing.
-      //
-      // Claim **or** control: the character this seat is playing, or one the DM handed
-      // them. Both are checked here rather than folded into the visibility predicate,
-      // because a claim is not a visibility rule — it is who the sheet belongs to.
-      //
-      // ⚠️ `holder !== null` rather than `holder?._id === args.playerId`, which is the
-      // same comparison with one wrong answer in it: for a caller who sent no
-      // `playerId`, asking an unclaimed hero, both sides are `undefined` and the sheet
-      // ships. The seat has to exist for a claim to mean anything.
-      const holder = await findClaimHolder(ctx, character._id)
-      const claimed = holder !== null && holder._id === args.playerId
-      if (!claimed && !controlled.has(character._id)) return null
-    }
-
-    return publicSheet(character)
+    // ⚠️ **The whole rule, through the one function `updateSheet` also goes through.**
+    // This had grown its own copy — visibility, then a claim lookup, then a grant check —
+    // which was `requireEditableCharacter` term for term with `null` where the throws
+    // were, and which is why `useCharacterSheet` and `CharacterSheetEditor` justify having
+    // no read-only mode by saying the two share a gate. They share one again.
+    //
+    // Two rules, not one, and neither is implied by the other. A hero belonging to
+    // somebody else is perfectly visible to `maySeeCharacter` — it is a `pc`, which is the
+    // whole of that predicate's player-facing rule — so visibility alone would open every
+    // sheet at the table. The claim is who the sheet belongs to, which is not a visibility
+    // question and is not folded into one.
+    //
+    // `allowControl: true`, because a grant is exactly what the DM handing the party a pet
+    // is for: the creature's sheet travels to the seat holding its lead. What a grant does
+    // *not* carry is authorship — `updateSheet` passes `false`, which is the one place the
+    // two diverge.
+    const character = await findEditableCharacter(
+      ctx,
+      game,
+      args.characterId,
+      isDm,
+      args.playerId,
+      { allowControl: true },
+    )
+    return character ? publicSheet(character) : null
   },
 })
 
@@ -407,17 +507,29 @@ export const vitals = query({
     // Both sets come from the token choke point rather than being answered again here,
     // and they answer two different questions about the same board:
     //
-    // - `onBoard` is *may I be told about this creature at all* — a player hears about an
+    // - `visible` is *may I be told about this creature at all* — a player hears about an
     //   NPC only when its token is already in front of them, because otherwise the length
     //   of this array would publish how many monsters are waiting.
     // - `controlled` is *may I be told the numbers* — the DM handed this seat the party's
     //   wolf, so the wolf's hit points are theirs to spend. Built from the same visible
-    //   token set, so it can only ever upgrade a creature `onBoard` already admitted.
-    const [onBoard, controlled] = await Promise.all([
-      visibleCharacterIds(ctx, game._id, isDm),
-      controlledCharacterIds(ctx, game._id, isDm, seats, args.playerId),
-    ])
-    return await visibleVitals(ctx, game._id, isDm, onBoard, controlled)
+    //   token set, so it can only ever upgrade a creature `visible` already admitted.
+    //
+    // **One crossing rather than two, and on this query above all.** This is the
+    // health-bar subscription: it re-runs on every point of damage, for each distinct
+    // cache entry at the table. Asking the two questions separately meant two
+    // `take(MAX_TOKENS_PER_GAME)` range reads and two `maySee` passes over the same two
+    // hundred rows to produce two sets out of what is one iteration. It also makes the
+    // "controlled is a subset of visible" property ADR 0009 claims structurally true
+    // rather than a coincidence of two traversals filtering alike — see
+    // `boardCharacterAccess`.
+    const { visible, controlled } = await boardCharacterAccess(
+      ctx,
+      game._id,
+      isDm,
+      seats,
+      args.playerId,
+    )
+    return await visibleVitals(ctx, game._id, isDm, visible, controlled)
   },
 })
 
@@ -552,10 +664,11 @@ export const updateSheet = mutation({
       args.characterId,
       isDm,
       args.playerId,
-      // **Authorship, and a grant does not confer it.** Control gives a seat sight of a
-      // creature and its hit points; rewriting what the creature *is* stays with the
-      // claim holder or the DM. Lending the party a wolf is not handing them the wolf's
-      // stat block to edit, and the DM's own numbers on it are the DM's.
+      // ⚠️ **The one `false` in the codebase, and the pointer to why.** Authorship is the
+      // half a grant does not confer: control gives a seat sight of a creature and its hit
+      // points, while rewriting what the creature *is* stays with the claim holder or the
+      // DM. The five hit-point mutations below say `true` and are not each re-explained —
+      // the split is set out once, on `resolveEditableCharacter`.
       { allowControl: false },
     )
 
@@ -996,8 +1109,6 @@ export const longRest = mutation({
       args.characterId,
       isDm,
       args.playerId,
-      // A rest restores hit points, which is the half of a sheet a grant does reach —
-      // the party's pet wakes up with the party.
       { allowControl: true },
     )
     await takeLongRest(ctx, character)
@@ -1024,8 +1135,6 @@ export const setPerRest = mutation({
       args.characterId,
       isDm,
       args.playerId,
-      // Spending a once-per-rest ability is play rather than authorship, and it travels
-      // on the vitals row beside hit points for exactly that reason.
       { allowControl: true },
     )
 
@@ -1084,9 +1193,6 @@ export const adjustHp = mutation({
       args.characterId,
       isDm,
       args.playerId,
-      // ⚠️ **The headline case for the grant.** A granted pet takes damage from the
-      // player holding its lead — a grant that could not spend a hit point would be a
-      // sheet to look at, and `HpControls` would render no `−`/`+` beside it.
       { allowControl: true },
     )
 
@@ -1134,8 +1240,6 @@ export const setHp = mutation({
       args.characterId,
       isDm,
       args.playerId,
-      // The same permission as `adjustHp`, because it is the same act typed in rather
-      // than clicked. Splitting them would give one control a rule the other did not.
       { allowControl: true },
     )
 
@@ -1169,11 +1273,6 @@ export const adjustHitDice = mutation({
       args.characterId,
       isDm,
       args.playerId,
-      // Hit dice are the other half of the vitals row, spent on a rest the same way hit
-      // points are spent in a fight. A granted creature has none — `changeHitDiceRemaining`
-      // returns zero for anything that is not a `pc` — so this is a grant that reaches a
-      // path with nothing on the other side of it, and saying `true` anyway keeps the five
-      // hit-point writes one rule instead of four and an exception.
       { allowControl: true },
     )
 

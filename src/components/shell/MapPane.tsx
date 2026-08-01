@@ -55,7 +55,11 @@ export type MapPaneProps = {
  * to produce byte-identical output, because neither pane reads the width. Every prop
  * here is stable across the parent's re-renders (the game document comes from a
  * subscription, the rest from the route), so the memo actually holds rather than
- * being defeated by a fresh object. The board's own `ResizeObserver` is what makes
+ * being defeated by a fresh object. `dm` is the one that had to be made so: `useDm`
+ * returns a fresh object per render, and `Game` re-renders on every join, rename and
+ * claim because `useSeat` subscribes to the roster — so before it was memoised, one
+ * person joining reconciled the whole board and the whole panel. A drag never did,
+ * which is why this held for its stated purpose while quietly failing for another. The board's own `ResizeObserver` is what makes
  * the canvas follow the divider, and it needs no render of this component to do it.
  *
  * ⚠️ **Selection is the second piece of `GameShell` state and must not defeat that

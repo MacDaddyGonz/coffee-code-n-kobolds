@@ -33,6 +33,9 @@ import {
   MIN_SPELL_LEVEL,
   CHARACTER_GROUPS,
   CREATURE_GROUPS,
+  CREATURE_GROUP_CHOICES,
+  characterGroupValidator,
+  creatureGroupValidator,
   ROLL_MODIFIER_TOKENS,
   ROLL_PATTERN,
   SHEET_ENTRY_CATEGORIES,
@@ -2292,5 +2295,49 @@ describe('normaliseSheet carries a creature’s group', () => {
     expect([...CREATURE_GROUPS]).toEqual(['npc', 'monster'])
     expect([...CHARACTER_GROUPS]).toEqual(['character', 'npc', 'monster'])
     expect(CHARACTER_GROUPS.filter((group) => group !== 'character')).toEqual([...CREATURE_GROUPS])
+  })
+
+  /**
+   * Each list is a type and each validator is a value, and sheet.ts writes the names out
+   * twice on purpose — the convention `sheetEntryCategoryValidator` states and that the
+   * test above it enforces: "a Convex validator is a value and the list is a type, and the
+   * one test pinning the two together is cheaper than the generic that would build one
+   * from the other."
+   *
+   * These two unions had the convention and not the test. Without it the copies are free
+   * to disagree, and the direction that hurts is a group the code accepts and the *schema*
+   * refuses — a save that fails against the real deployment and passes against
+   * convex-test, which is the class of failure only `npm run test:smoke` has ever caught
+   * here. `characterGroupValidator` fails the other way and just as quietly: it is what
+   * `publicCharacterValidator` sends, so a heading missing from it makes `characters.list`
+   * throw for the whole table over one creature.
+   */
+  test('each validator admits exactly its own groups, in the same order', () => {
+    const literalsOf = (validator: unknown) =>
+      (validator as { members: { kind: string; value: unknown }[] }).members
+
+    const creature = literalsOf(creatureGroupValidator)
+    expect(creature.map((member) => member.kind)).toEqual(['literal', 'literal'])
+    expect(creature.map((member) => member.value)).toEqual([...CREATURE_GROUPS])
+
+    const character = literalsOf(characterGroupValidator)
+    expect(character.map((member) => member.kind)).toEqual(['literal', 'literal', 'literal'])
+    expect(character.map((member) => member.value)).toEqual([...CHARACTER_GROUPS])
+  })
+
+  /**
+   * The record `CreatureGroupToggle` iterates. A `Record` keyed by the union catches a
+   * *missing* group at compile time and says nothing about the order, about a key left
+   * blank, or about two groups sharing a word — and a toggle with two buttons reading the
+   * same thing is a control nobody can use.
+   */
+  test('every creature group has a button label and an example, in list order', () => {
+    expect(Object.keys(CREATURE_GROUP_CHOICES)).toEqual([...CREATURE_GROUPS])
+    for (const group of CREATURE_GROUPS) {
+      expect(CREATURE_GROUP_CHOICES[group].label.trim(), group).not.toBe('')
+      expect(CREATURE_GROUP_CHOICES[group].hint.trim(), group).not.toBe('')
+    }
+    const labels = CREATURE_GROUPS.map((group) => CREATURE_GROUP_CHOICES[group].label)
+    expect(new Set(labels).size).toBe(CREATURE_GROUPS.length)
   })
 })

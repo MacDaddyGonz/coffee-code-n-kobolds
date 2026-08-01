@@ -9,9 +9,10 @@ import { debounce } from '@/lib/throttle'
  *
  * It is `CharacterSheetEditor`'s ability grid and nothing more arbitrary than that:
  * six ability scores, each with a save column and a derived bonus beside it, do not
- * fold. The number was arrived at as the `sm:max-w-xl` of the slide-out drawer the
- * editor used to be mounted in; that drawer is gone and this is now the only place the
- * measurement is stated, which is the right number of places for it.
+ * fold. The number was arrived at as the max-width of the slide-out drawer the editor
+ * used to be mounted in; that drawer is gone, the shadcn primitive behind it has been
+ * deleted with it, and this is now the only place the measurement is stated at all —
+ * which is the right number of places for it.
  */
 export const MIN_RIGHT_PANE = 576
 

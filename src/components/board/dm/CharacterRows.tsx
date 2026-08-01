@@ -61,7 +61,17 @@ import { CHARACTER_GROUPS } from '@convex/lib/sheet'
  * one would be decoration that looked like authority. It is left off the vitals
  * subscription for the same reason and one more: `playerId` there decides whether a
  * *granted* creature's numbers arrive exactly, and the DM is already sent every number in
- * the game. Holding the code is likewise not what authorises the list: `characters.list`
+ * the game.
+ *
+ * ⚠️ **And passing it would no longer split the cache even if somebody did**, which is
+ * worth knowing before "tidying" the `null` away or adding a seat back. `vitalsArgs`
+ * drops the seat whenever a DM code is present, so this list, `useBoard`'s health bars
+ * and the DM's own `CharacterSheetView` all read one entry — and, crucially, `hp.adjust`
+ * below patches that same one. They used not to: the board passed its seat and this hook
+ * did not, so a `−5` typed here moved the row instantly and left the coin on the map
+ * waiting for the round trip.
+ *
+ * Holding the code is likewise not what authorises the list: `characters.list`
  * returns creatures only when it is given a code it verifies server-side, so a browser
  * with an invented one gets the player characters and a refusal from every write, which is
  * exactly what it should get (invariant 7).
@@ -135,8 +145,6 @@ export function useDmCharacterRows(code: string, dmCode: string) {
     }),
   }
 }
-
-export type DmCharacterRows = ReturnType<typeof useDmCharacterRows>
 
 /** The roster's loading state. */
 export function DmCharacterRowsSkeleton() {
