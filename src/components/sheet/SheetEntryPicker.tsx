@@ -79,7 +79,7 @@ export function SheetEntryPicker({
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
 
-  // `useId` rather than fixed ids, for the reason `NpcSheetFields` gives: two of
+  // `useId` rather than fixed ids, for the reason `CreatureSheetFields` gives: two of
   // these are mounted at once on a hero's sheet — one for feats and one for spells —
   // and two labels pointing at the same input is a label that focuses the wrong box.
   const fieldId = useId()

@@ -9,7 +9,11 @@ import {
 } from './classes'
 import { LIBRARY, librarySheet } from './library'
 import { RACE_KEYS, race } from './races'
-import { presetExtras, presetOf, resolveSheet } from './resolve'
+// Reached from a test file, which `corpusGuard.test.ts` excludes from its sweep on
+// purpose: the confinement rule is about production modules crossing the boundary, and
+// a test that checks `groupOf` against the corpus has to be able to see the corpus.
+import { bestiaryCategoryOf, bestiaryEntry } from './bestiary'
+import { groupOf, presetExtras, presetOf, resolveSheet } from './resolve'
 import {
   MAX_LEVEL,
   MIN_LEVEL,
@@ -26,12 +30,14 @@ import {
 } from './sheet'
 import type {
   AbilityScores,
+  NpcSheet,
   PcSheet,
   PresetOverrides,
   PresetSheet,
   SheetEntry,
   StoredSheet,
 } from './sheet'
+import type { ChallengeRating } from './creatures'
 
 // ---------------------------------------------------------------------------
 // Builders
@@ -834,5 +840,161 @@ describe('the category survives every layer of resolution', () => {
       }
     }
     expect(problems).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// groupOf — which of the DM's three headings a character sits under
+// ---------------------------------------------------------------------------
+//
+// ⚠️ **`group` is a *display* discriminator and `kind` is a *secrecy* one, and the whole
+// reason this function is allowed a safe default is that only the DM ever receives a
+// group that is not `'character'`.** A player's payload has had every creature filtered
+// out of it by `maySeeCharacter` before `groupOf` is consulted, so a wrong answer here
+// misfiles a row in the DM's selector and can never leak one. Contrast `isMonsterSheet`,
+// whose default is fail-closed because getting *it* wrong publishes a dragon.
+//
+// That is the argument for the default being safe. It is not an argument for the answers
+// being untested — a creature filed under the wrong heading is a DM who cannot find their
+// own monster — and the four stored kinds do not map onto the three groups in any way a
+// reader can guess, which is what the table below is for.
+
+/**
+ * One key from each of the corpus's three categories.
+ *
+ * ⚠️ **Hand-copied, and each one checked against `bestiaryEntry` before it is used.**
+ * A retired key resolves to `'monster'` through the tolerated-miss path, so a test whose
+ * fixture key had quietly left the corpus would go on passing for two of the three
+ * categories and would be asserting the fallback rather than the lookup. The membership
+ * check is what tells those two apart.
+ */
+const MONSTER_KEY = 'dire-wolf'
+const ENEMY_KEY = 'town-guard'
+const SOCIAL_KEY = 'innkeeper'
+
+function bestiary(entryKey: string, cr: ChallengeRating = 1): StoredSheet {
+  return { kind: 'bestiary', entryKey, cr }
+}
+
+function creature(overrides: Partial<NpcSheet> = {}): NpcSheet {
+  return { ...defaultNpcSheet(), ...overrides }
+}
+
+describe('groupOf places every stored kind under a heading', () => {
+  /**
+   * The two hero kinds and the Milestone 1 document with no sheet at all. A `preset` is a
+   * set of selections over the *player-character* library, so it is a character however
+   * it resolves; a sheet-less row predates NPCs existing, so every one of them is a hero.
+   */
+  test('a hand-built hero, a premade hero and a sheet-less document are all characters', () => {
+    expect(groupOf({ sheet: defaultPcSheet() })).toBe('character')
+    expect(groupOf({ sheet: preset() })).toBe('character')
+    expect(groupOf({})).toBe('character')
+    expect(groupOf({ sheet: undefined })).toBe('character')
+  })
+
+  /**
+   * ⚠️ **A hand-built creature is grouped by what the DM said, and by `'npc'` when they
+   * were never asked.**
+   *
+   * `defaultNpcSheet` deliberately omits the field rather than writing `'npc'` into it,
+   * so absent means *unanswered* rather than *answered npc* — which is what lets the
+   * create dialog put its own answer in without the default having to be spread over
+   * first. Both readings produce the same group today; only one of them survives a form
+   * that sets the field afterwards.
+   */
+  test('a hand-built creature reads its stored group, and defaults to npc without one', () => {
+    expect(groupOf({ sheet: creature({ group: 'monster' }) })).toBe('monster')
+    expect(groupOf({ sheet: creature({ group: 'npc' }) })).toBe('npc')
+
+    const unanswered = creature()
+    expect('group' in unanswered, 'defaultNpcSheet has started writing a group').toBe(false)
+    expect(groupOf({ sheet: unanswered })).toBe('npc')
+  })
+
+  /**
+   * ⚠️ **A linked creature is grouped by the *corpus category of the file its entry came
+   * out of*, which is a fact the character document does not carry at all.**
+   *
+   * The category is declared on the file rather than on the entry, so this is the one
+   * group answer that cannot be read off the row — which is why `groupOf` lives in
+   * `lib/resolve.ts` beside the corpus rather than in `lib/sheet.ts` beside every other
+   * sheet question, and why the client is sent the answer instead of computing it.
+   *
+   * Two of the three categories collapse onto `'monster'`: a town guard is an `enemy` in
+   * the corpus and a monster in the DM's selector, because the selector's three headings
+   * are about how the DM *uses* a creature rather than about which file it was typed
+   * into.
+   */
+  test('a linked creature is grouped by its corpus category, all three of them', () => {
+    const cases: [string, string, 'npc' | 'monster'][] = [
+      [MONSTER_KEY, 'monster', 'monster'],
+      [ENEMY_KEY, 'enemy', 'monster'],
+      [SOCIAL_KEY, 'social', 'npc'],
+    ]
+
+    for (const [key, category, group] of cases) {
+      // Anti-vacuity, both halves: the entry is really in the corpus, and it is really in
+      // the category this case claims. Without these a retired or refiled key would make
+      // the assertion below pass through the fallback.
+      expect(bestiaryEntry(key), `${key} is no longer in the bestiary`).toBeDefined()
+      expect(bestiaryCategoryOf(key), `${key} has moved category`).toBe(category)
+
+      expect(groupOf({ sheet: bestiary(key) }), key).toBe(group)
+    }
+
+    // And the two monster categories genuinely answer the same thing while the social one
+    // does not, which is the distinction the headings exist for.
+    expect(groupOf({ sheet: bestiary(MONSTER_KEY) })).toBe(
+      groupOf({ sheet: bestiary(ENEMY_KEY) }),
+    )
+    expect(groupOf({ sheet: bestiary(SOCIAL_KEY) })).not.toBe(
+      groupOf({ sheet: bestiary(MONSTER_KEY) }),
+    )
+  })
+
+  /**
+   * A retired key groups as a monster rather than throwing, exactly as `resolveBestiary`
+   * keeps a retired creature readable: this runs inside `characters.list`, so a throw
+   * would blank the DM's whole panel over one creature nobody can look up.
+   *
+   * The prototype-chain names are here for `lib/library/index.ts`'s reason — a plain
+   * object lookup answers truthily for `__proto__` and `toString`, and `bestiaryCategoryOf`
+   * is a `Map` precisely so that the whole class of bug is unexpressible.
+   */
+  test('a retired or invented entry key groups as a monster and does not throw', () => {
+    for (const key of ['no-such-beast', 'Dire-Wolf', '__proto__', 'toString', '']) {
+      expect(bestiaryCategoryOf(key), `${key} is somehow in the corpus`).toBeUndefined()
+      expect(groupOf({ sheet: bestiary(key) }), key).toBe('monster')
+    }
+  })
+
+  /**
+   * ⚠️ **The `never` arm, which is the guard rather than a formality.** A fifth stored
+   * kind fails `npm run lint` on the exhaustive switch — that is where a new member is
+   * meant to be caught — and this asserts the runtime half, which is what a deployment
+   * reading a document written by a newer one actually hits.
+   *
+   * `'monster'` is the right answer for the unknown case here for the opposite reason to
+   * `isMonsterSheet`'s: nothing is being guarded, both creature groups are DM-only, so
+   * the default is chosen to keep an unrecognised row *out* of the Characters heading,
+   * where it would be the one place a group answer could look like a hero.
+   */
+  test('a kind this deployment has never heard of groups as a monster', () => {
+    expect(groupOf({ sheet: { kind: 'chimera' } as unknown as StoredSheet })).toBe('monster')
+  })
+
+  /** Every answer is one of the three the validator declares, and all three are reachable. */
+  test('the answers are exactly the three declared groups', () => {
+    const answers = new Set([
+      groupOf({ sheet: defaultPcSheet() }),
+      groupOf({ sheet: preset() }),
+      groupOf({}),
+      groupOf({ sheet: creature() }),
+      groupOf({ sheet: creature({ group: 'monster' }) }),
+      groupOf({ sheet: bestiary(MONSTER_KEY) }),
+      groupOf({ sheet: bestiary(SOCIAL_KEY) }),
+    ])
+    expect([...answers].sort()).toEqual(['character', 'monster', 'npc'])
   })
 })

@@ -9,9 +9,11 @@ import { cn } from '@/lib/utils'
  * `CharacterSheetEditor` is written as the body and footer of a *fixed-height* flex
  * column — its fields claim `flex-1` and scroll inside it, and Save is pinned to the
  * bottom, because a Save button below the fold of a long form is the failure that
- * arrangement exists to prevent. Until now that contract was invisible: the only
- * thing supplying it was a string of Tailwind classes on the drawer's `SheetContent`,
- * so the editor worked by being lucky about where it was mounted. This is the same
+ * arrangement exists to prevent. That contract used to be invisible: the only thing
+ * supplying it was a string of Tailwind classes on the slide-out drawer the editor
+ * happened to be mounted in, so it worked by being lucky about its surroundings. The
+ * drawer has since gone, which is the point rather than a footnote — the contract
+ * outlived the component that was accidentally honouring it. This is the same
  * contract with a name on it, and every tab gets it whether it needs it or not so
  * that the one that does cannot be the odd one out.
  *

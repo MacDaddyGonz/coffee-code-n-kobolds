@@ -41,7 +41,11 @@ export function CharacterSheetView({
       playerId,
       dmCode,
     })
-  const vitals = useVitals(code, dmCode)
+  // The seat, not just the game: a creature this player has been granted control of
+  // comes back with exact hit points rather than a band, and `HpControls` offers its
+  // `−`/`+` only on the exact form. The same three arguments reach `useHpActions`
+  // below, whose optimistic update has to name this very cache entry.
+  const vitals = useVitals(code, dmCode, playerId)
   const hp = useHpActions({ code, dmCode, playerId })
 
   // A toast rather than a line in the panel: by the time a refused `−5` is reported
@@ -75,12 +79,18 @@ export function CharacterSheetView({
     return (
       <div className="text-muted-foreground p-4">
         {/* Every refusal reads the same here because every refusal *is* the same on
-            the wire — an unknown id, another seat's hero and any NPC all come back as
-            null so that this query cannot be used to find out which. An NPC's
-            existence is itself the spoiler (ADR 0004). */}
+            the wire — an unknown id, another seat's hero, an ungranted creature and any
+            creature at all come back as null so that this query cannot be used to find
+            out which. A creature's existence is itself the spoiler (ADR 0004).
+
+            ⚠️ **The copy needed a second clause once control began granting sight.** It
+            named only the claim reason — *somebody else has picked it up* — and that is
+            no longer the common case: a player who selects a creature the DM has not
+            handed them lands here too, and the old sentence sent them to ask a player who
+            does not exist. Both reasons now, still without saying which. */}
         <p>
-          That character is not available to you. If somebody else has picked it up, ask them or
-          whoever is running the game.
+          That sheet is not yours to read. Somebody else may have picked the character up, or the
+          DM may not have handed you the creature — either way, ask whoever is running the game.
         </p>
       </div>
     )

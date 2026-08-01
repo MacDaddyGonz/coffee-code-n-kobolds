@@ -26,6 +26,15 @@ export type BoardProps = {
   /** The character this seat is playing, which decides which token it may drag. */
   myCharacterId: Id<'characters'> | null
   /**
+   * The shell's selection, which the board reads rather than owns — see
+   * `useTokenSelection`. A primitive and two stable callbacks, never an object:
+   * `MapPane` between here and `GameShell` is memoised against a pane width that
+   * changes sixty times a second, and a fresh object would defeat it.
+   */
+  selectedTokenId: Id<'tokens'> | null
+  onSelectToken: (tokenId: Id<'tokens'>) => void
+  onClearSelection: () => void
+  /**
    * Merged over the base classes, which no longer include an edge of their own. The
    * board is the contents of a pane rather than a card floating on a page, so the
    * border and the corner belong to the shell that owns the pane — drawing one here
@@ -54,8 +63,25 @@ export type BoardProps = {
  * The hit point target comes last of the three for the same reason and reads the
  * *smoothed* array, because it anchors something to a coin rather than deciding
  * what a key press moves.
+ *
+ * ⚠️ **Selection is no longer the board's to own.** It lives in `GameShell`, because
+ * the DM's sheet selector writes it too and the right-hand panel reads it, and the
+ * board is handed the id and the two setters. The visible consequence is that the id
+ * can name a token this scene does not draw — a creature picked from the selector
+ * with its token elsewhere or nowhere. **The board then draws no ring while the
+ * panel still shows the sheet**, which is intended: the panel is what says which
+ * creature is being talked about. `useTokenSelection` carries the long version.
  */
-export function Board({ code, dm, playerId, myCharacterId, className }: BoardProps) {
+export function Board({
+  code,
+  dm,
+  playerId,
+  myCharacterId,
+  selectedTokenId,
+  onSelectToken,
+  onClearSelection,
+  className,
+}: BoardProps) {
   // The board's outer element, which is what "does the map have focus?" means for
   // the keyboard, and how the smoothing loop finds its way to the Konva stage. The
   // focusable container is `BoardStage`'s own div inside it, so both questions are
@@ -74,7 +100,12 @@ export function Board({ code, dm, playerId, myCharacterId, className }: BoardPro
   // — to fit a map to and to zoom about the centre of — so it takes the element
   // rather than being told, which is one measurement and one piece of state.
   const camera = useBoardCamera({ code, sceneId: scene?._id ?? null, image, containerRef })
-  const selection = useTokenSelection(board.tokens)
+  const selection = useTokenSelection(
+    board.tokens,
+    selectedTokenId,
+    onSelectToken,
+    onClearSelection,
+  )
 
   const move = useTokenMove({
     code,
@@ -102,11 +133,12 @@ export function Board({ code, dm, playerId, myCharacterId, className }: BoardPro
    * Selecting a token is how you pick it up to move it, and that is not a request
    * to edit its hit points: the editor used to appear under a creature the moment
    * you touched it, over the squares you were dragging towards. Worse, it made the
-   * editor unreachable for a case that is entirely legitimate — `canEditHp` has no
-   * layer clause where `canMove` requires the player layer, so a hero the DM has
-   * moved onto the DM layer could not be selected by their own player and so could
-   * not have their hit points adjusted from the board at all. Asking the right
-   * question closes that without a special case for it.
+   * editor unreachable for a case that is entirely legitimate — hit points follow the
+   * character, so `canEditHp` is true for the player playing it, where `canMove` asks
+   * whether this seat is one of the token's controllers. A hero the DM has moved onto
+   * their own layer is therefore one its player may heal and may not drag, and while
+   * the editor hung off the selection they could do neither. Asking the right question
+   * closes that without a special case for it.
    *
    * Handed the **smoothed** array, deliberately. The board before interpolation is
    * the same creature but not the same position, so anchoring to it would leave the

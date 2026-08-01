@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { useId, useRef } from 'react'
+import { useCallback, useId, useRef, useState } from 'react'
 
 import { GameHeader } from '@/components/shell/GameHeader'
 import { MapPane } from '@/components/shell/MapPane'
@@ -49,6 +49,15 @@ export type GameShellProps = {
  * and push* — and the symptom appears levels away from the cause, which is why each
  * one is commented with what specifically breaks. They are: the body row below,
  * `MapPane`, the `<aside>`, the `Tabs` root, each `TabsContent`, and `TabPane`.
+ *
+ * ⚠️ **Selection lives here, and it is passed down as primitives — never as an
+ * object.** Both panes are `memo`'d, and the memos are load-bearing: the divider's
+ * width is state on this component too, and a drag sets it sixty times a second
+ * while neither pane reads it. A `{ tokenId, characterId }` prop would be a fresh
+ * object on every one of those frames, defeating both memos at once and reconciling
+ * the whole board and the whole panel to produce byte-identical output. The symptom
+ * is a slow divider and there is nothing in the profiler pointing at the cause, so
+ * the rule is written down in three places rather than discovered again.
  */
 export function GameShell({
   code,
@@ -71,6 +80,57 @@ export function GameShell({
   // element and a hard-coded id is a duplicate waiting for the second shell on a page.
   const paneId = useId()
 
+  /**
+   * What the table is currently talking about, in two pieces.
+   *
+   * **A token id alone is not enough**, which is the whole reason there are two.
+   * A character routinely has no token at all — the bestiary shelf creates a
+   * creature and never places one, and so does the DM's new-character form — so
+   * choosing such a row with only a token id to write would leave the *previous*
+   * token selected and the previous creature on screen, which is exactly the
+   * confusion lifting selection up here was meant to end.
+   *
+   * They are two `useState` calls rather than one object for the memo reason in the
+   * comment above: what crosses the pane boundary has to be primitive, and building
+   * an object here to take apart at the other end would be the same fresh identity
+   * with an extra step.
+   */
+  const [selectedTokenId, setSelectedTokenId] = useState<Id<'tokens'> | null>(null)
+  const [selectedCharacterId, setSelectedCharacterId] = useState<Id<'characters'> | null>(null)
+
+  /**
+   * The three ways the selection changes. All `useCallback([])` — the setters are
+   * stable, so these are too, and a pane's memo sees the same three functions for
+   * the life of the game.
+   */
+
+  // A click on a coin. Clearing the direct pick is what makes the map able to take
+  // over from the selector: without it, a creature chosen from the DM's list would
+  // keep winning `sheetFocusOf`'s first rule and the next click on the board would
+  // move a ring while the panel went on showing the old sheet.
+  const selectToken = useCallback((tokenId: Id<'tokens'>) => {
+    setSelectedTokenId(tokenId)
+    setSelectedCharacterId(null)
+  }, [])
+
+  // A choice from the DM's sheet selector. The token is whatever that creature has
+  // on this scene, or null — and null is a real answer, not a missing one, so the
+  // caller passes it explicitly rather than leaving the argument off.
+  const selectCharacter = useCallback(
+    (characterId: Id<'characters'>, tokenId: Id<'tokens'> | null) => {
+      setSelectedCharacterId(characterId)
+      setSelectedTokenId(tokenId)
+    },
+    [],
+  )
+
+  // Both, always. Half a selection is the state that produces a panel pointing at
+  // one creature and a ring drawn around another.
+  const clearSelection = useCallback(() => {
+    setSelectedTokenId(null)
+    setSelectedCharacterId(null)
+  }, [])
+
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       <GameHeader
@@ -92,6 +152,9 @@ export function GameShell({
           dm={dm}
           playerId={playerId}
           characterId={characterId}
+          selectedTokenId={selectedTokenId}
+          onSelectToken={selectToken}
+          onClearSelection={clearSelection}
         />
 
         {/* ⚠️ A sibling of the map pane, never a child of it. `useBoardKeys` gates its
@@ -124,6 +187,11 @@ export function GameShell({
             dm={dm}
             playerId={playerId}
             characterId={characterId}
+            selectedTokenId={selectedTokenId}
+            selectedCharacterId={selectedCharacterId}
+            onSelectToken={selectToken}
+            onSelectCharacter={selectCharacter}
+            onClearSelection={clearSelection}
             onRenameSeat={onRenameSeat}
             onLeaveSeat={onLeaveSeat}
           />

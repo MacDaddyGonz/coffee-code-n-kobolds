@@ -59,7 +59,7 @@ export type BestiaryPickerProps = {
   trigger?: ReactNode
   /**
    * **Absent means the picker adds the creature itself** — one `characters.create` and a
-   * toast, which is what the NPCs panel wants.
+   * toast, which is what the DM's sheet list wants.
    *
    * Present means it only *reports* the choice, which is what the token dialog wants: that
    * dialog already creates a character and then a token in two transactions, in that order,
@@ -76,7 +76,7 @@ export type BestiaryPickerProps = {
  *
  * **Built to `SheetEntryPicker`'s recipe**, deliberately and down to the class strings: a
  * dialog, a strip of tabs, a search box and a scrolling column of `<button>` rows with
- * badges. That picker's header explains why one component serves feats, spells and NPC
+ * badges. That picker's header explains why one component serves feats, spells and creature
  * actions; this is a second dialog rather than a fifth caller of it because what a *row*
  * means here is different — a creature is not a line on a sheet, it is a document to be
  * created — but the shape a DM's hands already know is the same, and there is no reason for
@@ -102,9 +102,10 @@ export function BestiaryPicker({ code, dmCode, trigger, onPick }: BestiaryPicker
   const createCharacter = useMutation(api.characters.create)
   const action = useLobbyAction()
 
-  // `useId` rather than fixed ids, for the reason `NpcSheetFields` gives: two of these can
-  // be mounted at once — the NPCs panel is over the board while the token dialog is open on
-  // top of it — and two labels pointing at one input is a label that focuses the wrong box.
+  // `useId` rather than fixed ids, for the reason `CreatureSheetFields` gives: two of these
+  // can be mounted at once — the DM's panel is beside the board while the token dialog is
+  // open over it — and two labels pointing at one input is a label that focuses the wrong
+  // box.
   const fieldId = useId()
 
   const [open, setOpen] = useState(false)
@@ -115,11 +116,10 @@ export function BestiaryPicker({ code, dmCode, trigger, onPick }: BestiaryPicker
   const [tag, setTag] = useState<TagKey | null>(null)
   const [chosen, setChosen] = useState<{ entryKey: string; cr: ChallengeRating } | null>(null)
 
-  // ⚠️ **Subscribed only while the dialog is open**, which is the pattern
-  // `CharacterSheetDrawer` sets and `CreatureSheetView` follows for its comparison. The NPCs
-  // tab renders this picker in a card header, so without the skip merely selecting that tab
-  // fetches every summary on the shelf and builds a row element for each — about 130 of
-  // both — for a dialog nobody has opened.
+  // ⚠️ **Subscribed only while the dialog is open**, the pattern `CreatureSheetView`
+  // follows for its comparison. The DM's Sheets tab renders this picker in a card header,
+  // so without the skip merely selecting that tab fetches every summary on the shelf and
+  // builds a row element for each — about 130 of both — for a dialog nobody has opened.
   const index = useQuery(api.bestiary.index, open ? { code, dmCode } : 'skip')
 
   /**

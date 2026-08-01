@@ -121,6 +121,51 @@ entry.
 `Athletics (STR)` — rather than grouped under ability headings. The grouping made a reader learn
 the grouping before they could find a skill; the annotation answers the same question in place.
 
+#### Seats, sheets and control — 2026-08-01 — [ADR 0009](adr/0009-who-plays-what-and-what-control-grants.md)
+
+Three amendments, and **none of them is a change to the rule set** — which is why, like the entry
+above, they are stated apart from the Milestone 4 one. Nothing was added to the *Included* list and
+nothing was lifted from the *Excluded* list. Two of these correct a description of the **screen**
+and one records a consequence of [ADR 0002](adr/0002-defer-user-accounts.md) that the original text
+could not have anticipated, because it assumed accounts. Nothing new is adjudicated, evaluated or
+rolled.
+
+**"Can only interact with and move their assigned character token" — widened, one deliberate act at
+a time.** *Player mode* above says a player may move their own character's token and nothing else.
+That is still the **default**, and it is still what a player gets without the DM doing anything. But
+the DM may now hand any token to any seats, and a granted seat may move that token **and read the
+sheet behind it, including its exact hit points**. The wolf the party is fighting alongside is the
+case this exists for: a pet a player cannot damage is a sheet to look at. Two limits keep this from
+being a hole rather than a feature. The grant is of the **token**, so a grant on a DM-layer token
+shows a player nothing at all — the coin is absent from their board and the sheet is absent with it.
+And it grants **sight and hit points, not authorship**: a granted creature is not a stat block a
+player may rewrite. Everything the DM has *not* handed over is refused exactly as before, by the
+same predicate in the same module.
+
+**"When logged in, users can … Create a 'Character' (or many characters)" — in this version the DM
+creates and players claim.** *Accounts and games* above describes character creation as something a
+logged-in person does with their own characters, which presumes the accounts ADR 0002 declined. With
+no accounts, the question of who may create one had to be answered some other way, and the answer is
+the DM: `characters.create` requires the DM code on every path, for heroes, NPCs and monsters alike.
+A player picks up an unclaimed character from the table instead. **This is a further consequence of
+ADR 0002 rather than a new decision** — a character still belongs to the game and not to an
+identity, the pointer still runs seat → character, and deleting every seat still leaves the
+characters standing for somebody else to claim. Only the typing moved. A character may additionally
+be **reserved** by the DM, which means absent from every player's payload rather than greyed out in
+it: a disabled row still publishes a name, and for a character built for a player who has not
+arrived yet, the name is the spoiler.
+
+**The DM panel's five-tab list — no longer that arrangement.** *DM mode* above describes a tabbed
+panel of *All player character sheets*, *All NPC character sheets*, *Token list*, *Modal image
+library* and *Background music*. The first two were two views of one list and are now a single
+selector, grouped into **Characters, NPCs and Monsters**, at the top of the DM's *Sheets* tab beside
+the sheet it selects — with all three creation routes above it. The remaining three are unbuilt and
+belong to the game editor, so the *DM tools* tab currently holds the map controls and nothing else.
+**Everything the list said the DM can do, the DM can still do**; what changed is that the sheets are
+no longer inside a tab named for the DM's plumbing. One further split falls out of the same
+correction: **the DM does not play a character**, so where a player sees a *Character* tab the DM
+sees the *Sheets* tab instead of it, not as well.
+
 ## Accounts and games
 
 - Users create an account by providing an email address.

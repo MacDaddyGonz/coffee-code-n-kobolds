@@ -85,12 +85,40 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    | Tables | The only module allowed to read them | The predicate |
    | --- | --- | --- |
    | `tokens`, `tokenPositions` | `convex/lib/board.ts` | `maySee(token, isDm)` |
-   | `characters`, `characterVitals` | `convex/lib/characters.ts` | `maySeeCharacter(character, isDm)` |
+   | `characters`, `characterVitals` | `convex/lib/characters.ts` | `maySeeCharacter(character, isDm, controlled?)` |
 
    `isDm` comes from `resolveDmAccess` in `convex/lib/games.ts` in both cases — never `players.isDm`
    (invariant 7). `leakGuard.test.ts` greps every Convex source and fails on a read outside the
    declared reader; `board.test.ts` and `vitals.test.ts` scan real player payloads for a secret,
    each with a positive control so the scan cannot pass on an empty fixture.
+
+   **`maySeeCharacter` has a third argument now, and it is a second door rather than a hole.** A DM
+   who hands the party a pet has decided those players may read its sheet, so `controlled` — the
+   characters standing on tokens *this seat controls* — opens exactly those rows and nothing else.
+   Three properties hold it in place:
+
+   - **Optional, and absent means no grants.** Fail-closed by construction rather than by
+     convention. `claim`, `assign` and `rename` pass nothing deliberately, which is how each of them
+     says a grant must not widen it; adding the argument "for consistency" changes what all three
+     mean.
+   - **Composed with the existing rule, never substituted for it.** Both sets come out of
+     `boardCharacterAccess` in `convex/lib/board.ts` — **the** crossing between the two choke
+     points, in **one pass** over the board, handing back `{ visible, controlled }`. A `Set` of
+     character ids leaves, never a `Doc<'tokens'>`. One pass is what makes the composition
+     structural rather than coincidental: an id can only enter `controlled` on an iteration that
+     already put it in `visible`, so a grant on a DM-layer token contributes nothing to a player —
+     `visibleTokens` dropped that row before the loop began. Sight follows the token, and there is
+     deliberately no second layer test inside it. `playerId === undefined` gives the empty set.
+     (ADR 0005 calls the sight half `visibleCharacterIds`; that function is gone, because asking a
+     second question about the same two hundred rows should not read them twice.)
+   - **It carries hit points and stops at authorship.** `visibleVitals` sends a controller the
+     `exact` variant rather than a band, and `requireEditableCharacter` takes an explicit
+     `allowControl` — true on the five hit-point paths, false on `updateSheet`. A granted pet takes
+     damage; a granted monster is not a stat block a player rewrites.
+
+   See [ADR 0009](docs/adr/0009-who-plays-what-and-what-control-grants.md). A **second, unrelated**
+   reason to withhold a character row now exists — `isReservedCharacter` — and it is `&&`-ed at the
+   call site rather than folded into either predicate, for the reasons that ADR gives.
 
    **Know which shape you have before picking a tool.** Milestone 3 has one of each, and they are
    not interchangeable — see [ADR 0005](docs/adr/0005-character-sheets-and-hit-point-secrecy.md):
@@ -162,6 +190,22 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    field-by-field rebuild then has to agree about and which `board-smoke.mjs` reports as
    `present on one side only`. See [ADR 0008](docs/adr/0008-one-shell-and-what-a-sheet-entry-is.md).
 
+   **There is a third union on this type, and knowing why its default is safe is the point of
+   mentioning it.** `CharacterGroup` — `character | npc | monster` — decides which heading the DM's
+   sheet selector prints a row under, and `groupOf` in `convex/lib/resolve.ts` is the one place it
+   is answered. That is **three mechanical refusals** on this type now, because `groupOf` has a
+   `never` arm too, and the renderer iterates `CHARACTER_GROUPS` through a `Record` rather than
+   naming three sections in JSX for the same reason `rollShapeOf`'s does.
+
+   ⚠️ **But `CharacterGroup` is a display discriminator and `isMonsterSheet` is a security one, and
+   they must not be merged.** Both values `groupOf` can return for a creature are DM-only — a player
+   receives neither, because `maySeeCharacter` refused the whole row before anybody asked which
+   heading it went under — so a wrong answer misfiles a row and can never publish one. That is why
+   an unanswered hand-built sheet may default to `'npc'` and a retired entry key may fall back to
+   `'monster'` rather than throwing inside the query that paints the DM's whole panel.
+   `isMonsterSheet` defaults to `true` for the opposite reason: getting *that* one wrong publishes a
+   dragon. Do not copy this one's tolerance across to that one.
+
 ### Threat model — what the invariants above are for, and where the line is
 
 The audience is a small group of trusted colleagues. That **scopes** the invariants rather than
@@ -176,14 +220,32 @@ never "hide" one in the browser instead. Free things do not get weighed against 
 **Expensive machinery to close the residual holes does not get built.** A `playerId` is routing and
 not identity (invariant 7), so a player with the network tab open can still pass another seat's id
 and move a token that is not theirs. Closing that needs real user accounts, which
-[ADR 0002](docs/adr/0002-defer-user-accounts.md) has now declined twice —
+[ADR 0002](docs/adr/0002-defer-user-accounts.md) has now declined four times —
 [ADR 0004](docs/adr/0004-board-authorisation-and-layers.md) records why advisory enforcement is the
 whole of what this table wants. Server-side refusals that stop a misclick are worth having and are
 not claimed to be more than that.
 
+⚠️ **One sentence that used to sit here is no longer true, and it is sharpened rather than
+softened.** This section used to say that the residual is acceptable because a refusal *guarding a
+secret* keys off the DM code alone, so nothing behind one is reachable by passing somebody else's
+seat id. Since control grants sight ([ADR 0009](docs/adr/0009-who-plays-what-and-what-control-grants.md)),
+a grant is a **second door onto a secret** — a granted seat receives that creature's sheet and its
+exact hit points. So the residual now reaches a monster's stat block, not only a rude shove of a
+hero everybody can already see.
+
+State the change precisely, because both of the sloppy readings are wrong. The **layer filter still
+keys off the DM code alone**: `maySee` consults nothing else and must not. What widened is one
+predicate, by exactly one act, and that act has an author — the DM ticked a box. Nothing ungranted
+moved, a grant on a DM-layer token is inert, and `controlledCharacterIds` returns the empty set for
+a caller with no seat. **The line moved by one deliberate act, not by a relaxation**, and it is
+written into `requireMovableToken` and `requireEditableCharacter` as well as here so the next reader
+does not have to discover it.
+
 The line: **not sending a secret is nearly free, so it is required; proving who is asking is not, so
-it is out of scope.** Read this as licence to ship DM data to players and you have inverted it. What
-would move the line is an audience, not a feature — the game being played outside the trusted group.
+it is out of scope.** That still holds exactly as written — a secret the DM has *not* published is
+still not sent, and never hidden in the browser instead. Read this as licence to ship DM data to
+players and you have inverted it. What would move the line is an audience, not a feature — the game
+being played outside the trusted group.
 
 ## Rules scope
 
@@ -233,6 +295,14 @@ rolled. The two amendments in [docs/requirements.md](docs/requirements.md) recor
 *screen* — the sheet and DM panels stop being slide-outs — and a clarification of what a sheet item
 is. See [ADR 0008](docs/adr/0008-one-shell-and-what-a-sheet-entry-is.md).
 
+**Seats, sheets and control lifted none either, and it is now three milestones in a row.** Its three
+amendments are about the *screen* (the DM's tab list is a selector grouped into Characters, NPCs and
+Monsters), about *who creates a character* (the DM does, and players claim — a consequence of
+ADR 0002 rather than a new decision), and about *which tokens a player may move* (their own, plus
+anything the DM has granted them). Nothing was added to the Included list, nothing was lifted from
+the Excluded list, and nothing new is adjudicated, evaluated or rolled. A `CharacterGroup` is a
+heading, and a grant is a permission — neither is a rule.
+
 ## Commands
 
 ```powershell
@@ -252,7 +322,10 @@ does genuine round trips against the dev deployment (a real upload URL, a real P
 real float64s through the position table), so that class of failure surfaces here rather than in
 front of the group. It needs `.env.local` (or `VITE_CONVEX_URL`), which `npm run dev:backend`
 writes, and it creates a throwaway game each run, deleting the scene and tokens it made on the way
-out — the game document itself stays, because there is no delete API for one before Milestone 7.
+out — the game document itself stays, because there is no delete API for one until the game-editor
+and admin milestone. (`scripts/board-smoke.mjs` still prints the old number in that line; it is one
+of a handful of source comments naming a milestone by number, which the roadmap's numbering note
+says get corrected as those files are touched.)
 
 **`npm run dev:backend` is needed whenever you are changing anything under `convex/`** — it watches
 those files and pushes them to the dev deployment. It also writes `.env.local`, which the frontend

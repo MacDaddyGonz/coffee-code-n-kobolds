@@ -1,6 +1,7 @@
 import { ConvexError, v } from 'convex/values'
 
 import { mutation, query } from './_generated/server'
+import { revokeControlForSeat } from './lib/board'
 import { playerCharacterNames } from './lib/characters'
 import { nameKeyFor } from './lib/codes'
 import { requireDisplayName } from './lib/names'
@@ -64,8 +65,14 @@ export const list = query({
       // straight to `characters.sheet`, which is the one query that would refuse it,
       // rather than to a screen that renders it. Unreachable today, because `claim`
       // and `assign` both refuse an NPC; the projection filtering as one decision
-      // rather than two is what keeps it unreachable if Milestone 7 changes who may
-      // hold what.
+      // rather than two is what keeps it unreachable if a later milestone changes who
+      // may hold what.
+      //
+      // ⚠️ **This filter now withholds a second thing and the sentence above is only
+      // half of it**: `playerCharacterNames` also drops a *reserved* character, which
+      // is a hero and which a seat therefore could hold. That state is unreachable too
+      // — `setReserved` refuses a held character and `assign` clears the flag — but it
+      // is unreachable by a different argument, so both are worth having.
       const name = seat.characterId ? nameById.get(seat.characterId) ?? null : null
       return {
         _id: seat._id,
@@ -132,6 +139,11 @@ export const rename = mutation({
  * Not gated on the DM code, and deliberately so: a seat is identified by a
  * display name anyone with the join code can type, so pretending removal is
  * privileged would be theatre. The DM strip calls this for other seats.
+ *
+ * The grants the DM had written for this seat go with it, which is the same class of
+ * repair `detachCharacterFromTokens` performs when a character is deleted: the pointer
+ * runs token → seat, so the token is what has to be mended, and the mending lives in
+ * lib/board.ts because that is the only module allowed to write that table.
  */
 export const leave = mutation({
   args: { code: v.string(), playerId: v.id('players') },
@@ -139,6 +151,10 @@ export const leave = mutation({
   handler: async (ctx, args) => {
     const game = await getGameByCode(ctx, args.code)
     const seat = await getSeatInGame(ctx, game._id, args.playerId)
+    // Before the delete, so no ordering of failures can leave a game holding a grant
+    // for a seat that has gone. Seat ids are never reused, so the residue would
+    // authorise nobody — it would simply be a row the DM's dialog cannot name.
+    await revokeControlForSeat(ctx, game._id, seat._id)
     await ctx.db.delete('players', seat._id)
     return null
   },

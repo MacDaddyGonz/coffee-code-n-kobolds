@@ -1,15 +1,20 @@
 import type { ReactElement } from 'react'
-import { memo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
+import { useQuery } from 'convex/react'
 
 import { TabPane } from '@/components/shell/TabPane'
 import { DmToolsTab } from '@/components/shell/tabs/DmToolsTab'
 import { FeedTab } from '@/components/shell/tabs/FeedTab'
 import { SettingsTab } from '@/components/shell/tabs/SettingsTab'
 import { SheetTab } from '@/components/shell/tabs/SheetTab'
+import { SheetsTab } from '@/components/shell/tabs/SheetsTab'
 import { TableTab } from '@/components/shell/tabs/TableTab'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { tokensArgs } from '@/hooks/useBoard'
 import type { Dm } from '@/hooks/useDm'
 import type { PublicGame } from '@/hooks/useSeat'
+import { sheetFocusOf } from '@/lib/sheetFocus'
+import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 
 type TabValue = 'feed' | 'sheet' | 'table' | 'dm' | 'settings'
@@ -19,7 +24,19 @@ export type RightPaneProps = {
   game: PublicGame
   dm: Dm
   playerId: Id<'players'>
+  /** The character this seat is playing, or null. Not necessarily the one on screen. */
   characterId: Id<'characters'> | null
+  /**
+   * The shell's selection and the three ways to change it. ⚠️ **Primitives and
+   * stable callbacks, never a selection object** — this component is memoised
+   * against a pane width that changes sixty times a second; see the memo note below
+   * and the longer one in `GameShell`.
+   */
+  selectedTokenId: Id<'tokens'> | null
+  selectedCharacterId: Id<'characters'> | null
+  onSelectToken: (tokenId: Id<'tokens'>) => void
+  onSelectCharacter: (characterId: Id<'characters'>, tokenId: Id<'tokens'> | null) => void
+  onClearSelection: () => void
   onRenameSeat: (displayName: string) => Promise<void>
   onLeaveSeat: () => Promise<void>
 }
@@ -35,7 +52,21 @@ export type RightPaneProps = {
  * same from the other direction. Radix would happily hold this state; the point is
  * that something else needs to be able to set it.
  *
- * ⚠️ **The Character tab is force-mounted and nothing else is, and that asymmetry is
+ * ⚠️ **The second tab is split by role, and it is *instead of* rather than *as well
+ * as*.** A player gets **Character** — their own sheet, and whatever they have been
+ * granted. The DM gets **Sheets** — every creature in the game, with the selector and
+ * the three creation routes. The DM does not play a character (`docs/roadmap.md`'s
+ * vocabulary table is explicit), so a Character tab on their strip is a tab offering
+ * something they cannot have, which is exactly where the old *Pick a character* button
+ * in the DM's sheet panel came from.
+ *
+ * **Both keep the tab value `sheet`**, deliberately, and only the trigger's label and
+ * the mounted component differ. The force-mount arrangement below is written against
+ * that one value; two values would be two panels to force-mount, two `data-state`
+ * selectors and a stored tab that means different things to different people. The
+ * split is a branch in one place rather than a second tab.
+ *
+ * ⚠️ **The sheet tab is force-mounted and nothing else is, and that asymmetry is
  * the whole of the thinking here.** Radix unmounts an inactive tab, which is right for
  * every other one: the DM tools tab holds a drawer per character row and the bestiary
  * picker, and those genuinely should go away with the tab. But
@@ -69,6 +100,15 @@ export type RightPaneProps = {
  * with both of its entry lists and every row in them — to produce exactly what was
  * there before. Nothing in here reads the width. Every prop is stable across the
  * parent's re-renders, so the memo holds.
+ *
+ * ⚠️ **Selection is the second piece of `GameShell` state and arrives as primitives
+ * for exactly that reason.** Two ids and three `useCallback([])` handlers: the ids
+ * change only when the selection genuinely does, and the handlers never change. A
+ * single `{ tokenId, characterId }` prop would be a new object on every frame of a
+ * divider drag and would defeat this memo entirely — and the symptom, a panel
+ * reconciling sixty times a second, points at nothing in particular in a profiler.
+ * The `SheetFocus` built below is an object and is deliberately built *inside* the
+ * boundary, where a fresh identity per render costs nothing.
  */
 export const RightPane = memo(function RightPane({
   code,
@@ -76,12 +116,87 @@ export const RightPane = memo(function RightPane({
   dm,
   playerId,
   characterId,
+  selectedTokenId,
+  selectedCharacterId,
+  // ⚠️ `onSelectToken` is on the props type above and is deliberately *not*
+  // destructured. Every selection this pane makes names a creature — the DM's
+  // selector calls `onSelectCharacter` with the token that creature happens to have —
+  // and picking a bare token is the map's gesture, not a panel's. So it is **reserved
+  // for a future reader**, kept because `GameShell` hands both panes the same three
+  // handlers and threading a fourth back through when a panel does want one is more
+  // churn than leaving the door open.
+  //
+  // That is the honest reason, and it replaces a wrong one: this used to claim that
+  // taking it off the type would make `GameShell`'s call site an error. It would not —
+  // every prop there is passed by name rather than spread, so deleting it from both
+  // places compiles. The only part that was true is the last clause: an unread
+  // *binding* here would fail `noUnusedLocals`, which is why the prop is left out of
+  // the destructuring rather than named and ignored.
+  onSelectCharacter,
+  onClearSelection,
   onRenameSeat,
   onLeaveSeat,
 }: RightPaneProps): ReactElement {
   // The sheet rather than the feed, because the feed is empty until the dice land and
   // opening a game on an empty panel reads as a broken app.
   const [tab, setTab] = useState<TabValue>('sheet')
+
+  /**
+   * The board's tokens, for the one question this pane has to ask of them: what is
+   * the selected token bound to?
+   *
+   * ⚠️ **`tokensArgs` rather than a literal, and that is not tidiness.** `useQuery`
+   * keys its memo on `JSON.stringify(convexToJson(args))`, so an argument object of
+   * the same *shape* as `useBoard`'s is genuinely the same subscription — one cache
+   * entry, one socket, one server-side execution — while `{ code, dmCode: undefined }`
+   * beside `{ code }` would be a second. `Roster.tsx:37-42` documents the same
+   * arrangement for `players.list` and is the precedent.
+   *
+   * `board.tokens` is the low-churn half of the board deliberately (invariant 2):
+   * positions live in their own query, so nobody's drag re-renders this panel.
+   *
+   * ⚠️ **Skipped until the game is running.** In the lobby there is no board to select
+   * from and nothing here reads the array — but the query is not free to ask: it
+   * resolves a signed storage URL per token, server-side, for a payload with no reader.
+   * Every consumer below already handles `undefined`, because it is what the first
+   * frame of a running game looks like anyway. `MapPane` mounts `Board` on the same
+   * condition (plus an active scene), so this either shares that subscription's cache
+   * entry or is the only holder of it, never a second one.
+   */
+  const tokens = useQuery(
+    api.board.tokens,
+    game.status === 'playing' ? tokensArgs(code, dm.dmCode) : 'skip',
+  )
+
+  /**
+   * The selected token, found **once for the whole panel**.
+   *
+   * Three facts hang off it: what it is bound to decides the focus below, its name is
+   * what the player's tab prints when it is bound to nothing, and it is the coin the
+   * DM's grant panel edits. All three used to `find` it separately — here, in
+   * `SheetsTab`'s `grantToken`, and again in `SheetRegion` — over the same array for
+   * the same answer, because only the *id* was passed down.
+   *
+   * ⚠️ So the token goes down, not the id. Handing a fresh object across this boundary
+   * would normally be the thing the memo note above forbids; it is safe precisely
+   * because `SheetsTab` is *inside* the boundary, where identity costs nothing — and
+   * the identity is stable regardless, since this is an element of the query's own
+   * array rather than a new object.
+   */
+  const selectedToken = useMemo(
+    () => tokens?.find((token) => token._id === selectedTokenId) ?? null,
+    [tokens, selectedTokenId],
+  )
+
+  // The one place the "whose sheet is on screen" question is asked. `sheetFocusOf`
+  // carries the five rules and the reason the player's fallback and the DM's differ.
+  const focus = sheetFocusOf({
+    selectedCharacterId,
+    selectedTokenId,
+    selectedTokenCharacterId: selectedToken?.characterId ?? null,
+    myCharacterId: characterId,
+    isDm: dm.dmCode !== null,
+  })
 
   // A DM standing down takes their own tab off the strip underneath them, and a
   // controlled `Tabs` pointed at a value with no trigger and no content shows an
@@ -103,7 +218,10 @@ export const RightPane = memo(function RightPane({
           that gave up height to a long tab body would be the first thing to vanish. */}
       <TabsList className="w-full shrink-0 rounded-none border-b">
         <TabsTrigger value="feed">Feed</TabsTrigger>
-        <TabsTrigger value="sheet">Character</TabsTrigger>
+        {/* One trigger, two names. See the ⚠️ above: the value is shared so that the
+            force-mounted body below stays one panel, and the label is the only thing
+            that says which of the two people at this table is reading it. */}
+        <TabsTrigger value="sheet">{dm.dmCode !== null ? 'Sheets' : 'Character'}</TabsTrigger>
         <TabsTrigger value="table">Table</TabsTrigger>
         {dm.dmCode !== null ? <TabsTrigger value="dm">DM tools</TabsTrigger> : null}
         <TabsTrigger value="settings">Settings</TabsTrigger>
@@ -125,13 +243,40 @@ export const RightPane = memo(function RightPane({
         className="min-h-0 data-[state=inactive]:hidden"
       >
         <TabPane>
-          <SheetTab
-            code={code}
-            playerId={playerId}
-            dmCode={dm.dmCode}
-            characterId={characterId}
-            onGoToTable={() => setTab('table')}
-          />
+          {/* The role split, and the only branch it costs. `SheetFocus` is computed
+              once above and handed to whichever of the two is mounted, so the two
+              panels cannot come to disagree about whose sheet is on screen — which
+              is the whole reason `sheetFocusOf` is a function rather than three
+              expressions (see its ⚠️ on the four readers).
+
+              Narrowed on the code rather than on a boolean so the DM's panel takes
+              the value its queries need. Rendering it is a display decision and not
+              a permission: every call inside re-verifies the code server-side
+              (invariant 7). */}
+          {dm.dmCode !== null ? (
+            <SheetsTab
+              code={code}
+              dmCode={dm.dmCode}
+              focus={focus}
+              tokens={tokens}
+              selectedToken={selectedToken}
+              onSelectCharacter={onSelectCharacter}
+              onClearSelection={onClearSelection}
+            />
+          ) : (
+            <SheetTab
+              code={code}
+              playerId={playerId}
+              focus={focus}
+              // The seat's *own* character, which is not necessarily the one on
+              // screen: `focus` may be pointing at a creature the DM has granted
+              // them. This is only for the empty state's copy — "you are not
+              // playing a character yet" — and for nothing else.
+              characterId={characterId}
+              selectedTokenName={selectedToken?.name ?? null}
+              onGoToTable={() => setTab('table')}
+            />
+          )}
         </TabPane>
       </TabsContent>
 

@@ -4,10 +4,10 @@ import { FieldError } from '@/components/FieldError'
 import { HpControls } from '@/components/HpControls'
 import type { BuilderSelections } from '@/components/sheet/CharacterBuilder'
 import { CharacterBuilder } from '@/components/sheet/CharacterBuilder'
+import { CreatureSheetForm } from '@/components/sheet/CreatureSheetForm'
 import { CreatureEntryMissing, CreatureSheetView } from '@/components/sheet/CreatureSheetView'
 import { EditorBody, EditorFooter } from '@/components/sheet/EditorColumn'
 import { HitDiceControls } from '@/components/sheet/HitDiceControls'
-import { NpcSheetForm } from '@/components/sheet/NpcSheetForm'
 import { PcSheetForm } from '@/components/sheet/PcSheetForm'
 import { PresetSheetView } from '@/components/sheet/PresetSheetView'
 import { RestControls } from '@/components/sheet/RestControls'
@@ -79,8 +79,8 @@ export type CharacterSheetEditorProps = {
  * **There is no read-only mode, and that is a property of the query rather than an
  * omission here.** `characters.sheet` answers through `requireEditableCharacter` — the
  * same gate `characters.updateSheet` uses — so a sheet that arrived at this component
- * is one this caller may also change. Another seat's hero and every NPC without the DM
- * code come back as `null` and never reach it.
+ * is one this caller may also change. Another seat's hero, and every creature the DM has
+ * neither the code for nor a grant on, come back as `null` and never reach it.
  *
  * What `isDm` buys is therefore not access but *authorship*: a character built from the
  * library holds selections rather than numbers, and the rule about who may change which
@@ -375,9 +375,13 @@ export function CharacterSheetEditor({
    */
   function sheetBody() {
     switch (draft.kind) {
+      // The stored discriminator, untouched: `kind: 'npc'` is what every hand-built
+      // creature document in every game holds, and it covers both of the DM's headings.
+      // Which one a particular creature sits under is `group`, a field on the sheet that
+      // `CreatureSheetForm` is the control for.
       case 'npc':
         return (
-          <NpcSheetForm sheet={draft} problem={problem} disabled={saving} onChange={setDraft} />
+          <CreatureSheetForm sheet={draft} problem={problem} disabled={saving} onChange={setDraft} />
         )
 
       case 'preset':
@@ -476,9 +480,19 @@ export function CharacterSheetEditor({
               />
               {/* The *resolved* kind, because that is the one a reader means. A preset
                   resolves to a hero, and a badge reading "preset" would name the storage
-                  form rather than the character. */}
+                  form rather than the character.
+
+                  **"Creature" rather than "NPC" or "Monster", and the vagueness is
+                  deliberate.** `kind` has two values where the DM's headings have three,
+                  and the field that tells an innkeeper from an owlbear is `group`, which
+                  a *resolved* sheet does not carry — a linked creature is grouped by the
+                  corpus category of its entry, which is read on the server and never
+                  travels. Printing one of the two names here would therefore be a guess
+                  that is wrong about half the DM's shelf, and copy that guesses is worse
+                  than copy that does not. The control that does answer it is on the form
+                  below. */}
               <Badge variant={saved.sheet.kind === 'npc' ? 'secondary' : 'outline'}>
-                {saved.sheet.kind === 'npc' ? 'NPC' : 'Player character'}
+                {saved.sheet.kind === 'npc' ? 'Creature' : 'Player character'}
               </Badge>
             </div>
           </SheetField>
@@ -504,10 +518,10 @@ export function CharacterSheetEditor({
               for Save. The server draws the same line — hit dice are on the vitals row
               for it.
 
-              An NPC gets nothing here, and the test is the resolved sheet's kind rather
-              than a null in the payload. The reduced sheet has no hit dice to have spent,
-              so there is no state to show, no permission being applied and nothing an
-              NPC's DM is being kept from.
+              A creature gets nothing here, and the test is the resolved sheet's kind
+              rather than a null in the payload. The reduced sheet has no hit dice to have
+              spent, so there is no state to show, no permission being applied and nothing
+              the creature's DM is being kept from.
 
               The faces come from `saved` and not from the draft: `hitDiceCount` was read
               off the stored sheet, so pairing it with a die size somebody is halfway
@@ -529,7 +543,7 @@ export function CharacterSheetEditor({
             hand-built hero, which this milestone still supports on purpose, even though
             `characters.longRest` has always worked on any character.
 
-            An NPC gets nothing, which is the same call `HitDiceControls` makes: the
+            A creature gets nothing, which is the same call `HitDiceControls` makes: the
             reduced sheet has no hit dice to hand back and no race to have spent
             anything, so there is no state to show rather than a permission being
             applied.
@@ -640,8 +654,8 @@ function storedOf(sheet: PublicSheet): StoredSheet {
  * The level to carry across when a sheet is rebuilt from the library, which two of the four
  * stored kinds do not have.
  *
- * A monster has no level and neither does a creature, so both read as 1. That is not a
- * default standing in for a missing value — it is the answer to "what level should the hero
+ * A hand-built creature has no level and neither does a linked one, so both read as 1. That
+ * is not a default standing in for a missing value — it is the answer to "what level should the hero
  * this is about to become start at", and the only sheet in the game that could be converted
  * from either is one nobody has built yet.
  */

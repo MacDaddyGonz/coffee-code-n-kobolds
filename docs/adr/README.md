@@ -16,3 +16,4 @@ being overwritten.
 | [0006](0006-premade-character-library.md) | A premade character library, and resolving a sheet from stored selections | Accepted |
 | [0007](0007-monster-bestiary-and-cr-scaling.md) | A monster bestiary, and scaling a creature to a challenge rating | Accepted |
 | [0008](0008-one-shell-and-what-a-sheet-entry-is.md) | One shell instead of floating panels, and what a sheet entry is | Accepted |
+| [0009](0009-who-plays-what-and-what-control-grants.md) | Who plays what, and what control grants | Accepted |

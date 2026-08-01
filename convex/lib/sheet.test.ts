@@ -31,6 +31,11 @@ import {
   MIN_LEVEL,
   MIN_MAX_HP,
   MIN_SPELL_LEVEL,
+  CHARACTER_GROUPS,
+  CREATURE_GROUPS,
+  CREATURE_GROUP_CHOICES,
+  characterGroupValidator,
+  creatureGroupValidator,
   ROLL_MODIFIER_TOKENS,
   ROLL_PATTERN,
   SHEET_ENTRY_CATEGORIES,
@@ -2169,5 +2174,170 @@ describe('a sheet written before this milestone is still saveable', () => {
       overrides: { extraActions: [legacyEntry({ id: 'dm-1', roll: '2d6' })] },
     }
     expect(storedSheetProblem(stored)).toBeNull()
+  })
+})
+
+describe('normaliseSheet carries a creature’s group', () => {
+  /**
+   * ⚠️ **THE FIELD-BY-FIELD REBUILD TRAP, MET FOR THE THIRD TIME.**
+   *
+   * `normaliseSheet` rebuilds an `NpcSheet` field by field — which is deliberate, it is
+   * what stops an unknown field riding into the database — and this codebase has now
+   * twice shipped a field added to a validator and not added to the rebuild: silently
+   * discarded on every write, with the form still showing the value it had just binned.
+   * Both times only `npm run test:smoke` caught it, because a dropped optional field
+   * leaves a perfectly valid sheet behind and every other test stays green.
+   *
+   * `group` is optional, so the same trap was waiting for it. Presence is therefore
+   * asserted directly rather than through a value comparison that a default could
+   * satisfy.
+   */
+  test('a stored group survives the round trip', () => {
+    for (const group of ['npc', 'monster'] as const) {
+      const out = normaliseSheet(npc({ group })) as NpcSheet
+      const built = out as unknown as Record<string, unknown>
+      expect('group' in built, group).toBe(true)
+      expect(out.group, group).toBe(group)
+    }
+  })
+
+  /**
+   * ⚠️ **AND THE MIRROR IMAGE, WHICH IS THE HALF THAT ACTUALLY CATCHES THE TRAP.**
+   *
+   * A creature that arrived without the key has to come back without it. `undefined` is
+   * not a Convex value, so a rebuild that wrote `group: sheet.group` unconditionally
+   * would be making a *different write* from one that omits the field — which the local
+   * suite cannot tell apart from the correct one, and which `board-smoke.mjs` reports as
+   * `present on one side only`. Hence `'group' in sheet` rather than a check that the
+   * value is undefined: the two are the same assertion in JavaScript and different
+   * assertions against a real deployment.
+   *
+   * Absent also has to stay a legal state for as long as the schema says the field is
+   * optional. A normaliser that filled it in would leave `groupOf`'s documented default
+   * reachable only by documents nobody has saved, which is how a default becomes untested
+   * code that nobody notices is wrong.
+   */
+  test('a creature that arrived without a group comes back without the key', () => {
+    const before = npc()
+    expect('group' in before, 'the fixture already has a group').toBe(false)
+
+    const out = normaliseSheet(before) as NpcSheet
+    const built = out as unknown as Record<string, unknown>
+    expect('group' in built).toBe(false)
+    expect(Object.keys(built)).not.toContain('group')
+  })
+
+  /**
+   * `defaultNpcSheet` is the second field-by-field rebuild and it made the opposite
+   * decision on purpose: it omits `group` rather than writing `'npc'`, so a hand-built
+   * creature with no answer defaults through the accessor instead of storing one.
+   *
+   * That matters at exactly one place — the create dialog spreads the default and then
+   * puts the DM's answer over the top — and it is asserted here because it is a decision
+   * two functions away from where its consequences show up.
+   */
+  test('defaultNpcSheet omits the field rather than defaulting it', () => {
+    const built = defaultNpcSheet() as unknown as Record<string, unknown>
+    expect('group' in built).toBe(false)
+  })
+
+  /** Idempotent in both directions, like every other part of the normaliser. */
+  test('normalising twice changes nothing, with the key and without it', () => {
+    for (const sheet of [npc(), npc({ group: 'monster' })]) {
+      const once = normaliseSheet(sheet)
+      expect(normaliseSheet(once)).toEqual(once)
+      expect(Object.keys(once as unknown as Record<string, unknown>).sort()).toEqual(
+        Object.keys(sheet as unknown as Record<string, unknown>).sort(),
+      )
+    }
+  })
+
+  /**
+   * The stored form, through the door the mutation actually uses. `normaliseStoredSheet`
+   * delegates to `normaliseSheet` for a hand-built creature, so this is the same rebuild
+   * reached the way `characters.create` reaches it — and `toEqual` over the whole sheet
+   * is what would catch a field dropped anywhere in it, not only this one.
+   */
+  test('and the same holds through normaliseStoredSheet, which is what the mutation calls', () => {
+    const withGroup: StoredSheet = npc({ group: 'monster' })
+    expect(normaliseStoredSheet(withGroup)).toEqual(withGroup)
+    expect(storedSheetProblem(withGroup)).toBeNull()
+
+    const without: StoredSheet = npc()
+    expect(normaliseStoredSheet(without)).toEqual(without)
+    expect(storedSheetProblem(without)).toBeNull()
+    expect(
+      'group' in (normaliseStoredSheet(without) as unknown as Record<string, unknown>),
+    ).toBe(false)
+  })
+
+  /**
+   * The group is a creature's alone, and the two hero variants have nowhere to put one —
+   * so a `pc` sheet carrying the key is an unknown field, and the rebuild drops it for
+   * the reason every field-by-field rebuild in this file exists.
+   */
+  test('a group smuggled onto a hero sheet is dropped', () => {
+    const smuggled = { ...pc(), group: 'monster' } as unknown as StoredSheet
+    const out = normaliseStoredSheet(smuggled) as unknown as Record<string, unknown>
+    expect('group' in out).toBe(false)
+  })
+
+  /**
+   * The two unions, spelled once each and asserted against each other. `CreatureGroup` is
+   * what a DM's creature can be; `CharacterGroup` is that widened by the one group a
+   * creature can never be in, and it is what `publicCharacterValidator` sends.
+   *
+   * Worth pinning because they are declared separately and a fifth heading added to one
+   * and not the other would compile: the selector would gain a tab that nothing can ever
+   * be filed under, or a creature would be filed under a heading the payload cannot carry.
+   */
+  test('the creature groups are exactly the character groups minus “character”', () => {
+    expect([...CREATURE_GROUPS]).toEqual(['npc', 'monster'])
+    expect([...CHARACTER_GROUPS]).toEqual(['character', 'npc', 'monster'])
+    expect(CHARACTER_GROUPS.filter((group) => group !== 'character')).toEqual([...CREATURE_GROUPS])
+  })
+
+  /**
+   * Each list is a type and each validator is a value, and sheet.ts writes the names out
+   * twice on purpose — the convention `sheetEntryCategoryValidator` states and that the
+   * test above it enforces: "a Convex validator is a value and the list is a type, and the
+   * one test pinning the two together is cheaper than the generic that would build one
+   * from the other."
+   *
+   * These two unions had the convention and not the test. Without it the copies are free
+   * to disagree, and the direction that hurts is a group the code accepts and the *schema*
+   * refuses — a save that fails against the real deployment and passes against
+   * convex-test, which is the class of failure only `npm run test:smoke` has ever caught
+   * here. `characterGroupValidator` fails the other way and just as quietly: it is what
+   * `publicCharacterValidator` sends, so a heading missing from it makes `characters.list`
+   * throw for the whole table over one creature.
+   */
+  test('each validator admits exactly its own groups, in the same order', () => {
+    const literalsOf = (validator: unknown) =>
+      (validator as { members: { kind: string; value: unknown }[] }).members
+
+    const creature = literalsOf(creatureGroupValidator)
+    expect(creature.map((member) => member.kind)).toEqual(['literal', 'literal'])
+    expect(creature.map((member) => member.value)).toEqual([...CREATURE_GROUPS])
+
+    const character = literalsOf(characterGroupValidator)
+    expect(character.map((member) => member.kind)).toEqual(['literal', 'literal', 'literal'])
+    expect(character.map((member) => member.value)).toEqual([...CHARACTER_GROUPS])
+  })
+
+  /**
+   * The record `CreatureGroupToggle` iterates. A `Record` keyed by the union catches a
+   * *missing* group at compile time and says nothing about the order, about a key left
+   * blank, or about two groups sharing a word — and a toggle with two buttons reading the
+   * same thing is a control nobody can use.
+   */
+  test('every creature group has a button label and an example, in list order', () => {
+    expect(Object.keys(CREATURE_GROUP_CHOICES)).toEqual([...CREATURE_GROUPS])
+    for (const group of CREATURE_GROUPS) {
+      expect(CREATURE_GROUP_CHOICES[group].label.trim(), group).not.toBe('')
+      expect(CREATURE_GROUP_CHOICES[group].hint.trim(), group).not.toBe('')
+    }
+    const labels = CREATURE_GROUPS.map((group) => CREATURE_GROUP_CHOICES[group].label)
+    expect(new Set(labels).size).toBe(CREATURE_GROUPS.length)
   })
 })

@@ -1054,11 +1054,13 @@ describe('the creature mutations refuse anything that has no rating', () => {
     })
     const { characterId: premadeHero } = await t.mutation(api.characters.create, {
       code,
+      dmCode,
       name: 'Brannoc Emberhand',
       sheet: presetSheet(),
     })
     const { characterId: typedHero } = await t.mutation(api.characters.create, {
       code,
+      dmCode,
       name: 'Thorin, typed in',
       sheet: {
         kind: 'pc',

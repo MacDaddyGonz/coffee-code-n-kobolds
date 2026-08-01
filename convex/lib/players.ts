@@ -100,6 +100,45 @@ export async function findClaimHolder(
 }
 
 /**
+ * The same relation as `findClaimHolder`, read off a roster already in hand:
+ * character → the seat playing it, for every seat that is playing one.
+ *
+ * **This lives here because the claim pointer does.** `setSeatCharacter` below claims
+ * to be the one place the relation is written; this is the one place it is inverted,
+ * so the two halves of "a seat points at a character, and never the reverse"
+ * (ADR 0002) sit in the module that owns the table. It had been written out verbatim
+ * three times — in `publicTokens`, in `boardCharacterAccess` and in
+ * `publicCharacters` — each with its own copy of the non-null assertion, in two
+ * modules that are forbidden from reading this table directly.
+ *
+ * Built once per query rather than looked up per row, which is the reason all three
+ * callers wanted it: a board holds up to `MAX_TOKENS_PER_GAME` rows, so the
+ * `findClaimHolder`-per-row form would be two hundred index reads on a subscription
+ * every client at the table holds open.
+ *
+ * A typed loop rather than `new Map(seats.filter(…).map(…))`, so the `characterId!`
+ * that shape forces disappears — the compiler narrows the field inside the `if` and
+ * there is no assertion left to be wrong.
+ *
+ * ⚠️ **At most one holder per character, and the last seat wins if that is ever
+ * false.** Nothing enforces the uniqueness in the schema: `claim` refuses a character
+ * another seat holds and `assign` releases the previous holder first, so the state is
+ * unreachable through the supported writes, and `findClaimHolder` would throw on it
+ * where this quietly picks one. Both answers are defensible for something that cannot
+ * happen; what matters is that the choice is made once, here, rather than differently
+ * in three copies.
+ */
+export function holderByCharacter(
+  seats: Doc<'players'>[],
+): Map<Id<'characters'>, Doc<'players'>> {
+  const byCharacter = new Map<Id<'characters'>, Doc<'players'>>()
+  for (const seat of seats) {
+    if (seat.characterId) byCharacter.set(seat.characterId, seat)
+  }
+  return byCharacter
+}
+
+/**
  * Point a seat at a character, or at nothing.
  *
  * The one place the claim pointer is written, so `characters.claim`, `release`,

@@ -47,9 +47,11 @@ this table:
 | Milestone 7 — [0007](adr/0007-monster-bestiary-and-cr-scaling.md) | DM tooling, layers, fog of war | 9 |
 | Milestone 8 — [0006](adr/0006-premade-character-library.md) | orphaned-blob sweeper | 11 |
 
-[ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md) has no row, and that is the discipline
-working rather than an omission: it names no milestone number anywhere, so the fourth renumbering
-cost it nothing.
+[ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md) and
+[ADR 0009](adr/0009-who-plays-what-and-what-control-grants.md) have no rows, and that is the
+discipline working rather than an omission: neither names a milestone number anywhere, so the fourth
+renumbering cost 0008 nothing and a fifth would cost 0009 nothing either. Both say "the dice
+milestone" and "the DM-tooling milestone", which is the formulation that survives.
 
 **This file no longer contains a forward reference by number, and that is the fix rather than a
 tidy-up.** Three renumberings taught the lesson [ADR 0006](adr/0006-premade-character-library.md)
@@ -845,7 +847,66 @@ an amendment rather than an edit, like the two before it.
 
 ---
 
-## Milestone 7 — Seats, sheets and control
+## ✅ Milestone 7 — Seats, sheets and control
+
+**Done.** The decisions are recorded in
+[ADR 0009](adr/0009-who-plays-what-and-what-control-grants.md). Five things it settled that the
+section below planned differently or did not plan at all, so read them together:
+
+- **Control granting sight is half a feature without hit points**, and the section below only asked
+  for the sheet. `HpControls` renders its `−`/`+` **only** against the `exact` variant of
+  `publicVitalsValidator`, on the stated grounds that a caller who may edit hit points is always
+  sent them — so a granted seat receiving a band would get the party's wolf with a sheet, a health
+  bar and no way to take damage on it. `visibleVitals` therefore takes the controlled set as well,
+  as a third term on the existing condition rather than a second branch, and the price is that
+  `characters.vitals` now keys on `playerId`: two seats at one table hold two subscriptions where
+  they used to share one.
+- **Selection had to be two primitives and not one token id.** A character routinely has no token —
+  the bestiary shelf creates a creature and never places one, and neither does the DM's
+  new-character form — so writing only a token id would leave the *previous* coin selected and the
+  previous creature on screen, which is the exact confusion lifting selection out of `Board` was
+  meant to end. Two `useState` calls in `GameShell`, three `useCallback([])` handlers, and nothing
+  crossing the memo boundary that is not primitive.
+- **`publicCharacterValidator` needed `reserved` projected**, which reads at first like sending a
+  player information they do not need — it is always `false` in their payload, because the row is
+  dropped entirely. It travels because the DM's hide control has to be a **state and not a
+  command**: without the field the button can say what pressing it would do and never what is
+  currently true, which for a flag whose whole purpose is "somebody must not see this" is the one
+  thing the DM needs to read off the screen.
+- **The roster was a second way a reserved name shipped.** `characters.list` is not the only payload
+  carrying a character's name; `playerCharacterNames` builds what `players.list` prints as
+  `characterName` in the lobby and the strip over the board. Withholding a row from one and naming
+  it in the other publishes exactly the spoiler — a name attached to a seat nobody is sitting in.
+  Both filters exist, and `players.ts` nulls the id together with the name rather than beside it.
+- **The last slide-out went, and its primitive now has no caller at all.**
+  `CharacterSheetDrawer` was the one panel the shell milestone did not notice it had left behind,
+  and it left with `DmSheetsPanel` and `DmNpcPanel` — two views of one list, each with a paragraph
+  explaining why the other existed. `ui/sheet.tsx` is kept anyway, with a header saying so: an
+  unmodified member of the shadcn set is cheaper to keep than to re-add, and a `<Sheet>` appearing
+  in a future diff should prompt the question "why is this not a tab?".
+
+**Acceptance, as met:** the DM's panel has a Sheets tab and no Character tab, and a player's has the
+reverse. Choosing a row in the DM's selector shows that sheet and selects its token; clicking a
+different token on the map moves the selector to it, and both write the one piece of shell state. A
+token bound to nothing names itself and says it carries no sheet rather than silently keeping the
+last one. A player selects their own token and sees their own sheet; granted the party's wolf, they
+see the wolf's sheet and its exact hit points and may take damage on it but not rewrite it; clicking
+empty map returns them to their own sheet. A player who has **not** been granted the wolf sees no
+trace of it in any payload — name, notes, actions or hit-point numbers, scanned as text and as
+numbers, with a positive control beside the scan — and a grant written onto a **DM-layer** token
+reveals nothing until the token moves to the player layer, asserted both in `characters.test.ts` and
+against the real deployment. A character the DM marks reserved is absent from every player's
+character list *and* from the roster, `claim` refuses it as unfindable, and `assign` clears the flag
+as it hands it over. Creating a character, an NPC and a monster are three buttons in one tab, and
+`characters.create` refuses every one of them without the DM code. `npm run lint` is clean, 1,136
+tests pass, and `npm run test:smoke` passes 135/135 against the real dev deployment.
+
+**Amendments to [requirements.md](requirements.md) written**, as the three before them were: *Player
+mode*'s "only their assigned character token", *Accounts and games*' logged-in user creating
+characters, and the *DM panel* tab list. None of the three is a rule-set change, and the entry says
+so.
+
+**The original plan follows.**
 
 **Inserted after reviewing the deployed shell**, and it is a correction rather than a feature: the
 layout is right and the model underneath it is not. Milestone 6 moved every panel into one screen

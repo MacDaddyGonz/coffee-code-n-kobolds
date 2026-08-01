@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation } from 'convex/react'
 
 import { api } from '@convex/_generated/api'
@@ -93,5 +93,27 @@ export function useDm(code: string, playerId: Id<'players'> | null): Dm {
     restoredFor.current = null
   }, [code])
 
-  return { dmCode, elevate, recover, standDown }
+  /**
+   * ⚠️ **Memoised, and the reason is two panes rather than anything in this hook.**
+   * `MapPane` and `RightPane` are both `memo`'d, and `dm` is one of the props both of
+   * them take — so a fresh object per render defeats both memos at once and reconciles
+   * the whole board tree *and* the whole right-hand panel to produce byte-identical
+   * output.
+   *
+   * The divider drag those memos were written for is not what exposed it: a drag sets
+   * state on `GameShell` and never re-renders `Game`, so this hook is not called. What
+   * does call it is roster churn — `useSeat` subscribes `players.list`, so every join,
+   * rename and DM claim re-renders `Game` and minted a new object here. Cheap enough
+   * to ignore once; not once `board.tokens` re-runs on the same churn, which is why the
+   * comment on `MapPane` asserting every prop is stable had to become true rather than
+   * be softened.
+   *
+   * Every member is already stable — `useMutation` is memoised inside convex/react and
+   * the three callbacks close over `code` and `playerId` — so the dependency list
+   * changes only when the credential genuinely does.
+   */
+  return useMemo(
+    () => ({ dmCode, elevate, recover, standDown }),
+    [dmCode, elevate, recover, standDown],
+  )
 }

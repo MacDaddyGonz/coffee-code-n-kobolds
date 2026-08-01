@@ -34,6 +34,15 @@
 // NEITHER that must come back with neither key present. Absence is a storable state on a
 // real deployment or it is not, and only a real deployment can say.
 //
+// Seats, sheets and control add three more optional stored fields — `NpcSheet.group`,
+// `characters.reserved` and `tokens.controllerIds` — and one of them, `group`, goes
+// through the same field-by-field rebuild the two above did. So sections 23 to 28 are
+// written in the same pairs, and the last three of them are about a second thing only a
+// real deployment settles: a **grant** is a door the DM opens onto this application's
+// headline secret, so what has to be checked is not that it works but that it opens for
+// exactly one seat. Every one of those scans has a positive control beside it, because a
+// scan with nothing to find passes on a deployment that sent nobody anything.
+//
 //   node scripts/board-smoke.mjs
 //
 // Plain .mjs on purpose: no tsx, no new dependency, nothing to install.
@@ -496,6 +505,73 @@ const DM_CREATURE_ATTACK_BONUS = 12
 const DM_CREATURE_TO_HIT = '1d20+12'
 
 /**
+ * MILESTONE 7'S FIXTURES. Three new stored fields, and every one of them optional.
+ *
+ * `NpcSheet.group`, `characters.reserved` and `tokens.controllerIds` are the sixth,
+ * seventh and eighth optional fields this schema has grown, for the reason all the
+ * others were: a required field cannot be added to a populated table in one push. That
+ * makes all three the exact shape this script exists for — a field a validator permits
+ * to be absent, dropped by a rebuild, written happily by convex-test and silently
+ * discarded by nothing anybody would notice.
+ *
+ * ⚠️ **`group` is the one to watch**, because it is the only one of the three that goes
+ * through a field-by-field rebuild: `normaliseSheet` reconstructs an `NpcSheet` field by
+ * field and carries this one by conditional spread. That is the fifth outing of the trap
+ * that shipped `skillProficiencies` and then `speed`, and this script is the only thing
+ * that has ever caught it. So section 23 sends a creature **with** the field and a
+ * sibling **without** it, and neither half means anything alone: the first passes on a
+ * deployment that materialised a group for everything, the second on one that discarded
+ * every new field it was sent. ADR 0008 § "Two things found by building it" is where that
+ * lesson is written down.
+ *
+ * The two creatures are also the fixtures for the grant sections. 293 and 157 are chosen
+ * to be searchable, for the reason 271 and 137 are: a scan of a player's payload for `45`
+ * would match half the ids in it, so a leaked hit point has to be a number a coincidence
+ * is unlikely to produce.
+ */
+const GRANTED_NAME = 'Bell of the Ninth Arch 🐕'
+const GRANTED_MAX_HP = 293
+const GRANTED_CURRENT_HP = 157
+/** DM-only prose on a DM-only sheet, scanned for alongside the two numbers. */
+const GRANTED_NOTES =
+  'Answers to whoever is holding the lead, and to the smell of the deep shift coming off a coat. 🐕'
+const GRANTED_SHEET = {
+  kind: 'npc',
+  armourClass: 15,
+  maxHp: GRANTED_MAX_HP,
+  initiativeBonus: 3,
+  actions: [entryFrom(CATALOGUE.greatclub, 'npc-greatclub')],
+  notes: GRANTED_NOTES,
+  // THE POSITIVE HALF OF THE PAIR. A hand-built creature has no corpus to derive a
+  // heading from, so the dialog asks and the answer is stored — which is the only
+  // reason this field exists at all.
+  group: 'monster',
+}
+
+/**
+ * THE NEGATIVE HALF, and the creature the DM-layer section hides.
+ *
+ * ⚠️ **It deliberately carries no `group` key**, so it is shaped exactly like every
+ * creature typed in before this milestone — which is the state every hand-built NPC in
+ * every existing game is in, and the state a real deployment has to prove it can store.
+ * `defaultNpcSheet` omits the field for the same reason, and `groupOf` reads the absence
+ * as `'npc'` in one place.
+ */
+const AMBUSH_NAME = 'Thing Beneath the Third Arch'
+const AMBUSH_MAX_HP = 181
+const AMBUSH_SHEET = {
+  kind: 'npc',
+  armourClass: 16,
+  maxHp: AMBUSH_MAX_HP,
+  initiativeBonus: 1,
+  actions: [],
+  notes: 'Does not surface while the ford is busy. Waits for one of them to come back alone.',
+}
+
+/** The hero the DM sets aside for a player who has not arrived. Section 25's fixture. */
+const RESERVED_NAME = 'Vaan of the Long Stride'
+
+/**
  * The eight numbers a rating shift moves, pulled off a resolved sheet in one shape so
  * `firstDifference` can name the one that drifted.
  *
@@ -696,6 +772,14 @@ async function main() {
 
   const created = []
   const createdCharacters = []
+  // Three more things this run makes that are *about somebody else's screen*, so each is
+  // undone on the way out on its own rather than left to disappear with the token or the
+  // character it hangs off. Every `quietly` step reports its own failure and the ones
+  // after it still run, which is exactly why a run that fails halfway must not depend on
+  // a later step to leave the game tidy.
+  const grantedTokens = []
+  const reservedCharacters = []
+  const seats = []
   let code = null
   let dmCode = null
   let sceneId = null
@@ -841,8 +925,17 @@ async function main() {
 
     // 6. Milestone 3's sheets. A nested discriminated union in an optional field,
     // through the real value validation, with real prose in it.
+    //
+    // ⚠️ **The DM code on this call is a deliberate change and not a tidy-up.** Creating
+    // a hero used to be ungated — the ternary in `characters.create` sent a `pc` straight
+    // to `getGameByCode` — and there is now no un-gated branch at all: a hero, a
+    // hand-built creature and one off the bestiary shelf arrive through one gate. Every
+    // `characters:create` below therefore sends it, including the ones whose *point* is
+    // some other refusal, or they would be refused as `NotDm` and prove nothing about the
+    // bound they were written for.
     const pc = await client.mutation('characters:create', {
       code,
+      dmCode,
       name: PC_NAME,
       sheet: PC_SHEET,
     })
@@ -850,7 +943,13 @@ async function main() {
     check(
       'characters:create stored a player character with a full sheet',
       Boolean(pc.characterId),
-      'no DM code — any player may add a hero (ADR 0002)',
+      'the DM code is now required on every path, heroes included',
+    )
+    // The other half of that change, asserted rather than assumed. Characters still
+    // belong to the game rather than to whoever typed them in (ADR 0002); what moved is
+    // who does the typing, and a player's route to a character is `claim`.
+    await refuses('characters:create refused a hero without the DM code', () =>
+      client.mutation('characters:create', { code, name: 'Uninvited Hero', sheet: PC_SHEET }),
     )
 
     const storedPc = await client.query('characters:sheet', {
@@ -1350,6 +1449,7 @@ async function main() {
 
     const elf = await client.mutation('characters:create', {
       code,
+      dmCode,
       name: 'Nightingale of the Ninth Step',
       sheet: presetSheet({ race: 'elf', classKey: 'rogue' }),
     })
@@ -1448,13 +1548,18 @@ async function main() {
     // of 19 and nothing on screen would look obviously wrong.
     const dwarf = await client.mutation('characters:create', {
       code,
+      dmCode,
       name: 'Hrada Stoneminder',
       sheet: presetSheet({ race: 'dwarf', classKey: 'rogue', subclassKey: 'thief', level: 3 }),
     })
     createdCharacters.push(dwarf.characterId)
+    // Named through the constant because section 25 reserves this one and scans a
+    // player's payload for the name — two literals of the same string is one place for
+    // that scan to quietly start matching nothing.
     const goliath = await client.mutation('characters:create', {
       code,
-      name: 'Vaan of the Long Stride',
+      dmCode,
+      name: RESERVED_NAME,
       sheet: presetSheet({ race: 'goliath', classKey: 'rogue' }),
     })
     createdCharacters.push(goliath.characterId)
@@ -1574,8 +1679,10 @@ async function main() {
     // holds no claim would be `requireEditableCharacter` talking rather than the
     // lock. The seat is a real one, joined the way a player joins.
     const seat = await client.mutation('players:join', { code, displayName: 'Smoke Player' })
+    seats.push(seat.playerId)
     const bramble = await client.mutation('characters:create', {
       code,
+      dmCode,
       name: 'Bramblefoot Tosscobble',
       sheet: presetSheet({ race: 'halfling', classKey: 'rogue', locked: true }),
     })
@@ -1628,6 +1735,7 @@ async function main() {
     // milestone, on a table whose rows were written without it.
     const human = await client.mutation('characters:create', {
       code,
+      dmCode,
       name: 'Aldis Fenwake',
       sheet: presetSheet({ race: 'human', classKey: 'fighter' }),
     })
@@ -1699,9 +1807,17 @@ async function main() {
     // validator's — a race and a class are unions of literals, so a key that is not
     // one of the eight never reaches a handler. The rest are `storedSheetProblem`'s,
     // and every one of them is a value convex-test would store without a word.
+    //
+    // ⚠️ **Every one of them sends the DM code**, which is the creation gate rather than
+    // decoration. `storedSheetProblem` runs *after* `requireDm`, so an archetype refusal
+    // written without a code would be refused as `NotDm` — passing the `refuses` check
+    // while asserting nothing at all about archetypes. The two argument-validator cases
+    // above it would still refuse for the right reason, and they carry the code anyway so
+    // that the whole block is refused by the bound it names rather than by the gate.
     await refuses('characters:create refused a race that is not one of the eight', () =>
       client.mutation('characters:create', {
         code,
+        dmCode,
         name: 'Uninvited Gnome',
         sheet: presetSheet({ race: 'gnome', classKey: 'rogue' }),
       }),
@@ -1709,6 +1825,7 @@ async function main() {
     await refuses('characters:create refused a class that is not one of the eight', () =>
       client.mutation('characters:create', {
         code,
+        dmCode,
         name: 'Uninvited Artificer',
         sheet: presetSheet({ race: 'human', classKey: 'artificer' }),
       }),
@@ -1716,6 +1833,7 @@ async function main() {
     await refuses('characters:create refused an archetype belonging to another class', () =>
       client.mutation('characters:create', {
         code,
+        dmCode,
         name: 'Champion Rogue',
         sheet: presetSheet({
           race: 'human',
@@ -1728,6 +1846,7 @@ async function main() {
     await refuses('characters:create refused an archetype chosen at level 1', () =>
       client.mutation('characters:create', {
         code,
+        dmCode,
         name: 'Premature Thief',
         sheet: presetSheet({ race: 'human', classKey: 'rogue', subclassKey: 'thief', level: 1 }),
       }),
@@ -2469,6 +2588,612 @@ async function main() {
             ` at CR ${survivingCreature.creature.cr}`
         : 'no sheet came back',
     )
+
+    // 23. MILESTONE 7'S FIRST NEW STORED FIELD, AND THE TRAP IT WALKS STRAIGHT INTO.
+    //
+    // `NpcSheet.group` is the sixth optional field on that validator, and it is the only
+    // one of this milestone's three that passes through a **field-by-field rebuild**:
+    // `normaliseSheet` reconstructs a creature field by field and carries this one by
+    // conditional spread. That is the fifth outing of the bug that shipped
+    // `skillProficiencies` and then `speed`, and this script is the only thing that has
+    // ever caught it — because a dropped optional field round-trips through a validator
+    // that permits it to be absent, so the local suite stays green and only a real
+    // deployment can say whether absence is a storable state.
+    //
+    // The pair below is the whole of the check. Neither half is optional: the positive
+    // passes on a deployment that materialised a group for everything, the negative on
+    // one that discarded every new field it was sent. See ADR 0008 § "Two things found by
+    // building it", which is where that lesson was written down.
+    const grantedCreature = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: GRANTED_NAME,
+      sheet: GRANTED_SHEET,
+    })
+    createdCharacters.push(grantedCreature.characterId)
+    const ambush = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: AMBUSH_NAME,
+      sheet: AMBUSH_SHEET,
+    })
+    createdCharacters.push(ambush.characterId)
+
+    const grantedStored = await readSheet(grantedCreature.characterId)
+    const ambushStored = await readSheet(ambush.characterId)
+    // Read off the *resolved* sheet, which for a hand-built creature is the stored one:
+    // `resolveSheet` returns an `npc` document unchanged, so what comes back here is
+    // genuinely what the deployment holds rather than something assembled over the top.
+    check(
+      'a creature sent with a group came back with it',
+      grantedStored && grantedStored.sheet.group === 'monster',
+      grantedStored
+        ? `positive control — without it the check below passes on a deployment that discarded everything; got ${JSON.stringify(grantedStored.sheet.group)}`
+        : 'no sheet came back',
+    )
+    // ABSENCE, ASSERTED AS ABSENCE — on the KEY rather than on the value, exactly as
+    // section 6 does for `category` and `toHit`. `sheet.group === undefined` is also true
+    // of a stored empty string, and an empty string is not how a field says it is absent.
+    check(
+      'its sibling, sent without one, came back with no group key at all',
+      ambushStored && !('group' in ambushStored.sheet),
+      ambushStored
+        ? `keys: ${Object.keys(ambushStored.sheet).sort().join(', ')}`
+        : 'no sheet came back',
+    )
+    // AND BACK, which is the half a create alone cannot ask. `writeSheet` patches the
+    // whole `sheet` field, so omitting the key has to *remove* a value that is already
+    // there — a deployment that merged rather than replaced would leave `monster` behind
+    // on a document the DM had just refiled as an NPC, and nothing on screen would say so.
+    await client.mutation('characters:updateSheet', {
+      code,
+      dmCode,
+      characterId: ambush.characterId,
+      sheet: { ...AMBUSH_SHEET, group: 'npc' },
+    })
+    const ambushRefiled = await readSheet(ambush.characterId)
+    await client.mutation('characters:updateSheet', {
+      code,
+      dmCode,
+      characterId: ambush.characterId,
+      sheet: AMBUSH_SHEET,
+    })
+    const ambushCleared = await readSheet(ambush.characterId)
+    check(
+      'a group written onto a creature that had none, and then taken off again',
+      ambushRefiled &&
+        ambushRefiled.sheet.group === 'npc' &&
+        ambushCleared &&
+        !('group' in ambushCleared.sheet),
+      ambushRefiled && ambushCleared
+        ? `${JSON.stringify(ambushRefiled.sheet.group)} then keys ${Object.keys(ambushCleared.sheet).sort().join(', ')}`
+        : 'no sheet came back',
+    )
+
+    // 24. THE HEADING, ON EVERY KIND OF SHEET THE SCHEMA HAS.
+    //
+    // `characters.list` now carries `group` beside `kind`, and the two answer different
+    // questions on the same row: `kind` decides whether a caller may know the character
+    // exists, `group` decides which of the DM's three headings it is printed under. Four
+    // stored kinds do not map onto three groups, which is why one field cannot do both
+    // jobs — so this checks all five cases the mapping actually has to distinguish.
+    //
+    // The bestiary pair is the interesting one and the reason this is worth a round trip
+    // rather than a unit test: a linked creature's heading is read off the *file* its
+    // entry lives in, so `dire-wolf` and `innkeeper` are one stored kind and two
+    // headings, resolved server-side out of a corpus the client never sees.
+    const groupedList = await client.query('characters:list', { code, dmCode })
+    const rowFor = (characterId) => groupedList.find((row) => row._id === characterId) ?? null
+    const groupings = [
+      ['a hand-built hero', pc.characterId, 'pc', 'character'],
+      ['a premade hero', elf.characterId, 'pc', 'character'],
+      // No group stored — section 23 took it back off — so this is `groupOf`'s default
+      // being asserted rather than a value anybody sent.
+      ['a hand-built creature with no group', ambush.characterId, 'npc', 'npc'],
+      ['a bestiary monster', wolf.characterId, 'npc', 'monster'],
+      ['a bestiary social NPC', innkeeper.characterId, 'npc', 'npc'],
+    ]
+    const misfiled = groupings.filter(([, characterId, kind, group]) => {
+      const row = rowFor(characterId)
+      return !row || row.kind !== kind || row.group !== group
+    })
+    check(
+      'characters:list filed all five kinds of sheet under the right heading',
+      misfiled.length === 0,
+      misfiled.length > 0
+        ? `misfiled ${JSON.stringify(
+            misfiled.map(([label, characterId, kind, group]) => {
+              const row = rowFor(characterId)
+              return [label, row ? [row.kind, row.group] : 'no row', [kind, group]]
+            }),
+          )}`
+        : `${groupings.length} rows, including the two bestiary kinds that share a stored kind and differ`,
+    )
+    // And the claim the whole default rests on: **only the DM ever receives a group that
+    // is not `'character'`**. That is what makes a wrong answer a misfiled row rather than
+    // a published dragon, and it is asserted rather than assumed because it is the licence
+    // `groupOf` takes to have a tolerant default at all.
+    const playerGrouped = await client.query('characters:list', { code })
+    check(
+      "a player's rows are all 'character', which is what makes the default safe",
+      playerGrouped.length > 0 &&
+        playerGrouped.every((row) => row.group === 'character' && row.kind === 'pc'),
+      `${playerGrouped.length} rows, groups ${JSON.stringify([
+        ...new Set(playerGrouped.map((row) => row.group)),
+      ])} — positive control included`,
+    )
+
+    // 25. RESERVED: A HERO THE DM HAS BUILT FOR SOMEBODY WHO IS NOT HERE YET.
+    //
+    // The second new stored field, and the second optional one. Reserved means **absent
+    // from a player's payload rather than greyed out in it**, because a disabled row still
+    // publishes a name and the name is the spoiler — so it is a second filter composed
+    // with `maySeeCharacter` at two call sites rather than folded into it.
+    const seatA = await client.mutation('players:join', { code, displayName: 'Smoke Player A' })
+    seats.push(seatA.playerId)
+    const seatB = await client.mutation('players:join', { code, displayName: 'Smoke Player B' })
+    seats.push(seatB.playerId)
+
+    await client.mutation('characters:setReserved', {
+      code,
+      dmCode,
+      characterId: goliath.characterId,
+      reserved: true,
+    })
+    reservedCharacters.push(goliath.characterId)
+
+    const listAfterReserve = await client.query('characters:list', { code })
+    const dmListAfterReserve = await client.query('characters:list', { code, dmCode })
+    check(
+      'a reserved hero is absent from a player’s character list, name and all',
+      !listAfterReserve.some((row) => row._id === goliath.characterId) &&
+        !JSON.stringify(listAfterReserve).includes(RESERVED_NAME) &&
+        // The positive control, and it is the load-bearing half: without it this passes
+        // on a deployment that lost the character altogether.
+        dmListAfterReserve.some((row) => row._id === goliath.characterId),
+      `player ${listAfterReserve.length} rows, DM ${dmListAfterReserve.length} — positive control included`,
+    )
+    // The projected flag, which is what lets the DM's control show what is *true* rather
+    // than only what pressing it would do. It is `false` in every player row by
+    // construction — a reserved row is dropped before anything can project it — so the
+    // second half here is not a restatement of the filter above: it is the claim that
+    // makes shipping the field at all harmless, and a `true` reaching a player is exactly
+    // what it would catch.
+    check(
+      'the DM’s row carries reserved: true, and every player row carries false',
+      dmListAfterReserve.find((row) => row._id === goliath.characterId)?.reserved === true &&
+        listAfterReserve.every((row) => row.reserved === false),
+      `DM ${JSON.stringify(
+        dmListAfterReserve.find((row) => row._id === goliath.characterId)?.reserved,
+      )}, player ${JSON.stringify([...new Set(listAfterReserve.map((row) => row.reserved))])}`,
+    )
+    // ⚠️ **The roster half of this is asserted at the only point it is reachable, and that
+    // is worth saying rather than faking.** `playerCharacterNames` withholds a reserved
+    // character's name from `players.list`, so a seat holding one would show a blank label
+    // — but "held and reserved" is a state nothing can produce: `claim` refuses a reserved
+    // character, `setReserved` refuses a held one, and `assign` clears the flag as it hands
+    // it over. So the reachable statement is the weak one below, and the strong one is the
+    // pair after it: `assign` clears the flag, and the roster then *does* print the name.
+    // Constructing the unreachable state would need a write this API does not have.
+    const rosterAfterReserve = await client.query('players:list', { code })
+    check(
+      'no seat’s roster row names the reserved hero',
+      !rosterAfterReserve.some((row) => row.characterName === RESERVED_NAME),
+      `${rosterAfterReserve.length} seats — reserved-and-held is unreachable through this API, so this is the weak half of the pair`,
+    )
+
+    await refuses('characters:claim refused a reserved hero to a seat', () =>
+      client.mutation('characters:claim', {
+        code,
+        playerId: seatA.playerId,
+        characterId: goliath.characterId,
+      }),
+    )
+    // Both refusals on the mutation itself, and both are the DM being told their click
+    // would not do what they think rather than a secret being kept — which is why these
+    // messages are helpful where `claim`'s is deliberately indistinguishable from "no such
+    // character".
+    await refuses('characters:setReserved refused a monster', () =>
+      client.mutation('characters:setReserved', {
+        code,
+        dmCode,
+        characterId: wolf.characterId,
+        reserved: true,
+      }),
+    )
+    await refuses('characters:setReserved refused a hero a seat is already playing', () =>
+      client.mutation('characters:setReserved', {
+        code,
+        dmCode,
+        characterId: bramble.characterId,
+        reserved: true,
+      }),
+    )
+    await refuses('characters:setReserved refused a caller without the DM code', () =>
+      client.mutation('characters:setReserved', {
+        code,
+        dmCode: 'not-the-dm-code',
+        characterId: goliath.characterId,
+        reserved: false,
+      }),
+    )
+
+    // THE HANDOVER, which is one of the two routes out of the reserved state the design
+    // names and the only one that is a single click. The flag is cleared in the same
+    // transaction as the claim, so there is no window in which the roster is refusing to
+    // name a character a seat is holding.
+    await client.mutation('characters:assign', {
+      code,
+      dmCode,
+      playerId: seatB.playerId,
+      characterId: goliath.characterId,
+    })
+    // Reserving is over: `assign` cleared the flag, and `setReserved` refuses a character
+    // a seat is holding — so leaving this on the cleanup list would make a run that went
+    // perfectly report a failed cleanup step.
+    reservedCharacters.length = 0
+
+    const listAfterAssign = await client.query('characters:list', { code })
+    const rosterAfterAssign = await client.query('players:list', { code })
+    const assignedRow = rosterAfterAssign.find((row) => row._id === seatB.playerId) ?? null
+    check(
+      'characters:assign cleared the reservation, and the roster named the hero again',
+      listAfterAssign.some((row) => row._id === goliath.characterId) &&
+        assignedRow &&
+        assignedRow.characterId === goliath.characterId &&
+        assignedRow.characterName === RESERVED_NAME,
+      assignedRow
+        ? `${listAfterAssign.length} player-visible rows, seat B holding ${JSON.stringify(assignedRow.characterName)}`
+        : 'no roster row for seat B',
+    )
+
+    // 26. THE THIRD NEW STORED FIELD, AND THE ONE FACT ON THE PAYLOAD THAT IS DERIVED.
+    //
+    // `board.tokens` now carries two arrays, and they are not redundant: `grantedPlayerIds`
+    // is exactly what `tokens.controllerIds` holds, and `controllerIds` is the *rule* —
+    // the grants union the seat playing the token's character. The dialog edits the first
+    // and `canMove` reads the second, and the difference between the two arrays is the
+    // derived half, which is why both travel rather than the browser subtracting one back
+    // out of the other.
+    //
+    // ⚠️ **The asymmetry is the design and is checked on its own.** A claim holder appears
+    // in `controllerIds` and must never appear in `grantedPlayerIds`: a claim lives on the
+    // seat (ADR 0002, seat → character and never the reverse), so writing it into the token
+    // as well would make two documents authoritative for one relation — and the bug that
+    // follows is a hero reassigned to a new player whose old token still lists the seat
+    // that left.
+    await client.mutation('characters:claim', {
+      code,
+      playerId: seatA.playerId,
+      characterId: human.characterId,
+    })
+    const heroToken = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      name: 'Aldis on the Causeway',
+      layer: 'player',
+      sizeSquares: 1,
+      tint: '#16a085',
+      characterId: human.characterId,
+      x: 700,
+      y: 1100,
+    })
+    created.push(heroToken.tokenId)
+
+    const tokensOf = async (tokenId) =>
+      (await client.query('board:tokens', { code, dmCode })).find(
+        (token) => token._id === tokenId,
+      ) ?? null
+
+    const claimedOnly = await tokensOf(heroToken.tokenId)
+    check(
+      'the claim holder arrived in controllerIds and in no grant',
+      claimedOnly &&
+        claimedOnly.controllerIds.length === 1 &&
+        claimedOnly.controllerIds[0] === seatA.playerId &&
+        claimedOnly.grantedPlayerIds.length === 0,
+      claimedOnly
+        ? `effective ${JSON.stringify(claimedOnly.controllerIds)} against granted ${JSON.stringify(claimedOnly.grantedPlayerIds)}`
+        : 'no token row came back',
+    )
+
+    await client.mutation('board:setControllers', {
+      code,
+      dmCode,
+      tokenId: heroToken.tokenId,
+      playerIds: [seatB.playerId],
+    })
+    grantedTokens.push(heroToken.tokenId)
+    const claimedAndGranted = await tokensOf(heroToken.tokenId)
+    check(
+      'a grant came back verbatim in grantedPlayerIds and unioned into controllerIds',
+      claimedAndGranted &&
+        claimedAndGranted.grantedPlayerIds.length === 1 &&
+        claimedAndGranted.grantedPlayerIds[0] === seatB.playerId &&
+        claimedAndGranted.controllerIds.length === 2 &&
+        claimedAndGranted.controllerIds.includes(seatA.playerId) &&
+        claimedAndGranted.controllerIds.includes(seatB.playerId),
+      claimedAndGranted
+        ? `effective ${JSON.stringify(claimedAndGranted.controllerIds)} against granted ${JSON.stringify(claimedAndGranted.grantedPlayerIds)}`
+        : 'no token row came back',
+    )
+
+    // Revoking everything is expressible because the list is absolute rather than a pair
+    // of add/remove calls — and it is stored as an empty array rather than patched away to
+    // `undefined`, which is one shape of write and therefore one fewer thing for a
+    // field-by-field comparison to call `present on one side only`.
+    await client.mutation('board:setControllers', {
+      code,
+      dmCode,
+      tokenId: heroToken.tokenId,
+      playerIds: [],
+    })
+    const revoked = await tokensOf(heroToken.tokenId)
+    check(
+      'revoking to an empty list came back as an empty list, with the claim untouched',
+      revoked &&
+        revoked.grantedPlayerIds.length === 0 &&
+        revoked.controllerIds.length === 1 &&
+        revoked.controllerIds[0] === seatA.playerId,
+      revoked
+        ? `effective ${JSON.stringify(revoked.controllerIds)} against granted ${JSON.stringify(revoked.grantedPlayerIds)}`
+        : 'no token row came back',
+    )
+
+    // A grant on a token with no character behind it — the DM handing the party a cart to
+    // push — where the effective set and the stored one are the same array. The duplicate
+    // is deliberate: a double-click is the ordinary way for the dialog to send one, and a
+    // seat listed twice would render as one player with two checkboxes.
+    await client.mutation('board:setControllers', {
+      code,
+      dmCode,
+      tokenId: open.tokenId,
+      playerIds: [seatA.playerId, seatA.playerId, seatB.playerId],
+    })
+    grantedTokens.push(open.tokenId)
+    const unattached = await tokensOf(open.tokenId)
+    check(
+      'a duplicated grant was squeezed out, and an unattached token derives nothing',
+      unattached &&
+        unattached.grantedPlayerIds.length === 2 &&
+        unattached.grantedPlayerIds.includes(seatA.playerId) &&
+        unattached.grantedPlayerIds.includes(seatB.playerId) &&
+        JSON.stringify([...unattached.controllerIds].sort()) ===
+          JSON.stringify([...unattached.grantedPlayerIds].sort()),
+      unattached
+        ? `effective ${JSON.stringify(unattached.controllerIds)} against granted ${JSON.stringify(unattached.grantedPlayerIds)}`
+        : 'no token row came back',
+    )
+
+    await refuses('board:setControllers refused a well-formed wrong DM code', () =>
+      client.mutation('board:setControllers', {
+        code,
+        dmCode: 'not-the-dm-code',
+        tokenId: heroToken.tokenId,
+        playerIds: [seatA.playerId],
+      }),
+    )
+    // ⚠️ **THIS IS CONVEX'S OWN ARGUMENT VALIDATION EARNING ITS PLACE AGAIN.** A document
+    // id is a string, and a `characters` id is a perfectly ordinary one — so it survives
+    // everything convex-test applies and is refused at the function boundary here, because
+    // `v.id('players')` checks the table the id actually belongs to. Nothing in the handler
+    // asks, and nothing would: `getSeatInGame` would look it up as a seat and find none,
+    // which is the right refusal for the wrong reason and only by luck.
+    await refuses('board:setControllers refused an id from the wrong table', () =>
+      client.mutation('board:setControllers', {
+        code,
+        dmCode,
+        tokenId: heroToken.tokenId,
+        playerIds: [pc.characterId],
+      }),
+    )
+
+    // 27. CONTROL GRANTS SIGHT, AND ONLY TO THE GRANTED SEAT.
+    //
+    // The acceptance test for the grant, and the same shape as sections 10 and 20: the
+    // creature's coin goes on the PLAYER layer, because that is the case that matters —
+    // both seats can see the thing standing there, and exactly one of them may read what
+    // it is. A DM-layer creature is the easy case and is section 28.
+    //
+    // ⚠️ **A grant is a second door onto this milestone's headline secret**, opened by the
+    // DM deliberately: control carries the creature's sheet and its exact hit points to
+    // the granted seat, because a granted pet that could not take damage would be a sheet
+    // to look at. What must not move is anybody else's payload, and that is what the scan
+    // below is for — with a positive control, because without one it passes on a
+    // deployment that sent nobody anything.
+    await client.mutation('characters:setHp', {
+      code,
+      dmCode,
+      characterId: grantedCreature.characterId,
+      currentHp: GRANTED_CURRENT_HP,
+    })
+    const grantedToken = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      // Deliberately not the character's name. What is written on a coin is public by
+      // design, so reusing the name would make the scan below unable to tell a leak from
+      // the thing it is meant to allow — the same care sections 10 and 20 take.
+      name: 'A Dog on a Lead',
+      layer: 'player',
+      sizeSquares: 1,
+      tint: '#9b59b6',
+      characterId: grantedCreature.characterId,
+      x: 1900,
+      y: 1100,
+    })
+    created.push(grantedToken.tokenId)
+    await client.mutation('board:setControllers', {
+      code,
+      dmCode,
+      tokenId: grantedToken.tokenId,
+      playerIds: [seatA.playerId],
+    })
+    grantedTokens.push(grantedToken.tokenId)
+
+    const sheetFor = (playerId) =>
+      client.query('characters:sheet', {
+        code,
+        playerId,
+        characterId: grantedCreature.characterId,
+      })
+    const vitalsFor = (playerId) => client.query('characters:vitals', { code, playerId })
+
+    const seenByA = await sheetFor(seatA.playerId)
+    const vitalsForA = await vitalsFor(seatA.playerId)
+    const rowForA = vitalsForA.find((row) => row.characterId === grantedCreature.characterId)
+    check(
+      'the granted seat got the creature’s sheet and its exact hit points',
+      seenByA &&
+        seenByA.name === GRANTED_NAME &&
+        seenByA.sheet.maxHp === GRANTED_MAX_HP &&
+        rowForA &&
+        rowForA.kind === 'exact' &&
+        rowForA.current === GRANTED_CURRENT_HP &&
+        rowForA.max === GRANTED_MAX_HP,
+      seenByA && rowForA
+        ? `positive control — without it the scan below passes on a deployment that sent nobody anything; ${rowForA.current}/${rowForA.max}`
+        : `sheet ${JSON.stringify(seenByA)}, vitals ${JSON.stringify(rowForA)}`,
+    )
+
+    const seenByB = await sheetFor(seatB.playerId)
+    const vitalsForB = await vitalsFor(seatB.playerId)
+    const rowForB = vitalsForB.find((row) => row.characterId === grantedCreature.characterId)
+    check(
+      'the ungranted seat got null and a band, with no hit-point key on the row',
+      seenByB === null &&
+        rowForB &&
+        rowForB.kind === 'band' &&
+        !('current' in rowForB) &&
+        !('max' in rowForB),
+      rowForB
+        ? `sheet ${JSON.stringify(seenByB)}, keys: ${Object.keys(rowForB).sort().join(', ')}`
+        : 'no row for the creature',
+    )
+
+    // AND B'S WHOLE PAYLOAD, scanned twice over for the reason section 10 gives:
+    // `holdsNumber` walks every number in the decoded payload, which is exact, and the
+    // substring scan over the redacted form catches one that arrived as text in a field
+    // nobody thought to look at. `characters:list` is in the scan because it takes no
+    // `playerId` and therefore cannot answer a grant at all — a creature that turned up in
+    // it would be one every client at the table had already been sent.
+    const grantScannable = [vitalsForB, await client.query('characters:list', { code }), seenByB]
+    const grantSerialised = JSON.stringify(redactOpaque(grantScannable))
+    const grantNeedles = [GRANTED_NAME, GRANTED_NOTES]
+    const grantLeaked = grantNeedles.filter((needle) => grantSerialised.includes(needle))
+    check(
+      'nothing about the granted creature reached the seat it was not granted to',
+      grantLeaked.length === 0 &&
+        !grantSerialised.includes(String(GRANTED_MAX_HP)) &&
+        !grantSerialised.includes(String(GRANTED_CURRENT_HP)) &&
+        !holdsNumber(grantScannable, GRANTED_MAX_HP) &&
+        !holdsNumber(grantScannable, GRANTED_CURRENT_HP),
+      grantLeaked.length > 0
+        ? `leaked ${JSON.stringify(grantLeaked)}`
+        : `${GRANTED_CURRENT_HP}/${GRANTED_MAX_HP} scanned as text and as numbers over ${grantScannable.length} payloads`,
+    )
+
+    // 28. A GRANT ON A DM-LAYER TOKEN REVEALS NOTHING, AND THE COIN IS WHAT DECIDES.
+    //
+    // `controlledCharacterIds` is built from `visibleTokens`, so a grant written onto a
+    // hidden coin contributes nothing to a player's set — sight of the token is the
+    // precondition for sight of the sheet, structurally rather than by anybody remembering
+    // to test the layer. The write itself is deliberately allowed: preparing an ambush and
+    // granting it before revealing it is a reasonable order to work in.
+    //
+    // ⚠️ **Two tokens rather than one moved between layers, because there is no mutation
+    // that re-layers a token.** `board.addToken` takes `layer` and `board.moveToken` takes
+    // coordinates; nothing else writes that field. A second coin on the player layer is the
+    // same input to the composition being asserted — the creature becomes visible, so the
+    // grant starts to mean something — and it is what the API actually allows, so it is
+    // what is done rather than pretending a re-layer exists.
+    const hiddenToken = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      name: 'Shadow Under the Arch',
+      layer: 'dm',
+      sizeSquares: 2,
+      tint: '#2c3e50',
+      characterId: ambush.characterId,
+      x: 1900,
+      y: 1500,
+    })
+    created.push(hiddenToken.tokenId)
+    await client.mutation('board:setControllers', {
+      code,
+      dmCode,
+      tokenId: hiddenToken.tokenId,
+      playerIds: [seatA.playerId],
+    })
+    grantedTokens.push(hiddenToken.tokenId)
+
+    const ambushAsA = () =>
+      client.query('characters:sheet', {
+        code,
+        playerId: seatA.playerId,
+        characterId: ambush.characterId,
+      })
+    const hiddenSheet = await ambushAsA()
+    const hiddenVitals = await vitalsFor(seatA.playerId)
+    check(
+      'a grant on a DM-layer coin gave the granted seat nothing — not a sheet, not a row',
+      hiddenSheet === null &&
+        // Not merely a band: an unseen creature contributes no row at all, because the
+        // *length* of that array is itself a count of how many monsters are waiting.
+        !hiddenVitals.some((row) => row.characterId === ambush.characterId),
+      `sheet ${JSON.stringify(hiddenSheet)}, ${hiddenVitals.length} vitals rows`,
+    )
+    // The DM's own view of the same token, so the check above is not passing because the
+    // grant was never written.
+    const hiddenAsDm = await tokensOf(hiddenToken.tokenId)
+    check(
+      'the grant was really there — the DM sees it on the hidden coin',
+      hiddenAsDm &&
+        hiddenAsDm.layer === 'dm' &&
+        hiddenAsDm.grantedPlayerIds.length === 1 &&
+        hiddenAsDm.grantedPlayerIds[0] === seatA.playerId,
+      hiddenAsDm
+        ? `positive control — granted ${JSON.stringify(hiddenAsDm.grantedPlayerIds)} on the ${hiddenAsDm.layer} layer`
+        : 'no token row came back',
+    )
+
+    const shownToken = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      name: 'Something Under the Arch',
+      layer: 'player',
+      sizeSquares: 2,
+      tint: '#34495e',
+      characterId: ambush.characterId,
+      x: 1900,
+      y: 1900,
+    })
+    created.push(shownToken.tokenId)
+    await client.mutation('board:setControllers', {
+      code,
+      dmCode,
+      tokenId: shownToken.tokenId,
+      playerIds: [seatA.playerId],
+    })
+    grantedTokens.push(shownToken.tokenId)
+
+    const revealedSheet = await ambushAsA()
+    const revealedVitals = await vitalsFor(seatA.playerId)
+    const revealedRow = revealedVitals.find((row) => row.characterId === ambush.characterId)
+    check(
+      'the same grant on a player-layer coin brought the sheet and the numbers with it',
+      revealedSheet &&
+        revealedSheet.name === AMBUSH_NAME &&
+        revealedRow &&
+        revealedRow.kind === 'exact' &&
+        revealedRow.max === AMBUSH_MAX_HP,
+      revealedSheet && revealedRow
+        ? `${revealedRow.current}/${revealedRow.max} — the grant did not change, the coin did`
+        : `sheet ${JSON.stringify(revealedSheet)}, vitals ${JSON.stringify(revealedRow)}`,
+    )
   } catch (error) {
     const data = error && error.data ? ` ${JSON.stringify(error.data)}` : ''
     record('the run completed without an unexpected error', false, `${error.message ?? error}${data}`)
@@ -2477,9 +3202,29 @@ async function main() {
     // assertion that fails halfway leaves the rest to be cleaned up, and a run that
     // abandoned two forty-entry sheets every time it failed would be a slow leak
     // into the same budget the upload limits exist to protect. There is no API for
-    // deleting a game — that is Milestone 7's admin view — so the scene, its blob,
+    // deleting a game — that is the game editor's admin view — so the scene, its blob,
     // the tokens and the characters are what can go.
     if (code && dmCode) {
+      // Grants and reservations first, and on their own rather than left to disappear with
+      // the token or the character they hang off. Both are state *about somebody else's
+      // screen*, both are undoable through an ordinary mutation, and each `quietly` step
+      // is guarded separately — so a run that fails between reserving a hero and handing
+      // it over does not depend on the removal below succeeding to leave the game tidy.
+      for (const tokenId of grantedTokens) {
+        await quietly(() =>
+          client.mutation('board:setControllers', { code, dmCode, tokenId, playerIds: [] }),
+        )
+      }
+      for (const characterId of reservedCharacters) {
+        await quietly(() =>
+          client.mutation('characters:setReserved', {
+            code,
+            dmCode,
+            characterId,
+            reserved: false,
+          }),
+        )
+      }
       for (const tokenId of created) {
         await quietly(() => client.mutation('board:removeToken', { code, dmCode, tokenId }))
       }
@@ -2487,13 +3232,17 @@ async function main() {
         await quietly(() => client.mutation('characters:remove', { code, dmCode, characterId }))
       }
       if (sceneId) await quietly(() => client.mutation('scenes:remove', { code, dmCode, sceneId }))
+      // The seats go too, which they did not before: `players.leave` has always existed
+      // and the note here used to say otherwise. It is also the mutation that revokes a
+      // departing seat's grants, so this sweep is a second, blunter exercise of
+      // `revokeControlForSeat` on whatever the loop above did not reach.
+      for (const playerId of seats) {
+        await quietly(() => client.mutation('players:leave', { code, playerId }))
+      }
       console.log(
-        `\n  cleaned up the scene, ${created.length} tokens and ${createdCharacters.length} characters`,
+        `\n  cleaned up the scene, ${created.length} tokens, ${createdCharacters.length} characters and ${seats.length} seats`,
       )
-      // The seat Milestone 4's lock check joined on goes the same way as the game
-      // it sits in: there is no API for removing either yet. A row holding a display
-      // name is a rounding error against the budget two forty-entry sheets would be.
-      console.log(`  the game itself remains: ${code} (no delete API before Milestone 7)`)
+      console.log(`  the game itself remains: ${code} (no delete API until the game editor)`)
     } else {
       console.log('\n  nothing to clean up: the game was never created')
     }
