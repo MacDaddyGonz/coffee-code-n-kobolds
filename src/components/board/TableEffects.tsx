@@ -10,7 +10,6 @@ import type { PublicFeedRow } from '@/hooks/useFeed'
 import { useFeed } from '@/hooks/useFeed'
 import type { ShownDie } from '@/lib/dice/notation'
 import { api } from '@convex/_generated/api'
-import type { Id } from '@convex/_generated/dataModel'
 
 /** How long the total stays up once the dice have settled. */
 const HOLD_MS = 2200
@@ -54,13 +53,6 @@ export type TableEffectsProps = {
    * It authorises nothing here (invariant 7); the server re-derives everything.
    */
   dmCode: string | null
-  /**
-   * This seat. Routing rather than identity, and it matters for the same reason it does in
-   * `vitalsArgs`: a creature the DM has granted this seat control of is a creature whose
-   * rolls this seat may hear about, and the server cannot know which seat is asking unless
-   * it is told.
-   */
-  playerId: Id<'players'>
   /** The map pane, for the crit shake. See `CritEffectProps.paneRef`. */
   paneRef: RefObject<HTMLElement | null>
 }
@@ -116,7 +108,6 @@ export type TableEffectsProps = {
 export function TableEffects({
   code,
   dmCode,
-  playerId,
   paneRef,
 }: TableEffectsProps): ReactElement {
   /**
@@ -137,7 +128,7 @@ export function TableEffects({
    * one screen, so a mismatch means the dice tumble for a row the panel has not been told
    * about yet.
    */
-  const rows = useFeed(code, dmCode, playerId)
+  const rows = useFeed(code, dmCode)
 
   /**
    * The board's tokens, for the roller's coin.

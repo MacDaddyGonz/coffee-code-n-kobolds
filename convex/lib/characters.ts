@@ -220,10 +220,30 @@ function isWithheldAsReserved(character: Doc<'characters'>, isDm: boolean): bool
  * board, and reveals both in the one write to `layer`.
  *
  * **It composes `maySeeCharacter` and never substitutes for it.** The sheet rule runs
- * first and unchanged, `controlled` is passed straight through to it, and the disjunct
- * only ever adds. `controlled` is optional here for the reason it is optional there:
- * absent means no grants, which is the fail-closed answer, and a caller who genuinely has
- * a set has one because it went and read the board for it.
+ * first and unchanged, and the disjunct only ever adds.
+ *
+ * ⚠️ **It takes no grant set, and that is a proof rather than an omission — the version
+ * that took one was wrong about its own value.** `boardCharacterAccess` builds `controlled`
+ * inside the loop that builds `visible`, and adds to it only on an iteration that has
+ * already added to `visible`: `controlled ⊆ visible`, by construction, which is the
+ * structural claim ADR 0009 makes and that function's own ⚠️ spells out. So passing the
+ * grant set here would give `maySeeCharacter(c, isDm, controlled) || visible.has(c)` — and
+ * every id the first disjunct could admit through a grant, the second has already admitted
+ * through sight. The term is unreachable.
+ *
+ * It was not free to leave in. A parameter that provably changes no answer still *asserts*
+ * a rule — and this one asserted that a grant widens the feed, which made `playerId` an
+ * argument of `feed.list` and split the highest-churn subscription in the application into
+ * one cache entry per seat, each re-executing on every roll at the table, to compute the
+ * same rows. Removing it makes the answer a function of `isDm` alone: two entries for the
+ * whole table.
+ *
+ * **What is lost is a hook, and losing it is the point.** If control is ever meant to let a
+ * seat hear a line about a creature it cannot *see*, that is a new decision — it would mean
+ * a grant on a DM-layer token doing something, which ADR 0009 deliberately made inert — and
+ * it should arrive as a signature change somebody has to write, not as a parameter already
+ * sitting here implying the rule is in place. `feed.test.ts` pins the present behaviour by
+ * asserting a granted seat, an ungranted seat and a seatless client receive identical rows.
  *
  * ⚠️ **The exposure `visible` inherits is stated rather than left to be discovered.**
  * `boardCharacterAccess` reads tokens game-wide rather than per-scene, so a creature
@@ -236,9 +256,8 @@ export function mayHearOf(
   character: Doc<'characters'>,
   isDm: boolean,
   visible: ReadonlySet<Id<'characters'>>,
-  controlled?: ReadonlySet<Id<'characters'>>,
 ): boolean {
-  return maySeeCharacter(character, isDm, controlled) || visible.has(character._id)
+  return maySeeCharacter(character, isDm) || visible.has(character._id)
 }
 
 // ---------------------------------------------------------------------------
@@ -668,13 +687,12 @@ export async function readableCharacterIds(
   gameId: Id<'games'>,
   isDm: boolean,
   visible: ReadonlySet<Id<'characters'>>,
-  controlled?: ReadonlySet<Id<'characters'>>,
 ): Promise<Set<Id<'characters'>>> {
   const characters = await allCharacters(ctx, gameId)
 
   const readable = new Set<Id<'characters'>>()
   for (const character of characters) {
-    if (!mayHearOf(character, isDm, visible, controlled)) continue
+    if (!mayHearOf(character, isDm, visible)) continue
     if (isWithheldAsReserved(character, isDm)) continue
     readable.add(character._id)
   }

@@ -145,7 +145,7 @@ export const MapPane = memo(function MapPane({
         and the roster. All three of its layers are `pointer-events-none`, so nothing here
         can be the overlay that silently swallows a click meant for a token.
       */}
-      <TableEffects code={code} dmCode={dm.dmCode} playerId={playerId} paneRef={paneRef} />
+      <TableEffects code={code} dmCode={dm.dmCode} paneRef={paneRef} />
     </div>
   )
 })

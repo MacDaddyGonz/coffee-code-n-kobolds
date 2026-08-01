@@ -68,6 +68,21 @@
 // is driven dm → player → dm and ADR 0009's "asserted in both places" is the same round
 // trip in both places for the first time.
 //
+// ⚠️ **Rolls and the feed store the deepest nested value this application has, and section
+// 30 is that.** A feed row is a six-member `v.union` of objects beside an object holding a
+// `v.array(v.object(…))`, with two `number | null` unions inside that — five levels of
+// validator in one write, where everything before it was an object of scalars in an optional
+// field. `v.union` next to `v.array(v.object(…))` is exactly the shape convex-test waves
+// through and a deployment has an opinion about. It also inverts the absence pair the
+// sections above are built on: `roll` and `subject.text` are **present keys holding null**
+// rather than absent ones, because a brand-new table got the stronger spelling — so the
+// checks that assert a key is *there* and the ones that assert a key is *gone* are now each
+// other's control.
+//
+// It is also the first section whose writes cannot all be undone. See the note in `finally`:
+// a line naming a character leaves with that character, and a dice-tray line names a seat,
+// so it stays until `npm run prune-games` sweeps it.
+//
 //   node scripts/board-smoke.mjs
 //
 // Plain .mjs on purpose: no tsx, no new dependency, nothing to install.
@@ -629,6 +644,293 @@ const EDITED_TOKEN_TINT = '#A1B2C3'
 /** The top of `isUsableTokenSize`'s range, so the round trip is over a bound rather than a 2. */
 const EDITED_TOKEN_SIZE = 8
 
+/**
+ * MILESTONE 9'S FIXTURES. No new field on a character, and **the deepest nested value this
+ * application has ever asked a real deployment to store.**
+ *
+ * A feed row carries a `subject` that is a **six-member `v.union` of objects** and a `roll`
+ * that is an object holding a `v.array(v.object(...))` — so one write crosses a union, an
+ * object, an array of objects, two nested unions of `number | null` and a three-member
+ * literal union, all in one document. Every other stored shape in this script is one level
+ * shallower than that, and `v.union` beside `v.array(v.object(…))` is exactly where a shape
+ * convex-test waves through is refused for real.
+ *
+ * ⚠️ **The absence half is the other reason this belongs here rather than in the suite.** A
+ * passive and an alt-clicked description both store `roll: null`, and the three non-`text`
+ * parts of an entry store `subject.text: null` — and `null` is a *value* on this table
+ * rather than an absent key, deliberately, because `writeFeedRow` requires every field of
+ * the caller and spells the two that can be empty as `null`. Whether a real deployment
+ * hands those back as present keys or drops them is a question only a round trip settles,
+ * and it is the difference between a client reading `row.roll === null` and one reading
+ * `row.roll === undefined` for ever afterwards. `firstDifference` reports
+ * `present on one side only`; a value check cannot tell the two apart.
+ *
+ * The hero below exists to hold **one entry per distinct expression shape**, so that the
+ * eight shapes the three corpora actually contain each cross the wire once. Its ability
+ * scores are chosen to make every resolved modifier a *different* number — STR +4, DEX +1,
+ * CON +2, INT +0, WIS +3, CHA +5 and PROF +4 at level 9 — because a run of identical
+ * modifiers is a run in which a token resolved to the wrong one still adds up.
+ */
+const ROLL_HERO_NAME = 'Thessaly Vane of the Ninth Arch 🎲'
+const ROLL_HERO_LEVEL = 9
+/**
+ * Worked out by hand, and the working is the point — every modifier below is a number
+ * nobody sends, resolved server-side out of the stored sheet at the moment of rolling.
+ *
+ *   18 → +4 (STR)   12 → +1 (DEX)   14 → +2 (CON)
+ *   10 → +0 (INT)   16 → +3 (WIS)   20 → +5 (CHA)
+ *   level 9 → PROF +4 (2 plus one per four levels above the first)
+ *
+ * INT is 10 on purpose: it makes the Arcana roll below a bonus of exactly zero, which is
+ * `toHitFromBonus`'s one special case — a bare `1d20` rather than the `1d20+0` the grammar
+ * would have accepted.
+ */
+const ROLL_HERO_ABILITIES = { str: 18, dex: 12, con: 14, int: 10, wis: 16, cha: 20 }
+const ROLL_WEAPON_NAME = 'Coil-Breaker'
+/** Alt-clicked, so this whole string has to travel on the row. Non-ASCII on purpose. */
+const ROLL_WEAPON_TEXT =
+  'A blade cut with coil-runes — swung with Strength, and the runes take light on a hit. 🜁🔥'
+const ROLL_PASSIVE_NAME = 'Ninth-Arch Stance'
+const ROLL_CANTRIP_NAME = 'Reading of the Coil'
+
+/** All thirteen, so the sheet is a realistic one. Arcana stays false — see `ROLL_HERO_ABILITIES`. */
+const ROLL_HERO_SKILLS = {
+  athletics: true,
+  acrobatics: false,
+  sleightOfHand: false,
+  stealth: false,
+  arcana: false,
+  investigation: false,
+  animalHandling: false,
+  insight: false,
+  perception: true,
+  deception: false,
+  intimidation: false,
+  performance: true,
+  persuasion: true,
+}
+
+/**
+ * EVERY DISTINCT EXPRESSION SHAPE THE GRAMMAR PRODUCES, one entry each.
+ *
+ * Not variety for its own sake: these are the eight shapes the 763 entries in three corpora
+ * come in, and the interesting thing about each is a different part of `parseRoll` —
+ * an empty term list, a bare integer term, one token, a token beside `PROF`, a token beside
+ * an integer, four terms at once, a die count above one on a d20, and a d20 arriving in the
+ * *damage* slot rather than the to-hit one.
+ *
+ * ⚠️ **`count` and `faces` are the fixture's and only the values are copied off the row.**
+ * That is what makes `expectedRollOf` able to name a missing die as `present on one side
+ * only` rather than agreeing with whatever came back, and it is the whole reason this table
+ * carries three numbers per shape instead of just the string.
+ *
+ * The expressions are hand-written here *and* hand-written on the sheet below, which is two
+ * copies on purpose: the first check of section 30 diffs the two, so a fixture that drifted
+ * fails by name before anything is rolled.
+ */
+const ROLL_SHAPES = [
+  { label: 'no modifier at all', entryId: 'roll-plain', part: 'roll', expression: '2d6', count: 2, faces: 6, modifier: 0 },
+  { label: 'a flat modifier', entryId: 'roll-flat', part: 'roll', expression: '1d8+3', count: 1, faces: 8, modifier: 3 },
+  { label: 'one ability token', entryId: 'roll-token', part: 'roll', expression: '1d8+STR', count: 1, faces: 8, modifier: 4 },
+  { label: 'a token and PROF', entryId: 'roll-weapon', part: 'toHit', expression: '1d20+STR+PROF', count: 1, faces: 20, modifier: 8 },
+  { label: 'a token and a flat', entryId: 'roll-weapon', part: 'roll', expression: '1d8+STR+2', count: 1, faces: 8, modifier: 6 },
+  { label: 'the four-term shape', entryId: 'roll-fourterm', part: 'toHit', expression: '1d20+STR+CHA+PROF', count: 1, faces: 20, modifier: 13 },
+  { label: 'more than one d20', entryId: 'roll-portent', part: 'roll', expression: '2d20', count: 2, faces: 20, modifier: 0 },
+  { label: 'a d20 in the damage slot', entryId: 'roll-cantrip', part: 'roll', expression: '1d20+WIS+PROF', count: 1, faces: 20, modifier: 7 },
+]
+
+/**
+ * The sheet holding all eight, plus the passive that rolls nothing.
+ *
+ * The two weapons are what make `entry` × all four parts reachable off one document: a
+ * weapon offers `toHit` and `roll`, the passive offers `use`, and `text` is the alt-click
+ * that works on everything. `roll-fourterm`'s damage is a plain `1d6` because the shape
+ * being asserted on that entry is its *to-hit*, and a second copy of a shape already in the
+ * table would make the predicates below ambiguous about which row they found.
+ */
+const ROLL_HERO_SHEET = {
+  kind: 'pc',
+  level: ROLL_HERO_LEVEL,
+  className: 'Coil-Reader',
+  abilities: ROLL_HERO_ABILITIES,
+  saveProficiencies: { str: true, dex: true, con: false, int: false, wis: false, cha: true },
+  skillProficiencies: ROLL_HERO_SKILLS,
+  armourClass: 16,
+  maxHp: 66,
+  hitDice: { count: 9, faces: 8 },
+  feats: [
+    {
+      id: 'roll-plain',
+      name: 'Hurled Ford-Stone',
+      text: 'A stone off the bank, thrown hard. Nothing is aimed and nothing is added.',
+      roll: '2d6',
+      level: null,
+      catalogueKey: null,
+      category: 'action',
+    },
+    {
+      id: 'roll-flat',
+      name: 'Sling of the Ford',
+      text: 'A leather sling with a fixed bonus somebody wrote on the sheet by hand.',
+      roll: '1d8+3',
+      level: null,
+      catalogueKey: null,
+      category: 'action',
+    },
+    {
+      id: 'roll-token',
+      name: 'Bare Fist',
+      text: 'One token and nothing else, which is the shape most of the library is in.',
+      roll: '1d8+STR',
+      level: null,
+      catalogueKey: null,
+      category: 'action',
+    },
+    {
+      id: 'roll-weapon',
+      name: ROLL_WEAPON_NAME,
+      text: ROLL_WEAPON_TEXT,
+      roll: '1d8+STR+2',
+      level: null,
+      catalogueKey: null,
+      category: 'weapon',
+      toHit: '1d20+STR+PROF',
+    },
+    {
+      id: 'roll-fourterm',
+      name: 'Verse and Blade',
+      text: 'Sung and swung together, which is why its to-hit names two abilities.',
+      roll: '1d6',
+      level: null,
+      catalogueKey: null,
+      category: 'weapon',
+      toHit: '1d20+STR+CHA+PROF',
+    },
+    {
+      id: 'roll-passive',
+      name: ROLL_PASSIVE_NAME,
+      text: 'Set your feet under the arch and nothing moves you off the stone you are on.',
+      roll: null,
+      level: null,
+      catalogueKey: null,
+      category: 'passive',
+    },
+  ],
+  spells: [
+    // `level: 0` rather than null — a cantrip, so `rollSentence` says *casts* and the
+    // subject carries the number zero rather than an absent field.
+    {
+      id: 'roll-cantrip',
+      name: ROLL_CANTRIP_NAME,
+      text: 'A read of the coil that leaves a mark on whatever it was read against.',
+      roll: '1d20+WIS+PROF',
+      level: 0,
+      catalogueKey: null,
+      category: 'action',
+    },
+    {
+      id: 'roll-portent',
+      name: 'Portent of the Ninth Arch',
+      text: 'Two d20s at once, deliberately: a roll with no single die to be the die.',
+      roll: '2d20',
+      level: 3,
+      catalogueKey: null,
+      category: 'action',
+    },
+  ],
+}
+
+/**
+ * THE CREATURE THE SECRECY HALF IS ABOUT, and every number on it is chosen to be
+ * unmistakable in a scan.
+ *
+ * `113` and `117` are the two modifiers, for the reason 271 and 137 are what they are one
+ * fixture block up: a hero's totals in this game top out in the thirties, no die in the
+ * grammar has more than a hundred faces, and a document id is redacted before the substring
+ * scan runs — so a `113` anywhere in a player's payload is this creature's to-hit and
+ * nothing else. `holdsNumber` walks every number at every depth, which is the half that
+ * catches one arriving as a number in a field nobody thought to look at.
+ *
+ * ⚠️ **A negative initiative bonus**, because `toHitFromBonus` spells one `1d20-7` and a
+ * naive `` `1d20+${bonus}` `` spells it `1d20+-7`. That function's own ⚠️ says so, and this
+ * is the one place the sentence crosses a wire.
+ */
+const FEED_CREATURE_NAME = 'Thing That Rolls Under the Arch 🐍'
+const FEED_CREATURE_ENTRY_NAME = 'Sundering Coil'
+const FEED_CREATURE_TO_HIT = '1d20+113'
+const FEED_CREATURE_TO_HIT_BONUS = 113
+const FEED_CREATURE_DAMAGE = '4d8+117'
+const FEED_CREATURE_DAMAGE_BONUS = 117
+const FEED_CREATURE_INITIATIVE = -7
+const FEED_CREATURE_SHEET = {
+  kind: 'npc',
+  armourClass: 19,
+  maxHp: 313,
+  initiativeBonus: FEED_CREATURE_INITIATIVE,
+  actions: [
+    {
+      id: 'feed-coil',
+      name: FEED_CREATURE_ENTRY_NAME,
+      text: 'Melee. The coil closes and the arch takes the noise.',
+      roll: FEED_CREATURE_DAMAGE,
+      level: null,
+      catalogueKey: null,
+      category: 'weapon',
+      toHit: FEED_CREATURE_TO_HIT,
+    },
+  ],
+  notes: 'Rolls its own dice, and nobody at the table hears a thing until the coin is out.',
+}
+
+/** The DM's private ad-hoc roll. 199 is a needle for the same reason 113 and 117 are. */
+const DM_ONLY_ROLL = '1d4+199'
+const DM_ONLY_BONUS = 199
+
+/**
+ * `1d6` plus twenty `+1` terms: forty-three characters, and **a roll the grammar accepts.**
+ *
+ * `ROLL_PATTERN`'s trailing term group has no repetition cap, so this is the one bound in
+ * the whole roll grammar that the pattern cannot express and `MAX_ROLL_LENGTH` inside
+ * `rollProblem` is the only thing closing — which is exactly why `feed.rollDice` calls that
+ * function rather than a bare `isValidRoll`. Built rather than typed out so the arithmetic
+ * is visible: an innocent edit is how a boundary test stops sitting on a boundary.
+ */
+const MAX_ROLL_LENGTH = 40
+const OVERLONG_ROLL = `1d6${'+1'.repeat(20)}`
+
+/**
+ * The die-count ceiling, copied by hand out of `convex/lib/sheet.ts`.
+ *
+ * Enforced by `ROLL_PATTERN`'s own `(?:[1-9]|1\d|20)` rather than by a comparison, which is
+ * why one over it and a wildly-over-it are both worth sending: `21d6` is the shape a regex
+ * that had been loosened by one character would accept, and `99d20` is the shape a physics
+ * engine is asked to render.
+ */
+const MAX_ROLL_DICE = 20
+
+/**
+ * THE KEY SETS, hand-spelled out of `publicFeedValidator`, `rollResultValidator`,
+ * `dieValidator` and `feedSubjectValidator`.
+ *
+ * Copied by hand for the reason every other fixture here is copied, and the argument is at
+ * its sharpest on a key set: a check that read the validator's own `fields` would agree with
+ * a field silently discarded on write exactly as readily as with a correct payload, because
+ * both sides would have moved together. **A field discarded on the way in is the thing this
+ * whole script exists to find**, and the only instrument that finds it is a list of names
+ * written down somewhere the code under test cannot reach.
+ */
+const FEED_ROW_KEYS = '_id,actorName,characterId,createdAt,dmOnly,roll,subject'
+const FEED_ROLL_KEYS = 'crit,dice,dropped,expression,mode,modifier,total'
+const FEED_DIE_KEYS = 'faces,value'
+const FEED_SUBJECT_KEYS = {
+  entry: 'category,kind,level,name,part,text',
+  check: 'ability,kind',
+  save: 'ability,kind',
+  skill: 'kind,skill',
+  initiative: 'kind',
+  dice: 'kind',
+}
+
 /** The name on the DM's own seat, and the `createdByName` the landing page prints. */
 const SMOKE_DM_NAME = 'Smoke DM'
 
@@ -669,6 +971,58 @@ function statlineOf(sheet) {
     damage: first && first.roll,
     toHit: first && first.toHit,
     category: first && first.category,
+  }
+}
+
+/**
+ * `critOf` restated, for the reason `snapToGrid` below is restated: this is plain .mjs on
+ * purpose and cannot import a .ts module, and a fixture derived from the code under test
+ * would agree with a broken rule exactly as readily as with a correct one.
+ *
+ * The rule is **exactly one d20 among the kept dice**, which is why `2d20` fires no
+ * fireworks and neither does an 8 on a d8. Reads the kept dice, so advantage crits on the
+ * die that survived and never on the one in `dropped`.
+ */
+function critFor(dice) {
+  const twenties = dice.filter((die) => die.faces === 20)
+  if (twenties.length !== 1) return null
+  if (twenties[0].value === 20) return 'success'
+  return twenties[0].value === 1 ? 'failure' : null
+}
+
+/**
+ * THE ROLL THIS SCRIPT EXPECTED, built so that `firstDifference` can name whatever moved.
+ *
+ * ⚠️ **The one thing here taken off the row is the face each die came up on**, because it is
+ * the only thing on a real roll a script cannot predict. Everything else — the expression,
+ * the mode, the die count, the face count of each die, the resolved modifier, the total and
+ * the crit — is the fixture's or is worked out from the dice, so a deployment that returned
+ * the wrong number of dice, a die with the wrong faces, a total that is not the sum plus the
+ * modifier, or a roll object missing a key is *named* rather than agreed with.
+ *
+ * The die count comes from `shape.count` and never from the row, which is the detail that
+ * makes that true: copying the array's length across would make an extra or a missing die
+ * invisible, whereas indexing into a shorter array leaves the expected die carrying no
+ * `value` key at all and `firstDifference` reports `present on one side only`.
+ *
+ * `total` is floored at zero here because `evaluateRoll` floors it there — a heavily
+ * penalised roll reads `0` rather than `-2`, and that is a claim worth asserting rather than
+ * a detail worth mirroring quietly.
+ */
+function expectedRollOf(row, shape) {
+  const dice = row && row.roll ? row.roll.dice : []
+  const rolled = dice.reduce((sum, die) => sum + die.value, 0)
+  return {
+    expression: shape.expression,
+    mode: shape.mode ?? 'flat',
+    dice: Array.from({ length: shape.count }, (unused, index) => ({
+      faces: shape.faces,
+      ...(index < dice.length ? { value: dice[index].value } : {}),
+    })),
+    dropped: null,
+    modifier: shape.modifier,
+    total: Math.max(0, rolled + shape.modifier),
+    crit: critFor(dice),
   }
 }
 
@@ -3721,6 +4075,725 @@ async function main() {
         seatsBeforeCheck.length > 1,
       `${seatsBeforeCheck.length} seats before, ${seatsAfterCheck.length} after — positive control included`,
     )
+
+    // 30. ROLLS AND THE FEED: THE DEEPEST NESTED VALUE THIS APPLICATION STORES, AND THE
+    // FIRST ROWS IT CANNOT TAKE BACK.
+    //
+    // Every stored shape before this one is at most an object of scalars inside an optional
+    // field. A feed row is **a six-member `v.union` of objects beside an object holding a
+    // `v.array(v.object(…))`**, with two nested `number | null` unions and a three-member
+    // literal union inside that — one write crossing five levels of validator, twenty-two
+    // times over in this section. `v.union` next to `v.array(v.object(…))` is precisely where
+    // a value convex-test stores without comment is refused by a real deployment, so the job
+    // here is round trips through genuine value validation rather than logic coverage.
+    //
+    // ⚠️ **The absence half is what this section is really for, and it comes in pairs like
+    // every other trap this script has caught.** `roll: null` on a passive and on an
+    // alt-clicked description, and `subject.text: null` on the three parts of an entry that
+    // are not the description, are **values on this table rather than absent keys** —
+    // deliberately, because `writeFeedRow` demands every field of its caller and spells the
+    // two that can be empty as `null`. That is the stronger convention and it is only worth
+    // having if a deployment actually honours it: a payload that dropped the key instead
+    // leaves every client in the application reading `row.roll === undefined` and comparing
+    // it against `null` for ever afterwards. `firstDifference` reports
+    // `present on one side only`; a value check cannot tell the two apart, which is why the
+    // round trips below are diffs rather than comparisons.
+    //
+    // ⚠️ **NOTHING THIS SECTION WRITES TO THE FEED IS SWEPT BY THE CLEANUP BELOW, AND THAT
+    // IS A DECISION RATHER THAN A GAP.** A feed row is the first thing this script creates
+    // with no delete path a client can reach. Two thirds of it does go: `characters.remove`
+    // calls `deleteFeedForCharacter`, so every line naming the hero or the creature made
+    // below leaves with them on the registry that already exists. What stays is the
+    // **ad-hoc** rolls — a dice-tray line names a seat and no character, so there is no
+    // document for its removal to hang off. `purgeGame` in `convex/admin.ts` would take
+    // them, and it is an `internalMutation` on purpose: reaching it means holding deploy
+    // credentials this script deliberately does not use, because it authenticates with a
+    // game code over `ConvexHttpClient` like any other client. Inventing a public delete
+    // mutation to tidy up after a test would put "who may erase what the table saw" back on
+    // the table, and that question wants an ADR. So the litter is swept by the broom:
+    // `npm run prune-games` counts `feed line(s)` now, and the note in `finally` says so.
+
+    // (a) THE TWO SHEETS, AND A COIN NOBODY IS LOOKING AT.
+    //
+    // The creature's coin goes on the **DM layer**, which is the state the secrecy half of
+    // this section is about: `mayHearOf` admits a creature whose token the caller can already
+    // see and refuses one it cannot, so a prepared encounter rolls nothing the table hears
+    // about until the coin is out. Created before any rolling so that every row written below
+    // is written against a board in one known state.
+    const roller = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: ROLL_HERO_NAME,
+      sheet: ROLL_HERO_SHEET,
+    })
+    createdCharacters.push(roller.characterId)
+    const feedCreature = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: FEED_CREATURE_NAME,
+      sheet: FEED_CREATURE_SHEET,
+    })
+    createdCharacters.push(feedCreature.characterId)
+    const feedToken = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      // Deliberately not the character's name, for the reason sections 10, 20 and 27 all
+      // give: what is written on a coin is public by design, so reusing the name would make
+      // the scan below unable to tell a leak from the thing it is meant to allow.
+      name: 'Something Coiled',
+      layer: 'dm',
+      sizeSquares: 3,
+      tint: '#145a32',
+      characterId: feedCreature.characterId,
+      x: 1200,
+      y: 300,
+    })
+    created.push(feedToken.tokenId)
+
+    // The eight expressions read back off the stored document rather than off the fixture,
+    // which is the half that makes `roll.expression` assertable at all: the claim below is
+    // that what came back is what was *stored*, and a fixture compared against itself would
+    // be a claim about nothing.
+    const rollerStored = await readSheet(roller.characterId)
+    const rollerEntries = rollerStored
+      ? [...rollerStored.sheet.feats, ...rollerStored.sheet.spells]
+      : []
+    const expressionsFor = (source) =>
+      Object.fromEntries(
+        ROLL_SHAPES.map((shape) => {
+          const entry = source.find((candidate) => candidate.id === shape.entryId)
+          return [
+            `${shape.entryId}.${shape.part}`,
+            entry === undefined
+              ? null
+              : shape.part === 'toHit'
+                ? entry.toHit ?? null
+                : entry.roll,
+          ]
+        }),
+      )
+    const expressionDrift = rollerStored
+      ? firstDifference(
+          Object.fromEntries(
+            ROLL_SHAPES.map((shape) => [`${shape.entryId}.${shape.part}`, shape.expression]),
+          ),
+          expressionsFor(rollerEntries),
+          'stored',
+        )
+      : 'no sheet came back'
+    check(
+      `all ${ROLL_SHAPES.length} expression shapes survived onto the stored sheet, byte for byte`,
+      expressionDrift === null,
+      expressionDrift ??
+        `read back off the document, so the rolls below are asserted against what is stored rather than against the fixture`,
+    )
+
+    // (b) ONE ROLL OF EVERY EXPRESSION SHAPE, AND EVERY OTHER ROLL THIS SECTION NEEDS.
+    //
+    // Written first and read once. Twenty-two mutations then one query, rather than a query
+    // after each, because `visibleFeed`'s window is the newest sixty rows and every row this
+    // section wants is inside it — so a single read is a cheaper *and* stricter statement:
+    // the assertions below are about a whole feed rather than about whatever the last call
+    // happened to return.
+    const rollEntry = (entryId, part, extra = {}) =>
+      client.mutation('feed:roll', {
+        code,
+        dmCode,
+        characterId: roller.characterId,
+        request: { kind: 'entry', entryId, part },
+        mode: 'flat',
+        dmOnly: false,
+        ...extra,
+      })
+    const rollRequest = (characterId, request, extra = {}) =>
+      client.mutation('feed:roll', {
+        code,
+        dmCode,
+        characterId,
+        request,
+        mode: 'flat',
+        dmOnly: false,
+        ...extra,
+      })
+    const trayRoll = (expression, extra = {}) =>
+      client.mutation('feed:rollDice', {
+        code,
+        expression,
+        mode: 'flat',
+        dmOnly: false,
+        playerId: seatA.playerId,
+        ...extra,
+      })
+
+    for (const shape of ROLL_SHAPES) {
+      await rollEntry(shape.entryId, shape.part)
+    }
+    // The two parts that roll nothing: a passive being declared, and the alt-click that is
+    // the description arriving.
+    await rollEntry('roll-passive', 'use')
+    await rollEntry('roll-weapon', 'text')
+    // The four shapes built by `toHitFromBonus` off the sheet rather than read out of it.
+    // Arcana is the interesting one: INT 10 and no proficiency is a bonus of exactly zero,
+    // which that function spells as a bare `1d20` rather than the `1d20+0` the grammar would
+    // have accepted.
+    await rollRequest(roller.characterId, { kind: 'check', ability: 'con' })
+    await rollRequest(roller.characterId, { kind: 'save', ability: 'dex' })
+    await rollRequest(roller.characterId, { kind: 'skill', skill: 'arcana' })
+    await rollRequest(roller.characterId, { kind: 'initiative' })
+    // Initiative on a creature, which is the one of the four a reduced sheet can answer —
+    // and it answers it from a stored bonus of −7, so this is `1d20-7` crossing a wire.
+    await rollRequest(feedCreature.characterId, { kind: 'initiative' })
+    // The creature's own two clicks, still behind a DM-layer coin.
+    await rollRequest(feedCreature.characterId, { kind: 'entry', entryId: 'feed-coil', part: 'toHit' })
+    await rollRequest(feedCreature.characterId, { kind: 'entry', entryId: 'feed-coil', part: 'roll' })
+    // Advantage, which is the only way `dropped` is ever a number rather than a null.
+    await rollEntry('roll-weapon', 'toHit', { mode: 'advantage' })
+    // The dice tray, twice over: one accepted expression and one that has to be normalised
+    // on the way in. Both under a player's seat, because an ad-hoc roll is announced as the
+    // person and there is no version of that sentence with the seat missing.
+    await trayRoll('4d6+2')
+    await trayRoll('2d6 + 3')
+    // The DM's private line, which nobody else may ever be told about. Rolled under the DM's
+    // own seat, which `games:create` made in the same transaction as the game — a dice-tray
+    // line is announced as the *person*, so it needs a seat where a sheet roll does not.
+    const dmSeat = (await client.query('players:list', { code })).find((row) => row.isDm) ?? null
+    check(
+      'the DM has a seat of their own to roll the tray under',
+      dmSeat !== null,
+      dmSeat ? `${dmSeat.displayName}, carrying the badge` : 'no seat carried isDm',
+    )
+    if (dmSeat) {
+      await client.mutation('feed:rollDice', {
+        code,
+        dmCode,
+        expression: DM_ONLY_ROLL,
+        mode: 'flat',
+        dmOnly: true,
+        playerId: dmSeat._id,
+      })
+    }
+
+    const dmFeed = await client.query('feed:list', { code, dmCode })
+    // The feed comes back **oldest first**, so the row a roll wrote is the newest match.
+    // Matched on the subject and the expression rather than by position, because a row a
+    // caller may not read still occupied a place in the window it was taken from — which is
+    // the whole reason `visibleFeed` takes its sixty before it filters.
+    const lastRow = (rows, predicate) => [...rows].reverse().find(predicate) ?? null
+
+    for (const shape of ROLL_SHAPES) {
+      const row = lastRow(
+        dmFeed,
+        (candidate) =>
+          candidate.subject.kind === 'entry' &&
+          candidate.subject.part === shape.part &&
+          candidate.roll !== null &&
+          candidate.roll.expression === shape.expression &&
+          candidate.roll.mode === 'flat',
+      )
+      const drift = row
+        ? firstDifference(expectedRollOf(row, shape), row.roll, 'roll')
+        : 'no row came back'
+      check(
+        `feed:roll landed ${shape.label} — ${shape.expression}`,
+        drift === null,
+        drift ??
+          `${shape.count}d${shape.faces} on [${row.roll.dice.map((die) => die.value).join(', ')}] ${
+            shape.modifier < 0 ? '−' : '+'
+          } ${Math.abs(shape.modifier)} = ${row.roll.total}`,
+      )
+    }
+
+    // (c) THE EXACT KEY SETS, WHICH ARE THE POINT AND NOT THE VALUES.
+    //
+    // ⚠️ **A field silently discarded on write is what this whole script exists to find**,
+    // and a value check cannot see one: a row missing `crit` still has a plausible total, and
+    // a subject missing `level` still names the right spell. So the shape is pinned by name
+    // at all three depths — the row, the roll inside it, and one die inside that — against
+    // lists hand-copied out of the four validators. Compared as sorted strings so a failure
+    // prints both sides.
+    const damageShape = ROLL_SHAPES.find((shape) => shape.expression === '1d8+STR+2')
+    const damageRow = lastRow(
+      dmFeed,
+      (row) => row.roll !== null && row.roll.expression === damageShape.expression,
+    )
+    const rowKeys = damageRow ? Object.keys(damageRow).sort().join(',') : 'no row'
+    const rollKeys = damageRow && damageRow.roll ? Object.keys(damageRow.roll).sort().join(',') : 'no roll'
+    const dieKeys =
+      damageRow && damageRow.roll && damageRow.roll.dice.length > 0
+        ? Object.keys(damageRow.roll.dice[0]).sort().join(',')
+        : 'no die'
+    check(
+      'a feed row carries exactly seven keys, its roll seven of its own, and a die exactly two',
+      rowKeys === FEED_ROW_KEYS && rollKeys === FEED_ROLL_KEYS && dieKeys === FEED_DIE_KEYS,
+      `row: ${rowKeys} · roll: ${rollKeys} · die: ${dieKeys}`,
+    )
+
+    // AND THE WHOLE ROW AS ONE DIFF, which is the instrument that caught the
+    // discarded-field bug twice. `_id` and `createdAt` are copied across for the reason
+    // `OPAQUE_KEYS` exists — a document id and a creation timestamp are the two fields on
+    // this row nothing but the deployment can know — and every other field, at every depth,
+    // is this script's own.
+    const wantedDamageRow = damageRow && {
+      _id: damageRow._id,
+      createdAt: damageRow.createdAt,
+      characterId: roller.characterId,
+      actorName: ROLL_HERO_NAME,
+      dmOnly: false,
+      subject: {
+        kind: 'entry',
+        part: 'roll',
+        name: ROLL_WEAPON_NAME,
+        category: 'weapon',
+        level: null,
+        text: null,
+      },
+      roll: expectedRollOf(damageRow, damageShape),
+    }
+    const rowDrift = damageRow
+      ? firstDifference(wantedDamageRow, damageRow, 'feed')
+      : 'no row came back'
+    check(
+      'a whole feed row round-tripped field for field, five levels of validator deep',
+      rowDrift === null,
+      rowDrift ?? `${ROLL_HERO_NAME} rolling ${damageShape.expression} for their ${ROLL_WEAPON_NAME}`,
+    )
+
+    // EVERY SUBJECT KIND THROUGH THE UNION, each diffed rather than sampled — so
+    // `subject.text: null` on the three parts of an entry that are not the description is
+    // asserted **by name** on every one of them, and a `level` of the number zero is
+    // distinguished from a level that never arrived.
+    const subjectCases = [
+      {
+        label: 'entry × toHit',
+        actorName: ROLL_HERO_NAME,
+        expression: '1d20+STR+PROF',
+        subject: {
+          kind: 'entry',
+          part: 'toHit',
+          name: ROLL_WEAPON_NAME,
+          category: 'weapon',
+          level: null,
+          text: null,
+        },
+      },
+      {
+        label: 'entry × roll, a weapon’s damage',
+        actorName: ROLL_HERO_NAME,
+        expression: '1d8+STR+2',
+        subject: {
+          kind: 'entry',
+          part: 'roll',
+          name: ROLL_WEAPON_NAME,
+          category: 'weapon',
+          level: null,
+          text: null,
+        },
+      },
+      {
+        // The cantrip, and the reason it is here rather than folded into the row above: a
+        // spell level of **the number zero** is the one value on this union that a
+        // deployment treating null and absent as interchangeable would get right by luck.
+        label: 'entry × roll, a cantrip at level 0',
+        actorName: ROLL_HERO_NAME,
+        expression: '1d20+WIS+PROF',
+        subject: {
+          kind: 'entry',
+          part: 'roll',
+          name: ROLL_CANTRIP_NAME,
+          category: 'action',
+          level: 0,
+          text: null,
+        },
+      },
+      {
+        label: 'entry × use',
+        actorName: ROLL_HERO_NAME,
+        subject: {
+          kind: 'entry',
+          part: 'use',
+          name: ROLL_PASSIVE_NAME,
+          category: 'passive',
+          level: null,
+          text: null,
+        },
+      },
+      {
+        // The one part that carries prose, so the whole string has to travel — non-ASCII,
+        // em dash and all.
+        label: 'entry × text, the alt-click',
+        actorName: ROLL_HERO_NAME,
+        subject: {
+          kind: 'entry',
+          part: 'text',
+          name: ROLL_WEAPON_NAME,
+          category: 'weapon',
+          level: null,
+          text: ROLL_WEAPON_TEXT,
+        },
+      },
+      {
+        label: 'check',
+        actorName: ROLL_HERO_NAME,
+        expression: '1d20+2',
+        subject: { kind: 'check', ability: 'con' },
+      },
+      {
+        // Proficient in Dexterity saves: +1 for the score and +4 for the level.
+        label: 'save',
+        actorName: ROLL_HERO_NAME,
+        expression: '1d20+5',
+        subject: { kind: 'save', ability: 'dex' },
+      },
+      {
+        // A bare `1d20`, which is `toHitFromBonus`'s zero branch: `ROLL_PATTERN` would have
+        // accepted `1d20+0`, so the grammar is not what forbids it.
+        label: 'skill',
+        actorName: ROLL_HERO_NAME,
+        expression: '1d20',
+        subject: { kind: 'skill', skill: 'arcana' },
+      },
+      {
+        label: 'initiative, on a hero',
+        actorName: ROLL_HERO_NAME,
+        expression: '1d20+1',
+        subject: { kind: 'initiative' },
+      },
+      {
+        // The same subject on a creature, off a stored bonus rather than a Dexterity score,
+        // and negative — so this is the one row in the game whose expression has a minus in
+        // it.
+        label: 'initiative, on a creature',
+        actorName: FEED_CREATURE_NAME,
+        expression: '1d20-7',
+        subject: { kind: 'initiative' },
+      },
+      {
+        label: 'dice, from the tray',
+        actorName: 'Smoke Player A',
+        expression: '4d6+2',
+        subject: { kind: 'dice' },
+      },
+    ]
+    const subjectProblems = subjectCases
+      .map((wanted) => {
+        const row = lastRow(
+          dmFeed,
+          (candidate) =>
+            candidate.actorName === wanted.actorName &&
+            candidate.subject.kind === wanted.subject.kind &&
+            (wanted.subject.part === undefined ||
+              candidate.subject.part === wanted.subject.part) &&
+            (wanted.expression === undefined ||
+              (candidate.roll !== null && candidate.roll.expression === wanted.expression)),
+        )
+        if (!row) return `${wanted.label}: no row came back`
+        const keys = Object.keys(row.subject).sort().join(',')
+        if (keys !== FEED_SUBJECT_KEYS[wanted.subject.kind]) {
+          return `${wanted.label}: subject keys ${keys}, wanted ${FEED_SUBJECT_KEYS[wanted.subject.kind]}`
+        }
+        return firstDifference(wanted.subject, row.subject, `${wanted.label}.subject`)
+      })
+      .filter((problem) => problem !== null)
+    check(
+      `all six subject kinds came back, over ${subjectCases.length} rows, with the exact key set each one’s branch of the union names`,
+      subjectProblems.length === 0,
+      subjectProblems.length > 0
+        ? JSON.stringify(subjectProblems)
+        : `entry × four parts, check, save, skill, initiative on a hero and on a creature, and the tray`,
+    )
+
+    // (d) `roll: null` AS A PRESENT KEY — THE OTHER HALF OF THE TRAP.
+    //
+    // ⚠️ Asserted on the **key** rather than on the value, exactly as sections 6 and 23 do
+    // for `category`, `toHit` and `group`, and for the opposite reason: those three are
+    // absent when they are empty and this one is present holding null, so the two families
+    // of check are each other's control. `row.roll === null` is also true of a key that
+    // never arrived, which is why the seven-key set is re-asserted on both rows beside it.
+    const useRow = lastRow(dmFeed, (row) => row.subject.kind === 'entry' && row.subject.part === 'use')
+    const textRow = lastRow(dmFeed, (row) => row.subject.kind === 'entry' && row.subject.part === 'text')
+    check(
+      'a declared passive and an alt-clicked description both came back with a present roll key holding null',
+      useRow &&
+        'roll' in useRow &&
+        useRow.roll === null &&
+        Object.keys(useRow).sort().join(',') === FEED_ROW_KEYS &&
+        textRow &&
+        'roll' in textRow &&
+        textRow.roll === null &&
+        Object.keys(textRow).sort().join(',') === FEED_ROW_KEYS,
+      useRow && textRow
+        ? `use: ${JSON.stringify(useRow.roll)} over ${Object.keys(useRow).length} keys, text: ${JSON.stringify(textRow.roll)} over ${Object.keys(textRow).length}`
+        : `use ${JSON.stringify(useRow)}, text ${JSON.stringify(textRow)}`,
+    )
+
+    // AND `dropped` AS A NUMBER, which is the only state that union's other member ever
+    // takes. Advantage keeps the higher of two d20s and reports the other, so the kept die
+    // is never below the dropped one and the total is the kept die plus the modifier — three
+    // statements about one row that a deployment storing the wrong die would fail.
+    const advantageRow = lastRow(dmFeed, (row) => row.roll !== null && row.roll.mode === 'advantage')
+    const advantageDice = advantageRow ? advantageRow.roll.dice : []
+    check(
+      'advantage kept one d20 and reported the other in dropped, as a number',
+      advantageRow &&
+        advantageDice.length === 1 &&
+        advantageDice[0].faces === 20 &&
+        typeof advantageRow.roll.dropped === 'number' &&
+        advantageRow.roll.dropped >= 1 &&
+        advantageRow.roll.dropped <= 20 &&
+        advantageDice[0].value >= advantageRow.roll.dropped &&
+        advantageRow.roll.total === advantageDice[0].value + 8 &&
+        advantageRow.roll.crit === critFor(advantageDice),
+      advantageRow
+        ? `kept ${advantageDice[0].value}, dropped ${advantageRow.roll.dropped}, total ${advantageRow.roll.total}, crit ${JSON.stringify(advantageRow.roll.crit)}`
+        : 'no advantage row came back',
+    )
+
+    // (e) THE AMBUSH, AGAINST THE REAL THING.
+    //
+    // Three fetches that hold nothing, one that holds a wrong guess, and a positive control
+    // — because a scan with nothing to find passes on a deployment that sent nobody anything,
+    // which is the discipline every secrecy check in this file keeps. The needles are the
+    // creature's name, the name of the entry that was clicked and both of its expressions;
+    // 113 and 117 are scanned as text over the redacted copy *and* as numbers at every depth,
+    // for the reason section 10 gives.
+    const feedNeedles = [
+      FEED_CREATURE_NAME,
+      FEED_CREATURE_ENTRY_NAME,
+      FEED_CREATURE_TO_HIT,
+      FEED_CREATURE_DAMAGE,
+    ]
+    const uncredentialled = [
+      ['no credential at all', await client.query('feed:list', { code })],
+      ['an empty dmCode', await client.query('feed:list', { code, dmCode: '' })],
+      ['a well-formed wrong dmCode', await client.query('feed:list', { code, dmCode: 'not-the-dm-code' })],
+      // No fourth credential shape naming a seat: `feed:list` does not accept one, because a
+      // grant cannot widen the feed beyond sight and a seat therefore cannot change the
+      // answer. See `mayHearOf`. Passing one here would be an argument-validation refusal
+      // rather than a payload to scan.
+    ]
+    const feedLeaks = uncredentialled.flatMap(([label, rows]) => {
+      const serialised = JSON.stringify(redactOpaque(rows))
+      return [
+        ...feedNeedles.filter((needle) => serialised.includes(needle)).map((needle) => `${label}: ${needle}`),
+        ...[FEED_CREATURE_TO_HIT_BONUS, FEED_CREATURE_DAMAGE_BONUS]
+          .filter((number) => serialised.includes(String(number)) || holdsNumber(rows, number))
+          .map((number) => `${label}: ${number}`),
+      ]
+    })
+    const dmSerialised = JSON.stringify(redactOpaque(dmFeed))
+    check(
+      'not one line about the hidden creature reached a caller without the DM code',
+      feedLeaks.length === 0 &&
+        // The positive control, and the load-bearing half: without it every scan above
+        // passes on a query that returned an empty array to everybody.
+        feedNeedles.every((needle) => dmSerialised.includes(needle)) &&
+        holdsNumber(dmFeed, FEED_CREATURE_DAMAGE_BONUS),
+      feedLeaks.length > 0
+        ? `leaked ${JSON.stringify(feedLeaks)}`
+        : `${uncredentialled.length} payloads scanned for four needles and two numbers, against a DM feed of ${dmFeed.length} rows that holds all six`,
+    )
+
+    // ⚠️ **THE ASSERTION THAT PROVES THE RULE IS LIVE RATHER THAN ALWAYS-FALSE.** Everything
+    // above would pass identically against a `feed:list` that answered the empty array for
+    // anyone but the DM. One write to the coin's layer — nothing touched on the character,
+    // nothing rewritten on the rows — and the same three lines are readable by a browser
+    // holding no credential whatsoever, because `mayHearOf` follows the token. This is
+    // `board.setLayer` and the feed's visibility rule meeting for the first time.
+    await client.mutation('board:setLayer', {
+      code,
+      dmCode,
+      tokenId: feedToken.tokenId,
+      layer: 'player',
+    })
+    const revealedFeed = await client.query('feed:list', { code })
+    const revealedRows = revealedFeed.filter((row) => row.actorName === FEED_CREATURE_NAME)
+    const revealedSerialised = JSON.stringify(redactOpaque(revealedFeed))
+    check(
+      'showing the coin published the three lines it had already rolled, to a caller holding nothing',
+      revealedRows.length === 3 &&
+        feedNeedles.every((needle) => revealedSerialised.includes(needle)),
+      `${revealedRows.length} lines: ${JSON.stringify(revealedRows.map((row) => (row.roll ? row.roll.expression : null)))}`,
+    )
+
+    // And back off again, which is the leg only a round trip settles: those lines have been
+    // **on the wire** to that browser, and hiding the coin has to take them back off.
+    // Section 28 makes the same three-legged trip over a sheet and its hit points.
+    await client.mutation('board:setLayer', {
+      code,
+      dmCode,
+      tokenId: feedToken.tokenId,
+      layer: 'dm',
+    })
+    const rehiddenFeed = await client.query('feed:list', { code })
+    const rehiddenSerialised = JSON.stringify(redactOpaque(rehiddenFeed))
+    check(
+      'hiding it again took all three back off the wire, and left every other line alone',
+      !rehiddenFeed.some((row) => row.actorName === FEED_CREATURE_NAME) &&
+        !feedNeedles.some((needle) => rehiddenSerialised.includes(needle)) &&
+        // The positive control: an empty feed would satisfy both scans above perfectly.
+        rehiddenSerialised.includes(ROLL_HERO_NAME),
+      `${revealedFeed.length} rows while it was shown, ${rehiddenFeed.length} after — positive control included`,
+    )
+
+    // (f) A PRIVATE ROLL, WHICH IS AN UNRELATED QUESTION ABOUT THE ROW RATHER THAN ABOUT THE
+    // CHARACTER ON IT.
+    //
+    // `dmOnly` travels on the payload, deliberately — it is the difference between a line the
+    // table saw and a line only the DM did, and a player never receives a row carrying `true`
+    // because `visibleFeed` dropped it. Both halves are asserted: the flag is absent from
+    // every player row, and it is `true` on the DM's own copy.
+    const playerFeed = await client.query('feed:list', { code })
+    const privateRow = lastRow(dmFeed, (row) => row.roll !== null && row.roll.expression === DM_ONLY_ROLL)
+    const playerSerialised = JSON.stringify(redactOpaque(playerFeed))
+    check(
+      'the DM’s private roll reached the DM as dmOnly: true and reached no player at all',
+      privateRow &&
+        privateRow.dmOnly === true &&
+        privateRow.characterId === null &&
+        !playerSerialised.includes(DM_ONLY_ROLL) &&
+        !holdsNumber(playerFeed, DM_ONLY_BONUS) &&
+        playerFeed.every((row) => row.dmOnly === false) &&
+        // The positive control again: an empty player feed would pass all three scans.
+        playerSerialised.includes(ROLL_HERO_NAME),
+      privateRow
+        ? `${privateRow.actorName} rolled ${privateRow.roll.expression} for ${privateRow.roll.total}; ${playerFeed.length} player rows, all dmOnly false`
+        : 'no private row came back to the DM',
+    )
+    await refuses('feed:rollDice refused a private roll to a seat with no DM code', () =>
+      client.mutation('feed:rollDice', {
+        code,
+        expression: '1d6',
+        mode: 'flat',
+        dmOnly: true,
+        playerId: seatA.playerId,
+      }),
+    )
+
+    // (g) THE BOUNDS, AGAINST REAL VALUE VALIDATION.
+    //
+    // The dice tray is the **one place in this application where a roll expression arrives
+    // from a human** rather than from content that has already been through
+    // `entriesProblem`, so it is the only place the length hole is reachable at all — and
+    // `OVERLONG_ROLL` is a roll `ROLL_PATTERN` accepts, which is why `rollProblem` and not a
+    // bare `isValidRoll` is what closes it.
+    await refuses(
+      `feed:rollDice refused a ${OVERLONG_ROLL.length}-character roll the grammar itself accepts`,
+      () => trayRoll(OVERLONG_ROLL),
+    )
+    await refuses(`feed:rollDice refused ${MAX_ROLL_DICE + 1}d6, one die over the cap`, () =>
+      trayRoll(`${MAX_ROLL_DICE + 1}d6`),
+    )
+    await refuses('feed:rollDice refused 99d20, which is a physics engine and not a roll', () =>
+      trayRoll('99d20'),
+    )
+    await refuses('feed:rollDice refused a sentence somebody typed into the box', () =>
+      trayRoll('two dice and a good feeling'),
+    )
+    // ⚠️ The refusal that is a *decision* rather than a bound. An ad-hoc roll has no
+    // character, so `1d8+STR` has nothing to resolve against — and `+0` would be a lie the
+    // feed then spells out in full beside a total nobody's Strength contributed to.
+    await refuses(
+      'feed:rollDice refused an ad-hoc roll naming STR, which has no character to resolve it',
+      () => trayRoll('1d8+STR'),
+    )
+
+    // AND THE TWO IT ACCEPTS. `2d6 + 3` is the same roll as `2d6+3` typed by somebody who
+    // uses spaces, normalised by the function the tray's own field runs on every keystroke —
+    // so what is asserted is the *stored* expression rather than the fact that it was
+    // accepted.
+    const trayRow = lastRow(dmFeed, (row) => row.roll !== null && row.roll.expression === '4d6+2')
+    const normalisedRow = lastRow(dmFeed, (row) => row.roll !== null && row.roll.expression === '2d6+3')
+    check(
+      'feed:rollDice accepted 4d6+2 and stored `2d6 + 3` as `2d6+3`',
+      trayRow &&
+        trayRow.roll.dice.length === 4 &&
+        trayRow.roll.dice.every((die) => die.faces === 6) &&
+        trayRow.characterId === null &&
+        normalisedRow &&
+        normalisedRow.roll.expression === '2d6+3' &&
+        normalisedRow.roll.modifier === 3 &&
+        normalisedRow.roll.dice.length === 2,
+      trayRow && normalisedRow
+        ? `${trayRow.roll.expression} on ${trayRow.roll.dice.length} d6, and the spaced one stored as ${JSON.stringify(normalisedRow.roll.expression)}`
+        : `tray ${JSON.stringify(trayRow)}, normalised ${JSON.stringify(normalisedRow)}`,
+    )
+
+    // (h) WHAT `feed:roll` REFUSES, AND THE PARITY THAT MATTERS MORE THAN ANY OF THEM.
+    await refuses('feed:roll refused an entry id that is not on the sheet', () =>
+      rollEntry('no-such-entry-at-all', 'roll'),
+    )
+    // The part gate. Without it a client asks for a passive's to-hit, `toHitOf` answers null
+    // because that category carries none, and the line announces an attack that cannot exist.
+    await refuses('feed:roll refused a to-hit on a passive', () => rollEntry('roll-passive', 'toHit'))
+    await refuses(
+      'feed:roll refused an ability check on a creature, which has no ability scores to roll from',
+      () => rollRequest(feedCreature.characterId, { kind: 'check', ability: 'str' }),
+    )
+
+    // ⚠️ **THE REFUSAL PARITY, WHICH IS THE ONLY ONE OF THESE THAT GUARDS A SECRET.** A
+    // fabricated character and the DM's hidden creature have to be **one answer**, word for
+    // word, or the error channel is an existence oracle for tonight's ambush — ask for a
+    // roll on every id you can think of and the ones that come back differently are the ones
+    // that exist. `requireEditableCharacter` is where that is made properly, and this is the
+    // claim that it is still true over a real wire.
+    //
+    // The ghost is **made and unmade** rather than invented, because a string that is not a
+    // `characters` id at all is refused by Convex's argument validation at the function
+    // boundary — a different refusal from a different layer, and not the one being compared.
+    const ghost = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: 'Ghost of a Deleted Sheet',
+      sheet: ROLL_HERO_SHEET,
+    })
+    await client.mutation('characters:remove', { code, dmCode, characterId: ghost.characterId })
+    // Refused to the **DM** as well, which is worth its own line: the id is well formed, it
+    // belonged to this game a moment ago, and the whole of what is wrong with it is that the
+    // document is gone. That is the state a second browser tab is in the instant after a
+    // delete, so it is a real click rather than a hostile one.
+    await refuses('feed:roll refused a character id that no longer resolves, even to the DM', () =>
+      rollRequest(ghost.characterId, { kind: 'initiative' }),
+    )
+    const refusalOf = async (fn) => {
+      try {
+        await fn()
+        return null
+      } catch (error) {
+        const data = error && error.data
+        return data && typeof data === 'object'
+          ? { kind: data.kind ?? null, message: data.message ?? null }
+          : { kind: null, message: describeError(error) }
+      }
+    }
+    const ghostRefusal = await refusalOf(() =>
+      client.mutation('feed:roll', {
+        code,
+        playerId: seatB.playerId,
+        characterId: ghost.characterId,
+        request: { kind: 'initiative' },
+        mode: 'flat',
+        dmOnly: false,
+      }),
+    )
+    const hiddenRefusal = await refusalOf(() =>
+      client.mutation('feed:roll', {
+        code,
+        playerId: seatB.playerId,
+        characterId: feedCreature.characterId,
+        request: { kind: 'initiative' },
+        mode: 'flat',
+        dmOnly: false,
+      }),
+    )
+    check(
+      'a character that never existed and a creature behind a DM-layer coin are one refusal, word for word',
+      ghostRefusal !== null &&
+        hiddenRefusal !== null &&
+        JSON.stringify(ghostRefusal) === JSON.stringify(hiddenRefusal) &&
+        ghostRefusal.kind === 'CharacterNotFound',
+      `${JSON.stringify(ghostRefusal)} against ${JSON.stringify(hiddenRefusal)}`,
+    )
   } catch (error) {
     const data = error && error.data ? ` ${JSON.stringify(error.data)}` : ''
     record('the run completed without an unexpected error', false, `${error.message ?? error}${data}`)
@@ -3741,6 +4814,16 @@ async function main() {
     // *cleanup* path of a test depend on deploy credentials it does not otherwise use,
     // to save a call to `npm run prune-games` that sweeps every run at once. So the
     // litter is swept by the broom rather than by each run, and the line below says so.
+    //
+    // ⚠️ **Section 30's ad-hoc feed lines are left behind for the same reason, and they are
+    // the first rows this script creates that no client can delete.** Two thirds of what it
+    // writes does go: `characters.remove` calls `deleteFeedForCharacter`, so every line
+    // naming the roll hero or the hidden creature leaves on the character loop below. A
+    // **dice-tray** line names a seat and no character, so there is no document for a
+    // removal to hang off — and inventing a public mutation to erase what the table saw is
+    // not a thing a smoke test gets to decide. `purgeGame` would take them and is an
+    // `internalMutation` deliberately, exactly as above. `npm run prune-games` counts them:
+    // its receipt reads `feed line(s)` beside the tokens, characters and seats.
     if (code && dmCode) {
       // Grants and reservations first, and on their own rather than left to disappear with
       // the token or the character they hang off. Both are state *about somebody else's
@@ -3796,7 +4879,9 @@ async function main() {
       console.log(
         `\n  cleaned up the scene, ${created.length} tokens, ${createdCharacters.length} characters and ${seats.length} seats, and swept ${uploads.length} uploads`,
       )
-      console.log(`  the game itself remains: ${code} — \`npm run prune-games\` sweeps these up`)
+      console.log(
+        `  the game itself remains, and section 30's ad-hoc feed lines with it: ${code} — \`npm run prune-games\` sweeps these up, and counts the feed lines`,
+      )
     } else {
       console.log('\n  nothing to clean up: the game was never created')
     }

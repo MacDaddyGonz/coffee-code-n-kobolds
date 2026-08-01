@@ -2,7 +2,6 @@ import { useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
 
 import { api } from '@convex/_generated/api'
-import type { Id } from '@convex/_generated/dataModel'
 
 /**
  * ONE LINE OF THE FEED, taken from the query's own return type.
@@ -44,21 +43,21 @@ export type PublicFeedRow = FunctionReturnType<typeof api.feed.list>[number]
  * object here. The key order is fixed by this one builder, which is the other half of why it
  * exists — `JSON.stringify` is order-sensitive.
  *
- * ⚠️ **For a player, `playerId` is part of the key, and leaving it off is a different
- * answer rather than a saving.** A creature the DM has granted this seat is one whose lines
- * this seat may read (ADR 0009), and `readableCharacterIds` cannot know which seat is asking
- * unless it is told — so a subscription built without the id is missing the party pet's
- * rolls. The id authorises nothing (invariant 7); the server re-derives the grant from the
- * token table either way.
+ * ⚠️ **There is no `playerId`, and its absence is the decision rather than an omission.**
+ * The obvious reading is that a seat has to be named because a creature the DM has granted
+ * it is one whose lines it may read (ADR 0009) — and that reading is wrong, which the
+ * version of this builder that took one asserted for an afternoon.
+ * `boardCharacterAccess` adds an id to `controlled` only on an iteration that has already
+ * added it to `visible`, so a grant can never admit a line that sight has not admitted
+ * already, and `feed.list` therefore answers a function of the DM code alone. Naming a seat
+ * would have minted one cache entry per person at the table for identical rows, on the one
+ * query that re-runs every time anybody rolls. `mayHearOf` carries the proof.
  *
- * ⚠️ **For the DM it is dropped, and that is a correctness fix rather than a saving.**
- * `boardCharacterAccess` puts the whole control question behind `!isDm` — `control` is
- * `null` for a caller holding the DM code — so a DM's answer is byte-identical whichever
- * seat is named, and naming one only mints a second entry holding the same rows.
+ * So there are two entries for a whole table — a player's and the DM's — and the two
+ * readers on one screen, the panel and the table effects, share whichever of them applies.
  */
-export function feedArgs(code: string, dmCode: string | null, playerId: Id<'players'> | null) {
-  if (dmCode !== null) return { code, dmCode }
-  return playerId === null ? { code } : { code, playerId }
+export function feedArgs(code: string, dmCode: string | null) {
+  return dmCode === null ? { code } : { code, dmCode }
 }
 
 /**
@@ -76,10 +75,6 @@ export function feedArgs(code: string, dmCode: string | null, playerId: Id<'play
  * this caller may hear about, by one predicate on the server, and a renderer that had to
  * decide would already have been sent the secret (CLAUDE.md invariant 1).
  */
-export function useFeed(
-  code: string,
-  dmCode: string | null,
-  playerId: Id<'players'>,
-): PublicFeedRow[] | undefined {
-  return useQuery(api.feed.list, feedArgs(code, dmCode, playerId))
+export function useFeed(code: string, dmCode: string | null): PublicFeedRow[] | undefined {
+  return useQuery(api.feed.list, feedArgs(code, dmCode))
 }

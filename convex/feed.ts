@@ -2,12 +2,12 @@ import { ConvexError, v } from 'convex/values'
 
 import { mutation, query } from './_generated/server'
 import { requireEditableCharacter } from './lib/access'
-import { boardCharacterAccess } from './lib/board'
+import { visibleCharacterIds } from './lib/board'
 import { readableCharacterIds } from './lib/characters'
 import { NO_MODIFIERS, cryptoDice, evaluateRoll, modifiersFor } from './lib/dice'
 import { publicFeedValidator, visibleFeed, writeFeedRow } from './lib/feed'
 import { findGameByCode, resolveDmAccess } from './lib/games'
-import { getSeatInGame, listSeats } from './lib/players'
+import { getSeatInGame } from './lib/players'
 import { resolveSheet } from './lib/resolve'
 import { partsFor, rollModeValidator, rollRequestValidator } from './lib/roll'
 import type { FeedSubject, RollRequest } from './lib/roll'
@@ -41,7 +41,7 @@ import { skillBonus } from './lib/skills'
 // as an invariant with a test, since no validator can express it.
 //
 // Nor is one row of `characters` or `tokens` read here. `readableCharacterIds` and
-// `boardCharacterAccess` are the two narrow crossings, and a `Set` of character ids is
+// `visibleCharacterIds` are the two narrow crossings, and a `Set` of character ids is
 // the widest thing that comes back from either.
 
 // ---------------------------------------------------------------------------
@@ -331,7 +331,6 @@ function planEntryRoll(
 export const list = query({
   args: {
     code: v.string(),
-    playerId: v.optional(v.id('players')),
     dmCode: v.optional(v.string()),
   },
   returns: v.array(publicFeedValidator),
@@ -339,24 +338,15 @@ export const list = query({
     const game = await findGameByCode(ctx, args.code)
     if (!game) return []
 
-    // Concurrent: whether this caller holds the DM code and who is sitting at the table
-    // are independent questions, exactly as in `characters.vitals`.
-    const [{ isDm }, seats] = await Promise.all([
-      resolveDmAccess(ctx, args.code, args.dmCode),
-      listSeats(ctx, game._id),
-    ])
+    const { isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
 
-    // One pass over the board for both sets — see `boardCharacterAccess`, which is what
-    // makes "controlled is a subset of visible" structural rather than a coincidence of
-    // two traversals filtering alike.
-    const { visible, controlled } = await boardCharacterAccess(
-      ctx,
-      game._id,
-      isDm,
-      seats,
-      args.playerId,
-    )
-    const readable = await readableCharacterIds(ctx, game._id, isDm, visible, controlled)
+    // Sight alone, because a grant cannot widen this answer — `controlled` is a subset of
+    // `visible` by construction, so the grant disjunct `mayHearOf` used to take was
+    // unreachable. That is why there is no `playerId` above and no `listSeats` here: the
+    // answer is a function of the DM code alone, so the whole table shares two cache
+    // entries for a query that re-runs on every roll. See `mayHearOf`.
+    const visible = await visibleCharacterIds(ctx, game._id, isDm)
+    const readable = await readableCharacterIds(ctx, game._id, isDm, visible)
     return await visibleFeed(ctx, game._id, isDm, readable)
   },
 })

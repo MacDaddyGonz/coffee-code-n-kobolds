@@ -341,7 +341,7 @@ export const RightPane = memo(function RightPane({
 
         <TabsContent value="feed" className="min-h-0">
           <TabPane>
-            <FeedTab code={code} playerId={playerId} dm={dm} />
+            <FeedTab code={code} dm={dm} />
           </TabPane>
         </TabsContent>
 

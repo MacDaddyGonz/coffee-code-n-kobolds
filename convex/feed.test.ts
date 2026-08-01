@@ -500,17 +500,8 @@ async function playerPayloads(t: Harness, fixture: Fixture): Promise<Record<stri
 
   return {
     'feed.list (no dm code)': await attempt(t.query(api.feed.list, { code })),
-    'feed.list (no dm code, the seat’s own id)': await attempt(
-      t.query(api.feed.list, { code, playerId: ana }),
-    ),
     'feed.list (empty dm code)': await attempt(t.query(api.feed.list, { code, dmCode: '' })),
-    'feed.list (empty dm code, the seat’s own id)': await attempt(
-      t.query(api.feed.list, { code, dmCode: '', playerId: ana }),
-    ),
     'feed.list (wrong dm code)': await attempt(t.query(api.feed.list, { code, dmCode: wrong })),
-    'feed.list (wrong dm code, the seat’s own id)': await attempt(
-      t.query(api.feed.list, { code, dmCode: wrong, playerId: ana }),
-    ),
     'characters.vitals': await attempt(t.query(api.characters.vitals, { code })),
     'characters.vitals (the seat’s own id)': await attempt(
       t.query(api.characters.vitals, { code, playerId: ana }),
@@ -656,13 +647,11 @@ describe('a player inspecting network traffic hears nothing about the DM’s cre
     const totals = await rolledTotals(t, fixture)
 
     // Half one — the player is genuinely subscribed to a feed with something in it.
-    for (const who of [{}, { playerId: fixture.ana }]) {
-      const rows = await t.query(api.feed.list, { code: fixture.code, ...who })
-      expect(rows.map((row) => row.actorName), JSON.stringify(who)).toEqual([HERO_NAME])
-      expect(rows[0].characterId).toBe(fixture.hero)
-      expect(rows[0].subject).toEqual({ kind: 'initiative' })
-      expect(rows[0].roll?.expression).toBe(HERO_INITIATIVE_ROLL)
-    }
+    const own = await t.query(api.feed.list, { code: fixture.code })
+    expect(own.map((row) => row.actorName)).toEqual([HERO_NAME])
+    expect(own[0].characterId).toBe(fixture.hero)
+    expect(own[0].subject).toEqual({ kind: 'initiative' })
+    expect(own[0].roll?.expression).toBe(HERO_INITIATIVE_ROLL)
 
     // Half two — the same fetch with the DM code carries every needle the loop hunted for.
     const dmRows = await dmFeed(t, fixture)
@@ -825,7 +814,7 @@ describe('a coin on the player layer is a line the table hears', () => {
 
     await t.mutation(api.board.setLayer, { code, dmCode, tokenId: creatureToken, layer: 'player' })
 
-    const revealed = await t.query(api.feed.list, { code, playerId: fixture.ana })
+    const revealed = await t.query(api.feed.list, { code })
     expect(revealed).toHaveLength(2)
     expect(revealed.map((row) => row.actorName)).toEqual([CREATURE_NAME, CREATURE_NAME])
     const revealedText = JSON.stringify(revealed) ?? ''
@@ -838,7 +827,7 @@ describe('a coin on the player layer is a line the table hears', () => {
     // takes both away again — see the ⚠️ on `setTokenLayer`, which lists the three things
     // that move together.
     await t.mutation(api.board.setLayer, { code, dmCode, tokenId: creatureToken, layer: 'dm' })
-    expect(await t.query(api.feed.list, { code, playerId: fixture.ana })).toHaveLength(0)
+    expect(await t.query(api.feed.list, { code })).toHaveLength(0)
   })
 
   /**
@@ -859,7 +848,7 @@ describe('a coin on the player layer is a line the table hears', () => {
 
     // The line is there, so what follows is a refusal about the sheet rather than an
     // empty game.
-    expect(await t.query(api.feed.list, { code, playerId: ana })).toHaveLength(2)
+    expect(await t.query(api.feed.list, { code })).toHaveLength(2)
 
     for (const who of [{}, { playerId: ana }, { dmCode: twiddle(dmCode) }]) {
       expect(
@@ -876,7 +865,7 @@ describe('a coin on the player layer is a line the table hears', () => {
     // The notes and the maximum are still nowhere in a player's traffic, even though a
     // line naming this creature now legitimately is.
     for (const [name, payload] of Object.entries({
-      'feed.list': await t.query(api.feed.list, { code, playerId: ana }),
+      'feed.list': await t.query(api.feed.list, { code }),
       'characters.sheet': await t.query(api.characters.sheet, { code, characterId: creature }),
       'characters.list': await t.query(api.characters.list, { code }),
       'characters.vitals': await t.query(api.characters.vitals, { code, playerId: ana }),
@@ -967,17 +956,11 @@ describe('a granted pet: sight follows the coin, and the grant follows the lead'
       dmOnly: false,
     })
 
-    // Ana holds the lead; Ben holds nothing. Both hear the line, and the assertion is
-    // written for both seats deliberately rather than for the granted one — see the
-    // section note. `visible` is a property of the coin.
-    for (const [who, playerId] of [
-      ['the granted seat', ana],
-      ['an ungranted seat', ben],
-    ] as const) {
-      const rows = await t.query(api.feed.list, { code, playerId })
-      expect(rows.map((row) => row.actorName), who).toEqual([PET_NAME])
-      expect(rows[0].subject, who).toMatchObject({ kind: 'entry', name: PET_ENTRY_NAME })
-    }
+    // Ana holds the lead; Ben holds nothing. Both hear the line, because `visible` is a
+    // property of the coin and not of the seat.
+    const heard = await t.query(api.feed.list, { code })
+    expect(heard.map((row) => row.actorName)).toEqual([PET_NAME])
+    expect(heard[0].subject).toMatchObject({ kind: 'entry', name: PET_ENTRY_NAME })
 
     // What the grant *does* change, asserted beside it so the two are not confused: the
     // sheet opens for the seat holding the lead and for nobody else.
@@ -989,27 +972,29 @@ describe('a granted pet: sight follows the coin, and the grant follows the lead'
     ).toBeNull()
 
     /**
-     * ⚠️ **AND THE STRONGER FORM OF THE SAME FACT: `playerId` cannot change this query's
-     * answer at all.**
+     * ⚠️ **AND THE STRONGER FORM OF THE SAME FACT: THERE IS NO LONGER A CHANNEL FOR A GRANT
+     * TO WIDEN THE FEED, AND THIS IS WHAT PINS THAT.**
      *
      * `boardCharacterAccess` builds both sets in one pass and only ever adds to
      * `controlled` on an iteration that has already added to `visible`, so
-     * `controlled ⊆ visible` holds by construction (ADR 0009, and the ⚠️ on that
-     * function). `mayHearOf` is `maySeeCharacter(…, controlled) || visible.has(…)` — so
-     * every id the `controlled` disjunct could admit, the `visible` disjunct has already
-     * admitted, and the argument is **provably inert on this query**. Three payloads,
-     * byte-identical.
+     * `controlled ⊆ visible` holds by construction (ADR 0009, and the ⚠️ on that function).
+     * `mayHearOf` was therefore `maySeeCharacter(…, controlled) || visible.has(…)` with a
+     * first disjunct that could admit nothing the second had not — a parameter that changed
+     * no answer while *asserting* that a grant widens the feed, which is what put `playerId`
+     * on this query and split the highest-churn subscription in the application into one
+     * cache entry per seat.
      *
-     * That is asserted rather than left implicit because `feed.list`'s docblock claims the
-     * opposite — that "the answer genuinely differs per seat and one shared entry cannot
-     * express it", which is the stated justification for splitting this subscription into a
-     * cache entry per seat on a query that re-runs on every roll at the table. If a later
-     * milestone makes control widen the feed *beyond* sight, this assertion is the one that
-     * fails, and it should: that would be a new decision rather than a tidy-up.
+     * Both are gone, so the property is now structural rather than tested: a seat cannot be
+     * named, so it cannot change the answer. What is left to assert is that the door is
+     * genuinely shut — Convex refuses an argument the validator does not declare, before any
+     * handler runs — and that a later milestone wanting control to widen the feed beyond
+     * sight has to reopen it deliberately. That would be a new decision, not a tidy-up, and
+     * this is the test that makes somebody take it.
      */
-    const granted = await t.query(api.feed.list, { code, playerId: ana })
-    expect(await t.query(api.feed.list, { code, playerId: ben })).toEqual(granted)
-    expect(await t.query(api.feed.list, { code })).toEqual(granted)
+    await expect(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      t.query(api.feed.list, { code, playerId: ben } as any),
+    ).rejects.toThrow()
   })
 
   test('the granted seat may roll the pet, and an ungranted seat may not', async () => {
@@ -1024,7 +1009,7 @@ describe('a granted pet: sight follows the coin, and the grant follows the lead'
     }
 
     await t.mutation(api.feed.roll, { code, playerId: ana, characterId: pet, ...bite })
-    expect(newest(await t.query(api.feed.list, { code, playerId: ana })).actorName).toBe(PET_NAME)
+    expect(newest(await t.query(api.feed.list, { code })).actorName).toBe(PET_NAME)
 
     // Ben was granted nothing, so the pet is invisible to the rule that decides this —
     // `maySeeCharacter` refuses a creature before anybody asks who is holding its lead,
@@ -1067,7 +1052,7 @@ describe('a granted pet: sight follows the coin, and the grant follows the lead'
     await setControllers(t, fixture, creatureToken, [ana])
     await rollCreatureAttack(t, fixture)
 
-    expect(await t.query(api.feed.list, { code, playerId: ana })).toHaveLength(0)
+    expect(await t.query(api.feed.list, { code })).toHaveLength(0)
     expect(
       await t.query(api.characters.sheet, { code, characterId: creature, playerId: ana }),
     ).toBeNull()
@@ -1091,7 +1076,7 @@ describe('a granted pet: sight follows the coin, and the grant follows the lead'
     // And the grant survives the round trip inert rather than revoked, which is what makes
     // the reveal one click: put the coin on the player layer and Ana has the lead.
     await t.mutation(api.board.setLayer, { code, dmCode, tokenId: creatureToken, layer: 'player' })
-    expect(await t.query(api.feed.list, { code, playerId: ana })).toHaveLength(2)
+    expect(await t.query(api.feed.list, { code })).toHaveLength(2)
     expect(
       await t.query(api.characters.sheet, { code, characterId: creature, playerId: ana }),
     ).not.toBeNull()
@@ -1141,7 +1126,7 @@ describe('a reserved hero’s rolls are withheld, and the reservation is the onl
 
     // Withheld — and by name and by id, because a row keyed on a character nobody is
     // supposed to know exists is a leak whether or not the name travels beside it.
-    for (const who of [{}, { playerId: ana }, { dmCode: twiddle(dmCode) }]) {
+    for (const who of [{}, { dmCode: twiddle(dmCode) }]) {
       const rows = await t.query(api.feed.list, { code, ...who })
       expect(rows, JSON.stringify(who)).toHaveLength(0)
       expect(JSON.stringify(rows) ?? '').not.toContain(RESERVED_NAME)
@@ -1162,7 +1147,7 @@ describe('a reserved hero’s rolls are withheld, and the reservation is the onl
       characterId: seraphine,
       reserved: false,
     })
-    const afterwards = await t.query(api.feed.list, { code, playerId: ana })
+    const afterwards = await t.query(api.feed.list, { code })
     expect(afterwards.map((row) => row.actorName)).toEqual([RESERVED_NAME])
     expect(afterwards).toEqual(asDm)
   })
@@ -1279,7 +1264,7 @@ describe('dmOnly is about the line and not about the character', () => {
       mode: 'flat',
       dmOnly: false,
     })
-    const rows = await t.query(api.feed.list, { code, playerId: ana })
+    const rows = await t.query(api.feed.list, { code })
     expect(rows.map((row) => row.actorName)).toEqual([HERO_NAME, 'Ana'])
     expect(rows.every((row) => row.dmOnly === false)).toBe(true)
   })
@@ -1306,9 +1291,7 @@ describe('dmOnly is about the line and not about the character', () => {
     })
 
     // Nothing for the party, even though the character is theirs to read.
-    for (const who of [{}, { playerId: ana }]) {
-      expect(await t.query(api.feed.list, { code, ...who }), JSON.stringify(who)).toHaveLength(0)
-    }
+    expect(await t.query(api.feed.list, { code })).toHaveLength(0)
     // The control on both halves: the sheet *is* open to that seat, and the DM does have
     // the line — so the withholding is the flag rather than the character.
     expect(
@@ -1328,7 +1311,7 @@ describe('dmOnly is about the line and not about the character', () => {
       mode: 'flat',
       dmOnly: false,
     })
-    const afterwards = await t.query(api.feed.list, { code, playerId: ana })
+    const afterwards = await t.query(api.feed.list, { code })
     expect(afterwards).toHaveLength(1)
     expect(afterwards[0].dmOnly).toBe(false)
   })
@@ -1975,7 +1958,7 @@ describe('the dice tray is the one place a roll arrives from a human', () => {
     const total = MAX_FEED_ROWS_LISTED + 5
     await fireRolls(t, fixture, total)
 
-    const rows = await t.query(api.feed.list, { code: fixture.code, playerId: fixture.ana })
+    const rows = await t.query(api.feed.list, { code: fixture.code })
     expect(rows).toHaveLength(MAX_FEED_ROWS_LISTED)
 
     // ⚠️ **The ordering, not just the count.** The index gives newest-first because that
@@ -2029,7 +2012,7 @@ describe('the dice tray is the one place a roll arrives from a human', () => {
       })
     }
 
-    const rows = await t.query(api.feed.list, { code: fixture.code, playerId: fixture.ana })
+    const rows = await t.query(api.feed.list, { code: fixture.code })
     expect(rows).toHaveLength(MAX_FEED_ROWS_LISTED - privateLines)
     // Not one of the private lines is in it, which is the part that matters and holds.
     expect(JSON.stringify(rows) ?? '').not.toContain(DM_PRIVATE_ROLL)

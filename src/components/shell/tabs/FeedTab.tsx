@@ -4,12 +4,9 @@ import { DiceComposer } from '@/components/feed/DiceComposer'
 import { FeedList } from '@/components/feed/FeedList'
 import type { Dm } from '@/hooks/useDm'
 import { useFeed } from '@/hooks/useFeed'
-import type { Id } from '@convex/_generated/dataModel'
 
 export type FeedTabProps = {
   code: string
-  /** This seat. Required, because a granted creature's lines are readable per seat. */
-  playerId: Id<'players'>
   /**
    * Whether this browser holds the DM code, and it decides two things here: which lines
    * arrive, and whether the private toggle is offered on the bar above. It authorises
@@ -42,8 +39,8 @@ export type FeedTabProps = {
  * by one predicate on the server before the payload existed (invariant 1); the panel renders
  * what arrived.
  */
-export function FeedTab({ code, playerId, dm }: FeedTabProps): ReactElement {
-  const rows = useFeed(code, dm.dmCode, playerId)
+export function FeedTab({ code, dm }: FeedTabProps): ReactElement {
+  const rows = useFeed(code, dm.dmCode)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

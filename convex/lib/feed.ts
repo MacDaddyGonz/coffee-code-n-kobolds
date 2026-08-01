@@ -92,11 +92,25 @@ export type PublicFeedRow = Infer<typeof publicFeedValidator>
  * design: it is the state between a delete and its sweep, and the reason the sweep can
  * afford to be the only thing that tidies up.
  *
- * ⚠️ **The window is taken before the filter, so this is the visible part of the last
- * sixty lines rather than the last sixty visible lines.** Deliberate: reading until sixty
- * survive is a bound that moves with how much the DM is hiding, and a scrollback whose
- * depth advertises how many private rolls have been made is a *count* leak of exactly the
- * kind `boardCharacterAccess` refuses for monsters. A short feed costs a player nothing.
+ * ⚠️ **The window is taken before the filter, so this is the visible part of the last sixty
+ * lines rather than the last sixty visible lines — and the reason is the bounded read,
+ * not secrecy.** This comment used to claim the opposite: that filtering first would leak a
+ * count. It is the other way round, and the correction is worth keeping rather than quietly
+ * replacing, because the wrong version reads perfectly well.
+ *
+ * Filtering first cannot be done inside a bound at all. `readable` is a decision about a
+ * *character*, not something an index can be built on, so "the newest sixty a player may
+ * hear" means reading rows until sixty survive — an unbounded scan of a table nothing caps,
+ * on a query that re-runs on every roll. That is the whole of why the order is this way.
+ *
+ * The cost is real and is a cost rather than a benefit: a player's window is shortened by
+ * the DM's private lines and by a hidden creature's, so somebody who has counted the public
+ * rolls can subtract once the game passes sixty and learn *how many* lines they are not
+ * being shown. Scoped rather than excused, in the register CLAUDE.md's threat model uses:
+ * the residual is a count of private rolls and never their content, the audience is a small
+ * group of trusted colleagues, and closing it means giving up the bound. Compare
+ * `boardCharacterAccess`, which refuses a count leak it could close for free — that one was
+ * a band per NPC in the game and scoping it cost nothing at all.
  *
  * **Returned oldest-first**, which is one `reverse` on the server against one on every
  * client, per render. The index gives newest-first because that is the only order in which
