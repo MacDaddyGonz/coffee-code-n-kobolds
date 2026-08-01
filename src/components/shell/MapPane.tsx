@@ -1,7 +1,8 @@
 import type { ReactElement } from 'react'
-import { memo } from 'react'
+import { memo, useRef } from 'react'
 
 import { Board } from '@/components/board/Board'
+import { TableEffects } from '@/components/board/TableEffects'
 import { MapPanePlaceholder } from '@/components/shell/MapPanePlaceholder'
 import { Roster } from '@/components/shell/Roster'
 import type { Dm } from '@/hooks/useDm'
@@ -81,8 +82,26 @@ export const MapPane = memo(function MapPane({
 }: MapPaneProps): ReactElement {
   const playing = game.status === 'playing' && game.activeSceneId !== null
 
+  /**
+   * The pane itself, for the one effect that has to move it rather than something in it.
+   *
+   * A critical miss shakes the map, and the thing that must *not* move is the header and
+   * the right-hand panel — a transform on `<body>` would take both with it, and on a
+   * `h-dvh` shell that reads as the application breaking rather than as a die landing
+   * badly. So `CritEffect` is handed this element and adds a class to it. A ref costs no
+   * render, which is what lets it happen behind the memo below rather than through it.
+   */
+  const paneRef = useRef<HTMLDivElement>(null)
+
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+    // ⚠️ **`overflow-hidden` is here for the shake and for nothing else.** The pane is
+    // transformed a few pixels for half a second on a critical miss, and without this its
+    // contents would slide out over the divider and the right-hand panel on the way. It
+    // clips nothing today — `Board` is already its own `overflow-hidden` box and the roster
+    // is inset — and any panel that has to escape the pane is a portal (every shadcn
+    // dialog, sheet and tooltip in this app already is), so the class is free in both
+    // directions.
+    <div ref={paneRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {playing ? (
         // `min-h-0` again on the board itself: it is a flex item of this column and a
         // scroll container of its own, and without it the canvas's own height becomes
@@ -104,6 +123,29 @@ export const MapPane = memo(function MapPane({
       {/* The caller passes the placement, which is this file's job and not the
           roster's — see its own note about what it deliberately does not decide. */}
       <Roster code={code} className="absolute right-3 bottom-3" />
+
+      {/*
+        WHAT HAPPENS WHEN SOMEBODY ROLLS — the floating announcement, the 3D dice and the
+        crit effects, mounted once.
+
+        **Outside both branches above, for the same reason the roster is.** A roll made off
+        a sheet before the DM presses Start still has to be confirmed to whoever made it,
+        and the person who clicked is looking at their own sheet in the right-hand panel and
+        cannot see the feed line they just created — that is the whole reason this exists,
+        and it does not stop being true in the lobby.
+
+        ⚠️ **No new props on `MapPaneProps`, and it subscribes for itself.** The memo note
+        above is the reason: every prop this pane takes is stable on purpose, because the
+        divider sets the pane width sixty times a second. `TableEffects` is handed only the
+        three primitives that were already here plus a ref, and holds its own `feed.list`
+        and `board.tokens` subscriptions — the second of which shares a cache entry with
+        `Board` and `RightPane` rather than opening a third.
+
+        Last of the three children, so the dice and the announcement paint over the board
+        and the roster. All three of its layers are `pointer-events-none`, so nothing here
+        can be the overlay that silently swallows a click meant for a token.
+      */}
+      <TableEffects code={code} dmCode={dm.dmCode} playerId={playerId} paneRef={paneRef} />
     </div>
   )
 })
