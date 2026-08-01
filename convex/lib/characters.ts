@@ -1193,6 +1193,39 @@ async function storeSheet(
   await ctx.db.patch('characterVitals', vitals._id, patch)
 }
 
+/**
+ * Every character in a game, each with its vitals row. For the purge tool in
+ * `convex/admin.ts`, and for nothing a client can reach.
+ *
+ * It lives here rather than there for the reason every read of these two tables does:
+ * `convex/admin.ts` is swept by `leakGuard.test.ts` like every other module, so it may
+ * not query `characters` itself. That sweep reaching a brand-new destructive module
+ * with no edit at all is the arrangement working.
+ *
+ * ⚠️ **`allCharacters` unfiltered, and the absence of `maySeeCharacter` is deliberate
+ * rather than an oversight.** A purge does not ask who may read a sheet — it must take
+ * the monsters too, since a deleted game's bestiary is precisely the residue this
+ * exists to remove. What holds invariant 8 is the same thing that holds it for
+ * `countCharactersInGame`: **a number leaves this function and never a row.**
+ *
+ * **None of the three repairs `characters.remove` performs are done here, and that is
+ * the whole difference between deleting a character and deleting a game.** That
+ * mutation releases the seat's claim and detaches the tokens standing on the character
+ * because both of those *survive* it; here nothing survives, so a repair would be a
+ * write to a document being deleted in the same transaction. The purge order in
+ * `convex/admin.ts` is what makes that true, and it is written down there.
+ */
+export async function deleteCharactersInGame(
+  ctx: MutationCtx,
+  gameId: Id<'games'>,
+): Promise<number> {
+  const characters = await allCharacters(ctx, gameId)
+  for (const character of characters) {
+    await deleteCharacter(ctx, character._id)
+  }
+  return characters.length
+}
+
 /** Deletes a character and its vitals row. Placements and claims are the caller's. */
 export async function deleteCharacter(
   ctx: MutationCtx,

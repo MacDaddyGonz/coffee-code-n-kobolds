@@ -718,6 +718,60 @@ export async function deleteScenePlacements(
 }
 
 /**
+ * Every token in a game, with its placements and its art. For the purge tool in
+ * `convex/admin.ts`, and for nothing a client can reach.
+ *
+ * This is `removeToken` done once per row, and it lives here for the reason every
+ * other write to these two tables does: `convex/admin.ts` is swept by
+ * `leakGuard.test.ts` like every other module, so it may not query `tokens` itself.
+ * That sweep catching a brand-new destructive module with no edit at all is the
+ * arrangement working, not an obstacle to route around.
+ *
+ * ⚠️ **The one read of `tokens` in this file that does not pass through `maySee`,
+ * and it is safe for a reason worth stating rather than assuming.** A purge is not a
+ * question about contents — it does not care which layer a row is on, and it must not,
+ * because a DM-layer ambush left behind in a deleted game is exactly the residue this
+ * exists to remove. What keeps invariant 8 intact is that **a number leaves and never
+ * a row**: the return value is a count, the same narrow crossing `countTokensInGame`
+ * below and `tokenReferencesImage` already make.
+ *
+ * ⚠️ **The blob goes with the row, and that is the point of doing this properly**
+ * (CLAUDE.md invariant 6). Rows without their art would be a *worse* leak than the
+ * games being cleaned up, because a deleted game's coins are unreachable from every
+ * screen in the app and would sit against the 1 GB ceiling for ever with nothing able
+ * to name them. Unconditional on the id being present, exactly as `board.removeToken`
+ * is, and it inherits that mutation's caveat unchanged: the game editor's token
+ * library makes one piece of art shareable between tokens, and whatever makes it
+ * shareable has to make both of these conditional at the same time.
+ *
+ * This does **not** make the orphaned-blob sweeper unnecessary. That sweeper is for
+ * blobs a *refused or abandoned upload* left behind — a mutation that throws cannot
+ * delete the file it just rejected (see `files.discard`), so those blobs never had a
+ * row to be deleted alongside. Different residue, different pass.
+ */
+export async function deleteTokensInGame(
+  ctx: MutationCtx,
+  gameId: Id<'games'>,
+): Promise<number> {
+  const tokens = await ctx.db
+    .query('tokens')
+    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  for (const token of tokens) {
+    // Placements first, across every scene rather than the current one, for the same
+    // reason `removeToken` does it in this order: they are what points at the token,
+    // so no ordering of failures can leave a scene holding a position for a document
+    // that has gone.
+    await deleteTokenPlacements(ctx, token._id)
+    if (token.imageId) await ctx.storage.delete(token.imageId)
+    await ctx.db.delete('tokens', token._id)
+  }
+
+  return tokens.length
+}
+
+/**
  * Bounded count of tokens in a game, so addToken can enforce MAX_TOKENS_PER_GAME.
  *
  * Counts both layers regardless of the caller, because this answers "is the game

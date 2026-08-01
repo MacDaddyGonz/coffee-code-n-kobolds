@@ -1,7 +1,12 @@
 import { ConvexError, v, type Infer } from 'convex/values'
 
 import type { Doc, Id } from '../_generated/dataModel'
-import type { QueryCtx } from '../_generated/server'
+import type { MutationCtx, QueryCtx } from '../_generated/server'
+// The placement sweep, borrowed rather than rewritten: `tokenPositions` belongs to
+// lib/board.ts and `leakGuard.test.ts` greps for anyone who forgets it. The import
+// runs one way — lib/board.ts knows nothing about scenes as a table — so there is no
+// cycle here, and `convex/scenes.ts` has paired these two calls since Milestone 2.
+import { deleteScenePlacements } from './board'
 import { MAX_SCENES_PER_GAME } from './games'
 
 // Lives in lib/limits.ts, which the browser imports too so there is one definition
@@ -81,6 +86,48 @@ export async function sceneReferencesImage(
 ): Promise<boolean> {
   const scenes = await listScenes(ctx, gameId)
   return scenes.some((scene) => scene.imageId === imageId)
+}
+
+/**
+ * Every board in a game, with its placements and its background image. For the purge
+ * tool in `convex/admin.ts`, and for nothing a client can reach.
+ *
+ * This is `scenes.remove` done once per row, minus the `activeSceneId` repair — the
+ * game document pointing at these scenes is deleted in the same transaction, so
+ * clearing the pointer first would be a write to a row on its way out. Everything
+ * else that mutation does, this does, in the same order and for the same reasons.
+ *
+ * ⚠️ **The blob goes with the row** (CLAUDE.md invariant 6). A purge that dropped the
+ * scenes and left the maps would be a worse leak than the games it cleaned up: a
+ * 4 MB battle map belonging to a game that no longer exists is unreachable from every
+ * screen in the app, and would sit against the 1 GB the free tier allows with nothing
+ * able to name it, let alone delete it. `scenes.remove` says the same thing about one
+ * scene; thirty-five smoke games' worth is the reason this tool is worth building
+ * properly rather than deleting rows and moving on.
+ *
+ * It does **not** make the orphaned-blob sweeper unnecessary. That pass exists for
+ * blobs a *refused or abandoned upload* left behind — a mutation that throws cannot
+ * delete the file it just rejected, which is the whole reason `files.discard` is a
+ * separate call — and those blobs never had a row to go with. Different residue.
+ *
+ * The placement sweep is very nearly always a no-op when the purge runs it, because
+ * `deleteTokensInGame` has already taken every placement with its token. It is kept
+ * because this helper has to be correct on its own terms — the game editor will reuse
+ * it — and because the one placement it *would* find is the pathological one: a row
+ * whose token had already vanished, which nothing else in the codebase would ever
+ * reach again.
+ */
+export async function deleteScenesInGame(
+  ctx: MutationCtx,
+  gameId: Id<'games'>,
+): Promise<number> {
+  const scenes = await listScenes(ctx, gameId)
+  for (const scene of scenes) {
+    await deleteScenePlacements(ctx, scene._id)
+    await ctx.storage.delete(scene.imageId)
+    await ctx.db.delete('scenes', scene._id)
+  }
+  return scenes.length
 }
 
 /**

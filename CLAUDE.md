@@ -312,6 +312,7 @@ npm run build        # tsc --noEmit && vite build (same command CI runs)
 npm run lint         # typecheck only — both src/ and convex/
 npm test             # vitest run — the convex-test suites in convex/*.test.ts
 npm run test:smoke   # scripts/board-smoke.mjs — the board API against the REAL dev deployment
+npm run prune-games  # scripts/prune-games.mjs — deletes the games test:smoke leaves behind
 ```
 
 `npm run test:smoke` is not a second copy of `npm test`, and the difference is the point:
@@ -321,11 +322,20 @@ leaving a lone UTF-16 surrogate that the suite stored happily and the cloud refu
 does genuine round trips against the dev deployment (a real upload URL, a real POST of real bytes,
 real float64s through the position table), so that class of failure surfaces here rather than in
 front of the group. It needs `.env.local` (or `VITE_CONVEX_URL`), which `npm run dev:backend`
-writes, and it creates a throwaway game each run, deleting the scene and tokens it made on the way
-out — the game document itself stays, because there is no delete API for one until the game-editor
-and admin milestone. (`scripts/board-smoke.mjs` still prints the old number in that line; it is one
-of a handful of source comments naming a milestone by number, which the roadmap's numbering note
-says get corrected as those files are touched.)
+writes, and it creates a throwaway game each run, deleting the scene, tokens, characters and seats
+it made on the way out.
+
+**The game document itself still stays, and `npm run prune-games` is what sweeps them up.** There is
+now a delete path for a game — `purgeGame` in `convex/admin.ts` — but it is an `internalMutation`
+and it is a **maintenance tool rather than a feature**: the admin view that deletes a game a person
+chose is still the game-editor and admin milestone, and the reason this could be built ahead of it
+is that an internal function does not have to answer *who* may delete a game. It is absent from the
+generated public API and reachable only by a caller already holding deploy credentials, which is the
+same authority as deleting the rows from the dashboard. ⚠️ **Do not give it a public mutation** —
+that puts the authorisation question back, and that question wants an ADR. The smoke script
+deliberately does *not* call it: it authenticates with a game code over `ConvexHttpClient` like any
+other client, and wiring the purge into its cleanup path would make a test depend on deploy
+credentials it does not otherwise need.
 
 **`npm run dev:backend` is needed whenever you are changing anything under `convex/`** — it watches
 those files and pushes them to the dev deployment. It also writes `.env.local`, which the frontend
