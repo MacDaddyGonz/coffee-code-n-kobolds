@@ -2,7 +2,7 @@ import type { CSSProperties, ReactElement, RefObject } from 'react'
 import { useEffect } from 'react'
 
 import type { CritKind } from '@/lib/crit'
-import { CRIT_COLOUR } from '@/lib/crit'
+import { critColour } from '@/lib/crit'
 
 /**
  * The class that shakes the map pane, and the length of the animation behind it.
@@ -154,9 +154,11 @@ export function CritEffect({ crit, nonce, paneRef }: CritEffectProps): ReactElem
     }
   }, [crit, nonce, paneRef])
 
-  if (crit === null) return null
-
-  const colour = CRIT_COLOUR[crit]
+  // No colour is the same fact as no crit, and it is the one this render needs: `critColour`
+  // in `@/lib/crit` is where `Crit` is narrowed to the two that happened, for the wash here
+  // and for the marker on the feed row reporting the same die.
+  const colour = critColour(crit)
+  if (colour === null) return null
 
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">

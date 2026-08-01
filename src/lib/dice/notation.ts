@@ -61,15 +61,7 @@ export type ShownDie = { faces: number; value: number }
  * rounded to 50 — a die displaying a number the feed disagrees with is worse than a die
  * that does not appear.
  */
-const SHOWABLE_DICE = new Map<number, (value: number) => boolean>([
-  [4, (value) => isWhole(value, 1, 4)],
-  [6, (value) => isWhole(value, 1, 6)],
-  [8, (value) => isWhole(value, 1, 8)],
-  [10, (value) => isWhole(value, 1, 10)],
-  [12, (value) => isWhole(value, 1, 12)],
-  [20, (value) => isWhole(value, 1, 20)],
-  [100, (value) => isWhole(value, 10, 100) && value % 10 === 0],
-])
+const ORDINARY_FACES: readonly number[] = [4, 6, 8, 10, 12, 20]
 
 /** An integer in `[min, max]`. Rejects `NaN`, infinities and 3.5 without four tests at each call. */
 function isWhole(value: number, min: number, max: number): boolean {
@@ -79,12 +71,21 @@ function isWhole(value: number, min: number, max: number): boolean {
 /**
  * Can the engine show this die with this value on it?
  *
- * Exported because the two halves of the answer are wanted in two places — the
- * notation, and the report of what got left out — and computing the same predicate
- * twice is how those two drift apart.
+ * ⚠️ **One rule for the six ordinary dice and one exception, written so the exception is
+ * the thing you see.** This was a `Map` of seven predicates, six of which were the same
+ * expression with a different bound — six lines a reader has to diff against each other to
+ * satisfy themselves they are identical, with the one that genuinely differs hidden among
+ * the lookalikes. The d100's tens rule is the only interesting line here and it now reads
+ * like it.
+ *
+ * Exported for its test rather than for a second caller: `diceNotation` below is the only
+ * consumer, and the predicate is worth asserting directly because the d100 rule is the sort
+ * of thing that would otherwise only be checked through a notation string.
  */
 export function isShowable(die: ShownDie): boolean {
-  return SHOWABLE_DICE.get(die.faces)?.(die.value) ?? false
+  // The tens die, and the whole of why this function is not `faces >= value >= 1`.
+  if (die.faces === 100) return isWhole(die.value, 10, 100) && die.value % 10 === 0
+  return ORDINARY_FACES.includes(die.faces) && isWhole(die.value, 1, die.faces)
 }
 
 /**
@@ -106,10 +107,11 @@ export function isShowable(die: ShownDie): boolean {
  * makes that mistake unavailable to a caller, and `diceBox.ts` feeds the groups to the
  * engine one at a time through `roll` then `add`.
  *
- * Dice the engine cannot show are dropped, never rounded and never thrown over — see
- * `unshowableDice` for the other half. A feed line must still render when somebody
- * rolls something exotic; the number is in the feed either way, and the dice are the
- * flourish.
+ * Dice the engine cannot show are **dropped**, never rounded and never thrown over. A feed
+ * line must still render when somebody rolls something exotic; the number is in the feed
+ * either way, and the dice are the flourish. Nothing reports what was left out, and nothing
+ * should until a screen exists that would say so — an unread `dropped` array at every call
+ * site is a reporting path a reader mistakes for one the interface uses.
  *
  * Grouping preserves **first appearance**, not ascending face count. There is no rules
  * reason to prefer either, and first appearance is the one a reader can verify against
@@ -130,18 +132,4 @@ export function diceNotation(dice: readonly ShownDie[]): string[] {
   }
 
   return [...groups].map(([faces, values]) => `${values.length}d${faces}@${values.join(',')}`)
-}
-
-/**
- * The dice `diceNotation` had to leave out, for a caller that wants to say so.
- *
- * Separate from `diceNotation` rather than bundled into a `{ notation, dropped }`
- * return, because the notation is wanted on every roll and this is wanted almost never
- * — and a two-field return would put a `dropped` array at every call site, where the
- * overwhelmingly common answer is an empty one that nobody then reads. Reporting is
- * still better than throwing: the engine failing to draw a die must not stop the feed
- * line, the announcement or the next roll.
- */
-export function unshowableDice(dice: readonly ShownDie[]): ShownDie[] {
-  return dice.filter((die) => !isShowable(die))
 }

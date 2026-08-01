@@ -4,8 +4,8 @@ import { RollButton } from '@/components/sheet/RollButton'
 import { SheetCheckbox, signed } from '@/components/sheet/SheetFields'
 import type { Skill, SkillProficiencies } from '@convex/lib/skills'
 import { SKILLS, skillBonus } from '@convex/lib/skills'
-import type { AbilityKey, PcSheet } from '@convex/lib/sheet'
-import { skillProficienciesOf } from '@convex/lib/sheet'
+import type { PcSheet } from '@convex/lib/sheet'
+import { abilityAbbreviation, skillProficienciesOf } from '@convex/lib/sheet'
 
 export type SkillListProps = {
   sheet: PcSheet
@@ -83,7 +83,7 @@ export function SkillList({ sheet, disabled, onChange, note }: SkillListProps) {
           <Fragment key={skill.key}>
             <label htmlFor={`skill-${skill.key}`} className="truncate text-sm">
               {skill.name}{' '}
-              <span className="text-muted-foreground text-xs">({abbreviate(skill.ability)})</span>
+              <span className="text-muted-foreground text-xs">({abilityAbbreviation(skill.ability)})</span>
             </label>
             <span className="flex justify-center">
               <SheetCheckbox
@@ -119,7 +119,3 @@ export function SkillList({ sheet, disabled, onChange, note }: SkillListProps) {
   )
 }
 
-/** `str` → `STR`, matching the tokens a roll like `1d20+STR` is written with. */
-function abbreviate(ability: AbilityKey): string {
-  return ability.toUpperCase()
-}

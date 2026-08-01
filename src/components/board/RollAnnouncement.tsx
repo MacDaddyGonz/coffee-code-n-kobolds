@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import { memo } from 'react'
 
 import { ProfileIcon } from '@/components/ProfileIcon'
-import { CRIT_COLOUR, CRIT_LABEL } from '@/lib/crit'
+import { CRIT_LABEL, critColour } from '@/lib/crit'
 import { cn } from '@/lib/utils'
 import type { FeedSubject, RollResult } from '@convex/lib/roll'
 import { rollModeNote, rollSentence } from '@convex/lib/roll'
@@ -128,6 +128,10 @@ export const RollAnnouncement = memo(function RollAnnouncement({
    * the sentence's job in that window is to say *who did what*, and it still does.
    */
   const crit = revealed ? (roll?.crit ?? null) : null
+  // `critColour` rather than the record and a `=== null` test written out here, twice: the
+  // narrowing from `Crit` to the two that happened is `@/lib/crit`'s job, and the feed row
+  // this line is about takes its tint from the same call.
+  const colour = critColour(crit)
   const note = roll ? rollModeNote(roll) : null
 
   return (
@@ -171,7 +175,7 @@ export const RollAnnouncement = memo(function RollAnnouncement({
               // `crit` above is gated on `revealed` and says at length why. A plain roll
               // gets `shadow-2xl` and nothing else, so the coloured halo means something
               // both when it appears and when it does not.
-              crit === null ? undefined : { boxShadow: `0 0 34px -4px ${CRIT_COLOUR[crit]}` }
+              colour === null ? undefined : { boxShadow: `0 0 34px -4px ${colour}` }
             }
           >
             {artUrl === null ? (
@@ -227,7 +231,10 @@ export const RollAnnouncement = memo(function RollAnnouncement({
                 // `@/lib/crit` and `CritEffect`.
                 <span
                   className="text-sm font-semibold tracking-wide uppercase"
-                  style={{ color: CRIT_COLOUR[crit] }}
+                  // `?? undefined` rather than a second narrowing: `crit` being non-null is
+                  // what put this element on screen, so the colour beside it is non-null too
+                  // — and inheriting the ordinary ink is the right answer if it ever is not.
+                  style={{ color: colour ?? undefined }}
                 >
                   {CRIT_LABEL[crit]}
                 </span>

@@ -345,9 +345,6 @@ describe('the DM layer never reaches a player', () => {
     const t = harness()
     const fixture = await boardFixture(t)
     const wrongDmCode = twiddle(fixture.dmCode)
-    // A seat, for the one argument shape a feed query wants and a board query does not.
-    // See the note on `argSets` below.
-    const seat = await makeSeat(t, fixture.code, 'Ana')
 
     type AnyQuery = FunctionReference<'query', 'public', Record<string, unknown>, unknown>
     const apiModules = api as unknown as Record<string, Record<string, AnyQuery>>
@@ -363,19 +360,23 @@ describe('the DM layer never reaches a player', () => {
     // `reached` assertion below would fail rather than passing vacuously. That is the
     // whole point of that assertion.
     //
-    // `feed` joins them for the same reason, and brings the seat shape with it: `feed.list`
-    // takes an optional `playerId`, so `{ code }` alone is not the whole of what a player's
-    // client can send to it, and a sweep that never sent a seat id would be leaving the
-    // argument that is *supposed* to widen an answer untested here. (Whether it actually
-    // widens one is `feed.test.ts`'s question, and the answer is recorded there.) The
-    // secrecy suite for the feed is that file; what this enumeration adds is that a query
-    // added to that module in a later milestone is swept for the DM layer with no edit to
-    // any list.
+    // `feed` joins them for the same reason, and needs no shape of its own: `feed.list`
+    // takes `{ code, dmCode? }` and nothing else, because a grant cannot widen the feed
+    // beyond sight and a seat therefore cannot change its answer (see `mayHearOf`). The
+    // secrecy suite for the feed is `feed.test.ts`; what this enumeration adds is that a
+    // query added to that module in a later milestone is swept for the DM layer with no
+    // edit to any list.
+    //
+    // ⚠️ **No shape here names a seat, and adding one would be worse than useless.** Not
+    // one query in the four modules swept below accepts a `playerId` — the board's
+    // subscriptions are keyed on the DM code alone by design — so an argument set carrying
+    // one is refused by Convex's *argument validation*, before any handler runs and without
+    // raising a `ConvexError`. The loop below only records `reached` for a resolved value or
+    // a `ConvexError`, so such a shape asserts nothing at all while reading like coverage.
+    // Two of them were here and are gone.
     const argSets: Record<string, unknown>[] = [
       { code: fixture.code },
       { code: fixture.code, dmCode: wrongDmCode },
-      { code: fixture.code, playerId: seat },
-      { code: fixture.code, playerId: seat, dmCode: wrongDmCode },
       { code: fixture.code, sceneId: fixture.sceneId },
       { code: fixture.code, sceneId: fixture.sceneId, dmCode: wrongDmCode },
       { code: fixture.code, dmCode: wrongDmCode, key: 'dire-wolf' },

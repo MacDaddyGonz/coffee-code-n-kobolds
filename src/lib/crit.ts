@@ -42,10 +42,33 @@ export type CritKind = Exclude<Crit, null>
  * A `Record` keyed on the union rather than two constants, for the reason
  * `ROLL_MODE_LABELS` is one: a third member of `Crit` fails to compile here instead of
  * rendering a wash with no colour in it.
+ *
+ * Private, because `critColour` below is the question every caller actually has —
+ * `FEED_PART_LABELS` and `partLabel` in `convex/lib/roll.ts` are the same pair for the same
+ * reason. Nothing outside this file needs a total record over the two crits that happened;
+ * what the three renderers have in hand is a `Crit`, which includes the third case.
  */
-export const CRIT_COLOUR: Record<CritKind, string> = {
+const CRIT_COLOUR: Record<CritKind, string> = {
   success: '#22c55e',
   failure: '#ef4444',
+}
+
+/**
+ * The colour for a crit, or `null` when the roll was ordinary.
+ *
+ * ⚠️ **Here rather than in each renderer, which is this file's own header instruction
+ * applied a second time.** The narrowing was written out three times — once as a private
+ * function in `FeedRow.tsx`, twice inline in `RollAnnouncement.tsx` and once more in
+ * `CritEffect.tsx` — because `CRIT_COLOUR` is deliberately total over the two crits that
+ * *happened* and every caller holds a `Crit`, which includes the absence of one. Three
+ * copies of one `=== null` test is the shape this module was created to remove.
+ *
+ * `null` and not a third colour: there is no colour for "not a crit", and a caller that
+ * wants the ordinary ink says so itself — `colour ?? undefined` on a style property is the
+ * spelling that inherits it.
+ */
+export function critColour(crit: Crit): string | null {
+  return crit === null ? null : CRIT_COLOUR[crit]
 }
 
 /**

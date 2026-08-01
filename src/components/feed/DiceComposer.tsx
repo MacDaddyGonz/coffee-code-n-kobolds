@@ -5,7 +5,7 @@ import { DicesIcon } from 'lucide-react'
 import { FieldError } from '@/components/FieldError'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { useRollControls } from '@/hooks/useRoll'
+import { useRollControls, useRollPending } from '@/hooks/useRoll'
 import { MAX_ROLL_LENGTH, normaliseRoll, rollProblem } from '@convex/lib/sheet'
 
 /**
@@ -62,7 +62,15 @@ const PRESETS: readonly { label: string; expression: string }[] = [
  * trying.
  */
 export function DiceComposer(): ReactElement {
-  const { rollDice, pending } = useRollControls()
+  const { rollDice } = useRollControls()
+  /**
+   * ⚠️ **A context of its own, and this is its only reader in the application.** The flag
+   * flips twice per roll — on the click and on the acknowledgement — so held in
+   * `RollControls` beside the mode it re-rendered the mode bar, every roll button on the
+   * sheet and the DM's two-hundred-row selector, twice, for a value only this form reads.
+   * `useRoll.ts` carries the long version.
+   */
+  const pending = useRollPending()
   const fieldId = useId()
   const errorId = `${fieldId}-error`
 

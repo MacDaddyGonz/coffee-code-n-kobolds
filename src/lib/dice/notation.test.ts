@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { diceNotation, isShowable, unshowableDice } from './notation'
+import { diceNotation, isShowable } from './notation'
 
 describe('diceNotation', () => {
   test('nothing to roll produces no notation at all', () => {
@@ -122,24 +122,5 @@ describe('isShowable', () => {
     expect(isShowable({ faces: 20, value: 1 })).toBe(true)
     expect(isShowable({ faces: 20, value: 21 })).toBe(false)
     expect(isShowable({ faces: 3, value: 2 })).toBe(false)
-  })
-})
-
-describe('unshowableDice', () => {
-  test('reports exactly what the notation left out', () => {
-    const dice = [
-      { faces: 7, value: 5 },
-      { faces: 6, value: 2 },
-      { faces: 100, value: 47 },
-    ]
-
-    expect(unshowableDice(dice)).toEqual([
-      { faces: 7, value: 5 },
-      { faces: 100, value: 47 },
-    ])
-  })
-
-  test('a roll the engine can show entirely reports nothing', () => {
-    expect(unshowableDice([{ faces: 20, value: 13 }])).toEqual([])
   })
 })

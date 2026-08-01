@@ -31,6 +31,9 @@ import {
   tagKeyValidator,
   tierValidator,
 } from './creatures'
+// The sight half of the board's one pass. A crossing rather than a coupling — see
+// `readableCharacterIds`, which is the only caller and explains why it reads it itself.
+import { visibleCharacterIds } from './board'
 import { MAX_CHARACTERS_PER_GAME } from './games'
 // A pure inversion of a roster this module is handed, not a read: the `players` table
 // belongs to lib/players.ts and the claim pointer with it, so the map that turns
@@ -681,14 +684,44 @@ export async function publicCharacters(
  *
  * `allCharacters` reused rather than a second read, so this shares the one bound and the
  * one range read over the table that every other reader in this module goes through.
+ *
+ * ⚠️ **It reads the board itself rather than being handed the sight set, and that is a
+ * refusal to trust a parameter.** The first version took `visible` from its caller — which
+ * meant the caller had to have built it with *the same* `isDm`, and nothing whatever enforced
+ * that. `maySeeCharacter(c, false, visibleBuiltForADm)` compiles, type-checks, passes
+ * `leakGuard`, and publishes every DM-layer creature's feed lines to the table; the two
+ * arguments are both a `ReadonlySet<Id<'characters'>>` and the compiler cannot tell them
+ * apart. Taking `isDm` once and deriving everything from it makes the mismatch unspellable.
+ *
+ * This is why the module imports `lib/board.ts`, which is a crossing rather than a new
+ * coupling and is precedented by `lib/access.ts`: what comes back is a `Set` of ids the
+ * owning module has already filtered, never a `Doc<'tokens'>`, so neither choke point reads
+ * the other's tables. `visibleVitals` next door still takes its two sets, and that is not the
+ * same case — it genuinely needs both halves of one pass, whereas this has exactly one
+ * consumer for one of them.
  */
 export async function readableCharacterIds(
   ctx: QueryCtx,
   gameId: Id<'games'>,
   isDm: boolean,
-  visible: ReadonlySet<Id<'characters'>>,
 ): Promise<Set<Id<'characters'>>> {
-  const characters = await allCharacters(ctx, gameId)
+  // ⚠️ **The board is not read for the DM at all, and skipping it is declining to ask a
+  // question whose answer is already known rather than an optimisation.** `maySeeCharacter`
+  // returns true for a DM on its first line, so `mayHearOf`'s `visible.has(...)` disjunct is
+  // unreachable and every character in the game is admitted — the set would be built and
+  // never consulted.
+  //
+  // What building it anyway would cost is the part that matters: a `take(MAX_TOKENS_PER_GAME)`
+  // range read puts the whole `tokens` table into this subscription's read set, so every
+  // `addToken`, `setLayer`, `setControllers`, rename and art change would re-execute the feed
+  // and re-push sixty rows to the DM — the one client doing all of those things. That is the
+  // trade `visiblePositions` refuses one module over, and the trade `feed.list`'s `playerId`
+  // argument was removed for; having dropped a `players` range read for that reason, leaving a
+  // `tokens` one would be the same mistake with a different table.
+  const [characters, visible] = await Promise.all([
+    allCharacters(ctx, gameId),
+    isDm ? EMPTY_IDS : visibleCharacterIds(ctx, gameId, false),
+  ])
 
   const readable = new Set<Id<'characters'>>()
   for (const character of characters) {
@@ -698,6 +731,12 @@ export async function readableCharacterIds(
   }
   return readable
 }
+
+/**
+ * No sight to add. Frozen and shared, because it is returned rather than built and a Convex
+ * isolate outlives the request that warmed it — the hazard `creatureExtras` copies against.
+ */
+const EMPTY_IDS: ReadonlySet<Id<'characters'>> = Object.freeze(new Set<Id<'characters'>>())
 
 /**
  * Names for the characters seats are holding, for the lobby roster.

@@ -5,7 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useRollControls, useRollTarget } from '@/hooks/useRoll'
 import { cn } from '@/lib/utils'
 import type { RollRequest } from '@convex/lib/roll'
-import { ROLL_MODE_LABELS } from '@convex/lib/roll'
+import { modeNote, partRolls } from '@convex/lib/roll'
 
 /**
  * THE ONE CONTROL THAT SENDS A ROLL. Every clickable thing on a character sheet is
@@ -16,15 +16,25 @@ import { ROLL_MODE_LABELS } from '@convex/lib/roll'
  * arithmetic of any kind: the request names an ability, a skill or an entry id, and the
  * server looks the expression up on the stored sheet and throws the dice. That is the
  * arrangement `convex/lib/dice.ts` is kept out of the bundle to protect — see the ⚠️ at
- * the top of `bundleGuard.test.ts` — and it is why this file imports `lib/roll.ts` for
- * three words of English and nothing else.
+ * the top of `bundleGuard.test.ts` — and it is why this file imports `lib/roll.ts` for two
+ * words of English and one predicate, and nothing else.
  *
- * ⚠️ **It reads the target itself rather than taking one as a prop, and renders nothing
- * when there is nothing to aim at.** `useRollTarget` is `null` for a token with no sheet
- * behind it and for a panel with nothing selected, and a roll button with nowhere to send
- * a roll must not exist. Folding that test in here is what keeps it out of `AbilityTable`,
- * `SkillList` and `SheetEntryList` — three components whose whole job is to print a sheet,
- * which would otherwise each grow a branch about whether dice are available.
+ * ⚠️ **It reads the target itself rather than taking one as a prop, and prints a number
+ * rather than a control when there is nothing to aim at.** Folding that test in here is what
+ * keeps it out of `AbilityTable`, `SkillList` and `SheetEntryList` — three components whose
+ * whole job is to print a sheet, which would otherwise each grow a branch about whether dice
+ * are available.
+ *
+ * ⚠️ **The null-target branch is unreachable through the tree as it stands, and it is kept
+ * on purpose — but do not read it as guarding a live case.** `RollTargetProvider` is mounted
+ * by `CharacterSheetView`, which has the character id as a prop, so every button in the
+ * application is under a provider with a real target; there is no *token with no sheet* or
+ * *nothing selected* arriving here, because those two arms of `sheetFocusOf` render prose
+ * instead of a sheet. What the branch buys is that **a component whose job is to print a
+ * modifier does not depend on a provider being mounted**: a sheet rendered in a test, or in
+ * some future panel that has no dice in it, prints its numbers and offers no buttons. That
+ * is why `INERT` in `useRoll.ts` is inert rather than a throw, and this is the same decision
+ * one level down.
  *
  * ⚠️ **Advantage is not a per-button concern and is still shown on every button.** The
  * mode lives in `RollProvider` and is sticky until somebody changes it, so the footgun is
@@ -103,27 +113,32 @@ export function RollButton({
   const { mode, roll } = useRollControls()
 
   if (characterId === null) {
-    // See the ⚠️ on `look`. A number is a fact and stays; a button is an affordance and
-    // goes. Both branches take `className`, which is what makes the printed form
-    // byte-identical to the cell that was there before any of this was clickable.
+    // See the ⚠️ on `look`, and the one on this component about why this branch is not a
+    // live case. A number is a fact and stays; a button is an affordance and goes. Both
+    // branches take `className`, which is what makes the printed form byte-identical to the
+    // cell that was there before any of this was clickable.
     return look === 'number' ? <span className={cn(FIGURE, className)}>{children}</span> : null
   }
 
   /**
    * `with advantage`, `with disadvantage`, or nothing.
    *
-   * ⚠️ **Derived from `ROLL_MODE_LABELS` rather than from a second `Record` of sentence
-   * fragments here.** Those three words already exist in exactly one place, and
-   * `rollModeNote` in lib/roll.ts already produces this exact wording for the feed line —
-   * so a local table of fragments would be a third copy free to disagree with the row the
-   * click ends up producing. Lowercasing a label to put it inside a sentence is a
-   * transformation of the one copy rather than a rival to it, and a fourth mode gets a
-   * note automatically instead of a blank one.
+   * ⚠️ **`modeNote` from lib/roll.ts, which is the same function `rollModeNote` calls for
+   * the feed row this click produces.** This used to build the clause here out of
+   * `ROLL_MODE_LABELS`, on the argument that deriving it from the one copy of those words
+   * meant it could not drift from the row — and it could, because `rollModeNote` held the
+   * two phrases as literals. So there were two spellings of one clause, one of which
+   * asserted they were the same. Now there is one derivation and both ends of the gesture
+   * call it: the control you are about to press and the line it writes cannot describe the
+   * same roll differently.
    *
-   * ⚠️ **Silent on a `use`, because a passive rolls nothing at all.** *"Use Rage with
-   * advantage"* offers a reader a choice that does not exist, and the row it produces will
-   * carry `roll: null` — so this is not a guess about the expression, it is the one part
-   * whose whole definition is that there is no die to take the higher of. Every other part
+   * ⚠️ **Silent on a part that throws no dice, because there is nothing for the toggle to
+   * do.** *"Use Rage with advantage"* offers a reader a choice that does not exist, and the
+   * row it produces will carry `roll: null`. **`partRolls` rather than `part === 'use'`**,
+   * which is what this test used to say: naming one member gets today's answer right and a
+   * fifth part's wrong, and it states a coincidence where the reason is *there is no die to
+   * take the higher of*. lib/roll.ts owns that question, with a `Record` that fails to
+   * compile for a part nobody has answered. Every other part
    * is left alone deliberately: a `toHit` is a d20 by construction (`TO_HIT_PREFIX`), and a
    * check, a save, a skill and an initiative all come from `toHitFromBonus`, so the note is
    * simply true there. A `roll` is the one genuinely unknown case — Fireball's `8d6` takes
@@ -133,9 +148,9 @@ export function RollButton({
    * whether the toggle did anything: it keys off the die that was actually dropped.
    */
   const note =
-    mode === 'flat' || (request.kind === 'entry' && request.part === 'use')
+    mode === 'flat' || (request.kind === 'entry' && !partRolls(request.part))
       ? null
-      : `with ${ROLL_MODE_LABELS[mode].toLowerCase()}`
+      : modeNote(mode)
   const name = note === null ? says : `${says} ${note}`
 
   /**
@@ -172,7 +187,7 @@ export function RollButton({
           // so it gets `outline`: the same weight the creature sheet's own chips use.
           variant={look === 'number' ? 'ghost' : 'outline'}
           className={look === 'number' ? cn('px-1.5', FIGURE, className) : className}
-          // ⚠️ **The caller's own reason only, and deliberately never `rolls.pending`.**
+          // ⚠️ **The caller's own reason only, and deliberately never `useRollPending`.**
           // That flag is the panel's count of *every* roll in flight, so reading it here
           // greys out every control on the sheet for the length of a round trip — and a
           // weapon is two clicks in a second, which `TableEffects` names as the ordinary

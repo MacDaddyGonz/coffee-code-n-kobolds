@@ -22,8 +22,13 @@
 import { v } from 'convex/values'
 import type { Infer } from 'convex/values'
 
-import { rollShapeOf, sheetEntryCategoryValidator } from './sheet'
-import type { AbilityKey, SheetEntryCategory } from './sheet'
+import {
+  SHEET_ENTRY_ROLL_LABELS,
+  abilityAbbreviation,
+  rollShapeOf,
+  sheetEntryCategoryValidator,
+} from './sheet'
+import type { SheetEntryCategory } from './sheet'
 import { skill } from './skills'
 
 // ---------------------------------------------------------------------------
@@ -117,12 +122,62 @@ export function partsFor(category: SheetEntryCategory): readonly FeedPart[] {
   return shape.roll ? ACTION_PARTS : PASSIVE_PARTS
 }
 
-/** What to print on each button. Same `Record` discipline as the labels above. */
-export const FEED_PART_LABELS: Record<FeedPart, string> = {
+/**
+ * What to print on each button — except the one whose word depends on the category.
+ *
+ * ⚠️ **`roll` is deliberately absent, and its absence is the fix rather than an omission.**
+ * This was a total `Record<FeedPart, string>` whose `roll` member said `'Damage'`, which is
+ * right on a weapon and wrong on everything else: Cure Wounds deals none. Nothing read it —
+ * every renderer reached for `SHEET_ENTRY_ROLL_LABELS[category]` instead — so what sat in the
+ * vocabulary module was a plausible-looking wrong answer that the next renderer would find
+ * first, with a test pinning it in place. `Exclude` keeps the compile-time totality for the
+ * three parts that genuinely have one word, and removes the trap.
+ *
+ * Private, because `partLabel` below is the question anybody actually has.
+ */
+const FEED_PART_LABELS: Record<Exclude<FeedPart, 'roll'>, string> = {
   toHit: 'To hit',
-  roll: 'Damage',
   use: 'Use',
   text: 'Describe',
+}
+
+/**
+ * What to print on the button for this part of an entry of this category.
+ *
+ * One function because the answer has two sources and only one of them is per-part:
+ * `SHEET_ENTRY_ROLL_LABELS` already answers *"what do you call the roll that is not the
+ * to-hit"* per category — `Damage` on a weapon, `Roll` on an action — and it is the label
+ * printed on the read-only line and on the editable field directly beneath the button, so
+ * taking the word from anywhere else would put two names on one roll a centimetre apart.
+ */
+export function partLabel(part: FeedPart, category: SheetEntryCategory): string {
+  return part === 'roll' ? SHEET_ENTRY_ROLL_LABELS[category] : FEED_PART_LABELS[part]
+}
+
+/**
+ * Does pressing this part throw dice?
+ *
+ * ⚠️ **Because `RollButton` was asking `part === 'use'` and meaning this.** Naming one member
+ * gets the right answer today and the wrong one for a fifth part, and it states a coincidence
+ * where the reason is *"there is no die to take the higher of"*. Asking the question makes the
+ * button's condition say what it is actually about.
+ *
+ * `planEntryRoll` in `convex/feed.ts` is the other reader of the same fact and stays a
+ * `switch`, which is not a duplication being tolerated: it needs a different *expression* per
+ * part — a to-hit off `toHitOf` and a damage off `entry.roll` — so its `use`/`text` arm is
+ * where those two happen to have nothing rather than the reason they do. A `Record` here for
+ * the reason every other union on this type gets one: a fifth part fails `npm run lint`
+ * instead of silently rolling nothing.
+ */
+const PART_ROLLS: Record<FeedPart, boolean> = {
+  toHit: true,
+  roll: true,
+  use: false,
+  text: false,
+}
+
+export function partRolls(part: FeedPart): boolean {
+  return PART_ROLLS[part]
 }
 
 // ---------------------------------------------------------------------------
@@ -293,22 +348,11 @@ export const rollRequestValidator = v.union(
 )
 export type RollRequest = Infer<typeof rollRequestValidator>
 
-/**
- * `str` → `STR`, for the two sentences the roadmap writes that way.
- *
- * The long name is in `ABILITY_NAMES` and is what a form uses; an announcement flashing
- * over a map has about two seconds and three words to spend, and *"Chadius performs a
- * Constitution saving throw"* spends them all on one word. The roadmap's own examples are
- * abbreviated, so this follows them.
- */
-function abilityAbbreviation(ability: AbilityKey): string {
-  return ability.toUpperCase()
-}
 
 /**
  * `a` or `an`, decided by the sound the reader is about to make.
  *
- * Needed because four of the thirteen skills begin with a vowel — Athletics, Acrobatics,
+ * Needed because seven of the thirteen skills begin with a vowel — Athletics, Acrobatics,
  * Arcana, Investigation, Insight, Intimidation, Animal Handling — so *"performs a
  * Athletics roll"* is not a corner case but half the list. A five-vowel test rather than
  * a per-skill lookup: the words are ordinary English and there is no *hour* or *unicorn*
@@ -408,8 +452,43 @@ export function rollSentence(
  * apply — so the note appears exactly when a die was genuinely discarded.
  */
 export function rollModeNote(result: RollResult): string | null {
-  if (result.dropped === null) return null
-  return result.mode === 'disadvantage' ? 'with disadvantage' : 'with advantage'
+  return result.dropped === null ? null : modeNote(result.mode)
+}
+
+/**
+ * `with advantage` / `with disadvantage`, built from the one copy of those words.
+ *
+ * ⚠️ **Shared with the sheet's roll buttons, because the two must not be able to disagree
+ * about the same roll.** `RollButton` puts this clause in the accessible name of the control
+ * you are about to press, and `rollModeNote` puts it on the feed row that press produces —
+ * so a button reading *"with adv."* over a line reading *"with advantage"* is the two halves
+ * of one gesture describing it differently. The button's own comment used to claim it derived
+ * the phrase from `ROLL_MODE_LABELS` precisely so that could not happen, while this function
+ * held the phrase as a literal. Now there is one derivation and both call it.
+ *
+ * A lookup rather than a ternary for the reason the labels are a `Record`: the ternary's
+ * `else` arm answered *"with advantage"* for a fourth mode, which is the one wrong answer a
+ * compile error is cheaper than.
+ */
+export function modeNote(mode: RollMode): string {
+  return `with ${ROLL_MODE_LABELS[mode].toLowerCase()}`
+}
+
+/**
+ * The die advantage or disadvantage discarded, as a die — or null when nothing was.
+ *
+ * ⚠️ **Its face count is 20 by construction, and that construction fact belongs here rather
+ * than in each renderer.** Advantage only ever applies to a single d20, which is what
+ * `TO_HIT_PREFIX` and `evaluateRoll` between them guarantee — so `dropped` is a bare number
+ * on the row, and both the feed's die chips and the 3D tray had to put the 20 back on it,
+ * each with a comment saying why. Two spellings of one convention, and if `dropped` ever
+ * carries anything else the tray and the feed would disagree about what landed.
+ *
+ * The tray wants it because two dice on the table is the whole visible point of advantage;
+ * the feed wants it struck through beside the kept one.
+ */
+export function droppedDie(result: RollResult): Die | null {
+  return result.dropped === null ? null : { faces: 20, value: result.dropped }
 }
 
 /**

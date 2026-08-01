@@ -79,7 +79,7 @@ import {
 //
 // The grant is the one thing this file computes and hands *in*, and the crossing is
 // deliberately as narrow as the one ADR 0005 describes for the health bars:
-// `controlledCharacterIds` lives in lib/board.ts, reads only the token tables, and
+// `boardCharacterAccess` lives in lib/board.ts, reads only the token tables, and
 // returns a `Set` of character ids and never a document. Neither module reads the
 // other's tables; one answers "whose coins may this caller move?" and the other decides
 // what that entitles them to read.

@@ -10,6 +10,7 @@ import type { PublicFeedRow } from '@/hooks/useFeed'
 import { useFeed } from '@/hooks/useFeed'
 import type { ShownDie } from '@/lib/dice/notation'
 import { api } from '@convex/_generated/api'
+import { droppedDie } from '@convex/lib/roll'
 
 /** How long the total stays up once the dice have settled. */
 const HOLD_MS = 2200
@@ -131,22 +132,41 @@ export function TableEffects({
   const rows = useFeed(code, dmCode)
 
   /**
+   * Whether anything has ever been rolled in this game, as this browser has seen it.
+   *
+   * ⚠️ **The latch that keeps the token subscription out of the lobby, and it keys off the
+   * first roll rather than off `game.status`.** Status is the obvious answer and needs a
+   * prop: `MapPaneProps` is closed on purpose, because the pane is memoised against a
+   * divider that sets state sixty times a second and every prop on it is stable by design —
+   * so threading a status through would make that file's memo note a thing somebody has to
+   * re-verify, which its own ⚠️ forbids. The first roll is a fact this component already
+   * has, from a subscription it already holds, and it is **strictly later** than Start: a
+   * roll before the game is running is one made off a sheet in the lobby, and there is no
+   * board for it to find a coin on anyway.
+   *
+   * What it buys is that a browser sitting in a lobby holds no `board.tokens` subscription
+   * at all — a query that mints a signed storage URL per token, server-side, for a payload
+   * with no reader. `RightPane` skips the same query until Start and `useBoard` is not
+   * mounted before it, so this was the one holder of a cache entry nobody else wanted.
+   *
+   * The cost is bounded and paid once: the subscription is established *while* the first
+   * roll's announcement is on screen, comfortably inside the 850 ms beat before the total
+   * appears, and never drops afterwards. The one visible consequence is that a roller's
+   * coin may be a generated disc for a fraction of the very first announcement of a
+   * session, which is the same fallback a roller with no token gets and is deliberately
+   * indistinguishable from it.
+   */
+  const [armed, setArmed] = useState(false)
+
+  /**
    * The board's tokens, for the roller's coin.
    *
    * ⚠️ **`tokensArgs` and not a literal.** `useBoard` and `RightPane` are both already
    * subscribed with exactly this shape, so this shares their cache entry rather than
    * opening a third — the arrangement `RightPane` documents at length and `Roster.tsx`
    * documents for `players.list`.
-   *
-   * **Not skipped in the lobby**, unlike `RightPane`'s copy of the same query, and that is
-   * a deliberate small cost. Skipping would need `game.status`, which means a prop, and
-   * `MapPaneProps` is closed on purpose — the pane is memoised against a divider that sets
-   * state sixty times a second and every prop on it is stable by design. What the
-   * subscription buys before Start is an almost always empty array; what a fourth reader of
-   * `game.status` would cost is the memo note in `MapPane` becoming a thing somebody has to
-   * re-verify.
    */
-  const tokens = useQuery(api.board.tokens, tokensArgs(code, dmCode))
+  const tokens = useQuery(api.board.tokens, armed ? tokensArgs(code, dmCode) : 'skip')
 
   const [shown, setShown] = useState<Shown | null>(null)
 
@@ -180,6 +200,9 @@ export function TableEffects({
   useEffect(() => {
     seenUpToRef.current = null
     setShown(null)
+    // The latch is per game for the same reason the baseline is: a different game is a
+    // different board, and one whose lobby this browser may be sitting in.
+    setArmed(false)
   }, [code])
 
   useEffect(() => {
@@ -189,6 +212,12 @@ export function TableEffects({
     // the newest line is the last one.
     const newest = rows.length === 0 ? null : rows[rows.length - 1]
 
+    // Armed by the presence of *any* line, history included, and not only by a new one: a
+    // browser joining a game in progress wants the coins immediately, and a feed with
+    // sixty rows in it is not a lobby. Idempotent — React drops a `setState` to the value
+    // it already holds, so this costs nothing on the payloads after the first.
+    if (newest !== null) setArmed(true)
+
     if (seenUpToRef.current === null) {
       // The first payload is history. `0` for an empty feed, so the very first roll of a
       // brand-new game is still newer than the mark.
@@ -197,6 +226,20 @@ export function TableEffects({
     }
 
     if (newest === null || newest.createdAt <= seenUpToRef.current) return
+
+    // ⚠️ **A row can arrive late because the *audience* widened rather than because somebody
+    // rolled, and this announces it anyway.** The DM rolls a hidden creature's attack, and
+    // minutes later moves its coin to the player layer: `mayHearOf` now admits those lines, so
+    // they reach the player as new rows, and the newest of them beats the mark below and plays
+    // over the map. Seen in a browser, and it is the rule working rather than failing — the
+    // player genuinely has not been told about that roll before.
+    //
+    // Not corrected by an age test, which is the obvious fix and a worse one: `createdAt` is
+    // the *server's* clock and the comparison would be against the *client's*, so a browser a
+    // minute out of step would announce nothing at all for the rest of the session — a silent
+    // failure of the whole flourish, traded for a slightly stale one in an edge case. If this
+    // ever wants fixing it wants a signal from the server about *why* a row became visible,
+    // which is a field on the payload and a decision, not a heuristic here.
 
     // Newest wins — see the note on this component. A subscription update can carry several
     // new rows at once (the DM rolling initiative down a list of goblins, or the socket
@@ -235,8 +278,12 @@ export function TableEffects({
     if (shown === null || shown.phase === 'sentence') return
 
     const nonce = shown.nonce
-    const next = shown.phase === 'result' ? 'leaving' : null
-    const delay = shown.phase === 'result' ? HOLD_MS : FADE_MS
+    // One tuple rather than two ternaries on the same test: the phase decides *both* what
+    // comes next and how long to wait for it, and splitting that into two expressions is
+    // two places to edit when a third timed step arrives. `leaving` holds for `HOLD_MS`
+    // then fades; the fade itself ends in removal, which is what `null` says.
+    const [next, delay] =
+      shown.phase === 'result' ? (['leaving', HOLD_MS] as const) : ([null, FADE_MS] as const)
 
     const timer = window.setTimeout(() => {
       setShown((current) => {
@@ -269,9 +316,12 @@ export function TableEffects({
    * rolls damage with a sticky advantage toggle still set. A second d20 beside a `2d6` would
    * be the dice asserting a rule the evaluator deliberately did not apply.
    *
-   * The dropped die is `faces: 20` by construction and not by assumption — advantage only
-   * ever applies to a single d20, which lib/roll.ts states as the reason `dropped` exists at
-   * all.
+   * The dropped die arrives from `droppedDie` already carrying its face count, which is `20`
+   * by construction and not by assumption — advantage only ever applies to a single d20,
+   * which lib/roll.ts states as the reason `dropped` exists at all. **Asked for rather than
+   * assembled here**, because the feed's die chips had the identical two lines and a
+   * construction fact spelled twice is a construction fact the tray and the feed can come to
+   * disagree about.
    *
    * An empty array for a roll with no dice, which is an instruction and not a gap: it clears
    * the tray, so a passive announcing itself does not do so over the last roll's dice. See
@@ -280,8 +330,8 @@ export function TableEffects({
   const dice = useMemo<readonly ShownDie[]>(() => {
     const roll = row?.roll ?? null
     if (roll === null) return []
-    if (roll.dropped === null) return roll.dice
-    return [...roll.dice, { faces: 20, value: roll.dropped }]
+    const dropped = droppedDie(roll)
+    return dropped === null ? roll.dice : [...roll.dice, dropped]
   }, [row])
 
   /**

@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import type { FeedPart } from '@convex/lib/roll'
-import { FEED_PART_LABELS, partsFor } from '@convex/lib/roll'
+import { partLabel, partsFor } from '@convex/lib/roll'
 import type { CatalogueEntry } from '@convex/lib/rules'
 import type { SheetEntry, SheetEntryCategory, SheetProblem } from '@convex/lib/sheet'
 import {
@@ -222,44 +222,33 @@ export function SheetEntryList({
 }
 
 /**
- * THE WORD ON EACH ROLL BUTTON, AND THE SENTENCE A SCREEN READER HEARS.
+ * THE SENTENCE A SCREEN READER HEARS ON EACH ROLL BUTTON.
  *
  * A `Record` keyed by `FeedPart` rather than a switch or a ternary chain, which is this
  * codebase's rule for a discriminated union and earns the usual refusal: a fifth part fails
- * to compile here instead of rendering a button with no word on it.
+ * to compile here instead of leaving a control with no accessible name.
  *
- * ⚠️ **Which of the two label sources each part reads is the whole point of the table, and
- * the answer is not the same for all four.** `FEED_PART_LABELS` has a word for every part,
- * and for the `roll` part it says *Damage* — which is right on a weapon and wrong on
- * everything else, because Cure Wounds does not deal any. `SHEET_ENTRY_ROLL_LABELS` is the
- * per-category answer to exactly that question and already carries the reasoning: a
- * weapon's non-to-hit roll is its damage, and every other category has one roll and no
- * ambiguity to resolve, so it keeps the plain word. It is also what the `ReadOnlyRoll` line
- * directly beneath the button is labelled with, so taking the word from anywhere else would
- * put two different names on one roll a centimetre apart.
+ * ⚠️ **The visible *label* is deliberately not here, and it used to be.** Each part carried
+ * a `label` thunk beside its `says`, and three of the four returned a constant out of
+ * lib/roll.ts while the fourth reached for the category's word — a table restating a rule
+ * that module already owns, and the one place where two names for one roll could come apart.
+ * `partLabel(part, category)` is that rule, in the file that has both sources in front of it,
+ * so the buttons below and the `ReadOnlyRoll` line beneath them cannot disagree. The `text`
+ * entry's label went with them and is not mourned: `partsFor` never returns `'text'`, so it
+ * was never called.
  *
- * So `roll` reads the category's word and the other three read the part's, and the table is
- * where that is *stated* rather than left as a `part === 'roll'` special case buried in the
- * render.
- *
- * `says` is the accessible name, less the mode, which `RollButton` appends. It has to be
- * built here because it needs the entry's name — `To hit` alone does not say which of a
- * hero's four weapons a button belongs to. The `text` row is never a button of its own,
- * since alt-click is a modifier on a gesture rather than a fourth part `partsFor` returns
- * (lib/roll.ts says so); its wording is the tooltip's alt-click hint, which is what stops
- * the exhaustiveness check costing a dead row.
+ * What is left is the part that is genuinely this component's, because it needs a value only
+ * this component has: the accessible name needs the **entry's name**, since `To hit` alone
+ * does not say which of a hero's four weapons a button belongs to. `RollButton` appends the
+ * mode to it. The `text` row survives here for a reason it does not survive above — alt-click
+ * is a modifier on a gesture rather than a fifth button, and its wording is the tooltip's
+ * hint, which is what stops the exhaustiveness check costing a dead field.
  */
-const PART_WORDING: Record<
-  FeedPart,
-  { label: (category: SheetEntryCategory) => string; says: (name: string) => string }
-> = {
-  toHit: { label: () => FEED_PART_LABELS.toHit, says: (name) => `Roll to hit for ${name}` },
-  roll: {
-    label: (category) => SHEET_ENTRY_ROLL_LABELS[category],
-    says: (name) => `Roll for ${name}`,
-  },
-  use: { label: () => FEED_PART_LABELS.use, says: (name) => `Use ${name}` },
-  text: { label: () => FEED_PART_LABELS.text, says: (name) => `Read out ${name}` },
+const PART_SAYS: Record<FeedPart, (name: string) => string> = {
+  toHit: (name) => `Roll to hit for ${name}`,
+  roll: (name) => `Roll for ${name}`,
+  use: (name) => `Use ${name}`,
+  text: (name) => `Read out ${name}`,
 }
 
 function EntryRow({
@@ -376,11 +365,11 @@ function EntryRow({
             <RollButton
               key={part}
               request={{ kind: 'entry', entryId: entry.id, part }}
-              says={PART_WORDING[part].says(entry.name)}
-              altSays={PART_WORDING.text.says(entry.name)}
+              says={PART_SAYS[part](entry.name)}
+              altSays={PART_SAYS.text(entry.name)}
               disabled={disabled}
             >
-              {PART_WORDING[part].label(category)}
+              {partLabel(part, category)}
             </RollButton>
           ))}
 
@@ -417,14 +406,14 @@ function EntryRow({
         //
         // ⚠️ **Both labels come from the shared vocabulary and neither is a literal**,
         // which used to be true of only one of them. This line sits directly beneath
-        // the roll buttons in the header, and those take their words from the same two
-        // sources — so a hard-coded `"To hit"` here was a second spelling of a word
-        // `lib/roll.ts` owns, a centimetre from the button that reads it properly, and
-        // the drift would have shown up as one row calling the same roll two things.
+        // the roll buttons in the header, and those ask `partLabel` for their words — so
+        // the to-hit asks it too, with the part named rather than the word spelled, and a
+        // hard-coded `"To hit"` a centimetre from the button that reads it properly is
+        // the drift that would have shown up as one row calling the same roll two things.
         toHit === null && roll === null ? null : (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             {toHit === null ? null : (
-              <ReadOnlyRoll label={FEED_PART_LABELS.toHit} value={toHit} />
+              <ReadOnlyRoll label={partLabel('toHit', category)} value={toHit} />
             )}
             {roll === null ? null : <ReadOnlyRoll label={SHEET_ENTRY_ROLL_LABELS[category]} value={roll} />}
           </div>

@@ -5,10 +5,11 @@ import { EyeOffIcon } from 'lucide-react'
 import { ProfileIcon } from '@/components/ProfileIcon'
 import { Badge } from '@/components/ui/badge'
 import type { PublicFeedRow } from '@/hooks/useFeed'
-import { CRIT_COLOUR, CRIT_LABEL } from '@/lib/crit'
+import { CRIT_LABEL, critColour } from '@/lib/crit'
 import { cn } from '@/lib/utils'
-import type { Crit, RollResult } from '@convex/lib/roll'
-import { rollModeNote, rollSentence, rollWorking } from '@convex/lib/roll'
+import { clockTime } from '@/lib/when'
+import type { RollResult } from '@convex/lib/roll'
+import { droppedDie, rollModeNote, rollSentence, rollWorking } from '@convex/lib/roll'
 
 // One line of what happened at the table.
 //
@@ -16,36 +17,14 @@ import { rollModeNote, rollSentence, rollWorking } from '@convex/lib/roll'
 // browser may not hear about (CLAUDE.md invariant 1), and nothing in this file decides
 // anything about who may see what. The arithmetic is on the server too, so what is here is
 // a readout of numbers that arrived over a subscription and never a source of them.
-
-/**
- * The colour for a crit, or null when the roll was ordinary.
- *
- * ⚠️ **The colours and the words used to live here and now live in `@/lib/crit`**, which is
- * this comment's own instruction being carried out rather than a change of mind: it said
- * they should move the day a second file imported them, and the day arrived within the hour
- * — the announcement over the map flashes the same event this line tints. `health.ts` is
- * the shape that module copies, and the argument is the same one: a green picked on each
- * side is two greens the moment one of them is adjusted, and the whole promise of a crit
- * is that the alarm over the map and the line in the feed are obviously about the same die.
- *
- * The narrowing stays here because `Crit` includes `null` — the *absence* of a crit — and
- * `CRIT_COLOUR` is deliberately total over the two that happened rather than carrying a
- * third entry for "no crit", which is not a colour.
- */
-function critColour(crit: Crit): string | null {
-  return crit === null ? null : CRIT_COLOUR[crit]
-}
-
-/**
- * The clock time, short and local.
- *
- * `undefined` as the locale rather than a fixed one, so a table spread across two countries
- * each reads its own convention. There is no date: the feed is one evening long, and a
- * scrollback of sixty lines never reaches yesterday.
- */
-function shortTime(createdAt: number): string {
-  return new Date(createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-}
+//
+// ⚠️ **Nothing in this file derives anything, and each of the three things it used to derive
+// went somewhere with a second reader.** The colours and the words are in `@/lib/crit`, the
+// crit narrowing with them; the clock time is `clockTime` in `@/lib/when`, beside the only
+// other date formatting under `src/`; the discarded d20 is `droppedDie` in lib/roll.ts,
+// which is also what the 3D tray asks. Every one of them was a private helper here first,
+// and every one of them acquired a second caller within a milestone — which is the argument
+// this file's own header used to make about the crit colours and is now the pattern.
 
 /**
  * One die and the face it settled on, as a chip.
@@ -88,6 +67,9 @@ function DieChip({ faces, value, dropped }: { faces: number; value: number; drop
 function RollResultBlock({ result }: { result: RollResult }): ReactElement {
   const note = rollModeNote(result)
   const colour = critColour(result.crit)
+  // The die advantage threw away, already carrying the `faces: 20` that only lib/roll.ts
+  // should be asserting. The tray over the map asks the same function for the same die.
+  const dropped = droppedDie(result)
 
   return (
     <div className="flex flex-col gap-1">
@@ -116,10 +98,14 @@ function RollResultBlock({ result }: { result: RollResult }): ReactElement {
         {result.dice.map((die, index) => (
           <DieChip key={`${index}-${die.faces}`} faces={die.faces} value={die.value} />
         ))}
-        {/* The discarded d20, if the toggle did anything. Its face count is `1d20` by
-            construction — advantage only ever applies to a single d20, which is the one
-            thing `TO_HIT_PREFIX` and `RollMode` between them guarantee. */}
-        {result.dropped !== null ? <DieChip faces={20} value={result.dropped} dropped /> : null}
+        {/* The discarded d20, if the toggle did anything. The face count comes with it: it
+            is 20 by construction — advantage only ever applies to a single d20, which
+            `TO_HIT_PREFIX` and `RollMode` between them guarantee — and `droppedDie` is where
+            that construction fact is stated, so this file and the 3D tray cannot disagree
+            about what landed. */}
+        {dropped === null ? null : (
+          <DieChip faces={dropped.faces} value={dropped.value} dropped />
+        )}
       </div>
     </div>
   )
@@ -128,19 +114,30 @@ function RollResultBlock({ result }: { result: RollResult }): ReactElement {
 /**
  * ONE LINE OF THE FEED: who did what, and what it came out as.
  *
- * ⚠️ **`memo`'d, and that is not premature.** The list re-renders on every roll anybody at
- * the table makes, and sixty rows reconciling to produce exactly what was already there — the
- * dice chips of each of them included — is waste on the frame where the 3D tray is also
- * starting an animation. The row is keyed by `_id` and a feed row is never edited after it is
- * written, so the memo holds for every row but the new one.
+ * ⚠️ **`memo`'d with a comparator on `_id`, and the comparator is what makes the memo work
+ * at all.** The list re-renders on every roll anybody at the table makes, and sixty rows
+ * reconciling to produce exactly what was already there is waste on the frame where the 3D
+ * tray is also starting an animation — each one costs a `rollSentence`, a `rollWorking`, a
+ * `toISOString` and a formatted clock time.
+ *
+ * The default shallow comparator could not prevent any of it: `useQuery` deserialises the
+ * payload afresh from the socket, so **every** row object has a new identity after **every**
+ * roll and `prev.row === next.row` is false sixty times. This file asserted the opposite for
+ * a while, which is the failure a memo has — it goes on looking correct while doing nothing.
+ *
+ * `_id` is sound as the whole of the comparison because **a feed row is never patched, only
+ * inserted**: the wording is generated on the way to the screen rather than stored
+ * (lib/roll.ts says so), the result is written once by the mutation that rolled it, and
+ * nothing anywhere updates a row of this table. So identical ids means identical content, and
+ * the one row whose content is new is the one whose id is new.
  *
  * ⚠️ **All the English comes from `rollSentence` and there is no second copy of it here.**
  * Six shapes of thing can be rolled and the wording for each is generated from the facts on
  * the row, in one function, on the server side of a module the browser is allowed to read —
  * which is what makes the line in this panel and the announcement over the map incapable of
- * disagreeing about what happened. That is also why nothing here prints `FEED_PART_LABELS`:
- * "To hit" beside *attacks with their Greatsword* is the same sentence twice, and the second
- * copy is the one that goes stale.
+ * disagreeing about what happened. That is also why nothing here prints a part's own label
+ * — `partLabel`, which the sheet's buttons use: "To hit" beside *attacks with their
+ * Greatsword* is the same sentence twice, and the second copy is the one that goes stale.
  *
  * **Three shapes of row, and the third is a required behaviour rather than a fallback:**
  *
@@ -188,11 +185,14 @@ export const FeedRow = memo(function FeedRow({ row }: { row: PublicFeedRow }): R
             </Badge>
           ) : null}
 
+          {/* The machine-readable instant beside the human one, which is what `<time>` is
+              for: the visible text is a local clock with no date in it, and this is the whole
+              timestamp for anything reading the document rather than looking at it. */}
           <time
             dateTime={new Date(row.createdAt).toISOString()}
             className="text-muted-foreground ml-auto shrink-0 text-[0.6875rem] tabular-nums"
           >
-            {shortTime(row.createdAt)}
+            {clockTime(row.createdAt)}
           </time>
         </div>
 
@@ -206,4 +206,8 @@ export const FeedRow = memo(function FeedRow({ row }: { row: PublicFeedRow }): R
       </div>
     </li>
   )
-})
+},
+// See the ⚠️ above. Two rows with the same id are the same row, because nothing in this
+// application ever writes to a feed document twice.
+(previous, next) => previous.row._id === next.row._id,
+)

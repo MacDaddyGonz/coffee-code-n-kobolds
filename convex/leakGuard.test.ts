@@ -69,12 +69,12 @@ type Guard = {
  * publishes belongs beside the predicate that decides it; the guard is not what is
  * holding that.
  *
- * **`./feed.ts` is deliberately absent from the load check below.** The Convex function
- * module lands in the next wave of this milestone, and naming a file that does not exist
- * yet would fail this suite for the wrong reason. It needs no entry when it arrives
- * either: the sweep is a deny-list of every module *but* the declared reader, so a new
- * `convex/feed.ts` is checked against all six tables the moment it exists, with no edit
- * here at all — which is the argument the `convex/bestiary.ts` note below makes at length.
+ * **`./feed.ts` is deliberately absent from the load check below, and it exists.** The
+ * sweep is a deny-list of every module *but* the declared reader, so that file has been
+ * checked against all seven tables since the moment it was written, with no entry here — which
+ * is the argument the `convex/bestiary.ts` note below makes at length. Naming it would only
+ * add a second assertion that the glob loaded, which `./schema.ts` and `./lib/games.ts`
+ * already provide.
  */
 const GUARDS: Guard[] = [
   { tables: ['tokens', 'tokenPositions'], reader: './lib/board.ts' },

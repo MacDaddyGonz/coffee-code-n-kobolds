@@ -196,9 +196,15 @@ export function DiceTrayLayer({ dice, nonce, onSettled }: DiceTrayLayerProps) {
     }
 
     const capTimer = window.setTimeout(settle, MAXIMUM_WAIT_MS)
-    let beatTimer = 0
+
+    // ⚠️ **Not cleared on the way out, and `capTimer` above is — the asymmetry is the point.**
+    // That one calls `settle`, so a superseded roll's cap firing late would advance an
+    // announcement about a different roll; this one resolves a promise, and `done = true` in
+    // the cleanup has already neutralised the `settle` at the end of the chain it feeds. So
+    // the worst a late resolve can do is complete a `Promise.all` nobody is waiting on, which
+    // costs nothing and needs no handle to cancel.
     const beat = new Promise<void>((resolve) => {
-      beatTimer = window.setTimeout(resolve, MINIMUM_BEAT_MS)
+      window.setTimeout(resolve, MINIMUM_BEAT_MS)
     })
 
     // `show` never rejects — see `DiceTray` — so there is nothing to catch, and a browser
@@ -217,7 +223,6 @@ export function DiceTrayLayer({ dice, nonce, onSettled }: DiceTrayLayerProps) {
       // different roll.
       done = true
       window.clearTimeout(capTimer)
-      window.clearTimeout(beatTimer)
     }
   }, [nonce, dice, tray, onSettled])
 

@@ -154,11 +154,17 @@ export function useDmCharacterRows(code: string, dmCode: string) {
    *
    * ⚠️ **Read once here rather than in each button**, so a two-hundred-row selector holds
    * one context subscription instead of two hundred. The only thing taken off it is `roll`,
-   * whose identity is stable for as long as the mode and the private toggle are — so
-   * changing either re-renders this hook's caller once, and pressing a die re-renders
-   * nothing at all. That last part is the point: see `initiativeProps` below for why the
-   * button deliberately does **not** read `pending`, and why a die that greyed itself out
-   * mid-encounter would have spent the whole feature it exists to provide.
+   * whose identity is stable for the whole session — `RollProvider` holds the mode and the
+   * private toggle in refs precisely so that it is — so pressing a die re-renders **nothing
+   * at all**, and setting advantage re-renders this hook's caller exactly once.
+   *
+   * ⚠️ **That sentence is true because `pending` is not in this context, and it was not true
+   * while it was.** The flag flips twice per roll, so a selector reading the controls used to
+   * reconcile two hundred rows twice for every die anybody pressed anywhere — on a tab
+   * `RightPane` `forceMount`s, so it happened while the DM was reading the feed. It now lives
+   * behind `useRollPending`, whose one reader is the feed's composer. See `initiativeProps`
+   * below for the separate reason the button does not *want* it, and why a die that greyed
+   * itself out mid-encounter would have spent the whole feature it exists to provide.
    *
    * A refused roll is **not** merged into `error` below, and that is `useRoll.ts`'s decision
    * rather than an omission: it toasts, because the row a failed roll would have appeared on
@@ -220,7 +226,7 @@ export function useDmCharacterRows(code: string, dmCode: string) {
      *
      * ⚠️ **A die that disables while a roll is in flight defeats the only thing this control
      * is for.** The feature is *"rolling initiative for six goblins is six clicks in one
-     * list"*, and `rolls.pending` is the panel's count of every roll in flight — so the
+     * list"*, and `useRollPending` is the panel's count of every roll in flight — so the
      * first click would grey out all six buttons until the round trip returned, and clicks
      * two through six would land on disabled buttons and be silently dropped. A DM going
      * down a list at the speed of a list is precisely the case, not an edge one.

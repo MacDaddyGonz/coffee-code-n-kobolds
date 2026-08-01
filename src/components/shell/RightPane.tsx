@@ -15,7 +15,7 @@ import { TokensTab } from '@/components/shell/tabs/TokensTab'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { tokensArgs } from '@/hooks/useBoard'
 import type { Dm } from '@/hooks/useDm'
-import { RollProvider, RollTargetProvider } from '@/hooks/useRoll'
+import { RollProvider } from '@/hooks/useRoll'
 import type { PublicGame } from '@/hooks/useSeat'
 import { sheetFocusOf } from '@/lib/sheetFocus'
 import { api } from '@convex/_generated/api'
@@ -305,9 +305,9 @@ export const RightPane = memo(function RightPane({
         onValueChange={(next) => setTab(next as TabValue)}
         className="min-h-0 flex-1 gap-0"
       >
-      {/* `w-full` rather than the primitive's `w-fit`, so the strip is the top edge
-          of the pane and not a pill floating in it — and `shrink-0`, because a strip
-          that gave up height to a long tab body would be the first thing to vanish. */}
+        {/* `w-full` rather than the primitive's `w-fit`, so the strip is the top edge
+            of the pane and not a pill floating in it — and `shrink-0`, because a strip
+            that gave up height to a long tab body would be the first thing to vanish. */}
         <TabsList className="w-full shrink-0 rounded-none border-b">
           <TabsTrigger value="feed">Feed</TabsTrigger>
           {/* One trigger, two names. See the ⚠️ above: the value is shared so that the
@@ -353,17 +353,14 @@ export const RightPane = memo(function RightPane({
           className="min-h-0 data-[state=inactive]:hidden"
         >
           <TabPane>
-            {/* ⚠️ **Whose sheet the roll buttons aim at, decided once here and carried down
-                rather than re-derived on each row.** `sheetFocusOf` above is the only place
-                the question "whose sheet is on screen" is asked — its own comment names the
-                roll announcement as its fourth reader — and this is that answer reaching
-                `AbilityTable`, `SkillList` and `SheetEntryList` without four props through a
-                dozen components that have no business knowing dice exist. `null` for a token
-                with no sheet behind it and for nothing selected, which is what stops a roll
-                button rendering with nothing to aim at. */}
-            <RollTargetProvider
-              characterId={focus.kind === 'character' ? focus.characterId : null}
-            >
+            {/* ⚠️ **Whose sheet the roll buttons aim at is *not* decided here, and it used
+                to be.** `RollTargetProvider` sat around both panels below, taking
+                `focus.kind === 'character' ? focus.characterId : null` — a narrowing each of
+                those panels performs anyway, to decide whether to render a sheet at all, and
+                then hands to `CharacterSheetView` as a prop. That component is the sole
+                ancestor of every `RollButton` in the application, so the provider belongs
+                there and now lives there; this pane is back to knowing only which sheet is on
+                screen, which `sheetFocusOf` above answers once for both roles. */}
             {/* The role split, and the only branch it costs. `SheetFocus` is computed
                 once above and handed to whichever of the two is mounted, so the two
                 panels cannot come to disagree about whose sheet is on screen — which
@@ -398,7 +395,6 @@ export const RightPane = memo(function RightPane({
                 onGoToTable={() => setTab('table')}
               />
             )}
-            </RollTargetProvider>
           </TabPane>
         </TabsContent>
 

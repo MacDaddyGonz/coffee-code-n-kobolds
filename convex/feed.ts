@@ -2,7 +2,6 @@ import { ConvexError, v } from 'convex/values'
 
 import { mutation, query } from './_generated/server'
 import { requireEditableCharacter } from './lib/access'
-import { visibleCharacterIds } from './lib/board'
 import { readableCharacterIds } from './lib/characters'
 import { NO_MODIFIERS, cryptoDice, evaluateRoll, modifiersFor } from './lib/dice'
 import { publicFeedValidator, visibleFeed, writeFeedRow } from './lib/feed'
@@ -301,29 +300,26 @@ function planEntryRoll(
 /**
  * The rolls panel. Every line this caller may be told about, oldest first.
  *
- * ⚠️ **The composition is `characters.vitals`'s, term for term, and saying so is the
- * point** — the seats, then `boardCharacterAccess` for `{ visible, controlled }`, then
- * the character choke point, then the payload. That query is the precedent and this one
- * must not invent a second arrangement of the same four calls, because the two answer
- * about the same rows and a caller who is shown a creature's health bar and denied its
- * feed line (or the reverse) is looking at two rules that were identical when they were
- * written.
+ * **The board, then the character choke point, then the payload** — the shape
+ * `characters.vitals` established for a question about the same rows, so that a caller
+ * shown a creature's health bar and denied its feed line (or the reverse) is not looking at
+ * two rules that were identical when they were written.
  *
- * What differs is only the last predicate, and it differs deliberately: `mayHearOf`
- * inside `readableCharacterIds` admits a creature whose token the caller can already
- * see, because `board.tokens` has *already* published that goblin's name and its coin —
- * so withholding the line would be secrecy theatre against a client that can read the
- * name off its own board. `maySeeCharacter` still decides the *sheet*. The ambush case
- * is untouched: a DM-layer token is in neither set, so a prepared encounter rolls
- * nothing anybody hears about until the coin is on the board.
+ * What differs is the last predicate, deliberately: `mayHearOf` inside
+ * `readableCharacterIds` admits a creature whose token the caller can already see, because
+ * `board.tokens` has *already* published that goblin's name and its coin — so withholding
+ * the line would be secrecy theatre against a client that can read the name off its own
+ * board. `maySeeCharacter` still decides the *sheet*. The ambush case is untouched: a
+ * DM-layer token is in neither set, so a prepared encounter rolls nothing anybody hears
+ * about until the coin is on the board.
  *
- * ⚠️ **`playerId` changes this query's cache key, and the argument is `characters.vitals`'s
- * unchanged.** Two seats at one table hold two subscriptions to the same feed, because a
- * granted creature's lines are readable by the seat holding its lead and not by anybody
- * else — the answer genuinely differs per seat and one shared entry cannot express it.
- * The alternative, sending everybody every line and letting the client hide some, is
- * invariant 1 inverted. It is bounded: the argument is one seat id, so the fan-out is
- * the size of the table.
+ * ⚠️ **There is no `playerId`, and the answer is a function of the DM code alone.** A grant
+ * cannot widen this query — `controlled` is a subset of `visible` by construction, so the
+ * disjunct `mayHearOf` used to take could admit nothing sight had not — and a per-seat
+ * argument would have split the one subscription that re-runs on every roll at the table
+ * into a cache entry per person, for identical rows. `mayHearOf` carries the proof. The
+ * alternative of sending everybody every line and letting the client hide some is invariant
+ * 1 inverted, and is not on the table.
  *
  * Empty for an unknown code rather than a throw, because this paints a screen —
  * `findGameByCode` is the finding form for exactly that reason.
@@ -340,13 +336,7 @@ export const list = query({
 
     const { isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
 
-    // Sight alone, because a grant cannot widen this answer — `controlled` is a subset of
-    // `visible` by construction, so the grant disjunct `mayHearOf` used to take was
-    // unreachable. That is why there is no `playerId` above and no `listSeats` here: the
-    // answer is a function of the DM code alone, so the whole table shares two cache
-    // entries for a query that re-runs on every roll. See `mayHearOf`.
-    const visible = await visibleCharacterIds(ctx, game._id, isDm)
-    const readable = await readableCharacterIds(ctx, game._id, isDm, visible)
+    const readable = await readableCharacterIds(ctx, game._id, isDm)
     return await visibleFeed(ctx, game._id, isDm, readable)
   },
 })

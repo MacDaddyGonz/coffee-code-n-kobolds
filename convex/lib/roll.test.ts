@@ -2,11 +2,12 @@ import { describe, expect, test } from 'vitest'
 
 import {
   FEED_PARTS,
-  FEED_PART_LABELS,
   ROLL_MODES,
   ROLL_MODE_LABELS,
   abilityKeyValidator,
   feedPartValidator,
+  partLabel,
+  partRolls,
   partsFor,
   rollModeNote,
   rollModeValidator,
@@ -15,8 +16,8 @@ import {
   skillKeyValidator,
 } from './roll'
 import type { FeedPart, FeedSubject, RollResult } from './roll'
-import { ABILITY_KEYS, SHEET_ENTRY_CATEGORIES, rollShapeOf } from './sheet'
-import { SKILL_KEYS, SKILLS } from './skills'
+import { ABILITY_KEYS, SHEET_ENTRY_CATEGORIES, SHEET_ENTRY_ROLL_LABELS, rollShapeOf } from './sheet'
+import { SKILL_KEYS, skill } from './skills'
 
 /**
  * The feed's vocabulary, and the one sentence generated from it.
@@ -81,15 +82,51 @@ describe('the hand-spelled unions admit exactly their own lists', () => {
    * *missing* key at compile time and says nothing about a key left blank or two keys
    * sharing a word — and two buttons reading the same thing is a control nobody can use.
    */
-  test('every mode and every part has its own non-empty label', () => {
+  test('every mode has its own non-empty label', () => {
     expect(Object.keys(ROLL_MODE_LABELS)).toEqual([...ROLL_MODES])
-    expect(Object.keys(FEED_PART_LABELS)).toEqual([...FEED_PARTS])
-    const labels = [
-      ...ROLL_MODES.map((mode) => ROLL_MODE_LABELS[mode]),
-      ...FEED_PARTS.map((part) => FEED_PART_LABELS[part]),
-    ]
+    const labels = ROLL_MODES.map((mode) => ROLL_MODE_LABELS[mode])
     for (const label of labels) expect(label.trim()).not.toBe('')
     expect(new Set(labels).size).toBe(labels.length)
+  })
+
+  /**
+   * Every part of every category prints something, and the one part whose word depends on
+   * the category takes it from the label the sheet already prints beneath the button.
+   *
+   * ⚠️ **This replaced a totality assertion over a `Record<FeedPart, string>` that was
+   * pinning a wrong answer in place.** That record had a `roll` member reading 'Damage',
+   * which is right on a weapon and wrong on an action — nothing read it, every renderer went
+   * to `SHEET_ENTRY_ROLL_LABELS` instead, and the test asserting the record was total was
+   * what kept the trap from looking like dead code rather than vocabulary.
+   */
+  test('every part of every category has a non-empty label, and roll follows the category', () => {
+    for (const category of SHEET_ENTRY_CATEGORIES) {
+      for (const part of FEED_PARTS) {
+        expect(partLabel(part, category).trim(), ).not.toBe('')
+      }
+      expect(partLabel('roll', category)).toBe(SHEET_ENTRY_ROLL_LABELS[category])
+    }
+    // The three that do not vary read the same whatever category they are asked about.
+    for (const part of ['toHit', 'use', 'text'] as const) {
+      const words = SHEET_ENTRY_CATEGORIES.map((category) => partLabel(part, category))
+      expect(new Set(words).size, part).toBe(1)
+    }
+  })
+
+  /**
+   * Which parts throw dice, asserted against `partsFor` rather than restated: a passive's
+   * only button must be one that rolls nothing, and every button a weapon or an action
+   * offers must be one that rolls. That is the property `RollButton` leans on when it
+   * suppresses the advantage note over a line that will have no die in it.
+   */
+  test('a part rolls exactly when the category that offers it rolls', () => {
+    expect(partRolls('text')).toBe(false)
+    for (const category of SHEET_ENTRY_CATEGORIES) {
+      const rolls = rollShapeOf(category).roll || rollShapeOf(category).toHit
+      for (const part of partsFor(category)) {
+        expect(partRolls(part), ).toBe(rolls)
+      }
+    }
   })
 })
 
@@ -229,7 +266,7 @@ describe('the roll announcement', () => {
   test('every skill reads as English, and none of them is blank', () => {
     for (const key of SKILL_KEYS) {
       const sentence = rollSentence(ACTOR, { kind: 'skill', skill: key }, '1d20')
-      const name = SKILLS.find((entry) => entry.key === key)?.name ?? ''
+      const name = skill(key).name
       expect(name).not.toBe('')
       expect(sentence).toBe(
         `Chadius performs ${/^[aeiou]/i.test(name) ? 'an' : 'a'} ${name} roll`,
