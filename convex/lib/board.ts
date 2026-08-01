@@ -31,6 +31,24 @@ import { cellOf, centreOfCell, snapToGrid } from './grid'
  */
 export const tokenLayerValidator = v.union(v.literal('player'), v.literal('dm'))
 
+/**
+ * The same union as a TypeScript type, for `setTokenLayer` below.
+ *
+ * Inferred from the validator rather than written out, for the reason the validator
+ * itself is written once: a fourth spelling of `'player' | 'dm'` is a fourth place a
+ * third member can be added to three of them.
+ *
+ * **Deliberately not exported**, unlike `PublicToken` beside it, and the asymmetry is
+ * the point: `setTokenLayer` in this file is the only signature that wants it. The
+ * browser derives its own from `PublicToken['layer']` — the same validator by a
+ * different route — and `board.setLayer` validates its argument against
+ * `tokenLayerValidator` itself, so an export would serve nobody while putting a second
+ * `TokenLayer` in auto-import range beside the *component* of that name in
+ * `src/components/board/TokenLayer.tsx`. An editor picking the wrong one of those is a
+ * confusing failure rather than a loud one.
+ */
+type TokenLayer = Infer<typeof tokenLayerValidator>
+
 /** The public shape of a token. artUrl is a signed storage URL, null when there is no art. */
 export const publicTokenValidator = v.object({
   _id: v.id('tokens'),
@@ -488,6 +506,46 @@ export async function requireMovableToken(
 }
 
 /**
+ * The token a DM named, or the same `TokenNotFound` throw. `requireMovableToken` above
+ * with its one boolean answered — and **the** place the reasoning for that answer is
+ * written down.
+ *
+ * ⚠️ **Takes a `game` that has already been admitted, not a code and a DM code, so no
+ * authorisation moves into this module.** `requireDm` stays in `convex/board.ts`, where
+ * the codes arrive and where every other gate in the app is; what reaches here is a
+ * document that call has already vouched for. This file holds neither the game code nor
+ * the DM code, which is the split every writer below keeps, and it is why *this* helper
+ * can exist here while the check it depends on cannot.
+ *
+ * That is also what discharges the literal `true`. It is not a locally computed `isDm`
+ * of the kind CLAUDE.md invariant 7 forbids — it is the caller's `requireDm` reported
+ * once instead of re-derived from a seat, a badge or a `playerId`. Six DM-gated
+ * mutations used to pass that literal themselves, each carrying a copy of this
+ * paragraph and each resting on two adjacent lines staying in one order; four copies of
+ * a comment maintaining an ordering property is this codebase's own signal that a shared
+ * fact has no home. It has one now, and a call site cannot reach it without a game.
+ *
+ * **Named for what it actually asks.** For a caller holding the DM code the movability
+ * question has exactly one answer — the DM moves anything on their own board — so what
+ * is left of `requireMovableToken` on that path is *does this token exist on this
+ * board*, which is what all six of these callers want and what the older name stopped
+ * describing. `moveToken` keeps the `isDm` / `playerId` form, because it is the one
+ * caller for which control is a real question.
+ *
+ * **The shared `TOKEN_NOT_FOUND` refusal comes with it**, and is right to, even though a
+ * caller who already holds the DM code has no existence oracle to gain from it: the
+ * parity across every refusal is that constant's whole value, and a call site quietly
+ * opting out is how one shared refusal becomes six literals that drift.
+ */
+export async function requireDmToken(
+  ctx: QueryCtx,
+  game: Doc<'games'>,
+  tokenId: Id<'tokens'>,
+): Promise<Doc<'tokens'>> {
+  return await requireMovableToken(ctx, game, tokenId, true)
+}
+
+/**
  * How far from the asked-for square to look for an empty one. Eight rings is 289
  * squares, which is more of a search than any real board needs — it exists so the
  * loop terminates rather than because anyone will reach it.
@@ -584,6 +642,192 @@ export async function detachCharacterFromTokens(
   for (const token of tokens) {
     await ctx.db.patch('tokens', token._id, { characterId: undefined })
   }
+}
+
+/**
+ * Rename, resize or re-tint one token — the cosmetic corner of the DM's Tokens tab, and
+ * the first of the four writers that tab's mutations edit a token through.
+ *
+ * ⚠️ **These four live here by discipline rather than by mechanism, and it is worth
+ * saying which.** `leakGuard.test.ts` greps for *reads* — `.query('tokens'` and
+ * `db.get('tokens'` — and `convex/board.ts` already inserts and deletes rows in that
+ * table itself, so nothing mechanical would stop a fifth writer being written next
+ * door. They are here because the reasoning about what a write to `layer` or
+ * `characterId` does to a player's payload belongs beside the predicate that decides
+ * it, which is in this file; the guard is not what is holding that.
+ *
+ * **It checks nothing it cannot know**, which is the same split `setTokenControllers`
+ * keeps below. The name's length, the size's range and the tint's pattern are all
+ * checked in `convex/board.ts`, by `requireTokenAppearance`, because that is where the
+ * game and the DM code are — this module holds neither, and a writer that half-validated
+ * would be a second, weaker copy of a check that already exists. The three writers after
+ * this one inherit that sentence and name only their own unchecked facts.
+ *
+ * **Takes the document rather than an id**, which the four of them share and
+ * `setTokenControllers` does not. The deviation is deliberate: each of these has a
+ * reason to compare against what is stored, the caller already holds the row because
+ * `requireDmToken` handed it back, and the comparison buys **no-op suppression**.
+ * A DM re-submitting an unchanged form should cost the table nothing, and a patch that
+ * changes no field is still a write — Convex rewrites the whole document, invalidating
+ * `board.tokens` for every client at the table. It is the reason `revokeControlForSeat`
+ * skips the tokens it would not change, and the reason `characters.assign` guards its
+ * write of `reserved`.
+ *
+ * There is deliberately **no test** for the suppression here, and the absence is not an
+ * omission: a skipped patch and an identical patch leave byte-identical documents, so
+ * nothing observable through the public API can tell them apart, and this project does
+ * not keep guards that cannot fail. What it saves is a subscription invalidation, which
+ * is not a thing the API can be asked about. (`replaceTokenArt`'s early return is a
+ * different animal — that one is observable, because skipping it destroys the art.)
+ */
+export async function setTokenAppearance(
+  ctx: MutationCtx,
+  token: Doc<'tokens'>,
+  fields: { name: string; sizeSquares: number; tint: string },
+): Promise<void> {
+  if (
+    token.name === fields.name &&
+    token.sizeSquares === fields.sizeSquares &&
+    token.tint === fields.tint
+  ) {
+    return
+  }
+
+  await ctx.db.patch('tokens', token._id, fields)
+}
+
+/**
+ * Move one token between the player layer and the DM's. **A secrecy write, and the
+ * broadest one on the board** — this is the field the whole of invariant 8's structural
+ * guard exists to act on.
+ *
+ * ⚠️ Moving a token to `'dm'` does all of the following, in one patch, with nothing
+ * else written anywhere:
+ *
+ * - **the coin leaves every player's `board.tokens`**, because `visibleTokens` filters
+ *   on `maySee`;
+ * - **its placements leave every player's `board.positions`**, because each placement is
+ *   hydrated back to its token and decided by the same predicate — so *the fact that
+ *   something is standing there* goes with it, which is most of what was being hidden;
+ * - **the bound character leaves both halves of `boardCharacterAccess`**, because that
+ *   function iterates `visibleTokens` and an id cannot enter `controlled` on an
+ *   iteration that did not already put it into `visible`. So a granted seat loses that
+ *   creature's sheet **and its exact hit points** in the same write, and the hit points
+ *   go by falling back to the band rather than by anything being subtracted.
+ *
+ * Moving it back to `'player'` restores every one of those, in the same one write.
+ *
+ * **The stored grants are untouched in both directions**, and that is what makes the
+ * round trip usable rather than destructive: `controllerIds` is not read here and must
+ * not be. A grant on a DM-layer token is *inert*, not revoked — which is precisely how a
+ * DM prepares an ambush, hands the party its pet before revealing it, and then reveals it
+ * with one click (ADR 0009, and the note on `board.setControllers`).
+ *
+ * Checks nothing it cannot know, like its siblings, and here that is the whole of the
+ * validation rather than a division of labour: `tokenLayerValidator` is the same union
+ * the schema uses and the same one `board.setLayer` validates its argument against, so
+ * there is no third member to reject and nowhere for one to appear in one copy and not
+ * the other. That is the point of the union being spelled once.
+ */
+export async function setTokenLayer(
+  ctx: MutationCtx,
+  token: Doc<'tokens'>,
+  layer: TokenLayer,
+): Promise<void> {
+  if (token.layer === layer) return
+
+  await ctx.db.patch('tokens', token._id, { layer })
+}
+
+/**
+ * Bind one token to a character, or unbind it. **The singular sibling of
+ * `detachCharacterFromTokens` above** — the same field, written in the same shape, for
+ * one row the DM named instead of every row pointing at a character that has gone. A
+ * rebind and a detach therefore leave a document of the same shape, which is one fewer
+ * thing for the smoke script's field-by-field comparison to call *present on one side
+ * only*.
+ *
+ * It is also **a secrecy write**, and the three consequences are worth having in front
+ * of you rather than derivable from two other files:
+ *
+ * - ⚠️ **Rebinding a granted token onto a monster publishes that monster's stat block
+ *   and its exact hit points to the granted seats, in this write, with no second
+ *   confirmation anywhere.** `boardCharacterAccess` reads the binding the token carries
+ *   *now*, so the grant the DM wrote last week starts pointing at tonight's dragon the
+ *   moment the pointer moves. Nothing refuses it and nothing should — a DM handing the
+ *   party a creature is the ordinary case — but it is the one write in the tab that can
+ *   publish a secret without looking like it touched one.
+ * - **Rebinding away from a claimed hero silently withdraws that seat's derived
+ *   control.** The seat simply stops appearing in `controllerIds` on the next payload,
+ *   with nothing written to the token to make that happen, and their coin stops being
+ *   draggable. `grantedPlayerIds` is unchanged, which is exactly the two-fields-are-
+ *   different-facts property `publicTokenValidator` exists to make visible.
+ * - **Unbinding entirely collapses a claim-only token to the empty array**, which means
+ *   the DM alone — the Milestone 2 correction on `effectiveControllersOf`, *an unattached
+ *   token is the DM's*, reached by a new route.
+ *
+ * ⚠️ **It must not touch `controllerIds`, and that is not an oversight.** A grant is of
+ * the token; the claim holder is composed *in* by `effectiveControllersOf` from whatever
+ * the token points at now. Migrating the array on a rebind would write the derived half
+ * down — the denormalisation ADR 0004 refused for `layer`, for the same reason — and the
+ * bug that follows is a token still listing the seat that played the creature it is no
+ * longer bound to: a stale grant that authorises a real drag and that the DM's dialog
+ * renders as a box it has no way to explain.
+ *
+ * Checks nothing it cannot know: whether this character belongs to this game is
+ * `board.setCharacter`'s job, through the same `getCharacterInGame` that `board.addToken`
+ * runs, because that is where the game is.
+ */
+export async function setTokenCharacter(
+  ctx: MutationCtx,
+  token: Doc<'tokens'>,
+  characterId: Id<'characters'> | null,
+): Promise<void> {
+  if ((token.characterId ?? null) === characterId) return
+
+  // `undefined` for none, matching `detachCharacterFromTokens` above, so the two routes
+  // to an unbound token produce one shape of row rather than two.
+  await ctx.db.patch('tokens', token._id, { characterId: characterId ?? undefined })
+}
+
+/**
+ * Point one token at a different piece of art, or at none — and delete the blob it was
+ * pointing at.
+ *
+ * **Named *replace* rather than *set* because the old blob does not survive**, and the
+ * caller should have to read that in the name. The delete cannot be somebody else's job:
+ * `files.discard` refuses a blob a token still references, through
+ * `tokenReferencesImage` at the bottom of this file, so the only transaction allowed to
+ * delete the old art is the one that stops referencing it. That is this one.
+ *
+ * ⚠️ **The early return is a DATA-LOSS guard, not an optimisation.** Re-submitting the id
+ * a token already carries would otherwise patch the row to point at that blob and then
+ * delete the blob — leaving a token drawing nothing, with a valid-looking `imageId`, and
+ * no way for anyone looking at it afterwards to explain why. Unlike the suppression on
+ * its three siblings, this one is observable and is tested.
+ *
+ * The delete is **unconditional** on there having been a previous blob, matching
+ * `board.removeToken` and `deleteTokensInGame`, and it inherits their caveat unchanged:
+ * today an upload makes exactly one token and there is no route to pick an existing blob,
+ * so this id has no other owner. The game editor's shared token library breaks that, and
+ * whatever makes art shareable has to make all **three** of those deletes conditional at
+ * the same time. A *partially* conditional set of three is the state in which somebody
+ * believes the problem is solved.
+ *
+ * Checks nothing it cannot know: that the blob exists and is under `MAX_TOKEN_BYTES` is
+ * `board.setArt`'s job, through the same `requireTokenArt` that `board.addToken` runs,
+ * because the limit belongs beside the DM code that admitted the upload.
+ */
+export async function replaceTokenArt(
+  ctx: MutationCtx,
+  token: Doc<'tokens'>,
+  imageId: Id<'_storage'> | null,
+): Promise<void> {
+  const previous = token.imageId ?? null
+  if (previous === imageId) return
+
+  await ctx.db.patch('tokens', token._id, { imageId: imageId ?? undefined })
+  if (previous) await ctx.storage.delete(previous)
 }
 
 /**
@@ -742,7 +986,9 @@ export async function deleteScenePlacements(
  * to name them. Unconditional on the id being present, exactly as `board.removeToken`
  * is, and it inherits that mutation's caveat unchanged: the game editor's token
  * library makes one piece of art shareable between tokens, and whatever makes it
- * shareable has to make both of these conditional at the same time.
+ * shareable has to make **all three** of the unconditional deletes conditional at the
+ * same time — `board.removeToken`, `replaceTokenArt` above, and this one. Three sites,
+ * named at each of them, because a partially converted set is worse than none.
  *
  * This does **not** make the orphaned-blob sweeper unnecessary. That sweeper is for
  * blobs a *refused or abandoned upload* left behind — a mutation that throws cannot

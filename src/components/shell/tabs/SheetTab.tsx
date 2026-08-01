@@ -81,10 +81,27 @@ export function SheetTab({
         {/* For a player, `none` *is* "no character assigned", and flatly rather than
             probably: `sheetFocusOf` falls back to `myCharacterId` one rule earlier,
             so nothing else reaches here. That is why the copy states it instead of
-            branching on `characterId`. */}
+            branching on `characterId`.
+
+            ⚠️ **The second sentence names the half of the job that happens *here*, and
+            it is the difference between one route and half of one.** The copy used to
+            stop at "pick one up from the table", which describes the button and not the
+            outcome: a new player claims a character whose sheet is a blank `pc` — ten
+            across, no race, no class — and the two dropdowns that turn it into somebody
+            are on this panel, in `CharacterBuilder`'s *Build a character* form. Nothing
+            on the Table tab says so, and nothing needs to, because they land back here
+            the moment the claim succeeds (`onClaimed` in `RightPane`). Copy that
+            described only the click left them holding a level-one nobody with no
+            indication that they were two choices away from a character, which is the
+            state the DM then gets asked about.
+
+            It says *race and class* rather than naming the archetype, because there is
+            no archetype to choose until level 2 — `CharacterBuilder` draws that field
+            only from `SUBCLASS_LEVEL` up, so promising three choices would be wrong for
+            every character that has just been made. */}
         <p className="text-muted-foreground text-sm">
-          You are not playing a character yet. Pick up an unclaimed one from the table and their
-          sheet will be here.
+          You are not playing a character yet. Pick up one of the characters the DM has made and
+          you will choose its race and class here.
         </p>
         <Button type="button" onClick={onGoToTable}>
           Pick a character

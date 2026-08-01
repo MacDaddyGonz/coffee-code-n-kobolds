@@ -67,6 +67,28 @@ async function playerRows(t: Harness) {
   return await t.run(async (ctx) => await ctx.db.query('players').collect())
 }
 
+/**
+ * Who is at the table and which of them wears the badge, in the server's own join
+ * order, as a shape small enough to write a whole roster out with `toEqual`.
+ *
+ * These assertions used to go through `players.listNames`, a query that returned this
+ * projection and nothing else. It is gone — the name gate mounted it alongside
+ * `useSeat`'s `players.list {code}`, which is a second cache entry, a second socket
+ * and a second server execution for a strict subset of rows already on the wire — so
+ * the projection it used to perform is done here instead. Nothing about what these
+ * tests assert changed: the roster is still whole (`toEqual`, not `toMatchObject`),
+ * still ordered, and still checked for the badge, which is the part several of them
+ * exist for. Dropping the extra fields at the helper rather than at each call site is
+ * what keeps the assertion readable — `characterName` and `_creationTime` are
+ * `players.list`'s subject and are asserted directly wherever they are the point.
+ */
+async function seatNames(t: Harness, code: string) {
+  return (await t.query(api.players.list, { code })).map(({ displayName, isDm }) => ({
+    displayName,
+    isDm,
+  }))
+}
+
 async function playerRow(t: Harness, playerId: Id<'players'>) {
   return await t.run(async (ctx) => await ctx.db.get('players', playerId))
 }
@@ -377,30 +399,6 @@ describe('players.list', () => {
   })
 })
 
-describe('players.listNames', () => {
-  test('returns an empty array for an unknown code', async () => {
-    const t = harness()
-    await createGame(t)
-    expect(await t.query(api.players.listNames, { code: 'ZZZZZZ' })).toEqual([])
-    expect(await t.query(api.players.listNames, { code: '' })).toEqual([])
-  })
-
-  test('returns only names and the DM badge, oldest seat first', async () => {
-    const t = harness()
-    const game = await createGame(t, 'Mike')
-    const sam = await join(t, game.code, 'Sam')
-    await join(t, game.code, 'Ada')
-    await claim(t, game.code, sam.playerId, await addCharacter(t, game, 'Grog'))
-
-    const names = await t.query(api.players.listNames, { code: game.code })
-    expect(names).toEqual([
-      { displayName: 'Mike', isDm: true },
-      { displayName: 'Sam', isDm: false },
-      { displayName: 'Ada', isDm: false },
-    ])
-  })
-})
-
 describe('players.rename', () => {
   test('renames in place, keeping the same seat and its character', async () => {
     const t = harness()
@@ -574,9 +572,7 @@ describe('players.rename', () => {
       'PlayerNotFound',
     )
     expect((await playerRow(t, sam.playerId))?.displayName).toBe('Sam')
-    expect(await t.query(api.players.listNames, { code: two.code })).toEqual([
-      { displayName: 'Dana', isDm: true },
-    ])
+    expect(await seatNames(t, two.code)).toEqual([{ displayName: 'Dana', isDm: true }])
   })
 
   test('a seat that has already left cannot be renamed', async () => {
@@ -707,23 +703,19 @@ describe('players.leave', () => {
     const mike = await join(t, game.code, 'Mike')
 
     await t.mutation(api.players.leave, { code: game.code, playerId: mike.playerId })
-    expect(await t.query(api.players.listNames, { code: game.code })).toEqual([])
+    expect(await seatNames(t, game.code)).toEqual([])
 
     // The badge is not restored by joining: only the DM code moves it back.
     const back = await join(t, game.code, 'Mike')
     expect(back.rejoined).toBe(false)
-    expect(await t.query(api.players.listNames, { code: game.code })).toEqual([
-      { displayName: 'Mike', isDm: false },
-    ])
+    expect(await seatNames(t, game.code)).toEqual([{ displayName: 'Mike', isDm: false }])
 
     await t.mutation(api.games.elevateDm, {
       code: game.code,
       dmCode: game.dmCode,
       playerId: back.playerId,
     })
-    expect(await t.query(api.players.listNames, { code: game.code })).toEqual([
-      { displayName: 'Mike', isDm: true },
-    ])
+    expect(await seatNames(t, game.code)).toEqual([{ displayName: 'Mike', isDm: true }])
   })
 })
 
@@ -773,9 +765,7 @@ describe('cross-game isolation', () => {
 
     await t.mutation(api.players.leave, { code: one.code, playerId: seatOne.playerId })
 
-    expect(await t.query(api.players.listNames, { code: one.code })).toEqual([
-      { displayName: 'Mike', isDm: true },
-    ])
+    expect(await seatNames(t, one.code)).toEqual([{ displayName: 'Mike', isDm: true }])
     expect((await playerRow(t, seatTwo.playerId))?.displayName).toBe('Sam')
   })
 })

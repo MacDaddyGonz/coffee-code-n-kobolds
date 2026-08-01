@@ -309,12 +309,17 @@ async function readSheet(
 /**
  * The `exact` vitals row for one character, insisting it is the exact variant —
  * a band would mean the caller was not entitled to the number being asserted.
+ *
+ * `who` widened from `{ dmCode? }` to the full `Actor` once a grant could entitle a *seat*
+ * to exact numbers: the rebind tests below ask whether a granted player receives the
+ * `exact` variant, and the throw inside this helper is the sharpest way to ask it. Every
+ * older caller passes `{ dmCode }` and is unaffected.
  */
 async function exactVitals(
   t: Harness,
   code: string,
   characterId: Id<'characters'>,
-  who: { dmCode?: string } = {},
+  who: Actor = {},
 ) {
   const rows = await t.query(api.characters.vitals, { code, ...who })
   const row = rows.find((entry) => entry.characterId === characterId)
@@ -5835,6 +5840,24 @@ const WOLF_NOTES = 'Answers to a whistle the party has not heard yet.'
 const WOLF_ACTION = 'Sundering Wyrmbreath'
 const WOLF_TOKEN_NAME = 'Shape in the Reeds'
 
+/**
+ * A **second** creature, with four needles of its own, for the tests about a rebind.
+ *
+ * Four rather than one for the reason the wolf has four, and distinct from the wolf's in
+ * all four places on purpose: the rebind tests assert that one creature's spoilers left a
+ * seat's payload in the same write that another's arrived, and a shared string anywhere
+ * would make both halves of that unprovable — a scan that found `Wyrmshadow` could not say
+ * which creature had put it there.
+ *
+ * ⚠️ **It gets no coin of its own in the fixture, and that absence is the whole
+ * experiment.** The only route from a player to this creature is the token that used to
+ * point at the wolf, so if the rebind were not moving sight along with the binding there
+ * would be no other way for the sheet to arrive and the test could not pass by accident.
+ */
+const BEAR_NAME = 'Ursaline of the Bone Orchard'
+const BEAR_NOTES = 'Was somebody’s pet before the winter that emptied the village.'
+const BEAR_ACTION = 'Bonecrush Embrace'
+
 /** A hero the DM has built for a player who has not arrived. */
 const RESERVED_NAME = 'Seraphine the Unarrived'
 
@@ -5845,6 +5868,16 @@ const RESERVED_NAME = 'Seraphine the Unarrived'
  * nothing or fires on everything. `vitals.test.ts` picked 271 for the same reason.
  */
 const WOLF_MAX_HP = 271
+
+/**
+ * The second creature's maximum, and a **different** three digits that likewise appear
+ * nowhere else in this file — checked, not assumed, and the same check is owed to anybody
+ * who adds a third. `271` is the wolf's here and in `vitals.test.ts`, `293` is the granted
+ * creature's in `board-smoke.mjs` and `181` the ambush's, so `347` is the free one. Two
+ * creatures sharing a maximum would make "the wolf's hit points left and the bear's
+ * arrived" a single unfalsifiable assertion about one number.
+ */
+const BEAR_MAX_HP = 347
 
 /**
  * `271` as a number in the payload, rather than `271` sitting inside a document id or a
@@ -5865,14 +5898,31 @@ function wolfSheet(): NpcSheet {
   })
 }
 
+/** The second creature's, built the same way so the two are comparable in every respect. */
+function bearSheet(): NpcSheet {
+  return npcSheet({
+    maxHp: BEAR_MAX_HP,
+    notes: BEAR_NOTES,
+    actions: [sheetEntry({ id: 'act-1', name: BEAR_ACTION, roll: '2d8+5' })],
+  })
+}
+
 /**
- * Two seats, one creature, and a coin for it on the layer the caller names.
+ * Two seats, **two** creatures, and a coin for the first of them on the layer the caller
+ * names.
  *
  * The default is the **player** layer, for the reason `vitals.test.ts` gives about its
  * own fixture: a creature hidden on the DM layer would make every assertion pass for
  * the wrong reason, because the token choke point would have dropped it before
  * `maySeeCharacter` was ever asked a hard question. The `dm` variant is used by exactly
  * one test, and that test is about the composition of the two rules.
+ *
+ * ⚠️ **The bear has no coin, deliberately.** `board.setCharacter` rebinding the wolf's
+ * token is the only path from a player to it, so a rebind that failed to move sight would
+ * leave the bear unreachable rather than reachable by some second route — which is what
+ * makes the assertion below about the *rebind* rather than about the board in general.
+ * Giving it a token of its own would be the change that quietly turns those tests into
+ * tests of `addToken`.
  */
 async function grantFixture(t: Harness, layer: 'player' | 'dm' = 'player') {
   const game = await makeGame(t)
@@ -5887,7 +5937,30 @@ async function grantFixture(t: Harness, layer: 'player' | 'dm' = 'player') {
     characterId: wolf,
   })
 
-  return { ...game, sceneId, ana, ben, wolf, wolfToken }
+  const bear = await makeNpc(t, game.code, game.dmCode, BEAR_NAME, bearSheet())
+
+  // The fixture asserts its own needles, exactly as `board.test.ts`'s `boardFixture`
+  // reaches for the DM's view of the hidden token before handing it back. A negative
+  // scan for a string the database does not contain passes for the wrong reason, and the
+  // bear is the one creature here that nothing else in the fixture touches — a sheet that
+  // had silently failed to save, or a `maxHp` that some future default overwrote, would
+  // make every "no trace of the bear" assertion below vacuous and nothing would say so.
+  const written = await t.query(api.characters.sheet, {
+    code: game.code,
+    dmCode: game.dmCode,
+    characterId: bear,
+  })
+  const serialised = JSON.stringify(written) ?? ''
+  if (
+    written?.name !== BEAR_NAME ||
+    !serialised.includes(BEAR_NOTES) ||
+    !serialised.includes(BEAR_ACTION) ||
+    !containsNumber(serialised, BEAR_MAX_HP)
+  ) {
+    throw new Error('the second creature’s four needles are not all on its stored sheet')
+  }
+
+  return { ...game, sceneId, ana, ben, wolf, wolfToken, bear }
 }
 
 type GrantFixture = Awaited<ReturnType<typeof grantFixture>>
@@ -5914,19 +5987,26 @@ async function grant(
  * `playerId` is threaded into the two queries that take one, because a grant is
  * answered per seat — a scan that omitted it would be scanning the anonymous payload
  * and reporting the answer as the granted seat's.
+ *
+ * `characterId` names which creature the sheet query asks about, defaulting to the wolf so
+ * that no existing caller moves. It is an argument because there are two creatures now and
+ * `characters.sheet` is reached with an id in hand: a scan for the bear's spoilers over a
+ * payload set that had only ever asked about the wolf would be missing the one query that
+ * could actually have answered with them.
  */
 async function seatPayloads(
   t: Harness,
   fixture: GrantFixture,
   playerId?: Id<'players'>,
+  characterId: Id<'characters'> = fixture.wolf,
 ): Promise<Record<string, unknown>> {
-  const { code, sceneId, wolf } = fixture
+  const { code, sceneId } = fixture
   const who = playerId === undefined ? {} : { playerId }
   return {
     'characters.list': await t.query(api.characters.list, { code }),
     'characters.sheet (the creature)': await t.query(api.characters.sheet, {
       code,
-      characterId: wolf,
+      characterId,
       ...who,
     }),
     'characters.vitals': await t.query(api.characters.vitals, { code, ...who }),
@@ -5955,21 +6035,74 @@ async function seatPayloads(
  */
 const CHARACTER_ENUMERATING = ['characters.list', 'characters.sheet (the creature)']
 
-/** Not one of the creature's secrets is anywhere in these payloads. */
-function expectNoWolf(payloads: Record<string, unknown>, fixture: GrantFixture) {
+/**
+ * One creature's whole spoiler, as a value, so a scan can name which creature it is
+ * hunting for.
+ *
+ * The four needles travelled as module constants while there was one creature to hunt.
+ * There are two now — the wolf a token points at, and the bear a rebind points it at — and
+ * the interesting assertion is that one of them left a payload in the same write the other
+ * arrived in. That is two scans of the same payloads with different needles, which is a
+ * parameter rather than a second copy of the loop.
+ */
+type CreatureNeedles = {
+  id: Id<'characters'>
+  name: string
+  notes: string
+  action: string
+  maxHp: number
+}
+
+function wolfNeedles(fixture: GrantFixture): CreatureNeedles {
+  return {
+    id: fixture.wolf,
+    name: WOLF_NAME,
+    notes: WOLF_NOTES,
+    action: WOLF_ACTION,
+    maxHp: WOLF_MAX_HP,
+  }
+}
+
+function bearNeedles(fixture: GrantFixture): CreatureNeedles {
+  return {
+    id: fixture.bear,
+    name: BEAR_NAME,
+    notes: BEAR_NOTES,
+    action: BEAR_ACTION,
+    maxHp: BEAR_MAX_HP,
+  }
+}
+
+/** Not one of the named creature's secrets is anywhere in these payloads. */
+function expectNoCreature(payloads: Record<string, unknown>, needles: CreatureNeedles) {
   for (const [name, payload] of Object.entries(payloads)) {
     const serialised = JSON.stringify(payload) ?? ''
     if (CHARACTER_ENUMERATING.includes(name)) {
-      expect(serialised, `${name} leaked the creature's id`).not.toContain(fixture.wolf)
+      expect(serialised, `${name} leaked the creature's id`).not.toContain(needles.id)
     }
-    expect(serialised, `${name} leaked the creature's name`).not.toContain(WOLF_NAME)
-    expect(serialised, `${name} leaked the creature's notes`).not.toContain(WOLF_NOTES)
-    expect(serialised, `${name} leaked one of its actions`).not.toContain(WOLF_ACTION)
-    expect(containsNumber(serialised, WOLF_MAX_HP), `${name} leaked its maximum`).toBe(false)
+    expect(serialised, `${name} leaked the creature's name`).not.toContain(needles.name)
+    expect(serialised, `${name} leaked the creature's notes`).not.toContain(needles.notes)
+    expect(serialised, `${name} leaked one of its actions`).not.toContain(needles.action)
+    expect(containsNumber(serialised, needles.maxHp), `${name} leaked its maximum`).toBe(false)
     // The discriminator, the way board.test.ts sweeps for `"dm"`. No player payload has
     // a reason to carry it: the list filters creature rows out and the sheet refuses one.
+    //
+    // Not one of the four needles, and so not keyed off `needles` — it is a property of
+    // the *payload* rather than of either creature, which is why it stays in the loop and
+    // is asserted twice when both creatures are scanned over the same payloads. Two
+    // identical assertions cost nothing; one that had been lifted out to the wrong scan
+    // would have gone quiet for the other.
     expect(serialised, `${name} leaked the npc discriminator`).not.toContain('"npc"')
   }
+}
+
+/**
+ * The wolf, which is the creature every test written before the rebind existed is about.
+ * Kept so none of those call sites has to move: they say what they mean already, and a
+ * needles argument at each of them would be a fixture detail repeated fourteen times.
+ */
+function expectNoWolf(payloads: Record<string, unknown>, fixture: GrantFixture) {
+  expectNoCreature(payloads, wolfNeedles(fixture))
 }
 
 describe('an ungranted creature is in no player payload', () => {
@@ -6081,12 +6214,14 @@ describe('a grant opens the sheet, and opens it for exactly one seat', () => {
     expect(after).toBe(before)
     expect(after).not.toContain(WOLF_NAME)
     // The control: the DM's list does carry it, so the comparison above is between two
-    // payloads of a game that has a creature in it.
+    // payloads of a game that has a creature in it. **Both** of the fixture's creatures,
+    // sorted — the second one has no coin and no grant, so its presence here is the plainest
+    // statement that this list answers no question about either.
     expect(
-      (await t.query(api.characters.list, { code: fixture.code, dmCode: fixture.dmCode })).map(
-        (row) => row.name,
-      ),
-    ).toEqual([WOLF_NAME])
+      (await t.query(api.characters.list, { code: fixture.code, dmCode: fixture.dmCode }))
+        .map((row) => row.name)
+        .sort(),
+    ).toEqual([WOLF_NAME, BEAR_NAME].sort())
   })
 
   /** Revoking is the same door shutting: the DM writes an empty list and the sheet goes. */
@@ -6126,15 +6261,28 @@ describe('a grant on a DM-layer token reveals nothing', () => {
    * for them to see it" copy is describing, and it holds in both directions rather than
    * being a one-way door that happened to open.
    *
-   * The layer is moved with `t.run` because no mutation changes it: `board.addToken`
-   * takes a layer and nothing re-layers a token yet. Writing the row directly is the
-   * honest way to reach the state, and it is the technique the roster test above uses to
-   * reach a seat holding a creature.
+   * ⚠️ **The round trip is driven through `api.board.setLayer`, which is what makes this
+   * assertion and § 28 of `scripts/board-smoke.mjs` the same round trip.** ADR 0009
+   * promises this property is "asserted twice, in the two places this project asserts
+   * secrets" — and until the DM's Tokens tab existed there was no mutation that re-layered
+   * a token, so the two places asserted it around the API rather than through it: this test
+   * patched the row with `t.run`, and the smoke script added a *second* token on the other
+   * layer because it has no `t.run` to reach for. Two different workarounds standing in for
+   * one claim is the weakest form "asserted twice" can take — neither of them exercised the
+   * write the app now makes, so a `setLayer` that patched the wrong field would have left
+   * both of them green.
+   *
+   * `t.run` is still the right instrument for a state no mutation can produce, and the
+   * roster test below uses it for exactly that. This is no longer such a state.
    */
   test('the sheet is withheld on the dm layer and arrives on the player layer', async () => {
     const t = convexTest(schema, modules)
     const fixture = await grantFixture(t, 'dm')
-    const { code, ana, wolf, wolfToken } = fixture
+    const { code, dmCode, ana, wolf, wolfToken } = fixture
+
+    /** The one write under test, so the two flips below cannot drift apart. */
+    const setLayer = (layer: 'player' | 'dm') =>
+      t.mutation(api.board.setLayer, { code, dmCode, tokenId: wolfToken, layer })
 
     await grant(t, fixture, wolfToken, [ana])
 
@@ -6147,18 +6295,289 @@ describe('a grant on a DM-layer token reveals nothing', () => {
     // Not even the coin, which is the reason the sheet is withheld.
     expect(await t.query(api.board.tokens, { code })).toEqual([])
 
-    await t.run(async (ctx) => await ctx.db.patch('tokens', wolfToken, { layer: 'player' }))
+    await setLayer('player')
 
-    // Nothing about the grant moved; the token did.
+    // Nothing about the grant moved; the token did. `setTokenLayer` does not read
+    // `controllerIds` and must not — a grant on a DM-layer token is inert rather than
+    // revoked, which is what lets a DM hand the party its pet before revealing it.
     expect((await rawToken(t, wolfToken))?.controllerIds).toEqual([ana])
     const arrived = await t.query(api.characters.sheet, { code, characterId: wolf, playerId: ana })
     expect(arrived?._id).toBe(wolf)
     expect(arrived?.name).toBe(WOLF_NAME)
 
-    await t.run(async (ctx) => await ctx.db.patch('tokens', wolfToken, { layer: 'dm' }))
+    await setLayer('dm')
     expect(
       await t.query(api.characters.sheet, { code, characterId: wolf, playerId: ana }),
     ).toBeNull()
+    // And the grant survived the return trip too, so the door is genuinely two-way rather
+    // than a one-way one that happened to open.
+    expect((await rawToken(t, wolfToken))?.controllerIds).toEqual([ana])
+  })
+})
+
+describe('a rebind moves sight with the token', () => {
+  /**
+   * ⚠️ **THE MILESTONE'S HEADLINE SECRECY ASSERTION, AND THE SHARPEST WRITE ON THE BOARD.**
+   *
+   * `boardCharacterAccess` reads `token.characterId` as it iterates `visibleTokens`, so the
+   * binding a coin carries *now* is what decides which sheets and which exact hit points a
+   * granted seat receives. One `board.setCharacter` therefore moves a creature's whole
+   * spoiler between seats — out of one player's payload and into it for another — in a
+   * single patch of a single field, with **nothing written to `controllerIds`** to make
+   * either half happen.
+   *
+   * That is the ordinary case rather than a bug, which is why nothing refuses it: a DM
+   * pointing the party's coin at the creature it is now standing in for is most of what the
+   * Tokens tab is. But it is the one write in that tab that can publish a monster's stat
+   * block without looking as though it touched a secret, so the property is pinned here
+   * rather than left to the panel's copy.
+   *
+   * The bear is deliberately coinless (see `grantFixture`), so the rebind is the *only*
+   * route to it and the second half of this test cannot pass by some other means.
+   */
+  test('the granted seat loses the old creature’s sheet and gains the new one’s', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await grantFixture(t)
+    const { code, dmCode, ana, wolf, wolfToken, bear } = fixture
+
+    await grant(t, fixture, wolfToken, [ana])
+
+    // ⚠️ **THE PRECONDITION, ASSERTED BEFORE THE WRITE.** Without it every scan below
+    // passes on a fixture where Ana could never read the wolf in the first place, which is
+    // the shape of empty-fixture failure this whole section is written against. Two of the
+    // wolf's four needles and its exact maximum, so it is the grant that is proven working
+    // and not merely the existence of a row.
+    const before = await t.query(api.characters.sheet, { code, characterId: wolf, playerId: ana })
+    expect(before?.name).toBe(WOLF_NAME)
+    expect((before?.sheet as NpcSheet).notes).toBe(WOLF_NOTES)
+    // `exactVitals` throws unless the row really is the `exact` variant, which is the
+    // sharpest way to ask this: a band would mean the grant had carried sight without
+    // carrying hit points, which ADR 0009 calls half a feature.
+    expect((await exactVitals(t, code, wolf, { playerId: ana })).max).toBe(WOLF_MAX_HP)
+
+    // Captured as bytes rather than as a value, because "unchanged" is the claim: the
+    // stored array is what a rebind must not touch, and comparing the serialisation says
+    // so about the whole field rather than about a length or a membership.
+    const grantsBefore = JSON.stringify((await rawToken(t, wolfToken))?.controllerIds)
+    expect(grantsBefore).toBe(JSON.stringify([ana]))
+
+    await t.mutation(api.board.setCharacter, {
+      code,
+      dmCode,
+      tokenId: wolfToken,
+      characterId: bear,
+    })
+
+    // (1) The wolf is gone, in the query that would have answered with it and in every
+    // other payload this seat can fetch. `characters.sheet` first, because a null there is
+    // the specific claim; the sweep after it is the general one, and it looks for the
+    // numbers with `containsNumber` rather than `toContain` for the reason that helper
+    // documents.
+    expect(
+      await t.query(api.characters.sheet, { code, characterId: wolf, playerId: ana }),
+    ).toBeNull()
+    expectNoWolf(await seatPayloads(t, fixture, ana), fixture)
+
+    // (2) The bear arrived through the very same grant — the one written for the wolf,
+    // never re-written, and never pointed at the bear by anybody. Its sheet, three of its
+    // four needles, and — because a grant carries hit points and not only sight — the
+    // `exact` variant of the vitals row rather than a band.
+    const after = await t.query(api.characters.sheet, { code, characterId: bear, playerId: ana })
+    expect(after?._id).toBe(bear)
+    expect(after?.name).toBe(BEAR_NAME)
+    expect((after?.sheet as NpcSheet).notes).toBe(BEAR_NOTES)
+    expect((after?.sheet as NpcSheet).actions.map((action) => action.name)).toEqual([BEAR_ACTION])
+    expect((await exactVitals(t, code, bear, { playerId: ana })).max).toBe(BEAR_MAX_HP)
+
+    // And the wolf has **no row at all** in Ana's vitals, not a band. A band would still be
+    // a leak of the shape `boardCharacterAccess`'s `visible` set exists to close: the length
+    // of that array publishes how many creatures are on the board.
+    const rows = await t.query(api.characters.vitals, { code, playerId: ana })
+    expect(rows.map((row) => row.characterId)).toEqual([bear])
+
+    // (3) ⚠️ **Nothing was written to the token to make any of the above true.** The grant
+    // is byte-identical across the rebind, which is the point: `setTokenCharacter` must not
+    // migrate `controllerIds`, because the claim holder is composed *in* by
+    // `effectiveControllersOf` from whatever the token points at now, and writing the
+    // derived half down is the denormalisation ADR 0004 refused for `layer`.
+    expect(JSON.stringify((await rawToken(t, wolfToken))?.controllerIds)).toBe(grantsBefore)
+  })
+
+  /**
+   * THE POSITIVE CONTROL for the test above, and it has to span both sides of the write.
+   * Every needle of both creatures is genuinely in the database before the rebind and still
+   * there after it, so the disappearance asserted above is **Ana's payload and not the
+   * database**. A rebind that had deleted the wolf, or that had never saved the bear, would
+   * satisfy every negative scan in the previous test, and this is the one that refuses it.
+   *
+   * Both stages loop over one scan rather than being written out twice, because the claim is
+   * that the DM's view is *unaffected* by the write: two hand-written copies is where one of
+   * them quietly stops asserting a needle the other still does.
+   */
+  test('positive control: the DM reads both creatures on both sides of the rebind', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await grantFixture(t)
+    const { code, dmCode, ana, wolf, wolfToken, bear } = fixture
+
+    await grant(t, fixture, wolfToken, [ana])
+
+    const dmSees = async () => {
+      const list = JSON.stringify(await t.query(api.characters.list, { code, dmCode })) ?? ''
+      const sheets = await Promise.all(
+        [wolf, bear].map((characterId) =>
+          t.query(api.characters.sheet, { code, dmCode, characterId }),
+        ),
+      )
+      return `${list}${JSON.stringify(sheets) ?? ''}`
+    }
+
+    for (const stage of ['before', 'after'] as const) {
+      if (stage === 'after') {
+        await t.mutation(api.board.setCharacter, {
+          code,
+          dmCode,
+          tokenId: wolfToken,
+          characterId: bear,
+        })
+      }
+
+      const serialised = await dmSees()
+      for (const needles of [wolfNeedles(fixture), bearNeedles(fixture)]) {
+        expect(serialised, `${stage}: the DM lost the creature's id`).toContain(needles.id)
+        expect(serialised, `${stage}: the DM lost the creature's name`).toContain(needles.name)
+        expect(serialised, `${stage}: the DM lost the creature's notes`).toContain(needles.notes)
+        expect(serialised, `${stage}: the DM lost one of its actions`).toContain(needles.action)
+        expect(
+          containsNumber(serialised, needles.maxHp),
+          `${stage}: the DM lost its maximum`,
+        ).toBe(true)
+      }
+    }
+  })
+
+  /**
+   * The bound on the feature. A rebind hands the new creature to the seats holding the
+   * grant and to nobody else, so the seat that was never granted anything gains nothing —
+   * and neither does the caller with no seat at all, which is the fail-closed case
+   * `boardCharacterAccess` returns an empty `controlled` set for.
+   *
+   * Ben is swept rather than null-checked for the reason his side of the grant test is: the
+   * interesting failure is not "Ben's sheet query answered" but "the bear turned up in
+   * something else of Ben's on the way past", and the sheet query is asked about the *bear*
+   * here so the one query that could have answered with it is actually in the sweep.
+   */
+  test('the ungranted seat and the anonymous caller gained nothing from the rebind', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await grantFixture(t)
+    const { code, dmCode, ana, ben, wolfToken, bear } = fixture
+
+    await grant(t, fixture, wolfToken, [ana])
+    await t.mutation(api.board.setCharacter, {
+      code,
+      dmCode,
+      tokenId: wolfToken,
+      characterId: bear,
+    })
+
+    for (const playerId of [undefined, ben]) {
+      expectNoCreature(await seatPayloads(t, fixture, playerId, bear), bearNeedles(fixture))
+    }
+
+    // The coin is still on the board for both of them, which is what makes the scans above
+    // scans of a payload with something in it. A player is *supposed* to see a coin called
+    // `Shape in the Reeds` standing there — what the rebind changed is what it stands for,
+    // and that is the thing they may not have.
+    expect((await t.query(api.board.tokens, { code })).map((token) => token.name)).toEqual([
+      WOLF_TOKEN_NAME,
+    ])
+  })
+})
+
+// A separate describe from the three above, because it is a separate property. Those are
+// about **sight** — which sheets and which hit points a rebind moves between seats. This one
+// is about **control**, which travels the other way through the same field and is the reason
+// a token payload carries two controller arrays rather than one.
+describe('a rebind moves derived control with the token', () => {
+  /**
+   * ⚠️ **THE OTHER HALF OF A REBIND, AND THE REASON `publicTokenValidator` CARRIES TWO
+   * CONTROLLER FIELDS RATHER THAN ONE.**
+   *
+   * The tests above are about a *granted* seat, where the stored array is what opens the
+   * door. This one has no grant in it at all: Ana controls the coin because she is playing
+   * the character it is bound to, and `effectiveControllersOf` composes that in from the
+   * claim pointer on her seat every time the payload is built. So pointing the coin
+   * somewhere else takes her control away **with nothing written to the token** — no patch
+   * to `controllerIds`, no patch to her seat, and her claim on the hero entirely intact.
+   *
+   * Which is exactly why the payload carries both `controllerIds` and `grantedPlayerIds`:
+   * the difference between the two arrays *is* the derived half, and a dialog handed only
+   * the effective set would have to subtract the claim holder back out — the control rule
+   * re-implemented in the browser, in a second language, which ADR 0005 recorded as a real
+   * failure and said to stop doing.
+   *
+   * The write side is asserted too, because a payload changing is only half the claim: a
+   * `setTokenCharacter` that had helpfully migrated the array would produce the same
+   * `controllerIds: []` here while leaving a stale grant behind on the row.
+   */
+  test('a control-only seat loses the coin when the binding moves', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await grantFixture(t)
+    const { code, dmCode, sceneId, ana, bear } = fixture
+
+    const thorin = await makePc(t, code, 'Thorin', pcSheet())
+    // The coin's name is deliberately not the character's, the way `WOLF_TOKEN_NAME` is
+    // not `WOLF_NAME`: a token's label is something every player is meant to read, so
+    // reusing the hero's name for it would make any scan unable to tell the two apart.
+    const heroToken = await addToken(t, code, dmCode, sceneId, {
+      name: 'Dwarf in Plate',
+      characterId: thorin,
+    })
+    await t.mutation(api.characters.claim, { code, playerId: ana, characterId: thorin })
+
+    /** The public row, which is where the two halves of control are visible. */
+    const publicRow = async () => {
+      const row = (await t.query(api.board.tokens, { code })).find(
+        (token) => token._id === heroToken,
+      )
+      if (!row) throw new Error('the hero’s coin is missing from the board')
+      return row
+    }
+
+    const move = () =>
+      t.mutation(api.board.moveToken, {
+        code,
+        sceneId,
+        tokenId: heroToken,
+        x: 620,
+        y: 620,
+        settle: true,
+        playerId: ana,
+      })
+
+    // Derived, not granted: Ana is in the effective set and absent from the stored one, and
+    // the stored field has never been written at all — which is the state the whole test
+    // depends on being distinguishable from an empty grant.
+    expect(await publicRow()).toMatchObject({ controllerIds: [ana], grantedPlayerIds: [] })
+    expect((await rawToken(t, heroToken))?.controllerIds).toBeUndefined()
+    // And the control: she really can move it, so the refusal below is caused by the rebind
+    // rather than by anything else about this fixture.
+    await move()
+
+    await t.mutation(api.board.setCharacter, {
+      code,
+      dmCode,
+      tokenId: heroToken,
+      characterId: bear,
+    })
+
+    expect(await publicRow()).toMatchObject({ controllerIds: [], grantedPlayerIds: [] })
+    await expectKind(move(), 'TokenNotYours')
+
+    // Nothing was written to the token to make that happen, and nothing was taken off her
+    // seat either: she is still playing Thorin, which is the point — a rebind is a statement
+    // about a coin, not about a claim.
+    expect((await rawToken(t, heroToken))?.controllerIds).toBeUndefined()
+    expect(await heldBy(t, ana)).toBe(thorin)
   })
 })
 
@@ -6215,11 +6634,19 @@ describe('characters.setReserved and what reserved means', () => {
     // the list filter, and why it has to live where the payload is built.
     await t.run(async (ctx) => await ctx.db.patch('players', ana, { characterId: seraphine }))
 
+    // ⚠️ **`players.list` is now the query behind the landing page's seat picker as well
+    // as the in-game roster, so this array is scanning the front page of the site.** It
+    // used to have `players.listNames` beside it — the door's own query, which carried a
+    // display name and an `isDm` badge and no character name at all — and that query is
+    // gone: the seat picker has to show the character each seat holds, which is the whole
+    // point of picking your name off a list rather than retyping it, so the door reads
+    // this one. Which means the two filters in `playerCharacterNames` are what stop a
+    // stranger who has typed no code at all being told the party is waiting on
+    // `Seraphine the Unarrived`.
     for (const payload of [
       await t.query(api.characters.list, { code }),
       await t.query(api.characters.list, { code, dmCode: 'NOPENOPE' }),
       await t.query(api.players.list, { code }),
-      await t.query(api.players.listNames, { code }),
     ]) {
       expect(JSON.stringify(payload) ?? '').not.toContain(RESERVED_NAME)
     }
@@ -6236,6 +6663,69 @@ describe('characters.setReserved and what reserved means', () => {
     expect(
       (await t.query(api.characters.list, { code, dmCode })).map((row) => row.name).sort(),
     ).toEqual([RESERVED_NAME, 'Thorin'])
+  })
+
+  /**
+   * ⚠️ **THE CREATURE HALF OF THE SAME FILTER, AND IT IS NOW THE FRONT PAGE OF THE SITE
+   * THAT DEPENDS ON IT.**
+   *
+   * The test above covers a reserved *hero*; `playerCharacterNames` has two filters and
+   * this is the other one. It matters more than it used to for one reason that has nothing
+   * to do with either filter: `players.list` is the query behind the landing page's seat
+   * picker as well as the in-game roster, so this payload now reaches a browser that has
+   * typed no code at all. A creature's name leaking here would put `Wyrmshadow at the Ford`
+   * on the public page of a game nobody has joined.
+   *
+   * Reached behind the API, exactly as the reserved case is and for the same reason:
+   * `characters.claim` and `characters.assign` both refuse a creature, so no supported route
+   * produces a seat holding one. That is not an argument for skipping the test — it is the
+   * argument for the filter living where the payload is *built* rather than at the two
+   * doors, and a test of a filter has to reach the state the doors refuse.
+   *
+   * **The id is asserted null alongside the name**, which is the property `convex/players.ts`
+   * was written to have: nulling them as one decision means a filtered character leaves
+   * neither half behind, so a client cannot take a live id off the roster to
+   * `characters.sheet` — the one query that would refuse it — instead of to a screen.
+   */
+  test('the seat list at the door names no creature, and names an ordinary hero', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await reservedFixture(t)
+    const { code, dmCode, ana, seraphine, thorin } = fixture
+    const ben = await makeSeat(t, code, 'Ben')
+    const cass = await makeSeat(t, code, 'Cass')
+
+    // The same four needles the grant section hunts for, so a leak here is recognisably the
+    // same leak rather than a differently-spelled near miss.
+    const wolf = await makeNpc(t, code, dmCode, WOLF_NAME, wolfSheet())
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch('players', ana, { characterId: seraphine })
+      await ctx.db.patch('players', ben, { characterId: wolf })
+    })
+
+    // Through the API, because this one is the positive control and has to be a state the
+    // app can actually produce.
+    await t.mutation(api.characters.claim, { code, playerId: cass, characterId: thorin })
+
+    const roster = await t.query(api.players.list, { code })
+    const serialised = JSON.stringify(roster) ?? ''
+    expect(serialised, 'the door named a creature').not.toContain(WOLF_NAME)
+    expect(serialised, 'the door named a reserved hero').not.toContain(RESERVED_NAME)
+    // Its id too. The roster has no legitimate reason to carry either, unlike `board.tokens`,
+    // which carries a visible creature's id on purpose to bind a coin to a health bar.
+    expect(serialised, 'the door named a creature’s id').not.toContain(wolf)
+    expect(serialised, 'the door named a reserved hero’s id').not.toContain(seraphine)
+
+    const seat = (playerId: Id<'players'>) => roster.find((row) => row._id === playerId)
+    expect(seat(ben)).toMatchObject({ characterId: null, characterName: null })
+    expect(seat(ana)).toMatchObject({ characterId: null, characterName: null })
+
+    // ⚠️ **THE POSITIVE CONTROL.** Without it every assertion above is satisfied by a
+    // roster that names nobody at all — which is precisely what a `characterName` accidentally
+    // hard-wired to null would produce, and the seat picker's whole reason to exist is that
+    // it shows the character each seat holds.
+    expect(seat(cass)).toMatchObject({ characterId: thorin, characterName: 'Thorin' })
+    expect(serialised).toContain('Thorin')
   })
 
   /**

@@ -20,7 +20,7 @@ import type { SheetFocus } from '@/lib/sheetFocus'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicToken } from '@convex/lib/board'
 import type { CharacterGroup } from '@convex/lib/sheet'
-import { CHARACTER_GROUPS } from '@convex/lib/sheet'
+import { CHARACTER_GROUPS, CHARACTER_GROUP_LABELS } from '@convex/lib/sheet'
 
 export type SheetsTabProps = {
   code: string
@@ -51,29 +51,28 @@ export type SheetsTabProps = {
 }
 
 /**
- * The headings and the sentence shown when one is empty.
+ * The sentence shown when a group is empty. **The heading itself is not here** — it comes
+ * from `CHARACTER_GROUP_LABELS` beside the union, which is the one copy of those three
+ * words.
  *
- * ⚠️ **A `Record` over the union rather than three sections written out in JSX**, which
- * is the formulation CLAUDE.md invariant 9 settled on for `SheetEntry.category` and for
- * the same reason: three hand-written sections is the arrangement where a fourth group
+ * ⚠️ **Still a `Record` over the union rather than three sections written out in JSX**,
+ * which is the formulation CLAUDE.md invariant 9 settled on for `SheetEntry.category` and
+ * for the same reason: three hand-written sections is the arrangement where a fourth group
  * leaves a character stored, counted and with no heading to find it under. This fails to
  * compile for a fourth member instead, which is the whole of the guard — nothing here
  * guards a secret, because every group but `character` is DM-only anyway and a player is
  * sent none of them.
+ *
+ * The split between this and the shared record is between *the name of a thing* and *copy
+ * about this screen*. A heading is one fact the DM's selector and the token editor's rebind
+ * select must agree on, so a second spelling of it is a bug waiting for a rename; the
+ * sentence below names the bestiary shelf and the button above this list, which is true of
+ * nowhere else and would be furniture in a module shared with the Convex functions.
  */
-const GROUP_SECTIONS: Record<CharacterGroup, { title: string; empty: string }> = {
-  character: {
-    title: 'Characters',
-    empty: 'No characters yet. Add one and anybody at the table can pick it up.',
-  },
-  npc: {
-    title: 'NPCs',
-    empty: 'No NPCs yet. The innkeeper and the captain of the guard live here.',
-  },
-  monster: {
-    title: 'Monsters',
-    empty: 'No monsters yet. Most of them come off the bestiary shelf.',
-  },
+const GROUP_EMPTY: Record<CharacterGroup, string> = {
+  character: 'No characters yet. Add one and anybody at the table can pick it up.',
+  npc: 'No NPCs yet. The innkeeper and the captain of the guard live here.',
+  monster: 'No monsters yet. Most of them come off the bestiary shelf.',
 }
 
 /**
@@ -218,8 +217,8 @@ export function SheetsTab({
             {CHARACTER_GROUPS.map((group) => (
               <CharacterSection
                 key={group}
-                title={GROUP_SECTIONS[group].title}
-                empty={GROUP_SECTIONS[group].empty}
+                title={CHARACTER_GROUP_LABELS[group]}
+                empty={GROUP_EMPTY[group]}
               >
                 {rows.byGroup[group].map((character) => (
                   <CharacterRow

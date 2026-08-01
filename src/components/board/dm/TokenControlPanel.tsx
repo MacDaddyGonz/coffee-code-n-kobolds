@@ -35,6 +35,16 @@ export type TokenControlPanelProps = {
  * ticking a box, watching nothing happen at the other end of the table, and concluding
  * the feature does not work.
  *
+ * **That alert is the home of the standing fact, and it says all of it**: what a granted seat
+ * is not sent — the coin, and with it the creature's sheet and its exact hit points — and
+ * that the grant itself survives untouched rather than being revoked. Here rather than at the
+ * layer control, because this panel is the one the DM's *Sheets* tab mounts on its own, where
+ * nothing else on screen would ever say it. `TokenEditPanel` mounts this below its own layer
+ * buttons and its alert there is deliberately the other half — the *act* of hiding a coin and
+ * that the press reverses — so the two are on screen together without either restating the
+ * other. Adding the standing half back to that one is how two alerts about one layer start
+ * disagreeing.
+ *
  * **Nothing here derives the rule.** `controllerIds` is the effective set and
  * `grantedPlayerIds` is exactly what is stored; the server sends both precisely so this
  * dialog can tell "granted" from "granted by playing the character" by comparing two
@@ -97,12 +107,20 @@ export function TokenControlPanel({ code, dmCode, token }: TokenControlPanelProp
       </div>
 
       {token.layer === 'dm' ? (
+        // The *resting state* of a grant on a hidden coin, which is this panel's half of the
+        // DM-layer copy — see the ⚠️ in the header. What is named depends on whether the coin
+        // carries a sheet, for the reason the paragraph above varies: "and its exact hit
+        // points" against an unbound coin is a consequence the DM cannot cause.
         <Alert>
           <AlertTitle>This token is on the DM layer</AlertTitle>
           <AlertDescription>
-            A grant on it shows a player nothing: the token itself is absent from their board,
-            and anything behind it is absent with it. Move it to the player layer for them to
-            see either.
+            Every grant below is stored exactly as you leave it and carries nothing while the
+            coin is here. A granted seat is not sent the token
+            {token.characterId === null
+              ? ', and it stands for nothing, so there is nothing else they are missing'
+              : ', the sheet behind it, or its exact hit points'}
+            . Nothing is revoked and nothing needs re-ticking: move it to the player layer and
+            everything ticked here takes effect in one write.
           </AlertDescription>
         </Alert>
       ) : null}

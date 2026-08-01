@@ -43,6 +43,31 @@
 // exactly one seat. Every one of those scans has a positive control beside it, because a
 // scan with nothing to find passes on a deployment that sent nobody anything.
 //
+// Getting to the table adds no stored field at all, and still lands squarely here, because
+// what it adds is **four ways to edit a coin that already exists** and one query a browser
+// may call holding nothing whatsoever. Section 29 is those four writes, and each of them is
+// something the local suite cannot be asked:
+//
+//   - `setArt` **destroys a blob**, and convex-test's file storage is an in-memory stub
+//     keyed on the content hash — so the same seventy-byte PNG uploaded twice is *one*
+//     entry there, and a swap that deleted the wrong blob, or the right one twice, or
+//     neither, all look identical. There are no signed URLs to stop resolving either, and
+//     "that bearer link is dead now" is the whole claim.
+//   - `updateToken` is the **Milestone 1 bug on a third field**: a lone surrogate in a
+//     token's name is refused by Convex's own *argument* validation, before any handler
+//     runs, which is precisely the mechanism this script exists to reach.
+//   - `setCharacter` clears a binding with `null`, and `undefined` is not a Convex value —
+//     so whether *none* comes back as a present key or as no key is a real round trip's
+//     question. Beside it, `controllerIds` changes with nothing written to the token.
+//   - `games:list` reads **every game in the deployment**. Locally that is a two-row
+//     fixture; here it is seventy-odd real games, and the row being looked for was inserted
+//     by this run.
+//
+// It also **removes a workaround rather than adding a section**. Section 28 used to add a
+// second coin because no mutation re-layered one; `board.setLayer` exists now, so one coin
+// is driven dm → player → dm and ADR 0009's "asserted in both places" is the same round
+// trip in both places for the first time.
+//
 //   node scripts/board-smoke.mjs
 //
 // Plain .mjs on purpose: no tsx, no new dependency, nothing to install.
@@ -572,6 +597,51 @@ const AMBUSH_SHEET = {
 const RESERVED_NAME = 'Vaan of the Long Stride'
 
 /**
+ * MILESTONE 8'S FIXTURES. No new stored field, and a new kind of exposure anyway.
+ *
+ * The DM's Tokens tab is four mutations that edit a coin after it exists, and the two
+ * constants below are both about the one of them that takes a string.
+ *
+ * `MAX_TOKEN_NAME_LENGTH` is copied by hand out of `convex/lib/codes.ts`, where it is
+ * `MAX_CHARACTER_NAME_LENGTH` — a token borrows the character-name limit rather than
+ * inventing a fourth one, which is `requireTokenAppearance`'s stated position. Copied for
+ * the reason every other number in this file is copied: a fixture derived from the code
+ * under test agrees with a mangled limit exactly as readily as with a correct one.
+ *
+ * ⚠️ **`EDITED_TOKEN_NAME` is exactly forty UTF-16 code units and thirty-five code
+ * points, and the gap between those two numbers is the whole point.** `requireText`
+ * measures `value.length`, which counts code units, deliberately, so that it agrees with
+ * the `maxLength` the browser applies — so a name at the limit made of astral characters
+ * is a name sitting on the boundary in one counting and well inside it in the other. Five
+ * surrogate pairs is where a server that measured code points would accept fifty units, and
+ * where a client that cut to length with `slice` would leave the lone surrogate this whole
+ * script exists for. The length is asserted at the check rather than trusted, because an
+ * innocent edit to the string is exactly how a boundary test stops being one.
+ *
+ * The tint is uppercase on purpose. `TINT_PATTERN` is case-insensitive and nothing
+ * normalises the case, so `#A1B2C3` has to come back as `#A1B2C3` — a deployment or a
+ * writer that helpfully lowercased it would be changing a value the DM chose, and
+ * `firstDifference` names that rather than shrugging at it.
+ */
+const MAX_TOKEN_NAME_LENGTH = 40
+const EDITED_TOKEN_NAME = 'Wyrmshadow 🐉🐉 of the Ninth Arch 🎲🐺🔥'
+const EDITED_TOKEN_TINT = '#A1B2C3'
+/** The top of `isUsableTokenSize`'s range, so the round trip is over a bound rather than a 2. */
+const EDITED_TOKEN_SIZE = 8
+
+/** The name on the DM's own seat, and the `createdByName` the landing page prints. */
+const SMOKE_DM_NAME = 'Smoke DM'
+
+/**
+ * A join code for a game that does not exist, for `games:checkDmCode`'s third answer.
+ *
+ * Six characters of the join alphabet, so it is refused for being unknown rather than for
+ * being malformed — the interesting case is a well-formed code that opens nothing, which is
+ * what a person mistyping one produces.
+ */
+const UNKNOWN_JOIN_CODE = 'ZZZZZZ'
+
+/**
  * The eight numbers a rating shift moves, pulled off a resolved sheet in one shape so
  * `firstDifference` can name the one that drifted.
  *
@@ -780,14 +850,29 @@ async function main() {
   const grantedTokens = []
   const reservedCharacters = []
   const seats = []
+  // ⚠️ **Every blob this run POSTs, whether or not anything ever adopted it.** The four
+  // registries above are all *rows*, and a row is reclaimed by the mutation that deletes the
+  // thing it hangs off — `scenes:remove` takes the map's bytes with it and
+  // `board:removeToken` takes the coin's. Section 29 breaks that arrangement, because an art
+  // swap is the first operation here that can leave bytes in storage with **no row pointing
+  // at them at all**: a run that fails between `uploadPng` and `board:setArt` has uploaded a
+  // file nothing in the application will ever mention again, and nothing else in this
+  // cleanup path could find it. So the ids are collected as they are minted rather than
+  // where they are used, and swept last — see the loop in `finally` for why the order
+  // matters and why sweeping the whole list is safe.
+  const uploads = []
   let code = null
   let dmCode = null
   let sceneId = null
 
   try {
+    // Named rather than inlined, because section 29 looks this string up in `games:list` —
+    // and two literals of the same name is one place for a scan to quietly start matching
+    // nothing, which is the care section 13 takes over `RESERVED_NAME`.
+    const gameName = `Board Smoke ${new Date().toISOString()}`
     const game = await client.mutation('games:create', {
-      name: `Board Smoke ${new Date().toISOString()}`,
-      dmName: 'Smoke DM',
+      name: gameName,
+      dmName: SMOKE_DM_NAME,
       recoveryPhrase: 'brass lantern smoke',
     })
     code = game.code
@@ -796,6 +881,7 @@ async function main() {
 
     // 1. A real upload URL, a real POST, real bytes in real storage.
     const imageId = await uploadPng(client, code, dmCode)
+    uploads.push(imageId)
     check('files:generateUploadUrl accepted a POST and returned a storageId', Boolean(imageId))
 
     const scene = await client.mutation('scenes:create', {
@@ -832,7 +918,9 @@ async function main() {
 
     // 3. One token on each layer, both with art of their own.
     const openArt = await uploadPng(client, code, dmCode)
+    uploads.push(openArt)
     const secretArt = await uploadPng(client, code, dmCode)
+    uploads.push(secretArt)
 
     const open = await client.mutation('board:addToken', {
       code,
@@ -3094,20 +3182,39 @@ async function main() {
         : `${GRANTED_CURRENT_HP}/${GRANTED_MAX_HP} scanned as text and as numbers over ${grantScannable.length} payloads`,
     )
 
-    // 28. A GRANT ON A DM-LAYER TOKEN REVEALS NOTHING, AND THE COIN IS WHAT DECIDES.
+    // 28. A GRANT ON A DM-LAYER TOKEN REVEALS NOTHING, AND THE COIN IS WHAT DECIDES —
+    // ONE COIN, DRIVEN dm → player → dm.
     //
-    // `controlledCharacterIds` is built from `visibleTokens`, so a grant written onto a
-    // hidden coin contributes nothing to a player's set — sight of the token is the
-    // precondition for sight of the sheet, structurally rather than by anybody remembering
-    // to test the layer. The write itself is deliberately allowed: preparing an ambush and
-    // granting it before revealing it is a reasonable order to work in.
+    // `boardCharacterAccess` builds `controlled` from `visibleTokens` in one pass, so an id
+    // cannot enter it on an iteration that did not already put it into `visible`: sight of
+    // the token is the precondition for sight of the sheet, structurally rather than by
+    // anybody remembering to test the layer. The grant itself is deliberately allowed on a
+    // hidden coin — preparing an ambush and handing it over before revealing it is a
+    // reasonable order to work in — so what is asserted is not that the write is refused but
+    // that it is *inert* until the coin is shown.
     //
-    // ⚠️ **Two tokens rather than one moved between layers, because there is no mutation
-    // that re-layers a token.** `board.addToken` takes `layer` and `board.moveToken` takes
-    // coordinates; nothing else writes that field. A second coin on the player layer is the
-    // same input to the composition being asserted — the creature becomes visible, so the
-    // grant starts to mean something — and it is what the API actually allows, so it is
-    // what is done rather than pretending a re-layer exists.
+    // ⚠️ **This used to add a SECOND coin on the player layer, under a comment saying no
+    // mutation re-layered a token. `board.setLayer` exists now, and the rewrite is not
+    // tidiness.** Two coins and two grants assert a weaker thing: that a grant on a visible
+    // token means something and a grant on a hidden one does not. Two rows can differ in
+    // ways nobody wrote down, so the interesting question goes unasked. One coin asks it —
+    // **the same row, the same grant, the same bytes in `controllerIds`** — changing what a
+    // player may read three times because one unrelated field moved, and nothing else was
+    // written anywhere. That the stored grant is untouched in both directions is
+    // `setTokenLayer`'s stated contract, and it is what makes the round trip usable rather
+    // than destructive.
+    //
+    // ADR 0009 promises this round trip is "asserted twice, in the two places this project
+    // asserts secrets". Until this milestone the two places were asserting two different
+    // things, and the local suite's half flipped the layer behind the API with
+    // `ctx.db.patch`. It is the **same round trip in both** now: `characters.test.ts` drives
+    // it through `board.setLayer` too.
+    //
+    // The third state is the one only a round trip settles, and it is the reason the trip
+    // has three legs rather than two. A revealed creature's sheet has been **on the wire**
+    // to that seat; hiding the coin again has to take it back off, and "already sent" is not
+    // a state convex-test has any opinion about — its queries are function calls, not
+    // subscriptions somebody is still holding.
     const hiddenToken = await client.mutation('board:addToken', {
       code,
       dmCode,
@@ -3129,70 +3236,490 @@ async function main() {
     })
     grantedTokens.push(hiddenToken.tokenId)
 
-    const ambushAsA = () =>
-      client.query('characters:sheet', {
-        code,
-        playerId: seatA.playerId,
-        characterId: ambush.characterId,
-      })
-    const hiddenSheet = await ambushAsA()
-    const hiddenVitals = await vitalsFor(seatA.playerId)
-    check(
-      'a grant on a DM-layer coin gave the granted seat nothing — not a sheet, not a row',
-      hiddenSheet === null &&
+    // Every reading taken the same way at each of the three states, in one closure, so that
+    // nothing but the layer differs between them — a state read two different ways at two
+    // different points is a comparison of two questions rather than of two answers. The
+    // granted seat's sheet and its vitals row are what the grant is *for*; the player-layer
+    // token list and the placement list are what `setTokenLayer` claims go with it; and the
+    // serialised grant is the thing that must not move at all.
+    const layerState = async () => {
+      const row = await tokensOf(hiddenToken.tokenId)
+      const vitals = await vitalsFor(seatA.playerId)
+      const asPlayer = await client.query('board:tokens', { code })
+      const placements = await client.query('board:positions', { code, sceneId })
+      return {
+        layer: row ? row.layer : null,
+        // Serialised rather than compared element by element, because the claim is
+        // byte-identity across three states rather than set membership at each of them.
+        granted: JSON.stringify(row ? row.grantedPlayerIds : null),
+        sheet: await client.query('characters:sheet', {
+          code,
+          playerId: seatA.playerId,
+          characterId: ambush.characterId,
+        }),
         // Not merely a band: an unseen creature contributes no row at all, because the
         // *length* of that array is itself a count of how many monsters are waiting.
-        !hiddenVitals.some((row) => row.characterId === ambush.characterId),
-      `sheet ${JSON.stringify(hiddenSheet)}, ${hiddenVitals.length} vitals rows`,
+        row: vitals.find((entry) => entry.characterId === ambush.characterId) ?? null,
+        rows: vitals.length,
+        visible: asPlayer.some((entry) => entry._id === hiddenToken.tokenId),
+        placed: placements.some((entry) => entry.tokenId === hiddenToken.tokenId),
+      }
+    }
+
+    const onDmLayer = await layerState()
+    check(
+      'a grant on a DM-layer coin gave the granted seat nothing — not a sheet, not a row',
+      onDmLayer.sheet === null && onDmLayer.row === null && !onDmLayer.visible && !onDmLayer.placed,
+      `sheet ${JSON.stringify(onDmLayer.sheet)}, ${onDmLayer.rows} vitals rows, coin visible ${onDmLayer.visible}, placed ${onDmLayer.placed}`,
     )
     // The DM's own view of the same token, so the check above is not passing because the
-    // grant was never written.
-    const hiddenAsDm = await tokensOf(hiddenToken.tokenId)
+    // grant was never written in the first place.
     check(
       'the grant was really there — the DM sees it on the hidden coin',
-      hiddenAsDm &&
-        hiddenAsDm.layer === 'dm' &&
-        hiddenAsDm.grantedPlayerIds.length === 1 &&
-        hiddenAsDm.grantedPlayerIds[0] === seatA.playerId,
-      hiddenAsDm
-        ? `positive control — granted ${JSON.stringify(hiddenAsDm.grantedPlayerIds)} on the ${hiddenAsDm.layer} layer`
-        : 'no token row came back',
+      onDmLayer.layer === 'dm' && onDmLayer.granted === JSON.stringify([seatA.playerId]),
+      `positive control — granted ${onDmLayer.granted} on the ${onDmLayer.layer} layer`,
     )
 
-    const shownToken = await client.mutation('board:addToken', {
+    await client.mutation('board:setLayer', {
+      code,
+      dmCode,
+      tokenId: hiddenToken.tokenId,
+      layer: 'player',
+    })
+    const onPlayerLayer = await layerState()
+    check(
+      'board:setLayer to the player layer brought the coin, the placement, the sheet and the numbers',
+      onPlayerLayer.layer === 'player' &&
+        onPlayerLayer.visible &&
+        onPlayerLayer.placed &&
+        onPlayerLayer.sheet &&
+        onPlayerLayer.sheet.name === AMBUSH_NAME &&
+        onPlayerLayer.row &&
+        onPlayerLayer.row.kind === 'exact' &&
+        onPlayerLayer.row.max === AMBUSH_MAX_HP,
+      onPlayerLayer.sheet && onPlayerLayer.row
+        ? `${onPlayerLayer.row.current}/${onPlayerLayer.row.max} — one field moved, and nothing else was written`
+        : `sheet ${JSON.stringify(onPlayerLayer.sheet)}, vitals ${JSON.stringify(onPlayerLayer.row)}`,
+    )
+
+    await client.mutation('board:setLayer', {
+      code,
+      dmCode,
+      tokenId: hiddenToken.tokenId,
+      layer: 'dm',
+    })
+    const backOnDmLayer = await layerState()
+    check(
+      'and back: hiding the coin again took the sheet, the row and the placement off the wire',
+      backOnDmLayer.layer === 'dm' &&
+        backOnDmLayer.sheet === null &&
+        backOnDmLayer.row === null &&
+        !backOnDmLayer.visible &&
+        !backOnDmLayer.placed,
+      `sheet ${JSON.stringify(backOnDmLayer.sheet)}, ${backOnDmLayer.rows} vitals rows against ${onPlayerLayer.rows} while it was shown`,
+    )
+    // ⚠️ **THE CLAIM THE WHOLE SECTION IS FOR.** Three different answers to "what may this
+    // seat read", and one unchanged array of grants behind all three. A deployment that
+    // migrated `controllerIds` on a layer change — revoking on the way out, restoring on the
+    // way in — would pass every check above and fail this one, and it is the bug that turns
+    // "prepare the ambush, hand over the pet, then reveal it" into a grant the DM has to
+    // write twice.
+    check(
+      'the stored grant was byte-identical in all three states — the coin moved, the grant did not',
+      onDmLayer.granted === onPlayerLayer.granted &&
+        onPlayerLayer.granted === backOnDmLayer.granted &&
+        // The positive control: without it three nulls, or three empty arrays from a
+        // deployment that never wrote the grant, would agree with each other perfectly.
+        onDmLayer.granted === JSON.stringify([seatA.playerId]),
+      `${onDmLayer.granted} → ${onPlayerLayer.granted} → ${backOnDmLayer.granted}`,
+    )
+
+    // 29. THE DM'S TOKENS TAB: THE FOUR WRITES THAT EDIT A COIN AFTER IT EXISTS.
+    //
+    // Nothing edited a token before this milestone. `board.addToken` created one and
+    // `board.setControllers` handed it round, so a name typed wrong, art at the wrong crop, a
+    // coin bound to nothing and a coin on a layer nobody is looking at were all permanent —
+    // the DM's only repair was to delete the row and make another. Four mutations fix that,
+    // split by **what kind of fact each write is** rather than gathered into one: cosmetics
+    // in `updateToken`, the two secrecy fields in `setLayer` and `setCharacter` one at a
+    // time, and `setArt` on its own because it is the only token write that destroys data
+    // outside the row it patches. Section 28 above is the whole of `setLayer`'s round trip,
+    // so this section is the other three, plus the one query in this application a browser
+    // may call holding **no credential at all**.
+    //
+    // ⚠️ **What only a deployment can settle, write by write.** Three of the four are things
+    // convex-test cannot be asked rather than things it merely was not asked:
+    //
+    //   - **`setArt` destroys a blob, and convex-test's file storage is an in-memory stub
+    //     keyed on the content hash.** Every upload in this script is the same seventy
+    //     bytes, so locally they are *one* entry — and a swap that deleted the wrong blob,
+    //     the right blob twice, or neither, all look identical against a store that never
+    //     had two. There are no signed URLs to stop resolving either, and "that bearer link
+    //     is dead now" is the entire claim being made.
+    //   - **`updateToken` is the Milestone 1 bug on a third field.** A lone UTF-16 surrogate
+    //     in a token's name is refused by Convex's own *argument* validation, at the
+    //     function boundary, before `requireTokenAppearance` ever runs — which is why
+    //     `requireText` deliberately carries no surrogate check of its own, and why the
+    //     local suite structurally cannot reproduce the refusal. A fractional size and a NaN
+    //     are the other half of the same point: both are perfectly ordinary float64s that
+    //     survive the boundary and are refused by the handler, and this is where they
+    //     actually cross a wire.
+    //   - **`setCharacter` clears a binding with `null`, beside an array nobody wrote.**
+    //     `undefined` is not a Convex value, so whether *none* comes back as a present key
+    //     holding null or as no key at all is a question only a real round trip settles —
+    //     and this is the one place in the app where the distinction is real rather than
+    //     stylistic. Next to it, `controllerIds` changes with **nothing written to the
+    //     token**, which is exactly the derived-value drift this script's field-by-field
+    //     comparison exists to name.
+    //   - **`games:list` reads every game in the deployment.** Locally that is a fixture
+    //     with two rows in it. Here it is seventy-odd real games made by real runs, and the
+    //     row this run looks for is one this run inserted — which is also the only way to
+    //     find out that a truncated list is truncated from the wrong end.
+
+    // (a) A BLOB THAT IS REALLY GONE.
+    //
+    // Two real uploads: a real signed URL each time and a real POST of real bytes. The first
+    // check is the one the content-hash stub makes unaskable — the same seventy bytes
+    // uploaded twice are two blobs with two ids and two URLs — and every claim below is a
+    // statement about exactly one of them, so without it they are statements about nothing.
+    const firstArt = await uploadPng(client, code, dmCode)
+    uploads.push(firstArt)
+    const secondArt = await uploadPng(client, code, dmCode)
+    uploads.push(secondArt)
+    check(
+      'the same bytes uploaded twice became two distinct blobs',
+      Boolean(firstArt) && Boolean(secondArt) && firstArt !== secondArt,
+      `${firstArt} against ${secondArt}`,
+    )
+
+    const editable = await client.mutation('board:addToken', {
       code,
       dmCode,
       sceneId,
-      name: 'Something Under the Arch',
+      name: 'Coin the DM Is Still Editing',
       layer: 'player',
-      sizeSquares: 2,
-      tint: '#34495e',
-      characterId: ambush.characterId,
-      x: 1900,
-      y: 1900,
+      sizeSquares: 1,
+      tint: '#8e44ad',
+      imageId: firstArt,
+      x: 300,
+      y: 1500,
     })
-    created.push(shownToken.tokenId)
+    created.push(editable.tokenId)
+
+    // Captured off `board:tokens` as the DM, which is the only place a signed URL is minted
+    // — `setArt` deliberately returns null rather than handing one back, because a mutation
+    // that minted one would be minting outside the filter that decides who may have it.
+    const artBefore = await tokensOf(editable.tokenId)
+    const oldArtUrl = artBefore ? artBefore.artUrl : null
+    const oldArtFetch = oldArtUrl ? await fetch(oldArtUrl) : null
+    check(
+      'the coin came back with a signed art URL that resolves',
+      oldArtFetch !== null && oldArtFetch.ok,
+      oldArtFetch ? `${oldArtFetch.status} from the URL the DM was sent` : 'no art URL came back',
+    )
+
+    await client.mutation('board:setArt', {
+      code,
+      dmCode,
+      tokenId: editable.tokenId,
+      imageId: secondArt,
+    })
+    const artAfter = await tokensOf(editable.tokenId)
+    const newArtUrl = artAfter ? artAfter.artUrl : null
+    const newArtFetch = newArtUrl ? await fetch(newArtUrl) : null
+    check(
+      'board:setArt pointed the coin at a different URL, and that one resolves',
+      newArtUrl !== null && newArtUrl !== oldArtUrl && newArtFetch !== null && newArtFetch.ok,
+      newArtFetch
+        ? `${newArtFetch.status} from a URL that differs: ${newArtUrl !== oldArtUrl}`
+        : 'no new art URL came back',
+    )
+    // ⚠️ **THE CHECK NOTHING BUT A DEPLOYMENT CAN MAKE.** The URL captured before the swap
+    // is a bearer link, unguessable but not permission-checked, and the promise
+    // `replaceTokenArt` makes is that the bytes behind it are gone rather than merely
+    // unreferenced. A 404 is that promise kept. Anything else — a 200, a 403, a redirect —
+    // means a swap left a live copy of the DM's old art behind for whoever had the string,
+    // and no local suite can tell the difference because no local suite ever had a URL.
+    const staleArtFetch = oldArtUrl ? await fetch(oldArtUrl) : null
+    check(
+      'the blob it replaced is really gone — the URL captured before the swap now 404s',
+      staleArtFetch !== null && staleArtFetch.status === 404,
+      staleArtFetch ? `${staleArtFetch.status} from the stale URL` : 'no stale URL to re-fetch',
+    )
+    // And the reference moved with the pointer, which is what makes the delete above the only
+    // one that was ever permitted: `files.discard` refuses a blob a token still points at,
+    // through `tokenReferencesImage`, so the only transaction allowed to delete the outgoing
+    // art is the one that stopped referencing it.
+    await refuses('files:discard refused the new blob, because the coin now references it', () =>
+      client.mutation('files:discard', { code, dmCode, imageId: secondArt }),
+    )
+    // The other half of that, and the property the cleanup registry at the bottom of this
+    // file rests on: `discard` returns early when the blob is not in storage, so discarding
+    // one `setArt` has already deleted is a no-op rather than a second error on top of the
+    // first. Asserted through what it did *not* disturb, because "it did not throw" is a
+    // claim the run's own catch already makes.
+    await client.mutation('files:discard', { code, dmCode, imageId: firstArt })
+    const artAfterDiscard = await tokensOf(editable.tokenId)
+    const liveArtFetch = newArtUrl ? await fetch(newArtUrl) : null
+    check(
+      'discarding the blob setArt had already deleted was a no-op, and left the live art alone',
+      artAfterDiscard &&
+        artAfterDiscard.artUrl === newArtUrl &&
+        liveArtFetch !== null &&
+        liveArtFetch.ok,
+      liveArtFetch
+        ? `${liveArtFetch.status} from the live URL afterwards — this is what makes sweeping the whole upload list safe`
+        : 'no live URL to re-fetch',
+    )
+
+    // (b) `board:setCharacter`: THE DERIVED HALF, AND THE `null` KEY.
+    //
+    // The coin is granted to seat B first, so that the two arrays on the payload are
+    // genuinely different arrays throughout: `grantedPlayerIds` is what the DM wrote down and
+    // `controllerIds` is the rule computed from it, and a rebind moves the second without
+    // touching the first. A derived value changing with no write behind it is precisely what
+    // `firstDifference`'s field-by-field naming exists to catch — and the reason the stored
+    // half must not be migrated is written out at `setTokenCharacter`: a token still listing
+    // the seat that played the creature it is no longer bound to is a stale grant that
+    // authorises a real drag.
     await client.mutation('board:setControllers', {
       code,
       dmCode,
-      tokenId: shownToken.tokenId,
-      playerIds: [seatA.playerId],
+      tokenId: editable.tokenId,
+      playerIds: [seatB.playerId],
     })
-    grantedTokens.push(shownToken.tokenId)
-
-    const revealedSheet = await ambushAsA()
-    const revealedVitals = await vitalsFor(seatA.playerId)
-    const revealedRow = revealedVitals.find((row) => row.characterId === ambush.characterId)
+    grantedTokens.push(editable.tokenId)
+    await client.mutation('board:setCharacter', {
+      code,
+      dmCode,
+      tokenId: editable.tokenId,
+      characterId: human.characterId,
+    })
+    const boundToHero = await tokensOf(editable.tokenId)
+    const grantWritten = boundToHero ? JSON.stringify(boundToHero.grantedPlayerIds) : 'no row'
     check(
-      'the same grant on a player-layer coin brought the sheet and the numbers with it',
-      revealedSheet &&
-        revealedSheet.name === AMBUSH_NAME &&
-        revealedRow &&
-        revealedRow.kind === 'exact' &&
-        revealedRow.max === AMBUSH_MAX_HP,
-      revealedSheet && revealedRow
-        ? `${revealedRow.current}/${revealedRow.max} — the grant did not change, the coin did`
-        : `sheet ${JSON.stringify(revealedSheet)}, vitals ${JSON.stringify(revealedRow)}`,
+      'binding a coin to a claimed hero composed the holder into controllerIds and into no grant',
+      boundToHero &&
+        boundToHero.characterId === human.characterId &&
+        boundToHero.controllerIds.length === 2 &&
+        boundToHero.controllerIds.includes(seatA.playerId) &&
+        boundToHero.controllerIds.includes(seatB.playerId) &&
+        grantWritten === JSON.stringify([seatB.playerId]),
+      boundToHero
+        ? `effective ${JSON.stringify(boundToHero.controllerIds)} against granted ${grantWritten}`
+        : 'no token row came back',
+    )
+
+    await client.mutation('board:setCharacter', {
+      code,
+      dmCode,
+      tokenId: editable.tokenId,
+      characterId: grantedCreature.characterId,
+    })
+    const rebound = await tokensOf(editable.tokenId)
+    check(
+      'the rebind dropped the holder from controllerIds while the stored grant did not move',
+      rebound &&
+        rebound.characterId === grantedCreature.characterId &&
+        JSON.stringify(rebound.controllerIds) === JSON.stringify([seatB.playerId]) &&
+        JSON.stringify(rebound.grantedPlayerIds) === grantWritten,
+      rebound
+        ? `effective ${JSON.stringify(rebound.controllerIds)} against granted ${JSON.stringify(rebound.grantedPlayerIds)}, unchanged from ${grantWritten}`
+        : 'no token row came back',
+    )
+
+    // ⚠️ **`characterId: null` AS A PRESENT KEY.** `undefined` is not a Convex value, so a
+    // cleared binding has to become *something* on the way out — `publicTokens` spells it
+    // `?? null` for that reason, and the stored document spells it as an absent field. This
+    // is the one place in the app where the difference between those two spellings is
+    // observable, and only a real round trip can say which one arrives: a payload that
+    // dropped the key instead would leave every client reading `token.characterId` as
+    // `undefined` and comparing it against `null` for ever afterwards.
+    await client.mutation('board:setCharacter', {
+      code,
+      dmCode,
+      tokenId: editable.tokenId,
+      characterId: null,
+    })
+    const unbound = await tokensOf(editable.tokenId)
+    check(
+      'unbinding came back as a present characterId key holding null, with the grant unmoved',
+      unbound &&
+        'characterId' in unbound &&
+        unbound.characterId === null &&
+        JSON.stringify(unbound.grantedPlayerIds) === grantWritten &&
+        JSON.stringify(unbound.controllerIds) === JSON.stringify([seatB.playerId]),
+      unbound
+        ? `keys: ${Object.keys(unbound).sort().join(', ')}, characterId ${JSON.stringify(unbound.characterId)}`
+        : 'no token row came back',
+    )
+
+    // (c) `board:updateToken`, AND THE MILESTONE 1 BUG CLASS ON A THIRD FIELD.
+    //
+    // The accepted write first, so the refusals after it have something to have left alone.
+    // Compared field by field rather than field at a time, because a rename, a resize and a
+    // re-tint are one absolute write — the `scenes.updateGrid` shape — and `firstDifference`
+    // names *which* of the three moved instead of reporting that something did.
+    const editedAppearance = {
+      name: EDITED_TOKEN_NAME,
+      sizeSquares: EDITED_TOKEN_SIZE,
+      tint: EDITED_TOKEN_TINT,
+    }
+    const appearanceOf = (token) =>
+      token === null
+        ? null
+        : { name: token.name, sizeSquares: token.sizeSquares, tint: token.tint }
+
+    await client.mutation('board:updateToken', {
+      code,
+      dmCode,
+      tokenId: editable.tokenId,
+      ...editedAppearance,
+    })
+    const renamed = await tokensOf(editable.tokenId)
+    const appearanceDrift = renamed
+      ? firstDifference(editedAppearance, appearanceOf(renamed), 'appearance')
+      : 'no token row came back'
+    check(
+      `board:updateToken round-tripped a name at exactly ${MAX_TOKEN_NAME_LENGTH} code units, astral pairs and all`,
+      appearanceDrift === null &&
+        // Asserted rather than trusted: an innocent edit to the fixture is exactly how a
+        // boundary test stops sitting on the boundary, and the two counts differing is the
+        // whole reason this name is the one being sent.
+        EDITED_TOKEN_NAME.length === MAX_TOKEN_NAME_LENGTH &&
+        [...EDITED_TOKEN_NAME].length < MAX_TOKEN_NAME_LENGTH,
+      appearanceDrift ??
+        `${EDITED_TOKEN_NAME.length} code units, ${[...EDITED_TOKEN_NAME].length} code points, ${EDITED_TOKEN_SIZE} squares, tint ${renamed.tint}`,
+    )
+
+    // THE MILESTONE 1 BUG ITSELF. A lone high surrogate is a perfectly ordinary
+    // one-character string to `requireText` — which is why that function deliberately does
+    // not test for one — so this refusal comes from Convex's argument validation at the
+    // function boundary, before any handler runs. Nothing in the local suite can produce it.
+    await refuses('board:updateToken refused a lone UTF-16 surrogate in the name', () =>
+      client.mutation('board:updateToken', {
+        code,
+        dmCode,
+        tokenId: editable.tokenId,
+        ...editedAppearance,
+        name: 'Half an emoji: \uD800',
+      }),
+    )
+    // And the other mechanism, on the field beside it. 1.5 and NaN are both perfectly good
+    // float64s, so both sail through the argument validator and are refused by
+    // `isUsableTokenSize` instead — which tests `Number.isInteger`, already false for NaN,
+    // which is why `updateToken` carries no `requireFinite` of its own. A suite that does not
+    // apply value validation cannot tell those two refusals apart from each other or from
+    // the one above; this is where all three actually cross a wire.
+    for (const [label, sizeSquares] of [
+      ['a fractional token size', 1.5],
+      ['NaN as a token size', Number.NaN],
+    ]) {
+      await refuses(`board:updateToken refused ${label}`, () =>
+        client.mutation('board:updateToken', {
+          code,
+          dmCode,
+          tokenId: editable.tokenId,
+          ...editedAppearance,
+          sizeSquares,
+        }),
+      )
+    }
+    const survivingAppearance = await tokensOf(editable.tokenId)
+    const survivorDrift = survivingAppearance
+      ? firstDifference(editedAppearance, appearanceOf(survivingAppearance), 'appearance')
+      : 'no token row came back'
+    check(
+      'every refused edit left the coin exactly as the accepted one had left it',
+      survivorDrift === null,
+      survivorDrift ?? `still ${survivingAppearance.sizeSquares} squares, tint ${survivingAppearance.tint}`,
+    )
+
+    // (d) `games:list` AND `games:checkDmCode`: THE FIRST READS A BROWSER MAKES HOLDING
+    // NOTHING AT ALL.
+    //
+    // Every other query in this file is scoped to one game by a code somebody typed.
+    // `games:list` takes **no arguments**, reads across the whole deployment, and is
+    // subscribed to by every idle browser that loads the site — so it is the first payload in
+    // this application whose audience is *anyone*, and the only cross-game read available
+    // with no credential of any kind. That makes it worth a real round trip twice over: the
+    // rows it returns were written by other runs and other people rather than by a fixture,
+    // and the `returns:` validator that keeps the three DM secrets out of it is derived by
+    // subtraction from a projection built for a different audience.
+    const seatsBeforeCheck = await client.query('players:list', { code })
+    const listing = await client.query('games:list', {})
+    const listedRow = listing.find((row) => row.name === gameName) ?? null
+    check(
+      'games:list carried this run’s own game, named and attributed',
+      listedRow !== null &&
+        listedRow.createdByName === SMOKE_DM_NAME &&
+        listedRow.status === 'lobby',
+      listedRow
+        ? `positive control — ${listing.length} rows, this one run by ${JSON.stringify(listedRow.createdByName)}`
+        : `not among ${listing.length} rows, so either the list is truncated from the wrong end or this run's game is not in it`,
+    )
+    // ⚠️ **THE KEY SET IS WHAT HOLDS, AND THE SUBSTRING SCAN IS THE WEAKER HALF.** A join
+    // code is six characters out of a thirty-one letter alphabet, so it can occur by chance
+    // inside a document id — the same class of trap `OPAQUE_KEYS` exists for, which is why
+    // the scan below runs over the redacted copy. What actually forbids a code is the *shape*
+    // of the row, and the shape is a subtraction: `publicGameListingValidator` is
+    // `publicGameValidator.omit('code', 'activeSceneId')`, so a new **non-secret** field
+    // added upstream for the audience that holds a join code would arrive here silently and
+    // widen the audience that holds nothing. Pinning the five names is the only thing
+    // standing between an upstream addition and an audience nobody chose.
+    const listingKeys = listedRow ? Object.keys(listedRow).sort().join(',') : 'no row'
+    check(
+      'a landing-page row carries exactly five keys, and `code` is not one of them',
+      listingKeys === '_creationTime,_id,createdByName,name,status',
+      `keys: ${listingKeys}`,
+    )
+    const listingSerialised = JSON.stringify(redactOpaque(listing))
+    check(
+      'no join code, DM code, salt or recovery hash appears anywhere in the landing payload',
+      !listing.some((row) => 'code' in row || 'dmCode' in row) &&
+        !listingSerialised.includes(code) &&
+        !listingSerialised.includes(dmCode) &&
+        !listingSerialised.includes('dmRecovery') &&
+        // The positive control, and it is the load-bearing half: without it every scan here
+        // passes on an empty array, which is exactly what a broken query returns.
+        listingSerialised.includes(gameName),
+      `${listing.length} rows scanned for ${code} and for an eight-character DM code — positive control included`,
+    )
+
+    // `checkDmCode` is a new oracle and answers a bare boolean, which is the whole of its
+    // design: no game, no code, no seat, nothing a caller could mistake for proof. A `true`
+    // authorises nothing — `requireDm` re-checks the code on every single call it gates
+    // (CLAUDE.md invariant 7) — and it expires the moment it is read.
+    const twiddledDmCode = `${dmCode[0] === 'A' ? 'B' : 'A'}${dmCode.slice(1)}`
+    const verdicts = {
+      right: await client.query('games:checkDmCode', { code, dmCode }),
+      twiddled: await client.query('games:checkDmCode', { code, dmCode: twiddledDmCode }),
+      unknownGame: await client.query('games:checkDmCode', { code: UNKNOWN_JOIN_CODE, dmCode }),
+    }
+    check(
+      'games:checkDmCode said true for the code, and false for a twiddle and an unknown game',
+      verdicts.right === true &&
+        verdicts.twiddled === false &&
+        verdicts.unknownGame === false &&
+        // Bare booleans rather than anything truthy: the return validator is `v.boolean()`
+        // and a caller writing `if (verdict)` must not be able to be handed a payload.
+        Object.values(verdicts).every((verdict) => typeof verdict === 'boolean'),
+      `${JSON.stringify(verdicts)} — the twiddle is the same length and the same alphabet, one character out`,
+    )
+    // ⚠️ **AND IT CREATED NO SEAT.** A query cannot write, which is exactly why this is a
+    // query: the DM badge follows a seat, this call is made before anybody has chosen a
+    // display name, and `elevateDm` stays the only thing that moves the badge. That is a
+    // statement about every future edit to the function rather than about today's body, and
+    // the deployment is what enforces it — so the roster is compared before and after,
+    // unredacted, because a seat created and a seat renamed are both changes worth failing on.
+    const seatsAfterCheck = await client.query('players:list', { code })
+    check(
+      'asking three times created no seat and renamed none',
+      JSON.stringify(seatsBeforeCheck) === JSON.stringify(seatsAfterCheck) &&
+        // The positive control: two empty rosters would agree perfectly. This game has the
+        // DM's own seat and the three this run joined.
+        seatsBeforeCheck.length > 1,
+      `${seatsBeforeCheck.length} seats before, ${seatsAfterCheck.length} after — positive control included`,
     )
   } catch (error) {
     const data = error && error.data ? ` ${JSON.stringify(error.data)}` : ''
@@ -3249,8 +3776,25 @@ async function main() {
       for (const playerId of seats) {
         await quietly(() => client.mutation('players:leave', { code, playerId }))
       }
+      // ⚠️ **The uploads go LAST, and the ordering is the whole reason this loop is a loop
+      // rather than a line beside each upload.** `files.discard` refuses any blob a scene or
+      // a token still references — that is what stops a mis-sequenced catch handler blanking
+      // the map out from under the table — so running it before the removals above would
+      // report a failed cleanup step for every blob that was doing its job.
+      //
+      // After them, every id on this list is one of three things: consumed and already
+      // deleted with its row, deleted by `replaceTokenArt` when section 29 swapped the art,
+      // or an **orphan** — bytes from a run that failed between the POST and the mutation
+      // that would have adopted them. `discard` returns early on a blob that is not in
+      // storage, so it is a no-op on the first two, and it is the only thing in the
+      // application that can reclaim the third. That idempotence is exactly what makes
+      // running it over the whole list safe rather than a list of guesses about which
+      // uploads survived a run that failed halfway.
+      for (const imageId of uploads) {
+        await quietly(() => client.mutation('files:discard', { code, dmCode, imageId }))
+      }
       console.log(
-        `\n  cleaned up the scene, ${created.length} tokens, ${createdCharacters.length} characters and ${seats.length} seats`,
+        `\n  cleaned up the scene, ${created.length} tokens, ${createdCharacters.length} characters and ${seats.length} seats, and swept ${uploads.length} uploads`,
       )
       console.log(`  the game itself remains: ${code} — \`npm run prune-games\` sweeps these up`)
     } else {

@@ -14,7 +14,7 @@ import {
   MAX_RECOVERY_PHRASE_LENGTH,
   MIN_RECOVERY_PHRASE_LENGTH,
 } from './lib/codes'
-import { MAX_SEATS_PER_GAME } from './lib/games'
+import { MAX_GAMES_ON_LANDING, MAX_SEATS_PER_GAME } from './lib/games'
 
 const modules = import.meta.glob('./**/*.ts')
 
@@ -260,6 +260,106 @@ describe('games.create', () => {
   })
 })
 
+// The landing page's payload, and the only query in this application a browser can
+// call holding no credential at all. Every test here scans a real query's serialised
+// output, and every negative has a positive control standing beside it in the same
+// test — a payload this list truncated to nothing would satisfy any number of
+// `not.toContain`s.
+describe('games.list', () => {
+  // CLAUDE.md invariant 1, against the same three secrets `getByCode` is scanned for
+  // **plus the join code**, which is a secret from *this* audience and not from that one —
+  // the whole point of there being a third audience. All four are read out of the database
+  // so they are the real stored strings rather than what a test hoped was stored.
+  test('carries no join code, no DM code, no recovery salt and no recovery hash', async () => {
+    const t = harness()
+    const first = await createGame(t, { name: 'Kobold Season', dmName: 'Mike' })
+    const second = await createGame(t, {
+      name: 'Copper Deep',
+      dmName: 'Ada',
+      recoveryPhrase: 'copper kettle',
+    })
+    const rows = [await gameRow(t, first.code), await gameRow(t, second.code)]
+
+    const listing = await t.query(api.games.list, {})
+    const payload = JSON.stringify(listing)
+
+    // The positive control, and it is in this test rather than a neighbouring one
+    // deliberately: the eight string scans below all pass over an empty array, and they
+    // pass just as happily over a payload the cap truncated to nothing. Two rows, both
+    // names and a creator name prove the thing being scanned is the real list.
+    expect(listing).toHaveLength(2)
+    expect(payload).toContain('Kobold Season')
+    expect(payload).toContain('Copper Deep')
+    expect(payload).toContain('Ada')
+
+    for (const row of rows) {
+      // The join code's scan is the *weaker* of the two assertions guarding it, and it is
+      // here rather than in a test of its own because the other one — the exact key set
+      // pinned below — is what actually holds. Six characters from a 31-letter alphabet,
+      // scanned against a payload containing `_id`s over an overlapping alphabet, can fire
+      // by coincidence: the same class of trap as `containsNumber` in vitals.test.ts, where
+      // a bare `toContain('271')` passed or failed on the clock. Kept anyway, because a
+      // coincidence here is a false failure rather than a false pass, and because a
+      // stringify scan catches the code arriving under a *name* nobody thought to pin.
+      expect(payload).not.toContain(row.code)
+      expect(payload).not.toContain(row.dmCode)
+      expect(payload).not.toContain(row.dmRecoverySalt)
+      expect(payload).not.toContain(row.dmRecoveryHash)
+    }
+    expect(payload).not.toContain('dmCode')
+    expect(payload).not.toContain('dmRecovery')
+  })
+
+  // The pin behind `publicGameListingValidator` being derived with `.omit()`.
+  // Subtraction only promises the two named fields are gone; a new *non-secret* field
+  // added to `publicGameValidator` for the audience holding a join code would arrive
+  // here silently and widen an audience holding nothing at all. This is the test that
+  // fails when that happens, and it is the reason the derivation is safe.
+  //
+  // It is also the **stronger** half of the join code's guard, and the reason the scan for
+  // it upstairs is only a scan: a field that is absent from this list cannot leak whatever
+  // its value happened to be, coincidences of alphabet or not.
+  test('has exactly the five keys the landing page needs and no sixth', async () => {
+    const t = harness()
+    await createGame(t)
+    const listing = await t.query(api.games.list, {})
+    expect(listing).toHaveLength(1)
+    expect(Object.keys(listing[0]).sort()).toEqual(
+      ['_creationTime', '_id', 'createdByName', 'name', 'status'].sort(),
+    )
+  })
+
+  test('lists the newest game first', async () => {
+    const t = harness()
+    for (const name of ['Oldest', 'Middle', 'Newest']) {
+      await createGame(t, { name })
+    }
+    const listing = await t.query(api.games.list, {})
+    expect(listing.map((row) => row.name)).toEqual(['Newest', 'Middle', 'Oldest'])
+  })
+
+  test('stops at MAX_GAMES_ON_LANDING and drops the oldest games', async () => {
+    const t = harness()
+    const total = MAX_GAMES_ON_LANDING + 4
+    for (let i = 0; i < total; i += 1) {
+      await createGame(t, { name: `Game ${i}` })
+    }
+
+    const listing = await t.query(api.games.list, {})
+    const names = listing.map((row) => row.name)
+    expect(listing).toHaveLength(MAX_GAMES_ON_LANDING)
+    // Truncation costs nothing because `Game 0` is still joinable by its code, which
+    // is why the *Join with a code* panel stays beside the list.
+    expect(names).not.toContain('Game 0')
+    expect(names[0]).toBe(`Game ${total - 1}`)
+  })
+
+  test('returns an empty array rather than throwing when there are no games', async () => {
+    const t = harness()
+    expect(await t.query(api.games.list, {})).toEqual([])
+  })
+})
+
 describe('games.getByCode', () => {
   test('returns null for an unknown code', async () => {
     const t = harness()
@@ -319,6 +419,141 @@ describe('games.getByCode', () => {
     expect(payload).not.toContain(row.dmRecoverySalt)
     expect(payload).not.toContain(row.dmRecoveryHash)
     expect(payload).not.toContain(row.dmCode)
+  })
+})
+
+// The door's verdict on a DM code, asked before anybody is seated. The corpus of
+// wrong codes is the one `games.elevateDm` is tested against — the same `twiddleFirst`
+// and `twiddleLast` helpers — because a code this accepts and `requireDm` refuses, or
+// the other way round, is precisely the bug that would seat a DM as a player with
+// nothing on screen saying why.
+describe('games.checkDmCode', () => {
+  test('accepts the right DM code in any case and with surrounding whitespace', async () => {
+    const t = harness()
+    const created = await createGame(t)
+    for (const dmCode of [
+      created.dmCode,
+      created.dmCode.toLowerCase(),
+      `  ${created.dmCode}  `,
+      `\t${created.dmCode.toLowerCase()}\n`,
+    ]) {
+      expect(await t.query(api.games.checkDmCode, { code: created.code, dmCode })).toBe(true)
+    }
+  })
+
+  /**
+   * Every class of wrong DM code, in one table over one game.
+   *
+   * This was three tests — same length, different length, internal whitespace — with the
+   * same body three times over: a harness, a game, a loop of bad codes, and in two of them
+   * the identical positive control. Three names and three fixtures for one property. The
+   * **label on each row buys the names back**, which is the only thing the separate tests
+   * were providing: a failure still says which class of bad code got through, and the
+   * corpus keeps every input it had.
+   *
+   * One positive control at the end rather than one per class, for the reason it existed
+   * in the first place — it proves the comparison is working rather than the query broken,
+   * and that is one statement about one game.
+   */
+  test('refuses every class of wrong DM code', async () => {
+    const t = harness()
+    const created = await createGame(t)
+
+    // Worth a sentence rather than only a label. The DM code goes through
+    // `normaliseDmCode`, which trims and uppercases and nothing else — deliberately not
+    // `normaliseJoinCode`, which would drop the space and quietly accept this. The join
+    // field is the forgiving one; the check on the app's only bearer secret is not.
+    const split = `${created.dmCode.slice(0, 4)} ${created.dmCode.slice(4)}`
+
+    // The right-length rows and the wrong-length ones sit in one corpus deliberately: the
+    // compare behind this is hand-written and length-independent, so a prefix, a suffix and
+    // a doubled code are the same kind of question as a twiddled character rather than a
+    // separate concern. It is `elevateDm`'s corpus, per the note on the describe.
+    const wrong: [label: string, dmCode: string][] = [
+      ['last character twiddled', twiddleLast(created.dmCode)],
+      ['first character twiddled', twiddleFirst(created.dmCode)],
+      ['right length, one repeated letter', 'A'.repeat(DM_CODE_LENGTH)],
+      ['one character short', created.dmCode.slice(0, DM_CODE_LENGTH - 1)],
+      ['first character only', created.dmCode.slice(0, 1)],
+      ['a suffix, with the first character dropped', created.dmCode.slice(1)],
+      ['one character too long', `${created.dmCode}A`],
+      ['the whole code doubled', `${created.dmCode}${created.dmCode}`],
+      ['empty', ''],
+      ['whitespace only', '   '],
+      ['broken up by internal whitespace', split],
+    ]
+
+    for (const [label, dmCode] of wrong) {
+      expect(await t.query(api.games.checkDmCode, { code: created.code, dmCode }), label).toBe(
+        false,
+      )
+    }
+
+    // Positive control: the same call with the real code still answers true, so every
+    // false above is the comparison working rather than the query broken.
+    expect(
+      await t.query(api.games.checkDmCode, { code: created.code, dmCode: created.dmCode }),
+    ).toBe(true)
+  })
+
+  test('refuses a DM code that is valid for a different game', async () => {
+    const t = harness()
+    const a = await createGame(t, { name: 'Game A', dmName: 'Mike' })
+    const b = await createGame(t, {
+      name: 'Game B',
+      dmName: 'Sam',
+      recoveryPhrase: 'copper kettle',
+    })
+    expect(await t.query(api.games.checkDmCode, { code: b.code, dmCode: a.dmCode })).toBe(false)
+    expect(await t.query(api.games.checkDmCode, { code: a.code, dmCode: b.dmCode })).toBe(false)
+    // Each code still opens its own game, so neither false above is a game that went
+    // missing between the two calls.
+    expect(await t.query(api.games.checkDmCode, { code: a.code, dmCode: a.dmCode })).toBe(true)
+    expect(await t.query(api.games.checkDmCode, { code: b.code, dmCode: b.dmCode })).toBe(true)
+  })
+
+  // An unknown join code answers rather than throws, the way `getByCode` returns null:
+  // the caller is a form with a field to render the verdict beside. It also must not
+  // distinguish *no such game* from *wrong code*, so that this cannot be used to
+  // enumerate which join codes are real.
+  test('answers false for an unknown join code rather than throwing', async () => {
+    const t = harness()
+    const created = await createGame(t)
+    for (const code of ['ZZZZZZ', '', 'A', created.code.slice(0, JOIN_CODE_LENGTH - 1)]) {
+      expect(await t.query(api.games.checkDmCode, { code, dmCode: created.dmCode })).toBe(false)
+    }
+  })
+
+  // There was a test here asserting `typeof` the answer is `'boolean'`, and it is gone
+  // rather than moved: `returns: v.boolean()` on the query makes that mechanically true,
+  // and the `true` / `false` values it also checked are already asserted by every test
+  // above. A guard that cannot fail dilutes the rule everywhere else — see the note in
+  // `convex/lib/names.ts`, where the same reasoning removed a lone-surrogate check. The
+  // intent it recorded, that nothing but a boolean travels, lives in `checkDmCode`'s own
+  // docblock beside the validator that enforces it.
+
+  // A query cannot write, so this asserts the property that turning `checkDmCode` into
+  // a mutation would break rather than a behaviour anybody had to implement. It is
+  // worth pinning anyway: the badge follows a seat, this call has none, and
+  // `elevateDm` stays the only thing that moves it.
+  test('creates no seat and does not move the DM badge, however often it is called', async () => {
+    const t = harness()
+    const created = await createGame(t)
+    const dmCodes = [
+      created.dmCode,
+      twiddleFirst(created.dmCode),
+      created.dmCode.toLowerCase(),
+      '',
+      `${created.dmCode}A`,
+      created.dmCode,
+    ]
+    for (const dmCode of dmCodes) {
+      await t.query(api.games.checkDmCode, { code: created.code, dmCode })
+    }
+
+    const seats = await seatsOf(t, created.code)
+    expect(seats.map((seat) => seat.displayName)).toEqual(['Mike'])
+    expect(await dmSeatNames(t, created.code)).toEqual(['Mike'])
   })
 })
 

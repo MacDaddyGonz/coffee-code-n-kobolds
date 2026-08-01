@@ -24,9 +24,7 @@ import { useImageUpload } from '@/hooks/useImageUpload'
 import { parseNumber } from '@/lib/utils'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
-import type { PublicToken } from '@convex/lib/board'
 import { MAX_CHARACTER_NAME_LENGTH } from '@convex/lib/codes'
-import { MAX_TOKEN_SQUARES, MIN_TOKEN_SQUARES, isUsableTokenSize } from '@convex/lib/grid'
 import type { PublicScene } from '@convex/lib/scenes'
 import { crLabel } from '@convex/lib/creatures'
 import type { CreatureChoice } from './BestiaryPicker'
@@ -37,6 +35,10 @@ import {
   creatureStatsProblem,
   defaultCreatureStats,
 } from './CreatureSheetFields'
+import type { Layer } from './LayerChoice'
+import { DM_LAYER_ALERT_TITLE, LayerChoice } from './LayerChoice'
+import type { TokenAppearanceDraft } from './TokenAppearanceFields'
+import { TokenAppearanceFields, isUsableAppearance } from './TokenAppearanceFields'
 
 export type TokenAddDialogProps = {
   code: string
@@ -44,15 +46,17 @@ export type TokenAddDialogProps = {
   scene: PublicScene
 }
 
-/**
- * Taken from the server's own token shape rather than spelled out again. This is
- * the field that decides secrecy, so a third literal of the union is the last thing
- * that should be able to drift from the one the mutation validates against.
- */
-type Layer = PublicToken['layer']
-
 /** A default that is legible on a map without being either team's colour. */
 const DEFAULT_TINT = '#8b5cf6'
+
+/**
+ * What the three appearance fields start at, and what closing the dialog puts them back to.
+ *
+ * A constant rather than three initialisers, so *reset* and *initial* cannot disagree — the
+ * failure that shape prevents is a dialog that opens purple the first time and grey the
+ * second.
+ */
+const EMPTY_APPEARANCE: TokenAppearanceDraft = { name: '', size: '1', tint: DEFAULT_TINT }
 
 /**
  * The character select's third and fourth answers: make a sheet for this token as it is
@@ -106,10 +110,11 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
   const fieldId = useId()
 
   const [open, setOpen] = useState(false)
-  const [name, setName] = useState('')
+  // One piece of state for the three cosmetic fields, because `TokenAppearanceFields` is
+  // absolute over all three — and because a name, a size and a colour are one appearance,
+  // which is the shape `board.updateToken` writes them in too.
+  const [appearance, setAppearance] = useState<TokenAppearanceDraft>(EMPTY_APPEARANCE)
   const [layer, setLayer] = useState<Layer>('player')
-  const [size, setSize] = useState('1')
-  const [tint, setTint] = useState(DEFAULT_TINT)
   const [characterId, setCharacterId] = useState('')
   const [creatureName, setCreatureName] = useState('')
   const [creatureStats, setCreatureStats] = useState(defaultCreatureStats)
@@ -118,10 +123,8 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
   function changeOpen(next: boolean) {
     setOpen(next)
     if (!next) {
-      setName('')
+      setAppearance(EMPTY_APPEARANCE)
       setLayer('player')
-      setSize('1')
-      setTint(DEFAULT_TINT)
       setCharacterId('')
       setCreatureName('')
       setCreatureStats(defaultCreatureStats())
@@ -131,7 +134,10 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
     }
   }
 
-  const sizeSquares = parseNumber(size)
+  // Taken apart once, because five things below name the coin and two send its size. The
+  // draft above is what the fields write to; these are what the mutation and the copy read.
+  const { name, tint } = appearance
+  const sizeSquares = parseNumber(appearance.size)
   const makingCreature = characterId === NEW_CREATURE
   const fromBestiary = characterId === FROM_BESTIARY
   // Only asked of the fields that are on screen. A blank armour class in a section
@@ -245,92 +251,41 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
         </DialogHeader>
 
         <form className="flex flex-col gap-3" onSubmit={(event) => void submit(event)}>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor={`${fieldId}-name`}>Name</Label>
-            <Input
-              id={`${fieldId}-name`}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              maxLength={MAX_CHARACTER_NAME_LENGTH}
-              autoComplete="off"
-              placeholder="Goblin archer"
-              disabled={busy}
-            />
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <Label>Who can see it</Label>
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                type="button"
-                variant={layer === 'player' ? 'default' : 'outline'}
-                aria-pressed={layer === 'player'}
-                disabled={busy}
-                onClick={() => setLayer('player')}
-              >
-                Everyone
-              </Button>
-              <Button
-                type="button"
-                variant={layer === 'dm' ? 'destructive' : 'outline'}
-                aria-pressed={layer === 'dm'}
-                disabled={busy}
-                onClick={() => setLayer('dm')}
-              >
-                Only me — DM layer
-              </Button>
-            </div>
-            {layer === 'dm' ? (
-              <Alert variant="destructive">
-                <AlertTitle>Nobody else will be sent this token at all</AlertTitle>
-                <AlertDescription>
-                  A DM-layer token is absent from every player's data, not merely undrawn — so an
-                  ambush survives a player who reads the network tab. The cost of the same setting
-                  chosen by mistake is a character nobody at the table can see or move, so check it
-                  before you save.
-                </AlertDescription>
-              </Alert>
-            ) : (
-              <p className="text-muted-foreground text-xs">
-                Drawn on every screen at the table, and movable by whoever is playing the character
-                it is attached to.
-              </p>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
+          {/* The name, the size and the colour, shared with the editor — see that
+              component for why they are one thing and not six inputs. The layer picker
+              goes in its slot, so *who can see it* still sits between the name and the
+              numbers: it is the only field here that decides anything about secrecy, and
+              its place in the reading order is part of saying so. */}
+          <TokenAppearanceFields
+            draft={appearance}
+            onChange={setAppearance}
+            disabled={busy}
+            namePlaceholder="Goblin archer"
+          >
             <div className="flex flex-col gap-2">
-              <Label htmlFor={`${fieldId}-size`}>Size in squares</Label>
-              <Input
-                id={`${fieldId}-size`}
-                type="number"
-                min={MIN_TOKEN_SQUARES}
-                max={MAX_TOKEN_SQUARES}
-                step={1}
-                value={size}
-                onChange={(event) => setSize(event.target.value)}
-                className="tabular-nums"
-                disabled={busy}
-              />
-              <p className="text-muted-foreground text-xs">
-                1 for a person, 2 for an ogre. Up to {MAX_TOKEN_SQUARES}.
-              </p>
+              <Label>Who can see it</Label>
+              <LayerChoice layer={layer} onChange={setLayer} disabled={busy} />
+              {/* The title is shared and the body is not: this one is about a mistake to
+                  catch *before* saving, where the editor's is about a press that puts
+                  everything back. See the ⚠️ on `DM_LAYER_ALERT_TITLE`. */}
+              {layer === 'dm' ? (
+                <Alert variant="destructive">
+                  <AlertTitle>{DM_LAYER_ALERT_TITLE}</AlertTitle>
+                  <AlertDescription>
+                    A DM-layer token is absent from every player's data, not merely undrawn — so
+                    an ambush survives a player who reads the network tab. The cost of the same
+                    setting chosen by mistake is a character nobody at the table can see or move,
+                    so check it before you save.
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <p className="text-muted-foreground text-xs">
+                  Drawn on every screen at the table, and movable by whoever is playing the
+                  character it is bound to.
+                </p>
+              )}
             </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor={`${fieldId}-tint`}>Colour</Label>
-              <Input
-                id={`${fieldId}-tint`}
-                type="color"
-                value={tint}
-                onChange={(event) => setTint(event.target.value)}
-                className="h-8 px-1 py-1"
-                disabled={busy}
-              />
-              <p className="text-muted-foreground text-xs">
-                The coin's colour, and its ring when it has art.
-              </p>
-            </div>
-          </div>
+          </TokenAppearanceFields>
 
           <ImagePicker
             id={`${fieldId}-art`}
@@ -460,7 +415,9 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
                   // empty — a DM who has already typed `Guard #3` meant it, and three coins
                   // from one entry wanting three names is the normal case rather than the
                   // exception.
-                  setName((was) => (was.trim() === '' ? choice.name : was))
+                  setAppearance((was) =>
+                    was.name.trim() === '' ? { ...was, name: choice.name } : was,
+                  )
                 }}
               />
 
@@ -484,8 +441,9 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
           <DialogFormFooter
             busy={busy}
             canSubmit={
-              name.trim() !== '' &&
-              isUsableTokenSize(sizeSquares) &&
+              // The shared predicate, so *what the server will accept* is asked in one
+              // place for both the dialog and the editor.
+              isUsableAppearance(appearance) &&
               creatureProblem === null &&
               // A shelf entry chosen, when the shelf is the answer. Refused rather than
               // silently adding a coin with no sheet, which is what the select's own empty

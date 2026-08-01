@@ -38,8 +38,8 @@ character claim is still attached to the seat it lands on.
 
 ### What browser storage holds
 
-Only five things, and every one of them is recomputable — the first three by typing them from memory,
-the fourth by way of the recovery phrase below, the fifth with one scroll gesture:
+Only six things, and every one of them is recomputable — the first three by typing them from memory,
+the fourth by way of the recovery phrase below, and the last two with one gesture each:
 
 | Key | Purpose |
 | --- | ------- |
@@ -48,6 +48,13 @@ the fourth by way of the recovery phrase below, the fifth with one scroll gestur
 | `ccnk.displayName.<code>` | Which seat this browser is, in one game |
 | `ccnk.dmCode.<code>` | The DM's bearer credential for one game |
 | `ccnk.camera.<code>.<sceneId>` | Where this browser last had the board panned and zoomed, per scene |
+| `ccnk.paneWidth.<code>` | Where this browser last left the divider between the map and the panel |
+
+> **Amended later.** This table said five and listed five; `ccnk.paneWidth.<code>` arrived with the
+> one-shell layout and was not added to it. Both of the last two rows are the same kind of fact for
+> the same reason — a view rather than shared state, so neither costs any database traffic
+> ([ADR 0004](0004-board-authorisation-and-layers.md)) — which is exactly why the second one was easy
+> to add without noticing this list existed.
 
 The per-game display name is deliberate rather than one global name. A single global name would
 bleed the name used in one game into another and silently create a second seat there — you would
@@ -166,6 +173,15 @@ Two things to be honest about:
 - The name gate can list the seats already in the game before anyone commits to a name, because the
   roster is not privileged. Someone returning after a cache clear picks their existing seat rather
   than reconstructing it from memory.
+
+  > **Amended later, and this bullet turned out to be the load-bearing one.** For a long time the
+  > gate listed the seats and the *landing* screen did not, so in practice "restore my session" was
+  > still a name typed from memory into a field on the way past — the idempotence above was true and
+  > invisible. The seat list is now what both doors show, and it carries **the character each seat
+  > holds** as well as its name, which is the thing that actually lets somebody recognise their own
+  > seat. It reads `players.list` rather than a narrower query of its own, deliberately: that payload
+  > already withholds a creature's name and a reserved character's name, and one list means one place
+  > that filter has to keep applying. See [ADR 0010](0010-the-way-in-and-the-dms-coins.md).
 
 ### Costs and constraints we are accepting
 

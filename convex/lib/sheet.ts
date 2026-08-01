@@ -664,6 +664,49 @@ export const characterGroupValidator = v.union(
 )
 
 /**
+ * WHAT EACH OF THE THREE HEADINGS IS CALLED. The union above, `groupOf`'s `never` arm and
+ * these three words are **one fact**, and this is where the third part of it lives.
+ *
+ * Prose in a Convex module for the reason `ABILITY_NAMES`, `CREATURE_GROUP_CHOICES` and the
+ * two `SheetEntry` label records are: the alternative is one copy per screen, and copies of
+ * a label are labels that can disagree. Nothing here is sent to a player — every group but
+ * `character` is DM-only, and `maySeeCharacter` refused the row long before anybody asked
+ * which heading it went under (see the ⚠️ on `CHARACTER_GROUPS`).
+ *
+ * ⚠️ **A `Record` keyed by the union is what lets a renderer iterate `CHARACTER_GROUPS`
+ * instead of naming three sections in JSX**, which is the formulation CLAUDE.md invariant 9
+ * and ADR 0009 settled on. Three hand-written sections is the arrangement where a fourth
+ * group leaves a character **stored, counted and with no heading to find it under** — or, in
+ * the token editor's rebind select, a creature no coin can be pointed at. A missing key here
+ * fails to compile, and that refusal is the whole of the guard.
+ *
+ * ⚠️ **One record rather than three, which is worth spelling out because it was three.**
+ * `SheetsTab`'s `GROUP_SECTIONS` and `TokenEditPanel`'s `GROUP_LABELS` each held their own
+ * copy of these words keyed by the same union, and both carried the invariant-9 argument
+ * correctly — which is precisely the problem rather than a mitigation of it. Three records
+ * make a fourth group fail to compile in three files, and whichever one is fixed first looks
+ * finished, so the group that arrives is the group that ends up printed under two headings
+ * and missing from a third list. One record is one refusal, at the declaration, and every
+ * screen inherits it.
+ *
+ * (`BestiaryPicker`'s tab strip is **not** a fourth copy and must not be folded in here. Its
+ * four tabs are the corpus's own `all | monster | enemy | social` — a different union that
+ * happens to share one word with this one, over content categories rather than over the DM's
+ * headings.)
+ *
+ * A per-screen sentence about an *empty* group is a different thing and stays on that
+ * screen: `SheetsTab` still owns "No monsters yet — most of them come off the bestiary
+ * shelf", which is about that list in that panel and would be furniture in a module the
+ * browser shares for its arithmetic. The heading is the shared fact; the copy around it
+ * is not.
+ */
+export const CHARACTER_GROUP_LABELS: Record<CharacterGroup, string> = {
+  character: 'Characters',
+  npc: 'NPCs',
+  monster: 'Monsters',
+}
+
+/**
  * What the DM has typed over the top of a premade sheet.
  *
  * Every field optional, and absent is overwhelmingly the common case — this exists

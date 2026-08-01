@@ -1,6 +1,37 @@
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import { JOIN_CODE_LENGTH, normaliseJoinCode } from '@convex/lib/codes'
+import { CODE_ALPHABET, JOIN_CODE_LENGTH, normaliseJoinCode } from '@convex/lib/codes'
+
+/**
+ * Everything a person could type into a code field. Not derived from anything, because
+ * it is not a fact about this application — it is the set of keys on the keyboard that
+ * `CODE_ALPHABET` is a subset of.
+ */
+const TYPEABLE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+
+/**
+ * The characters a real code never contains, listed for a person to read.
+ *
+ * **Derived from `CODE_ALPHABET` rather than written out**, because the sentence is a
+ * restatement of that constant and there is no reason for a second copy of it to
+ * exist. There were two hand-written copies of this line — the dialog's code step and
+ * the *Join with a code* panel, both on the landing page — and a hand-written reading
+ * of a constant is a sentence that stays on the screen after the constant it describes
+ * has changed. `normaliseJoinCode` already drops exactly these characters as they are
+ * typed, so the field and its hint now come from one source.
+ *
+ * A third, longer variant of the same fact lives in `Game.tsx`'s "no such game"
+ * screen; it reads differently on purpose, being a sentence of advice rather than a
+ * field hint, and is left alone.
+ */
+export const CODE_ALPHABET_HINT = alphabetHint()
+
+function alphabetHint(): string {
+  const excluded = [...TYPEABLE].filter((char) => !CODE_ALPHABET.includes(char))
+  // "I, L, O, 0 or 1" — an Oxford-comma-free list, matching the sentence it replaced.
+  const listed = `${excluded.slice(0, -1).join(', ')} or ${excluded.at(-1)}`
+  return `Codes never contain ${listed}.`
+}
 
 type CodeInputProps = {
   value: string

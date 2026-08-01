@@ -33,8 +33,8 @@ export const MAX_TOKENS_PER_GAME = 200
 export const MAX_PLACEMENTS_PER_SCENE = 200
 
 /**
- * The two bounds on a sweep of the `games` table itself — the only read bounds in
- * this file that are not per-game, and the only ones that can genuinely truncate.
+ * The two maintenance bounds on a sweep of the `games` table itself — bounds on the
+ * *deployment* rather than on one game, and the only ones that can genuinely truncate.
  *
  * Everything above bounds a list one table holds a handful of, so none of them is
  * ever reached in practice. These bound the *deployment*, which grows by one game
@@ -51,11 +51,41 @@ export const MAX_PLACEMENTS_PER_SCENE = 200
  * already the largest read anything in this application performs, and five hundred
  * of them would exceed what a single Convex query may read.
  *
- * ⚠️ **Maintenance only.** Nothing a player or a DM calls reads more than one game;
- * see the header of `convex/admin.ts` for why that stays true.
+ * ⚠️ **These two are still maintenance only, and nothing else may borrow them.**
+ * `games.list` is the one player-facing read of more than one game, and it has its
+ * own bound below precisely so that stays true: it reads only the small game
+ * documents and counts nothing, so the expensive property these two exist to bound
+ * — four bounded reads over four tables, per game — belongs to `admin.listByPrefix`
+ * alone. A landing page reaching for `MAX_GAMES_LISTED` because the number looked
+ * about right would inherit a bound sized for a completely different read.
  */
 export const MAX_GAMES_SWEPT = 500
 export const MAX_GAMES_LISTED = 50
+
+/**
+ * How many games the landing page publishes: the third bound on this table, and the
+ * **first one a player's browser can reach**. The other two answer to a CLI run by
+ * somebody holding deploy credentials; this one answers to anybody who loads the site.
+ *
+ * Thirty because truncation costs nothing here. A game that falls off the end is
+ * still joinable by its code — which is exactly why the *Join with a code* panel
+ * stays beside the list rather than being replaced by it — so the list is a
+ * convenience for finding a game you already belong to, not the only door to one.
+ *
+ * That is also why there is **no `truncated` flag, no search and no pagination**,
+ * and the contrast with `admin.listByPrefix` is the whole argument. There the flag
+ * is not decoration: an operator deletes what they were shown, and a purge tool that
+ * silently under-reports looks finished when it is not. Here an under-reporting list
+ * costs a person one extra field to type, and the panel that takes it is already on
+ * the screen. Adding machinery to close that gap would be paying for a problem the
+ * layout already solves.
+ *
+ * ⚠️ Cheap in a way `MAX_GAMES_LISTED` is not, and the two must not be conflated.
+ * That one bounds *counts* — four bounded reads over four tables for every game it
+ * prints. This bounds a scan of small documents and counts nothing at all, which is
+ * what makes a query every idle browser on the landing page subscribes to affordable.
+ */
+export const MAX_GAMES_ON_LANDING = 30
 
 /**
  * Whether the group is still gathering or already on the board, spelled once.
@@ -105,6 +135,49 @@ export function publicGame(game: Doc<'games'>) {
 }
 
 /**
+ * The shape of a game on the landing page, for a caller who has typed nothing.
+ *
+ * Derived with `.omit()` rather than spelled out, for the reason `admin.ts`'s
+ * `purgeCandidateValidator` is: the three DM secrets are absent by construction
+ * there, so they are absent by construction here too, and a fourth secret added to
+ * the `games` table cannot arrive in this payload either.
+ *
+ * ⚠️ **But `.omit()` is a subtractive spec, and here it subtracts across two
+ * different audiences.** `publicGameValidator` says what a caller **holding the join
+ * code** may see. This says what a caller holding **nothing at all** may see — every
+ * browser that loads the site, with no credential of any kind. Subtraction only
+ * guarantees the fields named are gone; a new *non-secret* field added upstream for
+ * the code-holding audience arrives here silently and widens the second one. The
+ * guard for that is the key-set test in `games.test.ts`, which pins
+ * `Object.keys(row).sort()` to exactly five names, and it is **not optional** — it is
+ * the only thing standing between an upstream addition and a wider audience than
+ * anybody chose.
+ *
+ * Field by field, since a projection whose reasoning is not written down is a
+ * projection somebody widens:
+ *
+ * - `code` is **dropped**. A row on the landing page says a game exists; the code is
+ *   still what admits you to it, and printing it beside the name would make the list
+ *   a directory of open doors rather than a list of games.
+ * - `activeSceneId` is **dropped**. A scene id means nothing off the board — there is
+ *   no canvas on this page to point it at, and nothing here can render one.
+ * - `status` is **kept**. "In play" against "in the lobby" is what tells a person
+ *   whether they are late, which is the one thing about a game they want to know
+ *   before opening it.
+ */
+export const publicGameListingValidator = publicGameValidator.omit('code', 'activeSceneId')
+
+export function publicGameListing(game: Doc<'games'>) {
+  return {
+    _id: game._id,
+    _creationTime: game._creationTime,
+    name: game.name,
+    createdByName: game.createdByName,
+    status: gameStatus(game),
+  }
+}
+
+/**
  * The only place the stored `status` is read.
  *
  * The field is optional in the schema because adding a required one to a table
@@ -136,6 +209,30 @@ export async function getGameByCode(ctx: QueryCtx, rawCode: string): Promise<Doc
 }
 
 /**
+ * Does this string authorise the caller as this game's DM? The comparison itself,
+ * with nothing else attached.
+ *
+ * Extracted because three callers need the same answer and only two of them want the
+ * same *shape* around it: `resolveDmAccess` wants it beside the game document,
+ * `requireDm` wants it as a throw, and `games.checkDmCode` wants the bare boolean and
+ * deliberately nothing else. Written out three times, the normalisation and the
+ * compare are three places for a later change — a different normaliser, a longer
+ * code — to be applied twice.
+ *
+ * `normaliseDmCode` and not `normaliseJoinCode`, which is the whole reason the pair
+ * travels together rather than each caller reaching for whichever it remembers: the
+ * join field forgives out-of-alphabet characters, and the check on the app's only
+ * bearer secret must not.
+ *
+ * `undefined` answers `false` rather than being an error, because a player's client
+ * genuinely has no code to send and that is the ordinary case, not a mistake.
+ */
+export function dmCodeMatches(game: Doc<'games'>, rawDmCode: string | undefined): boolean {
+  if (rawDmCode === undefined) return false
+  return secretsMatch(normaliseDmCode(rawDmCode), game.dmCode)
+}
+
+/**
  * The app's only authorisation primitive.
  *
  * A `playerId` argument is routing, not identity, and `players.isDm` is a
@@ -155,8 +252,7 @@ export async function resolveDmAccess(
   dmCode?: string,
 ): Promise<{ game: Doc<'games'>; isDm: boolean }> {
   const game = await getGameByCode(ctx, rawCode)
-  const isDm = dmCode !== undefined && secretsMatch(normaliseDmCode(dmCode), game.dmCode)
-  return { game, isDm }
+  return { game, isDm: dmCodeMatches(game, dmCode) }
 }
 
 /** The demanding form, for the DM-only mutations. */

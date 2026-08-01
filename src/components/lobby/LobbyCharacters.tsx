@@ -24,6 +24,30 @@ type LobbyCharactersProps = {
   playerId: Id<'players'>
   characters: LobbyCharacter[] | undefined
   dm: Dm
+  /**
+   * Called once **this seat's own claim has actually succeeded**, and for nothing else.
+   *
+   * It exists because picking a character up is not the end of the act — a character the
+   * DM made is a blank `pc` sheet, and the race and class that turn it into somebody are
+   * chosen on the Character tab. Somebody has to send the reader there, and the list
+   * cannot: it has no idea it is inside a tab. So the caller says what "done" leads to,
+   * which is `RightPane`'s `setTab('sheet')`.
+   *
+   * ⚠️ **Required, and it was optional.** There is one caller, it always passes one, and
+   * the failure the optionality allowed is the exact bug this callback was shipped to fix:
+   * a wire dropped anywhere along the two hops from `RightPane` would type-check and leave
+   * a player on a list whose job is done, with no idea the race and class are somewhere
+   * else. A hypothetical second caller with nowhere to send anybody can pass a no-op and
+   * say so in one line; the compiler cannot ask about an argument nobody has to give.
+   *
+   * ⚠️ **Success only, and only for a claim.** `useLobbyAction.run` resolves `false` once
+   * the refusal is on screen, so a claim two people fired at once must not move the
+   * reader off the list that is explaining why they lost it. Release, rename and delete
+   * do not fire it either, and neither does the DM's *assign* — that lives in
+   * `LobbyRoster`, acts on somebody else's seat, and would be steering the wrong
+   * browser's tabs even if it could.
+   */
+  onClaimed: () => void
 }
 
 /**
@@ -40,7 +64,13 @@ type LobbyCharactersProps = {
  * they are the two things worth being able to do from the lobby, before anybody has opened
  * the board.
  */
-export function LobbyCharacters({ code, playerId, characters, dm }: LobbyCharactersProps) {
+export function LobbyCharacters({
+  code,
+  playerId,
+  characters,
+  dm,
+  onClaimed,
+}: LobbyCharactersProps) {
   const renameCharacter = useMutation(api.characters.rename)
   const claimCharacter = useMutation(api.characters.claim)
   const releaseCharacter = useMutation(api.characters.release)
@@ -54,10 +84,22 @@ export function LobbyCharacters({ code, playerId, characters, dm }: LobbyCharact
   // than handing it to a presentational component to hand straight back.
   const dmCode = dm.dmCode
 
+  // The boolean `run` already resolves is what gates the callback — the same shape
+  // `RosterDmActions`' `onAssign` hands its dialog so it knows whether to close. Nothing
+  // is inferred from the mutation's own return value: `claim` may be refused for reasons
+  // this browser's last frame could not know about, and `run` is where that lands.
+  //
+  // The boolean is not handed back, unlike the three row actions below: the one call site
+  // is `void claim(character)`, and a resolved value nobody reads is a promise somebody
+  // eventually feels obliged to wire something to.
   const claim = (character: LobbyCharacter) =>
-    action.run(`claim:${character._id}`, `Could not pick up ${character.name}.`, () =>
-      claimCharacter({ code, playerId, characterId: character._id }),
-    )
+    action
+      .run(`claim:${character._id}`, `Could not pick up ${character.name}.`, () =>
+        claimCharacter({ code, playerId, characterId: character._id }),
+      )
+      .then((done) => {
+        if (done) onClaimed()
+      })
 
   const release = (character: LobbyCharacter) =>
     action.run(`release:${character._id}`, `Could not put ${character.name} down.`, () =>
