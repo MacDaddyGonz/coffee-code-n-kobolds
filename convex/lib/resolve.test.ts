@@ -1,16 +1,28 @@
 import { describe, expect, test } from 'vitest'
 
-import { MAX_LIBRARY_LEVEL, SUBCLASS_LEVEL, findClass, type ClassKey } from './classes'
+import {
+  CLASSES,
+  MAX_LIBRARY_LEVEL,
+  SUBCLASS_LEVEL,
+  findClass,
+  type ClassKey,
+} from './classes'
 import { LIBRARY, librarySheet } from './library'
-import { race } from './races'
-import { presetExtras, presetOf, resolveSheet } from './resolve'
+import { RACE_KEYS, race } from './races'
+// Reached from a test file, which `corpusGuard.test.ts` excludes from its sweep on
+// purpose: the confinement rule is about production modules crossing the boundary, and
+// a test that checks `groupOf` against the corpus has to be able to see the corpus.
+import { bestiaryCategoryOf, bestiaryEntry } from './bestiary'
+import { groupOf, presetExtras, presetOf, resolveSheet } from './resolve'
 import {
   MAX_LEVEL,
   MIN_LEVEL,
   SPEED_FEET,
+  categoryOf,
   defaultNpcSheet,
   defaultPcSheet,
   noSkills,
+  rollShapeOf,
   sheetProblem,
   skillProficienciesOf,
   speedOf,
@@ -18,12 +30,14 @@ import {
 } from './sheet'
 import type {
   AbilityScores,
+  NpcSheet,
   PcSheet,
   PresetOverrides,
   PresetSheet,
   SheetEntry,
   StoredSheet,
 } from './sheet'
+import type { ChallengeRating } from './creatures'
 
 // ---------------------------------------------------------------------------
 // Builders
@@ -568,5 +582,419 @@ describe('a preset the store would accept always resolves to a sheet it would ac
       expect(elf.abilities.dex, classKey).toBe((source?.abilities.dex ?? 0) + 2)
       expect(elf.feats.some((e) => e.name === race('elf').traitName), classKey).toBe(true)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The entry taxonomy across the three layers
+//
+// ⚠️ **`category` and `toHit` are optional on a `SheetEntry`, so every assertion
+// here has to be about presence rather than value.** A `withId` that rebuilt an
+// entry field by field instead of spreading it would drop both, and the resolved
+// sheet would still validate, still render and still pass every other test in
+// this file — the lines would simply have quietly reverted to their pre-milestone
+// shape on the way through the resolver.
+// ---------------------------------------------------------------------------
+
+describe('the category survives every layer of resolution', () => {
+  /** The trait `applyRace` mints for every race, whichever race it is. */
+  function traitOf(sheet: PcSheet, key: string): SheetEntry {
+    const found = sheet.feats.find((line) => line.id === `race:${key}`)
+    if (!found) throw new Error(`no trait line for ${key}`)
+    return found
+  }
+
+  /**
+   * **A race trait is a `passive`, and that is the only coherent answer rather
+   * than a choice.** It is built out of `traitName` and `traitText` and has no
+   * roll by construction, so `entriesProblem` would refuse it as anything else. A
+   * race whose trait genuinely rolls something grants a feat or a spell instead,
+   * which is exactly what the Dragonborn's breath weapon already does.
+   *
+   * Asserted for all eight rather than for one, because the trait is minted in a
+   * single place and a regression there is a regression for every character in
+   * every game at once.
+   */
+  test('every race trait resolves to a passive that carries no rolls', () => {
+    for (const key of RACE_KEYS) {
+      const sheet = resolve(preset({ race: key }))
+      const trait = traitOf(sheet, key)
+      const built = trait as unknown as Record<string, unknown>
+      expect(trait.category, key).toBe('passive')
+      expect(trait.roll, key).toBeNull()
+      expect('toHit' in built, `${key} trait carries a to-hit`).toBe(false)
+      expect(trait.name, key).toBe(race(key).traitName)
+    }
+  })
+
+  /** Anti-vacuity: eight races, eight traits, and the lookup really found them. */
+  test('and there is a trait line for every one of the eight', () => {
+    expect(RACE_KEYS.length).toBe(8)
+    const found = RACE_KEYS.map((key) => traitOf(resolve(preset({ race: key })), key).name)
+    expect(new Set(found).size).toBe(RACE_KEYS.length)
+  })
+
+  /**
+   * ⚠️ **The granted entries, which are the ones that could actually lose a
+   * category.** The trait is built inside `applyRace` with `category: 'passive'`
+   * written in the literal, so it cannot be dropped; a granted feat or spell is
+   * declared in `races.ts` and copied through `withId`, which is a spread — and a
+   * spread is exactly what stops being one when somebody "tidies" it into a
+   * field-by-field rebuild.
+   *
+   * Compared against the source entry rather than against a hard-coded string, so
+   * the test says "the category the corpus declared arrived on the sheet" rather
+   * than "the sheet says passive", which would keep passing over a resolver that
+   * had stopped reading the corpus at all.
+   */
+  test('a granted feat or spell keeps the category its race declared', () => {
+    let checked = 0
+    for (const key of RACE_KEYS) {
+      const chosen = race(key)
+      const sheet = resolve(preset({ race: key }))
+      const granted = [
+        ...(chosen.grantedFeats ?? []).map((source) => ({ source, list: sheet.feats })),
+        ...(chosen.grantedSpells ?? []).map((source) => ({ source, list: sheet.spells })),
+      ]
+      for (const { source, list } of granted) {
+        checked += 1
+        const line = list.find((candidate) => candidate.name === source.name)
+        expect(line, `${key}: ${source.name} missing from the resolved sheet`).toBeDefined()
+        const built = line as unknown as Record<string, unknown>
+        expect('category' in built, `${key}: ${source.name} lost its category`).toBe(true)
+        expect(line?.category, `${key}: ${source.name}`).toBe(source.category)
+        expect('toHit' in built, `${key}: ${source.name} to-hit key`).toBe(
+          source.toHit !== undefined,
+        )
+        expect(line?.toHit, `${key}: ${source.name}`).toBe(source.toHit)
+        // And it really came through the race layer, under the race prefix.
+        expect(line?.id.startsWith(`race-${key}:`), `${key}: ${source.name} id ${line?.id}`).toBe(
+          true,
+        )
+      }
+    }
+    // Not vacuous: two races grant entries — the Tiefling a cantrip and the
+    // Dragonborn a breath weapon — and this loop would be empty if either lost it.
+    expect(checked).toBeGreaterThanOrEqual(2)
+  })
+
+  /** The two grants, named, so the loop above is anchored to something concrete. */
+  test('the Dragonborn’s breath weapon is an action and the Tiefling’s cantrip a passive', () => {
+    const dragonborn = resolve(preset({ race: 'dragonborn' }))
+    const breath = dragonborn.feats.find((line) => line.name === 'Breath Weapon')
+    expect(breath?.category).toBe('action')
+    expect(breath?.roll).not.toBeNull()
+    expect('toHit' in (breath as unknown as Record<string, unknown>)).toBe(false)
+
+    const tiefling = resolve(preset({ race: 'tiefling' }))
+    const cantrip = tiefling.spells.find((line) => line.name === 'Thaumaturgy')
+    expect(cantrip?.category).toBe('passive')
+    expect(cantrip?.roll).toBeNull()
+  })
+
+  /**
+   * The library layer, for completeness — `withId` is one function and serves all
+   * three sources, so a rebuild there would take the premade sheets with it. Every
+   * `lib:` line on a resolved sheet has to carry the category its `LibrarySheet`
+   * declared, and a weapon has to arrive with its to-hit intact.
+   */
+  test('a library entry keeps the category and to-hit its sheet declared', () => {
+    const at = { classKey: 'fighter' as ClassKey, subclassKey: 'champion', level: 3 }
+    const found = librarySheet(at.classKey, at.subclassKey, at.level)
+    expect(found, 'the fixture sheet is missing').toBeDefined()
+    const sheet = resolve(preset({ ...at, race: 'human' }))
+
+    let checked = 0
+    for (const source of [...(found?.feats ?? []), ...(found?.spells ?? [])]) {
+      const line = [...sheet.feats, ...sheet.spells].find(
+        (candidate) => candidate.id.startsWith('lib:') && candidate.name === source.name,
+      )
+      expect(line, `${source.name} missing`).toBeDefined()
+      const built = line as unknown as Record<string, unknown>
+      checked += 1
+      expect('category' in built, `${source.name} lost its category`).toBe(true)
+      expect(line?.category, source.name).toBe(source.category)
+      expect('toHit' in built, `${source.name} to-hit key`).toBe(source.toHit !== undefined)
+      expect(line?.toHit, source.name).toBe(source.toHit)
+    }
+    expect(checked).toBeGreaterThan(0)
+    // The Champion at 3 really does have a weapon, so the to-hit half above is
+    // exercised rather than being a loop over passives.
+    expect(
+      [...sheet.feats, ...sheet.spells].some(
+        (line) => line.id.startsWith('lib:') && line.category === 'weapon',
+      ),
+    ).toBe(true)
+  })
+
+  /**
+   * ⚠️ **The DM's own entries are appended unmodified**, which is what makes an
+   * override the last word. `withOverrides` spreads `extraFeats` and `extraSpells`
+   * straight onto the resolved lists — it does not mint an id, does not derive a
+   * category and does not compose a to-hit — so a weapon the DM wrote arrives on
+   * the sheet byte for byte as it was stored.
+   *
+   * Asserted with `toEqual` against the stored object rather than field by field,
+   * so a field the merge starts dropping in future fails here without anybody
+   * having to add it to a list.
+   */
+  test('the DM’s extra entries arrive exactly as they were stored', () => {
+    const weapon = entry({
+      id: 'dm-weapon',
+      name: 'Ancestral Greatsword',
+      text: 'A blade the party found in the barrow.',
+      roll: '2d6+STR',
+      category: 'weapon',
+      toHit: '1d20+STR+PROF',
+    })
+    const declared = entry({
+      id: 'dm-boon',
+      name: 'The Duke’s Favour',
+      text: 'Doors open in the capital.',
+      roll: null,
+      category: 'passive',
+    })
+    const spell = entry({
+      id: 'dm-spell',
+      name: 'Borrowed Fire',
+      text: 'Once a day, from the amulet.',
+      roll: '3d6',
+      level: 2,
+      category: 'action',
+    })
+
+    const sheet = resolve(
+      preset({ overrides: { extraFeats: [weapon, declared], extraSpells: [spell] } }),
+    )
+
+    expect(sheet.feats.find((line) => line.id === 'dm-weapon')).toEqual(weapon)
+    expect(sheet.feats.find((line) => line.id === 'dm-boon')).toEqual(declared)
+    expect(sheet.spells.find((line) => line.id === 'dm-spell')).toEqual(spell)
+
+    // Presence of the keys, separately, because `toEqual` treats an absent key and
+    // a key holding `undefined` as the same thing and Convex does not.
+    const stored = sheet.feats.find((line) => line.id === 'dm-weapon') as unknown as
+      Record<string, unknown>
+    expect('category' in stored).toBe(true)
+    expect('toHit' in stored).toBe(true)
+    const plain = sheet.feats.find((line) => line.id === 'dm-boon') as unknown as
+      Record<string, unknown>
+    expect('toHit' in plain).toBe(false)
+
+    // And the whole sheet is still storable, which is what the arity rule decides.
+    expect(sheetProblem(sheet)).toBeNull()
+  })
+
+  /**
+   * A legacy override entry — neither field — is appended just as unmodified, and
+   * must not acquire a category on the way through. This is the shape a preset
+   * stored before this milestone actually holds.
+   */
+  test('and a pre-milestone extra entry is not given a category on the way through', () => {
+    const legacy: SheetEntry = {
+      id: 'dm-old',
+      name: 'A gift from before',
+      text: 'Stored in Milestone 4.',
+      roll: '1d6',
+      level: null,
+      catalogueKey: null,
+    }
+    expect('category' in (legacy as unknown as Record<string, unknown>)).toBe(false)
+
+    const sheet = resolve(preset({ overrides: { extraFeats: [legacy] } }))
+    const line = sheet.feats.find((candidate) => candidate.id === 'dm-old') as unknown as
+      Record<string, unknown>
+    expect(line).toBeDefined()
+    expect('category' in line).toBe(false)
+    expect('toHit' in line).toBe(false)
+    expect(sheetProblem(sheet)).toBeNull()
+  })
+
+  /**
+   * And the whole resolved sheet satisfies the arity rule at every coordinate the
+   * library covers, for every race — which is the property the three layers have
+   * to hold *jointly*. Each layer is coherent on its own above; this is the one
+   * that would catch a race trait landing on a class whose sheet already used the
+   * id, or an override merged into the wrong list.
+   */
+  test('and every resolved combination satisfies the arity rule', () => {
+    const problems: string[] = []
+    for (const key of RACE_KEYS) {
+      for (const definition of CLASSES) {
+        for (const level of [MIN_LEVEL, SUBCLASS_LEVEL, MAX_LIBRARY_LEVEL]) {
+          const subclassKey = level < SUBCLASS_LEVEL ? null : definition.subclasses[0].key
+          const sheet = resolve(
+            preset({ race: key, classKey: definition.key, subclassKey, level }),
+          )
+          const problem = sheetProblem(sheet)
+          if (problem) {
+            problems.push(`${key}/${definition.key}/${level}: ${problem.path} — ${problem.message}`)
+          }
+          for (const line of [...sheet.feats, ...sheet.spells]) {
+            const shape = rollShapeOf(categoryOf(line))
+            const where = `${key}/${definition.key}/${level} → ${line.name}`
+            if (shape.toHit !== (line.toHit !== undefined)) problems.push(`${where} toHit`)
+            if (shape.roll !== (line.roll !== null)) problems.push(`${where} roll`)
+          }
+        }
+      }
+    }
+    expect(problems).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// groupOf — which of the DM's three headings a character sits under
+// ---------------------------------------------------------------------------
+//
+// ⚠️ **`group` is a *display* discriminator and `kind` is a *secrecy* one, and the whole
+// reason this function is allowed a safe default is that only the DM ever receives a
+// group that is not `'character'`.** A player's payload has had every creature filtered
+// out of it by `maySeeCharacter` before `groupOf` is consulted, so a wrong answer here
+// misfiles a row in the DM's selector and can never leak one. Contrast `isMonsterSheet`,
+// whose default is fail-closed because getting *it* wrong publishes a dragon.
+//
+// That is the argument for the default being safe. It is not an argument for the answers
+// being untested — a creature filed under the wrong heading is a DM who cannot find their
+// own monster — and the four stored kinds do not map onto the three groups in any way a
+// reader can guess, which is what the table below is for.
+
+/**
+ * One key from each of the corpus's three categories.
+ *
+ * ⚠️ **Hand-copied, and each one checked against `bestiaryEntry` before it is used.**
+ * A retired key resolves to `'monster'` through the tolerated-miss path, so a test whose
+ * fixture key had quietly left the corpus would go on passing for two of the three
+ * categories and would be asserting the fallback rather than the lookup. The membership
+ * check is what tells those two apart.
+ */
+const MONSTER_KEY = 'dire-wolf'
+const ENEMY_KEY = 'town-guard'
+const SOCIAL_KEY = 'innkeeper'
+
+function bestiary(entryKey: string, cr: ChallengeRating = 1): StoredSheet {
+  return { kind: 'bestiary', entryKey, cr }
+}
+
+function creature(overrides: Partial<NpcSheet> = {}): NpcSheet {
+  return { ...defaultNpcSheet(), ...overrides }
+}
+
+describe('groupOf places every stored kind under a heading', () => {
+  /**
+   * The two hero kinds and the Milestone 1 document with no sheet at all. A `preset` is a
+   * set of selections over the *player-character* library, so it is a character however
+   * it resolves; a sheet-less row predates NPCs existing, so every one of them is a hero.
+   */
+  test('a hand-built hero, a premade hero and a sheet-less document are all characters', () => {
+    expect(groupOf({ sheet: defaultPcSheet() })).toBe('character')
+    expect(groupOf({ sheet: preset() })).toBe('character')
+    expect(groupOf({})).toBe('character')
+    expect(groupOf({ sheet: undefined })).toBe('character')
+  })
+
+  /**
+   * ⚠️ **A hand-built creature is grouped by what the DM said, and by `'npc'` when they
+   * were never asked.**
+   *
+   * `defaultNpcSheet` deliberately omits the field rather than writing `'npc'` into it,
+   * so absent means *unanswered* rather than *answered npc* — which is what lets the
+   * create dialog put its own answer in without the default having to be spread over
+   * first. Both readings produce the same group today; only one of them survives a form
+   * that sets the field afterwards.
+   */
+  test('a hand-built creature reads its stored group, and defaults to npc without one', () => {
+    expect(groupOf({ sheet: creature({ group: 'monster' }) })).toBe('monster')
+    expect(groupOf({ sheet: creature({ group: 'npc' }) })).toBe('npc')
+
+    const unanswered = creature()
+    expect('group' in unanswered, 'defaultNpcSheet has started writing a group').toBe(false)
+    expect(groupOf({ sheet: unanswered })).toBe('npc')
+  })
+
+  /**
+   * ⚠️ **A linked creature is grouped by the *corpus category of the file its entry came
+   * out of*, which is a fact the character document does not carry at all.**
+   *
+   * The category is declared on the file rather than on the entry, so this is the one
+   * group answer that cannot be read off the row — which is why `groupOf` lives in
+   * `lib/resolve.ts` beside the corpus rather than in `lib/sheet.ts` beside every other
+   * sheet question, and why the client is sent the answer instead of computing it.
+   *
+   * Two of the three categories collapse onto `'monster'`: a town guard is an `enemy` in
+   * the corpus and a monster in the DM's selector, because the selector's three headings
+   * are about how the DM *uses* a creature rather than about which file it was typed
+   * into.
+   */
+  test('a linked creature is grouped by its corpus category, all three of them', () => {
+    const cases: [string, string, 'npc' | 'monster'][] = [
+      [MONSTER_KEY, 'monster', 'monster'],
+      [ENEMY_KEY, 'enemy', 'monster'],
+      [SOCIAL_KEY, 'social', 'npc'],
+    ]
+
+    for (const [key, category, group] of cases) {
+      // Anti-vacuity, both halves: the entry is really in the corpus, and it is really in
+      // the category this case claims. Without these a retired or refiled key would make
+      // the assertion below pass through the fallback.
+      expect(bestiaryEntry(key), `${key} is no longer in the bestiary`).toBeDefined()
+      expect(bestiaryCategoryOf(key), `${key} has moved category`).toBe(category)
+
+      expect(groupOf({ sheet: bestiary(key) }), key).toBe(group)
+    }
+
+    // And the two monster categories genuinely answer the same thing while the social one
+    // does not, which is the distinction the headings exist for.
+    expect(groupOf({ sheet: bestiary(MONSTER_KEY) })).toBe(
+      groupOf({ sheet: bestiary(ENEMY_KEY) }),
+    )
+    expect(groupOf({ sheet: bestiary(SOCIAL_KEY) })).not.toBe(
+      groupOf({ sheet: bestiary(MONSTER_KEY) }),
+    )
+  })
+
+  /**
+   * A retired key groups as a monster rather than throwing, exactly as `resolveBestiary`
+   * keeps a retired creature readable: this runs inside `characters.list`, so a throw
+   * would blank the DM's whole panel over one creature nobody can look up.
+   *
+   * The prototype-chain names are here for `lib/library/index.ts`'s reason — a plain
+   * object lookup answers truthily for `__proto__` and `toString`, and `bestiaryCategoryOf`
+   * is a `Map` precisely so that the whole class of bug is unexpressible.
+   */
+  test('a retired or invented entry key groups as a monster and does not throw', () => {
+    for (const key of ['no-such-beast', 'Dire-Wolf', '__proto__', 'toString', '']) {
+      expect(bestiaryCategoryOf(key), `${key} is somehow in the corpus`).toBeUndefined()
+      expect(groupOf({ sheet: bestiary(key) }), key).toBe('monster')
+    }
+  })
+
+  /**
+   * ⚠️ **The `never` arm, which is the guard rather than a formality.** A fifth stored
+   * kind fails `npm run lint` on the exhaustive switch — that is where a new member is
+   * meant to be caught — and this asserts the runtime half, which is what a deployment
+   * reading a document written by a newer one actually hits.
+   *
+   * `'monster'` is the right answer for the unknown case here for the opposite reason to
+   * `isMonsterSheet`'s: nothing is being guarded, both creature groups are DM-only, so
+   * the default is chosen to keep an unrecognised row *out* of the Characters heading,
+   * where it would be the one place a group answer could look like a hero.
+   */
+  test('a kind this deployment has never heard of groups as a monster', () => {
+    expect(groupOf({ sheet: { kind: 'chimera' } as unknown as StoredSheet })).toBe('monster')
+  })
+
+  /** Every answer is one of the three the validator declares, and all three are reachable. */
+  test('the answers are exactly the three declared groups', () => {
+    const answers = new Set([
+      groupOf({ sheet: defaultPcSheet() }),
+      groupOf({ sheet: preset() }),
+      groupOf({}),
+      groupOf({ sheet: creature() }),
+      groupOf({ sheet: creature({ group: 'monster' }) }),
+      groupOf({ sheet: bestiary(MONSTER_KEY) }),
+      groupOf({ sheet: bestiary(SOCIAL_KEY) }),
+    ])
+    expect([...answers].sort()).toEqual(['character', 'monster', 'npc'])
   })
 })

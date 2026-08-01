@@ -22,6 +22,52 @@
 // deployment accepts the shapes, and that the numbers coming back are ones nobody
 // sent. The library values it compares against are copied by hand for that reason.
 //
+// ⚠️ **Milestone 6 is the largest exposure the silently-dropped-field trap has had.**
+// Two optional fields — `category` and `toHit` — landed on `sheetEntryValidator`, which
+// is the one shape shared by a hero's feats, a hero's spells, a monster's actions and
+// both override diffs: six array positions, all rebuilt field by field by a single
+// `normaliseEntry`. That trap has shipped twice (`skillProficiencies`, then `speed`) and
+// this script is the only thing that has ever caught it, because the dropped value
+// round-trips through a validator that permits it to be absent and so the local suite
+// stays green. Everything the entry sections below assert therefore comes in pairs: an
+// entry sent WITH both fields that must come back with both, and a sibling sent with
+// NEITHER that must come back with neither key present. Absence is a storable state on a
+// real deployment or it is not, and only a real deployment can say.
+//
+// Seats, sheets and control add three more optional stored fields — `NpcSheet.group`,
+// `characters.reserved` and `tokens.controllerIds` — and one of them, `group`, goes
+// through the same field-by-field rebuild the two above did. So sections 23 to 28 are
+// written in the same pairs, and the last three of them are about a second thing only a
+// real deployment settles: a **grant** is a door the DM opens onto this application's
+// headline secret, so what has to be checked is not that it works but that it opens for
+// exactly one seat. Every one of those scans has a positive control beside it, because a
+// scan with nothing to find passes on a deployment that sent nobody anything.
+//
+// Getting to the table adds no stored field at all, and still lands squarely here, because
+// what it adds is **four ways to edit a coin that already exists** and one query a browser
+// may call holding nothing whatsoever. Section 29 is those four writes, and each of them is
+// something the local suite cannot be asked:
+//
+//   - `setArt` **destroys a blob**, and convex-test's file storage is an in-memory stub
+//     keyed on the content hash — so the same seventy-byte PNG uploaded twice is *one*
+//     entry there, and a swap that deleted the wrong blob, or the right one twice, or
+//     neither, all look identical. There are no signed URLs to stop resolving either, and
+//     "that bearer link is dead now" is the whole claim.
+//   - `updateToken` is the **Milestone 1 bug on a third field**: a lone surrogate in a
+//     token's name is refused by Convex's own *argument* validation, before any handler
+//     runs, which is precisely the mechanism this script exists to reach.
+//   - `setCharacter` clears a binding with `null`, and `undefined` is not a Convex value —
+//     so whether *none* comes back as a present key or as no key is a real round trip's
+//     question. Beside it, `controllerIds` changes with nothing written to the token.
+//   - `games:list` reads **every game in the deployment**. Locally that is a two-row
+//     fixture; here it is seventy-odd real games, and the row being looked for was inserted
+//     by this run.
+//
+// It also **removes a workaround rather than adding a section**. Section 28 used to add a
+// second coin because no mutation re-layered one; `board.setLayer` exists now, so one coin
+// is driven dm → player → dm and ADR 0009's "asserted in both places" is the same round
+// trip in both places for the first time.
+//
 //   node scripts/board-smoke.mjs
 //
 // Plain .mjs on purpose: no tsx, no new dependency, nothing to install.
@@ -61,9 +107,13 @@ const CATALOGUE = {
   fireBolt: {
     key: 'fire-bolt',
     name: 'Fire Bolt',
-    text: 'A mote of fire hurled at one target within 120 feet. Make a ranged spell attack; on a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
+    text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
     roll: '1d10',
     level: 0,
+    // A spell that has to land before it burns anything, which is the shape a single
+    // `roll` could not express and the reason `toHit` exists.
+    category: 'weapon',
+    toHit: '1d20+INT+PROF',
   },
   cureWounds: {
     key: 'cure-wounds',
@@ -71,6 +121,7 @@ const CATALOGUE = {
     text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
     roll: '2d8+WIS',
     level: 1,
+    category: 'action',
   },
   fireball: {
     key: 'fireball',
@@ -78,6 +129,7 @@ const CATALOGUE = {
     text: 'A roaring sphere of flame fills a 20-foot radius around a point within 150 feet, going round corners to do it. Each creature there takes the damage, halved on a successful Dexterity saving throw. Another 1d6 per slot level above 3rd.',
     roll: '8d6',
     level: 3,
+    category: 'action',
   },
   secondWind: {
     key: 'second-wind',
@@ -85,6 +137,7 @@ const CATALOGUE = {
     text: 'A bonus action, once per rest, to catch your breath and regain hit points. Add your fighter level to the die.',
     roll: '1d10',
     level: null,
+    category: 'action',
   },
   actionSurge: {
     key: 'action-surge',
@@ -92,13 +145,21 @@ const CATALOGUE = {
     text: 'Once per rest, take one extra action on your turn — a whole second action, not a bonus action.',
     roll: null,
     level: null,
+    category: 'passive',
   },
+  // ⚠️ **The `+6 to hit` clause is gone from the prose and the number now lives in
+  // `toHit`.** Recopied by hand from lib/rules.ts, along with the six other NPC weapons
+  // that had the identical clause removed. A stale copy here would fail this script over
+  // a change that was correct, and a smoke test that cries wolf is one the group learns
+  // to ignore — which costs more than the coverage it was protecting.
   greatclub: {
     key: 'npc-greatclub',
     name: 'Greatclub',
-    text: 'Melee attack, +6 to hit, reach 5 feet, bludgeoning damage — an ogre with a tree trunk, and enough to fell a first-level character outright.',
+    text: 'Melee attack, reach 5 feet, bludgeoning damage — an ogre with a tree trunk, and enough to fell a first-level character outright.',
     roll: '2d8+3',
     level: null,
+    category: 'weapon',
+    toHit: '1d20+6',
   },
   multiattack: {
     key: 'npc-multiattack',
@@ -106,10 +167,20 @@ const CATALOGUE = {
     text: 'The creature takes two of its attacks on its turn instead of one. Roll each of them separately from its other entries.',
     roll: null,
     level: null,
+    category: 'passive',
   },
 }
 
-/** A catalogue entry copied onto a sheet, which is what the picker does: a copy, never a pointer. */
+/**
+ * A catalogue entry copied onto a sheet, which is what the picker does: a copy, never a
+ * pointer.
+ *
+ * `toHit` is spread conditionally rather than written as `undefined`, because
+ * `undefined` is not a Convex value: naming the key and handing it that is a different
+ * write from omitting the key, and only the second is what "this line does not roll to
+ * hit" means. Getting this wrong here would make the key-absence checks below assert
+ * nothing.
+ */
 function entryFrom(catalogue, id) {
   return {
     id,
@@ -118,10 +189,19 @@ function entryFrom(catalogue, id) {
     roll: catalogue.roll,
     level: catalogue.level,
     catalogueKey: catalogue.key,
+    category: catalogue.category,
+    ...(catalogue.toHit === undefined ? {} : { toHit: catalogue.toHit }),
   }
 }
 
-/** A hand-typed entry, filled in by the caller. Everything the picker does not supply. */
+/**
+ * A hand-typed entry, filled in by the caller. Everything the picker does not supply.
+ *
+ * ⚠️ **It deliberately supplies no `category`**, so an entry built by it is shaped
+ * exactly like one written before Milestone 6 — which is the state every sheet in every
+ * existing game is in, and the state this script has to prove a real deployment can
+ * store. A caller that wants a category names one; the default is the legacy shape.
+ */
 function customEntry(fields) {
   return { roll: null, level: null, catalogueKey: null, ...fields }
 }
@@ -135,6 +215,15 @@ function customEntry(fields) {
  * collapsed into one. Already normalised — no stray whitespace, rolls in the casing
  * `normaliseRoll` produces — so anything the deployment changes is a real change
  * rather than the server tidying up after us.
+ *
+ * ⚠️ **The feat list is now one of each category and one entry with no category at
+ * all**, and the pairing is the whole design rather than variety for its own sake.
+ * `firstDifference` reports `present on one side only`, so a `category` or a `toHit`
+ * dropped by a field-by-field rebuild fails by name against the three that carry them —
+ * and `feat-aether-bolt`, which carries neither, is what proves *absence* survives the
+ * round trip rather than being filled in. Neither half means anything without the
+ * other: the first passes on a deployment that materialised a category for everything,
+ * the second on one that discarded every new field it was sent.
  */
 const PC_NAME = 'Sköll Emberkin 🎲'
 const PC_SHEET = {
@@ -149,12 +238,49 @@ const PC_SHEET = {
   feats: [
     entryFrom(CATALOGUE.secondWind, 'feat-second-wind'),
     entryFrom(CATALOGUE.actionSurge, 'feat-action-surge'),
+    // THE NEGATIVE. Neither new field, exactly as every entry written before
+    // Milestone 6 is, and the one this script asserts comes back with neither key
+    // present. See `LEGACY_FEAT_ID` and the check in section 6.
     customEntry({
       id: 'feat-aether-bolt',
       name: 'Æther Bolt 🜁🔥',
       text: 'Éclair d’æther — 2d8 de dégâts radiants, et la cible brille. ✨ 火 🐉',
       roll: '2d8+CHA',
     }),
+    // THE POSITIVE CONTROL, and the hand-written weapon. Two rolls: one to land it and
+    // one for what it does. Written out in full rather than built by a helper, because
+    // a fixture derived from the code under test would agree with a mangled rebuild as
+    // readily as with a correct one.
+    {
+      id: 'feat-runeblade',
+      name: 'Runeblade of the Ember Skald',
+      text: 'A two-handed blade cut with fire runes. Swung with Strength, and the runes take light on a hit.',
+      roll: '2d6+STR',
+      level: null,
+      catalogueKey: null,
+      category: 'weapon',
+      toHit: '1d20+STR+PROF',
+    },
+    // The hand-written action: one roll, no to-hit, and it simply goes off.
+    {
+      id: 'feat-verse-of-mending',
+      name: 'Verse of Mending',
+      text: 'A sung stanza that closes a wound on an ally within thirty feet. Nothing is aimed and nothing is resisted.',
+      roll: '1d8+CHA',
+      level: null,
+      catalogueKey: null,
+      category: 'action',
+    },
+    // The hand-written passive: declared, not rolled.
+    {
+      id: 'feat-stone-stance',
+      name: 'Stone Stance',
+      text: 'Set your feet and you are not moved against your will while you hold the ground you are standing on.',
+      roll: null,
+      level: null,
+      catalogueKey: null,
+      category: 'passive',
+    },
   ],
   spells: [
     entryFrom(CATALOGUE.fireBolt, 'spell-fire-bolt'),
@@ -224,6 +350,22 @@ const ROGUE = {
     maxHp: 10,
     hitDice: { count: 1, faces: 8 },
     featCount: 5,
+    /**
+     * The Rogue's first weapon, copied by hand out of `convex/lib/library/rogue.ts`.
+     *
+     * ⚠️ **This is the only thing that proves the library's new field survives the two
+     * copies resolution makes of every entry** — `withId`'s spread in lib/resolve.ts,
+     * and the race overlay's rebuild of the feat list on top of it. A `toHit` dropped
+     * by either would leave a weapon on a hero's sheet that announces an attack and
+     * has nothing to roll for it, and no other check in this script would notice: the
+     * feat *count* would still be right.
+     *
+     * `1d20+DEX+PROF` and not `1d20+STR+PROF`, which is the detail that makes it worth
+     * copying rather than deriving. A rapier is a finesse weapon aimed with Dexterity,
+     * and `DEX` is the one modifier token containing a `D` — the token `normaliseRoll`
+     * has already destroyed once.
+     */
+    weapon: { name: 'Rapier', roll: '1d8+DEX', toHit: '1d20+DEX+PROF' },
   },
   thief2: { maxHp: 17, hitDice: { count: 2, faces: 8 }, featCount: 7 },
   thief3: { maxHp: 24, hitDice: { count: 3, faces: 8 }, featCount: 7 },
@@ -270,6 +412,28 @@ function presetSheet(fields) {
  * its deviation from its row is preserved. The four d20 columns are **deltas**, because
  * 1.23× of an armour class is not a statement about anything. Mixing the two up is the
  * single easiest way to get a scaler wrong, so both kinds are worked out separately below.
+ *
+ * ⚠️ **`toHit` IS WORKED FROM `atk` AS A DELTA, AND THE WORKING IS WRITTEN OUT** — because
+ * reading it as a ratio gives three plausible-looking numbers that are all wrong, and a
+ * fixture derived from `toHitFromBonus` would agree with a broken composition exactly as
+ * readily as with a correct one.
+ *
+ *   The Dire Wolf is written at CR 1 with an attack bonus of 4. The benchmark `atk` at
+ *   CR 1 is 4, so its deviation from its own row is 4 − 4 = 0, and the scaled bonus at
+ *   any rating is that row's `atk` plus 0:
+ *
+ *     CR 1 → 4 + (4 − 4) = 4   → `1d20+4`
+ *     CR 4 → 6 + (4 − 4) = 6   → `1d20+6`
+ *     CR 6 → 7 + (4 − 4) = 7   → `1d20+7`
+ *
+ *   As a ratio it would have been 4 × 6/4 = 6 at CR 4 — which coincides — and
+ *   4 × 7/4 = 7 at CR 6, which also coincides, *because this creature sits exactly on its
+ *   row*. That coincidence is the trap: the two readings agree on every number here and
+ *   would diverge on any creature with a deviation, so the arithmetic above is the one
+ *   that is actually being asserted and it is written out so nobody re-derives it the
+ *   other way. The `attackBonus` figures in the three statlines below are the same three
+ *   numbers and have been since Milestone 5 — the to-hit is that bonus spelled as a roll,
+ *   which is exactly the claim `toHitFromBonus` makes and exactly what is checked.
  */
 const WOLF = {
   key: 'dire-wolf',
@@ -287,6 +451,12 @@ const WOLF = {
     speed: 50,
     skills: { perception: 3, stealth: 4 },
     damage: '2d6+3',
+    toHit: '1d20+4',
+    // Every attack in the corpus is a weapon by construction — the entry separates
+    // `attacks` from `abilities`, and an attack is the thing that has to land before its
+    // damage applies. Asserted rather than assumed, because it is read off the structure
+    // rather than declared on a hundred and fifty-nine hand-written attacks.
+    category: 'weapon',
   },
   /** 31 × 70/26 = 83.46… → 83, and +2 on every d20 column. Damage 16/8 = 2.0× exactly. */
   atCr4: {
@@ -298,6 +468,8 @@ const WOLF = {
     speed: 50,
     skills: { perception: 5, stealth: 6 },
     damage: '4d6+6',
+    toHit: '1d20+6',
+    category: 'weapon',
   },
   /** 31 × 120/26 = 143.07… → 143, and +3 on every d20 column. Damage 25/8 = 3.125×. */
   atCr6: {
@@ -309,6 +481,8 @@ const WOLF = {
     speed: 50,
     skills: { perception: 6, stealth: 7 },
     damage: '6d6+10',
+    toHit: '1d20+7',
+    category: 'weapon',
   },
   /** The composed opening of the resolved Bite at each rating, from `attackText`. */
   biteAtCr1: 'Melee. 2d6+3 piercing damage.',
@@ -336,8 +510,136 @@ const INNKEEPER = {
     'Three of her regulars have been paying in thin old silver of the Verrow mint, coin nobody has struck in four generations, and all three of them work the deep shift at the Hallow Delve. She keeps a jar of it under the bar and has told nobody, because the Ledger House in Greyhallow would want to know where it came from and so would the revenue.',
 }
 
-/** The DM's thumb on a creature, in the one field section 19 overrides. */
+/** The DM's thumb on a creature, in the two fields section 19 overrides. */
 const DM_CREATURE_ARMOUR_CLASS = 25
+/**
+ * ⚠️ **The second override, and the one this script exists for.**
+ *
+ * A creature carries **one** `attackBonus` for the whole of itself and every attack's
+ * to-hit is composed *from* it, so the two are one number spelled twice — and a merge
+ * that patches the field while the composition has already happened gives a sheet
+ * reading +12 whose every weapon rolls +7. Nothing on screen looks wrong enough to
+ * investigate: both readings come back on the same payload, from the same query, and the
+ * DM sees a consistent-looking creature that hits eight points softer than its own
+ * statline says.
+ *
+ * 12 rather than a round number for the reason 271 and 137 are what they are: it cannot
+ * be produced by coincidence out of the benchmark table, whose `atk` column runs 4, 6, 7.
+ */
+const DM_CREATURE_ATTACK_BONUS = 12
+const DM_CREATURE_TO_HIT = '1d20+12'
+
+/**
+ * MILESTONE 7'S FIXTURES. Three new stored fields, and every one of them optional.
+ *
+ * `NpcSheet.group`, `characters.reserved` and `tokens.controllerIds` are the sixth,
+ * seventh and eighth optional fields this schema has grown, for the reason all the
+ * others were: a required field cannot be added to a populated table in one push. That
+ * makes all three the exact shape this script exists for — a field a validator permits
+ * to be absent, dropped by a rebuild, written happily by convex-test and silently
+ * discarded by nothing anybody would notice.
+ *
+ * ⚠️ **`group` is the one to watch**, because it is the only one of the three that goes
+ * through a field-by-field rebuild: `normaliseSheet` reconstructs an `NpcSheet` field by
+ * field and carries this one by conditional spread. That is the fifth outing of the trap
+ * that shipped `skillProficiencies` and then `speed`, and this script is the only thing
+ * that has ever caught it. So section 23 sends a creature **with** the field and a
+ * sibling **without** it, and neither half means anything alone: the first passes on a
+ * deployment that materialised a group for everything, the second on one that discarded
+ * every new field it was sent. ADR 0008 § "Two things found by building it" is where that
+ * lesson is written down.
+ *
+ * The two creatures are also the fixtures for the grant sections. 293 and 157 are chosen
+ * to be searchable, for the reason 271 and 137 are: a scan of a player's payload for `45`
+ * would match half the ids in it, so a leaked hit point has to be a number a coincidence
+ * is unlikely to produce.
+ */
+const GRANTED_NAME = 'Bell of the Ninth Arch 🐕'
+const GRANTED_MAX_HP = 293
+const GRANTED_CURRENT_HP = 157
+/** DM-only prose on a DM-only sheet, scanned for alongside the two numbers. */
+const GRANTED_NOTES =
+  'Answers to whoever is holding the lead, and to the smell of the deep shift coming off a coat. 🐕'
+const GRANTED_SHEET = {
+  kind: 'npc',
+  armourClass: 15,
+  maxHp: GRANTED_MAX_HP,
+  initiativeBonus: 3,
+  actions: [entryFrom(CATALOGUE.greatclub, 'npc-greatclub')],
+  notes: GRANTED_NOTES,
+  // THE POSITIVE HALF OF THE PAIR. A hand-built creature has no corpus to derive a
+  // heading from, so the dialog asks and the answer is stored — which is the only
+  // reason this field exists at all.
+  group: 'monster',
+}
+
+/**
+ * THE NEGATIVE HALF, and the creature the DM-layer section hides.
+ *
+ * ⚠️ **It deliberately carries no `group` key**, so it is shaped exactly like every
+ * creature typed in before this milestone — which is the state every hand-built NPC in
+ * every existing game is in, and the state a real deployment has to prove it can store.
+ * `defaultNpcSheet` omits the field for the same reason, and `groupOf` reads the absence
+ * as `'npc'` in one place.
+ */
+const AMBUSH_NAME = 'Thing Beneath the Third Arch'
+const AMBUSH_MAX_HP = 181
+const AMBUSH_SHEET = {
+  kind: 'npc',
+  armourClass: 16,
+  maxHp: AMBUSH_MAX_HP,
+  initiativeBonus: 1,
+  actions: [],
+  notes: 'Does not surface while the ford is busy. Waits for one of them to come back alone.',
+}
+
+/** The hero the DM sets aside for a player who has not arrived. Section 25's fixture. */
+const RESERVED_NAME = 'Vaan of the Long Stride'
+
+/**
+ * MILESTONE 8'S FIXTURES. No new stored field, and a new kind of exposure anyway.
+ *
+ * The DM's Tokens tab is four mutations that edit a coin after it exists, and the two
+ * constants below are both about the one of them that takes a string.
+ *
+ * `MAX_TOKEN_NAME_LENGTH` is copied by hand out of `convex/lib/codes.ts`, where it is
+ * `MAX_CHARACTER_NAME_LENGTH` — a token borrows the character-name limit rather than
+ * inventing a fourth one, which is `requireTokenAppearance`'s stated position. Copied for
+ * the reason every other number in this file is copied: a fixture derived from the code
+ * under test agrees with a mangled limit exactly as readily as with a correct one.
+ *
+ * ⚠️ **`EDITED_TOKEN_NAME` is exactly forty UTF-16 code units and thirty-five code
+ * points, and the gap between those two numbers is the whole point.** `requireText`
+ * measures `value.length`, which counts code units, deliberately, so that it agrees with
+ * the `maxLength` the browser applies — so a name at the limit made of astral characters
+ * is a name sitting on the boundary in one counting and well inside it in the other. Five
+ * surrogate pairs is where a server that measured code points would accept fifty units, and
+ * where a client that cut to length with `slice` would leave the lone surrogate this whole
+ * script exists for. The length is asserted at the check rather than trusted, because an
+ * innocent edit to the string is exactly how a boundary test stops being one.
+ *
+ * The tint is uppercase on purpose. `TINT_PATTERN` is case-insensitive and nothing
+ * normalises the case, so `#A1B2C3` has to come back as `#A1B2C3` — a deployment or a
+ * writer that helpfully lowercased it would be changing a value the DM chose, and
+ * `firstDifference` names that rather than shrugging at it.
+ */
+const MAX_TOKEN_NAME_LENGTH = 40
+const EDITED_TOKEN_NAME = 'Wyrmshadow 🐉🐉 of the Ninth Arch 🎲🐺🔥'
+const EDITED_TOKEN_TINT = '#A1B2C3'
+/** The top of `isUsableTokenSize`'s range, so the round trip is over a bound rather than a 2. */
+const EDITED_TOKEN_SIZE = 8
+
+/** The name on the DM's own seat, and the `createdByName` the landing page prints. */
+const SMOKE_DM_NAME = 'Smoke DM'
+
+/**
+ * A join code for a game that does not exist, for `games:checkDmCode`'s third answer.
+ *
+ * Six characters of the join alphabet, so it is refused for being unknown rather than for
+ * being malformed — the interesting case is a well-formed code that opens nothing, which is
+ * what a person mistyping one produces.
+ */
+const UNKNOWN_JOIN_CODE = 'ZZZZZZ'
 
 /**
  * The eight numbers a rating shift moves, pulled off a resolved sheet in one shape so
@@ -346,8 +648,16 @@ const DM_CREATURE_ARMOUR_CLASS = 25
  * `damage` is read off the first action's `roll` rather than its `text`, because the roll
  * is what Milestone 6 will aim dice at and the text is the sentence a person reads. Both
  * are asserted; only one of them is a value.
+ *
+ * ⚠️ **`toHit` and `category` travel here rather than being checked on their own**, so a
+ * change to either is *named* by `firstDifference` — `statline.toHit: stored "1d20+7",
+ * wanted "1d20+12"` — instead of collapsing into a boolean that says a shift went wrong
+ * somewhere. That naming is the whole reason a statline object exists at all, and the
+ * to-hit is now the number in it most likely to move on its own: it is the only one
+ * derived from another field rather than scaled from a benchmark row.
  */
 function statlineOf(sheet) {
+  const first = sheet.actions[0]
   return {
     maxHp: sheet.maxHp,
     armourClass: sheet.armourClass,
@@ -356,7 +666,9 @@ function statlineOf(sheet) {
     passivePerception: sheet.passivePerception,
     speed: sheet.speed,
     skills: sheet.skills,
-    damage: sheet.actions[0] && sheet.actions[0].roll,
+    damage: first && first.roll,
+    toHit: first && first.toHit,
+    category: first && first.category,
   }
 }
 
@@ -530,14 +842,37 @@ async function main() {
 
   const created = []
   const createdCharacters = []
+  // Three more things this run makes that are *about somebody else's screen*, so each is
+  // undone on the way out on its own rather than left to disappear with the token or the
+  // character it hangs off. Every `quietly` step reports its own failure and the ones
+  // after it still run, which is exactly why a run that fails halfway must not depend on
+  // a later step to leave the game tidy.
+  const grantedTokens = []
+  const reservedCharacters = []
+  const seats = []
+  // ⚠️ **Every blob this run POSTs, whether or not anything ever adopted it.** The four
+  // registries above are all *rows*, and a row is reclaimed by the mutation that deletes the
+  // thing it hangs off — `scenes:remove` takes the map's bytes with it and
+  // `board:removeToken` takes the coin's. Section 29 breaks that arrangement, because an art
+  // swap is the first operation here that can leave bytes in storage with **no row pointing
+  // at them at all**: a run that fails between `uploadPng` and `board:setArt` has uploaded a
+  // file nothing in the application will ever mention again, and nothing else in this
+  // cleanup path could find it. So the ids are collected as they are minted rather than
+  // where they are used, and swept last — see the loop in `finally` for why the order
+  // matters and why sweeping the whole list is safe.
+  const uploads = []
   let code = null
   let dmCode = null
   let sceneId = null
 
   try {
+    // Named rather than inlined, because section 29 looks this string up in `games:list` —
+    // and two literals of the same name is one place for a scan to quietly start matching
+    // nothing, which is the care section 13 takes over `RESERVED_NAME`.
+    const gameName = `Board Smoke ${new Date().toISOString()}`
     const game = await client.mutation('games:create', {
-      name: `Board Smoke ${new Date().toISOString()}`,
-      dmName: 'Smoke DM',
+      name: gameName,
+      dmName: SMOKE_DM_NAME,
       recoveryPhrase: 'brass lantern smoke',
     })
     code = game.code
@@ -546,6 +881,7 @@ async function main() {
 
     // 1. A real upload URL, a real POST, real bytes in real storage.
     const imageId = await uploadPng(client, code, dmCode)
+    uploads.push(imageId)
     check('files:generateUploadUrl accepted a POST and returned a storageId', Boolean(imageId))
 
     const scene = await client.mutation('scenes:create', {
@@ -582,7 +918,9 @@ async function main() {
 
     // 3. One token on each layer, both with art of their own.
     const openArt = await uploadPng(client, code, dmCode)
+    uploads.push(openArt)
     const secretArt = await uploadPng(client, code, dmCode)
+    uploads.push(secretArt)
 
     const open = await client.mutation('board:addToken', {
       code,
@@ -675,8 +1013,17 @@ async function main() {
 
     // 6. Milestone 3's sheets. A nested discriminated union in an optional field,
     // through the real value validation, with real prose in it.
+    //
+    // ⚠️ **The DM code on this call is a deliberate change and not a tidy-up.** Creating
+    // a hero used to be ungated — the ternary in `characters.create` sent a `pc` straight
+    // to `getGameByCode` — and there is now no un-gated branch at all: a hero, a
+    // hand-built creature and one off the bestiary shelf arrive through one gate. Every
+    // `characters:create` below therefore sends it, including the ones whose *point* is
+    // some other refusal, or they would be refused as `NotDm` and prove nothing about the
+    // bound they were written for.
     const pc = await client.mutation('characters:create', {
       code,
+      dmCode,
       name: PC_NAME,
       sheet: PC_SHEET,
     })
@@ -684,7 +1031,13 @@ async function main() {
     check(
       'characters:create stored a player character with a full sheet',
       Boolean(pc.characterId),
-      'no DM code — any player may add a hero (ADR 0002)',
+      'the DM code is now required on every path, heroes included',
+    )
+    // The other half of that change, asserted rather than assumed. Characters still
+    // belong to the game rather than to whoever typed them in (ADR 0002); what moved is
+    // who does the typing, and a player's route to a character is `claim`.
+    await refuses('characters:create refused a hero without the DM code', () =>
+      client.mutation('characters:create', { code, name: 'Uninvited Hero', sheet: PC_SHEET }),
     )
 
     const storedPc = await client.query('characters:sheet', {
@@ -699,17 +1052,84 @@ async function main() {
       drift ?? `name ${JSON.stringify(storedPc.name)}`,
     )
 
+    // ⚠️ **ABSENCE, ASSERTED AS ABSENCE.** `firstDifference` above already reports a
+    // dropped field as `present on one side only`, which covers the three entries that
+    // carry a category. What it cannot do on its own is tell a deployment that stores
+    // an omitted optional field as omitted from one that helpfully materialises it —
+    // both sides would have to differ for that to show, and a materialised `category`
+    // on an entry the fixture sent without one *does* differ, but only if the fixture
+    // is right about which entry is which. So the two are pulled out by id and asserted
+    // directly, on the KEY rather than on the value: `entry.toHit === undefined` is true
+    // of a stored empty string as well, and an empty string is not how absence is said.
+    //
+    // This is the half of the pair convex-test cannot answer at all. `undefined` is not
+    // a Convex value, so whether the client library drops the key, the deployment
+    // refuses the write, or the field comes back as `null` is a question only a real
+    // round trip settles.
+    const storedFeats = storedPc && storedPc.sheet.feats ? storedPc.sheet.feats : []
+    const legacyFeat = storedFeats.find((entry) => entry.id === 'feat-aether-bolt')
+    const weaponFeat = storedFeats.find((entry) => entry.id === 'feat-runeblade')
+    check(
+      'an entry sent with neither new field came back with neither key present',
+      legacyFeat && !('category' in legacyFeat) && !('toHit' in legacyFeat),
+      legacyFeat ? `keys: ${Object.keys(legacyFeat).sort().join(', ')}` : 'no legacy feat came back',
+    )
+    check(
+      'its sibling, sent with both, came back with both',
+      weaponFeat &&
+        weaponFeat.category === 'weapon' &&
+        weaponFeat.toHit === '1d20+STR+PROF' &&
+        weaponFeat.roll === '2d6+STR',
+      weaponFeat
+        ? `positive control — without it the check above passes on a deployment that discarded everything; got ${JSON.stringify(weaponFeat.category)} / ${JSON.stringify(weaponFeat.toHit)}`
+        : 'no weapon feat came back',
+    )
+    check(
+      'the action and the passive kept their categories and neither grew a to-hit',
+      storedFeats.some(
+        (entry) =>
+          entry.id === 'feat-verse-of-mending' &&
+          entry.category === 'action' &&
+          !('toHit' in entry),
+      ) &&
+        storedFeats.some(
+          (entry) =>
+            entry.id === 'feat-stone-stance' &&
+            entry.category === 'passive' &&
+            entry.roll === null &&
+            !('toHit' in entry),
+        ),
+      `${storedFeats.length} feats, categories ${JSON.stringify(storedFeats.map((entry) => entry.category ?? null))}`,
+    )
+
     // 7. The forty-entry cap, which is the largest thing this application asks a
     // document to hold. Convex has opinions about document size and nesting depth
     // that convex-test does not, and eighty objects inside a union inside an
     // optional field is where they would first be heard.
+    // Every filler carries a category and alternate ones carry a to-hit as well, so the
+    // deployment is asked to store eighty entries each two fields wider than the shape
+    // that fitted before — which is the point of the section. Nesting depth and document
+    // size are things Convex has opinions about and convex-test has none, and a list at
+    // its cap is where a rounding error in either would first be heard.
     const filler = (prefix, index) =>
-      customEntry({
-        id: `${prefix}-${index}`,
-        name: `${prefix} ${index}`,
-        text: 'Filler, so the deployment is asked to store a list at its cap.',
-        roll: index % 2 === 0 ? '1d6+2' : null,
-      })
+      customEntry(
+        index % 2 === 0
+          ? {
+              id: `${prefix}-${index}`,
+              name: `${prefix} ${index}`,
+              text: 'Filler, so the deployment is asked to store a list at its cap.',
+              roll: '1d6+2',
+              category: 'weapon',
+              toHit: '1d20+3',
+            }
+          : {
+              id: `${prefix}-${index}`,
+              name: `${prefix} ${index}`,
+              text: 'Filler, so the deployment is asked to store a list at its cap.',
+              roll: null,
+              category: 'passive',
+            },
+      )
     const cappedFeats = Array.from({ length: 40 }, (_, index) => filler('feat', index))
     const cappedSpells = Array.from({ length: 40 }, (_, index) => filler('spell', index))
     const cappedSheet = { ...PC_SHEET, feats: cappedFeats, spells: cappedSpells }
@@ -729,6 +1149,20 @@ async function main() {
       'characters:updateSheet stored forty feats and forty spells',
       cappedBack && cappedBack.sheet.feats.length === 40 && cappedBack.sheet.spells.length === 40,
       cappedBack ? `${cappedBack.sheet.feats.length} + ${cappedBack.sheet.spells.length}` : 'no sheet',
+    )
+    // And that the two extra fields survived at the cap rather than only in a list of
+    // three. A document-size or nesting limit would not fail the length check above —
+    // the write would simply have been refused, or a field quietly lost.
+    const cappedEntries = cappedBack
+      ? [...cappedBack.sheet.feats, ...cappedBack.sheet.spells]
+      : []
+    check(
+      'every one of the eighty came back two fields wider, half of them with a to-hit',
+      cappedEntries.length === 80 &&
+        cappedEntries.every((entry) => entry.category === 'weapon' || entry.category === 'passive') &&
+        cappedEntries.filter((entry) => entry.toHit === '1d20+3').length === 40 &&
+        cappedEntries.filter((entry) => !('toHit' in entry)).length === 40,
+      `${cappedEntries.filter((entry) => 'toHit' in entry).length} of ${cappedEntries.length} carry a to-hit`,
     )
     await refuses('the deployment refused a forty-first entry', () =>
       client.mutation('characters:updateSheet', {
@@ -972,6 +1406,97 @@ async function main() {
         },
       }),
     )
+    // ⚠️ **THE ARITY RULE AND THE LITERAL UNION, AGAINST THE REAL BOUNDARY.** Every
+    // one of the six below is a value convex-test would store without a word: `'trap'`
+    // is an ordinary string, `'1d7'` is an ordinary string, and an entry carrying a
+    // field its category does not admit is a perfectly well-typed object. Two different
+    // mechanisms refuse them and it matters which is which — the first is Convex's own
+    // argument validation refusing a member that is not in `sheetEntryCategoryValidator`,
+    // which is the only thing that demonstrates the literal union actually reached the
+    // deployment rather than merely being written down; the other five are
+    // `entriesProblem` running server-side on a normalised sheet.
+    const badEntrySheets = [
+      [
+        'a category that is not one of the three',
+        customEntry({
+          id: 'feat-trap',
+          name: 'Pit Trap',
+          text: 'A fourth category nobody declared.',
+          roll: '1d6',
+          category: 'trap',
+        }),
+      ],
+      [
+        'a to-hit on a die nobody owns',
+        customEntry({
+          id: 'feat-d7',
+          name: 'Sevenfold Blade',
+          text: 'Aimed with a die that does not exist.',
+          roll: '1d6',
+          category: 'weapon',
+          toHit: '1d7',
+        }),
+      ],
+      [
+        'a passive carrying a roll',
+        customEntry({
+          id: 'feat-loud-passive',
+          name: 'Stone Stance',
+          text: 'Declared rather than rolled, and then rolling something.',
+          roll: '1d6',
+          category: 'passive',
+        }),
+      ],
+      [
+        'an action carrying a to-hit',
+        customEntry({
+          id: 'feat-aimed-action',
+          name: 'Verse of Mending',
+          text: 'Nothing is aimed, and it is aimed anyway.',
+          roll: '1d8+CHA',
+          category: 'action',
+          toHit: '1d20+CHA+PROF',
+        }),
+      ],
+      [
+        'a weapon with no to-hit',
+        customEntry({
+          id: 'feat-blind-weapon',
+          name: 'Runeblade',
+          text: 'A weapon is the one category that asserts a second field exists.',
+          roll: '2d6+STR',
+          category: 'weapon',
+        }),
+      ],
+      [
+        // Distinct from the one above, and this is the pair that decides whether
+        // absence has exactly one spelling. `normaliseEntry` drops an empty to-hit
+        // before anything validates it, so this arrives at `entriesProblem` as the case
+        // above — which is the intended behaviour, and is only *observable* through a
+        // refusal. If it were ever stored instead, `toHitOf` would answer null on a
+        // weapon while the stored document said otherwise.
+        'a weapon whose to-hit is an empty string',
+        customEntry({
+          id: 'feat-empty-to-hit',
+          name: 'Runeblade',
+          text: 'An empty string is not how a field says it is absent.',
+          roll: '2d6+STR',
+          category: 'weapon',
+          toHit: '',
+        }),
+      ],
+    ]
+    for (const [label, entry] of badEntrySheets) {
+      await refuses(`characters:updateSheet refused ${label}`, () =>
+        client.mutation('characters:updateSheet', {
+          code,
+          dmCode,
+          characterId: pc.characterId,
+          sheet: { ...cappedSheet, feats: [entry] },
+        }),
+      )
+    }
+
     const survivor = await client.query('characters:sheet', {
       code,
       dmCode,
@@ -979,8 +1504,17 @@ async function main() {
     })
     check(
       'every refused sheet left the stored one exactly as it was',
-      survivor && survivor.sheet.feats.length === 40 && survivor.sheet.abilities.str === 17,
-      survivor ? `${survivor.sheet.feats.length} feats, str ${survivor.sheet.abilities.str}` : 'no sheet',
+      survivor &&
+        survivor.sheet.feats.length === 40 &&
+        survivor.sheet.abilities.str === 17 &&
+        // The two new fields on the entry that was there before the refusals, so a
+        // partial write that replaced the list with a one-entry sheet and then threw
+        // cannot pass this by getting the length right.
+        survivor.sheet.feats[0].category === 'weapon' &&
+        survivor.sheet.feats[0].toHit === '1d20+3',
+      survivor
+        ? `${survivor.sheet.feats.length} feats, str ${survivor.sheet.abilities.str}, first ${JSON.stringify(survivor.sheet.feats[0].category)} / ${JSON.stringify(survivor.sheet.feats[0].toHit)}`
+        : 'no sheet',
     )
 
     // 13. MILESTONE 4, WHICH IS THE MOST THIS APPLICATION HAS EVER ASKED A
@@ -1003,6 +1537,7 @@ async function main() {
 
     const elf = await client.mutation('characters:create', {
       code,
+      dmCode,
       name: 'Nightingale of the Ninth Step',
       sheet: presetSheet({ race: 'elf', classKey: 'rogue' }),
     })
@@ -1055,19 +1590,64 @@ async function main() {
           : 'no sheet came back'),
     )
 
+    // ⚠️ **THE LIBRARY'S OWN TO-HIT, THROUGH TWO REBUILDS.** A premade hero's feats are
+    // copied by `withId`'s spread in lib/resolve.ts and then copied again by the race
+    // overlay, which rebuilds the list to append the racial trait. A field added to the
+    // library's entry type and dropped by either copy leaves a weapon on the sheet that
+    // announces an attack and has nothing to roll for it — and no other check here would
+    // notice, because the feat *count* would still be right. Compared against a value
+    // copied out of `convex/lib/library/rogue.ts` by hand for the reason every other
+    // library number in this section is.
+    const libraryWeapon = built
+      ? built.feats.find((entry) => entry.name === ROGUE.base.weapon.name)
+      : null
+    check(
+      "the library's weapon reached the resolved sheet with its own to-hit",
+      libraryWeapon &&
+        libraryWeapon.category === 'weapon' &&
+        libraryWeapon.toHit === ROGUE.base.weapon.toHit &&
+        libraryWeapon.roll === ROGUE.base.weapon.roll,
+      libraryWeapon
+        ? `${libraryWeapon.name}: ${JSON.stringify(libraryWeapon.toHit)} / ${JSON.stringify(libraryWeapon.roll)}, wanted ${JSON.stringify(ROGUE.base.weapon.toHit)} / ${JSON.stringify(ROGUE.base.weapon.roll)}`
+        : `no ${ROGUE.base.weapon.name} among ${built ? built.feats.map((entry) => entry.name).join(', ') : '—'}`,
+    )
+    // The race's own contribution, which is the entry the overlay *adds* rather than
+    // copies — and a passive by construction, since a trait is built from two strings
+    // and has no roll. Without this the check above passes on an overlay that dropped
+    // the category from everything it appended.
+    check(
+      'the racial trait arrived as a passive with no roll and no to-hit',
+      built &&
+        built.feats.some(
+          (entry) =>
+            entry.id.startsWith('race:') &&
+            entry.category === 'passive' &&
+            entry.roll === null &&
+            !('toHit' in entry),
+        ),
+      built
+        ? `race entries ${JSON.stringify(built.feats.filter((entry) => entry.id.startsWith('race:')).map((entry) => [entry.id, entry.category ?? null]))}`
+        : 'no sheet came back',
+    )
+
     // THE ARITHMETIC THAT IS EASY TO APPLY TWICE. A race is added on top of a
     // library sheet that was written without one in mind, so a resolver that
     // applied it in both the base and the overlay would give this Elf a Dexterity
     // of 19 and nothing on screen would look obviously wrong.
     const dwarf = await client.mutation('characters:create', {
       code,
+      dmCode,
       name: 'Hrada Stoneminder',
       sheet: presetSheet({ race: 'dwarf', classKey: 'rogue', subclassKey: 'thief', level: 3 }),
     })
     createdCharacters.push(dwarf.characterId)
+    // Named through the constant because section 25 reserves this one and scans a
+    // player's payload for the name — two literals of the same string is one place for
+    // that scan to quietly start matching nothing.
     const goliath = await client.mutation('characters:create', {
       code,
-      name: 'Vaan of the Long Stride',
+      dmCode,
+      name: RESERVED_NAME,
       sheet: presetSheet({ race: 'goliath', classKey: 'rogue' }),
     })
     createdCharacters.push(goliath.characterId)
@@ -1187,8 +1767,10 @@ async function main() {
     // holds no claim would be `requireEditableCharacter` talking rather than the
     // lock. The seat is a real one, joined the way a player joins.
     const seat = await client.mutation('players:join', { code, displayName: 'Smoke Player' })
+    seats.push(seat.playerId)
     const bramble = await client.mutation('characters:create', {
       code,
+      dmCode,
       name: 'Bramblefoot Tosscobble',
       sheet: presetSheet({ race: 'halfling', classKey: 'rogue', locked: true }),
     })
@@ -1241,6 +1823,7 @@ async function main() {
     // milestone, on a table whose rows were written without it.
     const human = await client.mutation('characters:create', {
       code,
+      dmCode,
       name: 'Aldis Fenwake',
       sheet: presetSheet({ race: 'human', classKey: 'fighter' }),
     })
@@ -1312,9 +1895,17 @@ async function main() {
     // validator's — a race and a class are unions of literals, so a key that is not
     // one of the eight never reaches a handler. The rest are `storedSheetProblem`'s,
     // and every one of them is a value convex-test would store without a word.
+    //
+    // ⚠️ **Every one of them sends the DM code**, which is the creation gate rather than
+    // decoration. `storedSheetProblem` runs *after* `requireDm`, so an archetype refusal
+    // written without a code would be refused as `NotDm` — passing the `refuses` check
+    // while asserting nothing at all about archetypes. The two argument-validator cases
+    // above it would still refuse for the right reason, and they carry the code anyway so
+    // that the whole block is refused by the bound it names rather than by the gate.
     await refuses('characters:create refused a race that is not one of the eight', () =>
       client.mutation('characters:create', {
         code,
+        dmCode,
         name: 'Uninvited Gnome',
         sheet: presetSheet({ race: 'gnome', classKey: 'rogue' }),
       }),
@@ -1322,6 +1913,7 @@ async function main() {
     await refuses('characters:create refused a class that is not one of the eight', () =>
       client.mutation('characters:create', {
         code,
+        dmCode,
         name: 'Uninvited Artificer',
         sheet: presetSheet({ race: 'human', classKey: 'artificer' }),
       }),
@@ -1329,6 +1921,7 @@ async function main() {
     await refuses('characters:create refused an archetype belonging to another class', () =>
       client.mutation('characters:create', {
         code,
+        dmCode,
         name: 'Champion Rogue',
         sheet: presetSheet({
           race: 'human',
@@ -1341,6 +1934,7 @@ async function main() {
     await refuses('characters:create refused an archetype chosen at level 1', () =>
       client.mutation('characters:create', {
         code,
+        dmCode,
         name: 'Premature Thief',
         sheet: presetSheet({ race: 'human', classKey: 'rogue', subclassKey: 'thief', level: 1 }),
       }),
@@ -1599,6 +2193,20 @@ async function main() {
 
     // An override is the DM's last word, and the scale happens before it — so a boss-fight
     // armour class stays bumped through a shift while everything unpinned moves.
+    //
+    // ⚠️ **`attackBonus` is overridden alongside it, and that is the ordering bug nothing
+    // else in this repo would catch.** Every attack's to-hit is composed *from* this one
+    // field, and `withCreatureOverrides` patches the field while leaving `actions`
+    // untouched — so composing the to-hit before the merge rather than after gives a
+    // creature whose sheet reads +12 and whose every weapon rolls +7. The local suite
+    // cannot see it: both numbers come back on the same payload, from the same query, and
+    // the panel draws a creature that looks entirely self-consistent. The DM finds out
+    // when the boss misses all night.
+    //
+    // The armour class is what makes the check a pair. It is overridden *and* not derived
+    // from anything, so it proves the merge ran at all — without it, a resolver that
+    // ignored the whole override object would pass the to-hit assertion by leaving the
+    // corpus's +7 in both places and agreeing with itself.
     await client.mutation('characters:updateSheet', {
       code,
       dmCode,
@@ -1607,7 +2215,30 @@ async function main() {
         kind: 'bestiary',
         entryKey: WOLF.key,
         cr: 4,
-        overrides: { armourClass: DM_CREATURE_ARMOUR_CLASS },
+        overrides: {
+          armourClass: DM_CREATURE_ARMOUR_CLASS,
+          attackBonus: DM_CREATURE_ATTACK_BONUS,
+          // The sixth and last array position `sheetEntryValidator` occupies, and the
+          // only one where a *hand-written* weapon reaches a creature. Two things are
+          // being asked at once: that a DM's own entry round-trips both new fields
+          // through `normaliseCreatureOverrides`, and that resolution leaves it exactly
+          // as written rather than composing over it. The second is the interesting
+          // one — the corpus's attacks all take the creature's one bonus, and a
+          // resolver that rewrote every weapon on the sheet rather than every weapon it
+          // built would silently retune a line the DM typed a number into.
+          extraActions: [
+            {
+              id: 'dm-witchfire-brand',
+              name: 'Witchfire Brand',
+              text: 'A brand the DM handed this one for tonight, aimed on its own bonus rather than the creature’s.',
+              roll: '3d8+2',
+              level: null,
+              catalogueKey: null,
+              category: 'weapon',
+              toHit: '1d20+9',
+            },
+          ],
+        },
       },
     })
     await client.mutation('characters:setCreatureCr', {
@@ -1619,24 +2250,86 @@ async function main() {
     const wolfAtSix = await readSheet(wolf.characterId)
     const sixDrift = wolfAtSix
       ? firstDifference(
-          { ...WOLF.atCr6, armourClass: DM_CREATURE_ARMOUR_CLASS },
+          {
+            ...WOLF.atCr6,
+            armourClass: DM_CREATURE_ARMOUR_CLASS,
+            attackBonus: DM_CREATURE_ATTACK_BONUS,
+            toHit: DM_CREATURE_TO_HIT,
+          },
           statlineOf(wolfAtSix.sheet),
           'statline',
         )
       : 'no sheet came back'
     check(
-      "the DM's pinned armour class survived a shift while the rest of the statline moved",
+      "the DM's pinned numbers survived a shift while the rest of the statline moved",
       wolfAtSix &&
         sixDrift === null &&
         wolfAtSix.creature.overrides &&
         wolfAtSix.creature.overrides.armourClass === DM_CREATURE_ARMOUR_CLASS &&
-        wolfAtSix.creature.overriddenFields.length === 1 &&
-        wolfAtSix.creature.overriddenFields[0] === 'armourClass' &&
+        wolfAtSix.creature.overrides.attackBonus === DM_CREATURE_ATTACK_BONUS &&
+        wolfAtSix.creature.overriddenFields.length === 3 &&
+        wolfAtSix.creature.overriddenFields.includes('armourClass') &&
+        wolfAtSix.creature.overriddenFields.includes('attackBonus') &&
+        wolfAtSix.creature.overriddenFields.includes('extraActions') &&
         wolfAtSix.sheet.actions[0].text.startsWith(WOLF.biteAtCr6),
       sixDrift ??
         (wolfAtSix
-          ? `AC ${wolfAtSix.sheet.armourClass} against the corpus's ${WOLF.atCr6.armourClass}, ${wolfAtSix.sheet.maxHp} hp`
+          ? `AC ${wolfAtSix.sheet.armourClass} against the corpus's ${WOLF.atCr6.armourClass}, ${wolfAtSix.sheet.maxHp} hp, pinned ${JSON.stringify(wolfAtSix.creature.overriddenFields)}`
           : 'no sheet came back'),
+    )
+    // ⚠️ **THE SAME NUMBER, READ IN BOTH PLACES, ASSERTED TO AGREE.** Stated on its own
+    // rather than left inside the statline drift above, because this is the failure that
+    // would otherwise be reported as "some field moved" — and because the claim is not
+    // that either value is right, it is that the two are **one number spelled twice** and
+    // moved together. A creature carries exactly one `attackBonus` (ADR 0007), and every
+    // weapon on its sheet is that bonus written as a roll. `1d20+12` against a stated +12
+    // is the whole of what is being checked; the arithmetic is `toHitFromBonus`'s and is
+    // deliberately not restated here, only the agreement is.
+    //
+    // Every attack the corpus contributed, not merely the first: `statlineOf` reads
+    // `actions[0]`, so a resolver that composed the first attack from the merged bonus
+    // and the rest from the scaled one would sail past everything above. Honest about
+    // the reach of that — a Dire Wolf has exactly one attack, so the `every` below is
+    // one entry wide today and is written this way because the *next* fixture is not.
+    // What is genuinely more than one wide is the discrimination: the DM's own weapon is
+    // on this sheet too and must be left alone, which is the check after it.
+    const corpusAttacks = wolfAtSix
+      ? wolfAtSix.sheet.actions.filter((entry) => entry.id.startsWith('atk:'))
+      : []
+    check(
+      "the creature's attack bonus and every attack's to-hit moved together",
+      wolfAtSix &&
+        wolfAtSix.sheet.attackBonus === DM_CREATURE_ATTACK_BONUS &&
+        corpusAttacks.length > 0 &&
+        corpusAttacks.every(
+          (entry) => entry.category === 'weapon' && entry.toHit === DM_CREATURE_TO_HIT,
+        ) &&
+        // The positive control, and it is not ceremony: without it this passes on a
+        // deployment where the override was ignored entirely and both readings sat at
+        // the corpus's +7, agreeing with each other and with nothing else.
+        WOLF.atCr6.toHit !== DM_CREATURE_TO_HIT,
+      wolfAtSix
+        ? `sheet ${wolfAtSix.sheet.attackBonus}, ${corpusAttacks.length} attacks rolling ${JSON.stringify([...new Set(corpusAttacks.map((entry) => entry.toHit))])}, against the unoverridden ${WOLF.atCr6.toHit}`
+        : 'no sheet came back',
+    )
+    // And the DM's own entry, left exactly as written. `+9` is neither the creature's
+    // overridden `+12` nor the corpus's scaled `+7`, so a resolver that recomposed every
+    // weapon it found — rather than every weapon it built — changes this and nothing
+    // else on the sheet.
+    const dmWeapon = wolfAtSix
+      ? wolfAtSix.sheet.actions.find((entry) => entry.id === 'dm-witchfire-brand')
+      : null
+    check(
+      "the DM's own weapon kept the to-hit the DM typed, not the creature's",
+      dmWeapon &&
+        dmWeapon.category === 'weapon' &&
+        dmWeapon.toHit === '1d20+9' &&
+        dmWeapon.roll === '3d8+2' &&
+        // Appended after the corpus's own, which is the order the sheet shows.
+        wolfAtSix.sheet.actions[wolfAtSix.sheet.actions.length - 1].id === 'dm-witchfire-brand',
+      dmWeapon
+        ? `${JSON.stringify(dmWeapon.toHit)} against the creature's ${DM_CREATURE_TO_HIT}`
+        : `no DM action among ${wolfAtSix ? wolfAtSix.sheet.actions.map((entry) => entry.id).join(', ') : '—'}`,
     )
     const rescaledAgain = await dmVitalsFor(wolf.characterId)
     check(
@@ -1983,6 +2676,1051 @@ async function main() {
             ` at CR ${survivingCreature.creature.cr}`
         : 'no sheet came back',
     )
+
+    // 23. MILESTONE 7'S FIRST NEW STORED FIELD, AND THE TRAP IT WALKS STRAIGHT INTO.
+    //
+    // `NpcSheet.group` is the sixth optional field on that validator, and it is the only
+    // one of this milestone's three that passes through a **field-by-field rebuild**:
+    // `normaliseSheet` reconstructs a creature field by field and carries this one by
+    // conditional spread. That is the fifth outing of the bug that shipped
+    // `skillProficiencies` and then `speed`, and this script is the only thing that has
+    // ever caught it — because a dropped optional field round-trips through a validator
+    // that permits it to be absent, so the local suite stays green and only a real
+    // deployment can say whether absence is a storable state.
+    //
+    // The pair below is the whole of the check. Neither half is optional: the positive
+    // passes on a deployment that materialised a group for everything, the negative on
+    // one that discarded every new field it was sent. See ADR 0008 § "Two things found by
+    // building it", which is where that lesson was written down.
+    const grantedCreature = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: GRANTED_NAME,
+      sheet: GRANTED_SHEET,
+    })
+    createdCharacters.push(grantedCreature.characterId)
+    const ambush = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: AMBUSH_NAME,
+      sheet: AMBUSH_SHEET,
+    })
+    createdCharacters.push(ambush.characterId)
+
+    const grantedStored = await readSheet(grantedCreature.characterId)
+    const ambushStored = await readSheet(ambush.characterId)
+    // Read off the *resolved* sheet, which for a hand-built creature is the stored one:
+    // `resolveSheet` returns an `npc` document unchanged, so what comes back here is
+    // genuinely what the deployment holds rather than something assembled over the top.
+    check(
+      'a creature sent with a group came back with it',
+      grantedStored && grantedStored.sheet.group === 'monster',
+      grantedStored
+        ? `positive control — without it the check below passes on a deployment that discarded everything; got ${JSON.stringify(grantedStored.sheet.group)}`
+        : 'no sheet came back',
+    )
+    // ABSENCE, ASSERTED AS ABSENCE — on the KEY rather than on the value, exactly as
+    // section 6 does for `category` and `toHit`. `sheet.group === undefined` is also true
+    // of a stored empty string, and an empty string is not how a field says it is absent.
+    check(
+      'its sibling, sent without one, came back with no group key at all',
+      ambushStored && !('group' in ambushStored.sheet),
+      ambushStored
+        ? `keys: ${Object.keys(ambushStored.sheet).sort().join(', ')}`
+        : 'no sheet came back',
+    )
+    // AND BACK, which is the half a create alone cannot ask. `writeSheet` patches the
+    // whole `sheet` field, so omitting the key has to *remove* a value that is already
+    // there — a deployment that merged rather than replaced would leave `monster` behind
+    // on a document the DM had just refiled as an NPC, and nothing on screen would say so.
+    await client.mutation('characters:updateSheet', {
+      code,
+      dmCode,
+      characterId: ambush.characterId,
+      sheet: { ...AMBUSH_SHEET, group: 'npc' },
+    })
+    const ambushRefiled = await readSheet(ambush.characterId)
+    await client.mutation('characters:updateSheet', {
+      code,
+      dmCode,
+      characterId: ambush.characterId,
+      sheet: AMBUSH_SHEET,
+    })
+    const ambushCleared = await readSheet(ambush.characterId)
+    check(
+      'a group written onto a creature that had none, and then taken off again',
+      ambushRefiled &&
+        ambushRefiled.sheet.group === 'npc' &&
+        ambushCleared &&
+        !('group' in ambushCleared.sheet),
+      ambushRefiled && ambushCleared
+        ? `${JSON.stringify(ambushRefiled.sheet.group)} then keys ${Object.keys(ambushCleared.sheet).sort().join(', ')}`
+        : 'no sheet came back',
+    )
+
+    // 24. THE HEADING, ON EVERY KIND OF SHEET THE SCHEMA HAS.
+    //
+    // `characters.list` now carries `group` beside `kind`, and the two answer different
+    // questions on the same row: `kind` decides whether a caller may know the character
+    // exists, `group` decides which of the DM's three headings it is printed under. Four
+    // stored kinds do not map onto three groups, which is why one field cannot do both
+    // jobs — so this checks all five cases the mapping actually has to distinguish.
+    //
+    // The bestiary pair is the interesting one and the reason this is worth a round trip
+    // rather than a unit test: a linked creature's heading is read off the *file* its
+    // entry lives in, so `dire-wolf` and `innkeeper` are one stored kind and two
+    // headings, resolved server-side out of a corpus the client never sees.
+    const groupedList = await client.query('characters:list', { code, dmCode })
+    const rowFor = (characterId) => groupedList.find((row) => row._id === characterId) ?? null
+    const groupings = [
+      ['a hand-built hero', pc.characterId, 'pc', 'character'],
+      ['a premade hero', elf.characterId, 'pc', 'character'],
+      // No group stored — section 23 took it back off — so this is `groupOf`'s default
+      // being asserted rather than a value anybody sent.
+      ['a hand-built creature with no group', ambush.characterId, 'npc', 'npc'],
+      ['a bestiary monster', wolf.characterId, 'npc', 'monster'],
+      ['a bestiary social NPC', innkeeper.characterId, 'npc', 'npc'],
+    ]
+    const misfiled = groupings.filter(([, characterId, kind, group]) => {
+      const row = rowFor(characterId)
+      return !row || row.kind !== kind || row.group !== group
+    })
+    check(
+      'characters:list filed all five kinds of sheet under the right heading',
+      misfiled.length === 0,
+      misfiled.length > 0
+        ? `misfiled ${JSON.stringify(
+            misfiled.map(([label, characterId, kind, group]) => {
+              const row = rowFor(characterId)
+              return [label, row ? [row.kind, row.group] : 'no row', [kind, group]]
+            }),
+          )}`
+        : `${groupings.length} rows, including the two bestiary kinds that share a stored kind and differ`,
+    )
+    // And the claim the whole default rests on: **only the DM ever receives a group that
+    // is not `'character'`**. That is what makes a wrong answer a misfiled row rather than
+    // a published dragon, and it is asserted rather than assumed because it is the licence
+    // `groupOf` takes to have a tolerant default at all.
+    const playerGrouped = await client.query('characters:list', { code })
+    check(
+      "a player's rows are all 'character', which is what makes the default safe",
+      playerGrouped.length > 0 &&
+        playerGrouped.every((row) => row.group === 'character' && row.kind === 'pc'),
+      `${playerGrouped.length} rows, groups ${JSON.stringify([
+        ...new Set(playerGrouped.map((row) => row.group)),
+      ])} — positive control included`,
+    )
+
+    // 25. RESERVED: A HERO THE DM HAS BUILT FOR SOMEBODY WHO IS NOT HERE YET.
+    //
+    // The second new stored field, and the second optional one. Reserved means **absent
+    // from a player's payload rather than greyed out in it**, because a disabled row still
+    // publishes a name and the name is the spoiler — so it is a second filter composed
+    // with `maySeeCharacter` at two call sites rather than folded into it.
+    const seatA = await client.mutation('players:join', { code, displayName: 'Smoke Player A' })
+    seats.push(seatA.playerId)
+    const seatB = await client.mutation('players:join', { code, displayName: 'Smoke Player B' })
+    seats.push(seatB.playerId)
+
+    await client.mutation('characters:setReserved', {
+      code,
+      dmCode,
+      characterId: goliath.characterId,
+      reserved: true,
+    })
+    reservedCharacters.push(goliath.characterId)
+
+    const listAfterReserve = await client.query('characters:list', { code })
+    const dmListAfterReserve = await client.query('characters:list', { code, dmCode })
+    check(
+      'a reserved hero is absent from a player’s character list, name and all',
+      !listAfterReserve.some((row) => row._id === goliath.characterId) &&
+        !JSON.stringify(listAfterReserve).includes(RESERVED_NAME) &&
+        // The positive control, and it is the load-bearing half: without it this passes
+        // on a deployment that lost the character altogether.
+        dmListAfterReserve.some((row) => row._id === goliath.characterId),
+      `player ${listAfterReserve.length} rows, DM ${dmListAfterReserve.length} — positive control included`,
+    )
+    // The projected flag, which is what lets the DM's control show what is *true* rather
+    // than only what pressing it would do. It is `false` in every player row by
+    // construction — a reserved row is dropped before anything can project it — so the
+    // second half here is not a restatement of the filter above: it is the claim that
+    // makes shipping the field at all harmless, and a `true` reaching a player is exactly
+    // what it would catch.
+    check(
+      'the DM’s row carries reserved: true, and every player row carries false',
+      dmListAfterReserve.find((row) => row._id === goliath.characterId)?.reserved === true &&
+        listAfterReserve.every((row) => row.reserved === false),
+      `DM ${JSON.stringify(
+        dmListAfterReserve.find((row) => row._id === goliath.characterId)?.reserved,
+      )}, player ${JSON.stringify([...new Set(listAfterReserve.map((row) => row.reserved))])}`,
+    )
+    // ⚠️ **The roster half of this is asserted at the only point it is reachable, and that
+    // is worth saying rather than faking.** `playerCharacterNames` withholds a reserved
+    // character's name from `players.list`, so a seat holding one would show a blank label
+    // — but "held and reserved" is a state nothing can produce: `claim` refuses a reserved
+    // character, `setReserved` refuses a held one, and `assign` clears the flag as it hands
+    // it over. So the reachable statement is the weak one below, and the strong one is the
+    // pair after it: `assign` clears the flag, and the roster then *does* print the name.
+    // Constructing the unreachable state would need a write this API does not have.
+    const rosterAfterReserve = await client.query('players:list', { code })
+    check(
+      'no seat’s roster row names the reserved hero',
+      !rosterAfterReserve.some((row) => row.characterName === RESERVED_NAME),
+      `${rosterAfterReserve.length} seats — reserved-and-held is unreachable through this API, so this is the weak half of the pair`,
+    )
+
+    await refuses('characters:claim refused a reserved hero to a seat', () =>
+      client.mutation('characters:claim', {
+        code,
+        playerId: seatA.playerId,
+        characterId: goliath.characterId,
+      }),
+    )
+    // Both refusals on the mutation itself, and both are the DM being told their click
+    // would not do what they think rather than a secret being kept — which is why these
+    // messages are helpful where `claim`'s is deliberately indistinguishable from "no such
+    // character".
+    await refuses('characters:setReserved refused a monster', () =>
+      client.mutation('characters:setReserved', {
+        code,
+        dmCode,
+        characterId: wolf.characterId,
+        reserved: true,
+      }),
+    )
+    await refuses('characters:setReserved refused a hero a seat is already playing', () =>
+      client.mutation('characters:setReserved', {
+        code,
+        dmCode,
+        characterId: bramble.characterId,
+        reserved: true,
+      }),
+    )
+    await refuses('characters:setReserved refused a caller without the DM code', () =>
+      client.mutation('characters:setReserved', {
+        code,
+        dmCode: 'not-the-dm-code',
+        characterId: goliath.characterId,
+        reserved: false,
+      }),
+    )
+
+    // THE HANDOVER, which is one of the two routes out of the reserved state the design
+    // names and the only one that is a single click. The flag is cleared in the same
+    // transaction as the claim, so there is no window in which the roster is refusing to
+    // name a character a seat is holding.
+    await client.mutation('characters:assign', {
+      code,
+      dmCode,
+      playerId: seatB.playerId,
+      characterId: goliath.characterId,
+    })
+    // Reserving is over: `assign` cleared the flag, and `setReserved` refuses a character
+    // a seat is holding — so leaving this on the cleanup list would make a run that went
+    // perfectly report a failed cleanup step.
+    reservedCharacters.length = 0
+
+    const listAfterAssign = await client.query('characters:list', { code })
+    const rosterAfterAssign = await client.query('players:list', { code })
+    const assignedRow = rosterAfterAssign.find((row) => row._id === seatB.playerId) ?? null
+    check(
+      'characters:assign cleared the reservation, and the roster named the hero again',
+      listAfterAssign.some((row) => row._id === goliath.characterId) &&
+        assignedRow &&
+        assignedRow.characterId === goliath.characterId &&
+        assignedRow.characterName === RESERVED_NAME,
+      assignedRow
+        ? `${listAfterAssign.length} player-visible rows, seat B holding ${JSON.stringify(assignedRow.characterName)}`
+        : 'no roster row for seat B',
+    )
+
+    // 26. THE THIRD NEW STORED FIELD, AND THE ONE FACT ON THE PAYLOAD THAT IS DERIVED.
+    //
+    // `board.tokens` now carries two arrays, and they are not redundant: `grantedPlayerIds`
+    // is exactly what `tokens.controllerIds` holds, and `controllerIds` is the *rule* —
+    // the grants union the seat playing the token's character. The dialog edits the first
+    // and `canMove` reads the second, and the difference between the two arrays is the
+    // derived half, which is why both travel rather than the browser subtracting one back
+    // out of the other.
+    //
+    // ⚠️ **The asymmetry is the design and is checked on its own.** A claim holder appears
+    // in `controllerIds` and must never appear in `grantedPlayerIds`: a claim lives on the
+    // seat (ADR 0002, seat → character and never the reverse), so writing it into the token
+    // as well would make two documents authoritative for one relation — and the bug that
+    // follows is a hero reassigned to a new player whose old token still lists the seat
+    // that left.
+    await client.mutation('characters:claim', {
+      code,
+      playerId: seatA.playerId,
+      characterId: human.characterId,
+    })
+    const heroToken = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      name: 'Aldis on the Causeway',
+      layer: 'player',
+      sizeSquares: 1,
+      tint: '#16a085',
+      characterId: human.characterId,
+      x: 700,
+      y: 1100,
+    })
+    created.push(heroToken.tokenId)
+
+    const tokensOf = async (tokenId) =>
+      (await client.query('board:tokens', { code, dmCode })).find(
+        (token) => token._id === tokenId,
+      ) ?? null
+
+    const claimedOnly = await tokensOf(heroToken.tokenId)
+    check(
+      'the claim holder arrived in controllerIds and in no grant',
+      claimedOnly &&
+        claimedOnly.controllerIds.length === 1 &&
+        claimedOnly.controllerIds[0] === seatA.playerId &&
+        claimedOnly.grantedPlayerIds.length === 0,
+      claimedOnly
+        ? `effective ${JSON.stringify(claimedOnly.controllerIds)} against granted ${JSON.stringify(claimedOnly.grantedPlayerIds)}`
+        : 'no token row came back',
+    )
+
+    await client.mutation('board:setControllers', {
+      code,
+      dmCode,
+      tokenId: heroToken.tokenId,
+      playerIds: [seatB.playerId],
+    })
+    grantedTokens.push(heroToken.tokenId)
+    const claimedAndGranted = await tokensOf(heroToken.tokenId)
+    check(
+      'a grant came back verbatim in grantedPlayerIds and unioned into controllerIds',
+      claimedAndGranted &&
+        claimedAndGranted.grantedPlayerIds.length === 1 &&
+        claimedAndGranted.grantedPlayerIds[0] === seatB.playerId &&
+        claimedAndGranted.controllerIds.length === 2 &&
+        claimedAndGranted.controllerIds.includes(seatA.playerId) &&
+        claimedAndGranted.controllerIds.includes(seatB.playerId),
+      claimedAndGranted
+        ? `effective ${JSON.stringify(claimedAndGranted.controllerIds)} against granted ${JSON.stringify(claimedAndGranted.grantedPlayerIds)}`
+        : 'no token row came back',
+    )
+
+    // Revoking everything is expressible because the list is absolute rather than a pair
+    // of add/remove calls — and it is stored as an empty array rather than patched away to
+    // `undefined`, which is one shape of write and therefore one fewer thing for a
+    // field-by-field comparison to call `present on one side only`.
+    await client.mutation('board:setControllers', {
+      code,
+      dmCode,
+      tokenId: heroToken.tokenId,
+      playerIds: [],
+    })
+    const revoked = await tokensOf(heroToken.tokenId)
+    check(
+      'revoking to an empty list came back as an empty list, with the claim untouched',
+      revoked &&
+        revoked.grantedPlayerIds.length === 0 &&
+        revoked.controllerIds.length === 1 &&
+        revoked.controllerIds[0] === seatA.playerId,
+      revoked
+        ? `effective ${JSON.stringify(revoked.controllerIds)} against granted ${JSON.stringify(revoked.grantedPlayerIds)}`
+        : 'no token row came back',
+    )
+
+    // A grant on a token with no character behind it — the DM handing the party a cart to
+    // push — where the effective set and the stored one are the same array. The duplicate
+    // is deliberate: a double-click is the ordinary way for the dialog to send one, and a
+    // seat listed twice would render as one player with two checkboxes.
+    await client.mutation('board:setControllers', {
+      code,
+      dmCode,
+      tokenId: open.tokenId,
+      playerIds: [seatA.playerId, seatA.playerId, seatB.playerId],
+    })
+    grantedTokens.push(open.tokenId)
+    const unattached = await tokensOf(open.tokenId)
+    check(
+      'a duplicated grant was squeezed out, and an unattached token derives nothing',
+      unattached &&
+        unattached.grantedPlayerIds.length === 2 &&
+        unattached.grantedPlayerIds.includes(seatA.playerId) &&
+        unattached.grantedPlayerIds.includes(seatB.playerId) &&
+        JSON.stringify([...unattached.controllerIds].sort()) ===
+          JSON.stringify([...unattached.grantedPlayerIds].sort()),
+      unattached
+        ? `effective ${JSON.stringify(unattached.controllerIds)} against granted ${JSON.stringify(unattached.grantedPlayerIds)}`
+        : 'no token row came back',
+    )
+
+    await refuses('board:setControllers refused a well-formed wrong DM code', () =>
+      client.mutation('board:setControllers', {
+        code,
+        dmCode: 'not-the-dm-code',
+        tokenId: heroToken.tokenId,
+        playerIds: [seatA.playerId],
+      }),
+    )
+    // ⚠️ **THIS IS CONVEX'S OWN ARGUMENT VALIDATION EARNING ITS PLACE AGAIN.** A document
+    // id is a string, and a `characters` id is a perfectly ordinary one — so it survives
+    // everything convex-test applies and is refused at the function boundary here, because
+    // `v.id('players')` checks the table the id actually belongs to. Nothing in the handler
+    // asks, and nothing would: `getSeatInGame` would look it up as a seat and find none,
+    // which is the right refusal for the wrong reason and only by luck.
+    await refuses('board:setControllers refused an id from the wrong table', () =>
+      client.mutation('board:setControllers', {
+        code,
+        dmCode,
+        tokenId: heroToken.tokenId,
+        playerIds: [pc.characterId],
+      }),
+    )
+
+    // 27. CONTROL GRANTS SIGHT, AND ONLY TO THE GRANTED SEAT.
+    //
+    // The acceptance test for the grant, and the same shape as sections 10 and 20: the
+    // creature's coin goes on the PLAYER layer, because that is the case that matters —
+    // both seats can see the thing standing there, and exactly one of them may read what
+    // it is. A DM-layer creature is the easy case and is section 28.
+    //
+    // ⚠️ **A grant is a second door onto this milestone's headline secret**, opened by the
+    // DM deliberately: control carries the creature's sheet and its exact hit points to
+    // the granted seat, because a granted pet that could not take damage would be a sheet
+    // to look at. What must not move is anybody else's payload, and that is what the scan
+    // below is for — with a positive control, because without one it passes on a
+    // deployment that sent nobody anything.
+    await client.mutation('characters:setHp', {
+      code,
+      dmCode,
+      characterId: grantedCreature.characterId,
+      currentHp: GRANTED_CURRENT_HP,
+    })
+    const grantedToken = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      // Deliberately not the character's name. What is written on a coin is public by
+      // design, so reusing the name would make the scan below unable to tell a leak from
+      // the thing it is meant to allow — the same care sections 10 and 20 take.
+      name: 'A Dog on a Lead',
+      layer: 'player',
+      sizeSquares: 1,
+      tint: '#9b59b6',
+      characterId: grantedCreature.characterId,
+      x: 1900,
+      y: 1100,
+    })
+    created.push(grantedToken.tokenId)
+    await client.mutation('board:setControllers', {
+      code,
+      dmCode,
+      tokenId: grantedToken.tokenId,
+      playerIds: [seatA.playerId],
+    })
+    grantedTokens.push(grantedToken.tokenId)
+
+    const sheetFor = (playerId) =>
+      client.query('characters:sheet', {
+        code,
+        playerId,
+        characterId: grantedCreature.characterId,
+      })
+    const vitalsFor = (playerId) => client.query('characters:vitals', { code, playerId })
+
+    const seenByA = await sheetFor(seatA.playerId)
+    const vitalsForA = await vitalsFor(seatA.playerId)
+    const rowForA = vitalsForA.find((row) => row.characterId === grantedCreature.characterId)
+    check(
+      'the granted seat got the creature’s sheet and its exact hit points',
+      seenByA &&
+        seenByA.name === GRANTED_NAME &&
+        seenByA.sheet.maxHp === GRANTED_MAX_HP &&
+        rowForA &&
+        rowForA.kind === 'exact' &&
+        rowForA.current === GRANTED_CURRENT_HP &&
+        rowForA.max === GRANTED_MAX_HP,
+      seenByA && rowForA
+        ? `positive control — without it the scan below passes on a deployment that sent nobody anything; ${rowForA.current}/${rowForA.max}`
+        : `sheet ${JSON.stringify(seenByA)}, vitals ${JSON.stringify(rowForA)}`,
+    )
+
+    const seenByB = await sheetFor(seatB.playerId)
+    const vitalsForB = await vitalsFor(seatB.playerId)
+    const rowForB = vitalsForB.find((row) => row.characterId === grantedCreature.characterId)
+    check(
+      'the ungranted seat got null and a band, with no hit-point key on the row',
+      seenByB === null &&
+        rowForB &&
+        rowForB.kind === 'band' &&
+        !('current' in rowForB) &&
+        !('max' in rowForB),
+      rowForB
+        ? `sheet ${JSON.stringify(seenByB)}, keys: ${Object.keys(rowForB).sort().join(', ')}`
+        : 'no row for the creature',
+    )
+
+    // AND B'S WHOLE PAYLOAD, scanned twice over for the reason section 10 gives:
+    // `holdsNumber` walks every number in the decoded payload, which is exact, and the
+    // substring scan over the redacted form catches one that arrived as text in a field
+    // nobody thought to look at. `characters:list` is in the scan because it takes no
+    // `playerId` and therefore cannot answer a grant at all — a creature that turned up in
+    // it would be one every client at the table had already been sent.
+    const grantScannable = [vitalsForB, await client.query('characters:list', { code }), seenByB]
+    const grantSerialised = JSON.stringify(redactOpaque(grantScannable))
+    const grantNeedles = [GRANTED_NAME, GRANTED_NOTES]
+    const grantLeaked = grantNeedles.filter((needle) => grantSerialised.includes(needle))
+    check(
+      'nothing about the granted creature reached the seat it was not granted to',
+      grantLeaked.length === 0 &&
+        !grantSerialised.includes(String(GRANTED_MAX_HP)) &&
+        !grantSerialised.includes(String(GRANTED_CURRENT_HP)) &&
+        !holdsNumber(grantScannable, GRANTED_MAX_HP) &&
+        !holdsNumber(grantScannable, GRANTED_CURRENT_HP),
+      grantLeaked.length > 0
+        ? `leaked ${JSON.stringify(grantLeaked)}`
+        : `${GRANTED_CURRENT_HP}/${GRANTED_MAX_HP} scanned as text and as numbers over ${grantScannable.length} payloads`,
+    )
+
+    // 28. A GRANT ON A DM-LAYER TOKEN REVEALS NOTHING, AND THE COIN IS WHAT DECIDES —
+    // ONE COIN, DRIVEN dm → player → dm.
+    //
+    // `boardCharacterAccess` builds `controlled` from `visibleTokens` in one pass, so an id
+    // cannot enter it on an iteration that did not already put it into `visible`: sight of
+    // the token is the precondition for sight of the sheet, structurally rather than by
+    // anybody remembering to test the layer. The grant itself is deliberately allowed on a
+    // hidden coin — preparing an ambush and handing it over before revealing it is a
+    // reasonable order to work in — so what is asserted is not that the write is refused but
+    // that it is *inert* until the coin is shown.
+    //
+    // ⚠️ **This used to add a SECOND coin on the player layer, under a comment saying no
+    // mutation re-layered a token. `board.setLayer` exists now, and the rewrite is not
+    // tidiness.** Two coins and two grants assert a weaker thing: that a grant on a visible
+    // token means something and a grant on a hidden one does not. Two rows can differ in
+    // ways nobody wrote down, so the interesting question goes unasked. One coin asks it —
+    // **the same row, the same grant, the same bytes in `controllerIds`** — changing what a
+    // player may read three times because one unrelated field moved, and nothing else was
+    // written anywhere. That the stored grant is untouched in both directions is
+    // `setTokenLayer`'s stated contract, and it is what makes the round trip usable rather
+    // than destructive.
+    //
+    // ADR 0009 promises this round trip is "asserted twice, in the two places this project
+    // asserts secrets". Until this milestone the two places were asserting two different
+    // things, and the local suite's half flipped the layer behind the API with
+    // `ctx.db.patch`. It is the **same round trip in both** now: `characters.test.ts` drives
+    // it through `board.setLayer` too.
+    //
+    // The third state is the one only a round trip settles, and it is the reason the trip
+    // has three legs rather than two. A revealed creature's sheet has been **on the wire**
+    // to that seat; hiding the coin again has to take it back off, and "already sent" is not
+    // a state convex-test has any opinion about — its queries are function calls, not
+    // subscriptions somebody is still holding.
+    const hiddenToken = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      name: 'Shadow Under the Arch',
+      layer: 'dm',
+      sizeSquares: 2,
+      tint: '#2c3e50',
+      characterId: ambush.characterId,
+      x: 1900,
+      y: 1500,
+    })
+    created.push(hiddenToken.tokenId)
+    await client.mutation('board:setControllers', {
+      code,
+      dmCode,
+      tokenId: hiddenToken.tokenId,
+      playerIds: [seatA.playerId],
+    })
+    grantedTokens.push(hiddenToken.tokenId)
+
+    // Every reading taken the same way at each of the three states, in one closure, so that
+    // nothing but the layer differs between them — a state read two different ways at two
+    // different points is a comparison of two questions rather than of two answers. The
+    // granted seat's sheet and its vitals row are what the grant is *for*; the player-layer
+    // token list and the placement list are what `setTokenLayer` claims go with it; and the
+    // serialised grant is the thing that must not move at all.
+    const layerState = async () => {
+      const row = await tokensOf(hiddenToken.tokenId)
+      const vitals = await vitalsFor(seatA.playerId)
+      const asPlayer = await client.query('board:tokens', { code })
+      const placements = await client.query('board:positions', { code, sceneId })
+      return {
+        layer: row ? row.layer : null,
+        // Serialised rather than compared element by element, because the claim is
+        // byte-identity across three states rather than set membership at each of them.
+        granted: JSON.stringify(row ? row.grantedPlayerIds : null),
+        sheet: await client.query('characters:sheet', {
+          code,
+          playerId: seatA.playerId,
+          characterId: ambush.characterId,
+        }),
+        // Not merely a band: an unseen creature contributes no row at all, because the
+        // *length* of that array is itself a count of how many monsters are waiting.
+        row: vitals.find((entry) => entry.characterId === ambush.characterId) ?? null,
+        rows: vitals.length,
+        visible: asPlayer.some((entry) => entry._id === hiddenToken.tokenId),
+        placed: placements.some((entry) => entry.tokenId === hiddenToken.tokenId),
+      }
+    }
+
+    const onDmLayer = await layerState()
+    check(
+      'a grant on a DM-layer coin gave the granted seat nothing — not a sheet, not a row',
+      onDmLayer.sheet === null && onDmLayer.row === null && !onDmLayer.visible && !onDmLayer.placed,
+      `sheet ${JSON.stringify(onDmLayer.sheet)}, ${onDmLayer.rows} vitals rows, coin visible ${onDmLayer.visible}, placed ${onDmLayer.placed}`,
+    )
+    // The DM's own view of the same token, so the check above is not passing because the
+    // grant was never written in the first place.
+    check(
+      'the grant was really there — the DM sees it on the hidden coin',
+      onDmLayer.layer === 'dm' && onDmLayer.granted === JSON.stringify([seatA.playerId]),
+      `positive control — granted ${onDmLayer.granted} on the ${onDmLayer.layer} layer`,
+    )
+
+    await client.mutation('board:setLayer', {
+      code,
+      dmCode,
+      tokenId: hiddenToken.tokenId,
+      layer: 'player',
+    })
+    const onPlayerLayer = await layerState()
+    check(
+      'board:setLayer to the player layer brought the coin, the placement, the sheet and the numbers',
+      onPlayerLayer.layer === 'player' &&
+        onPlayerLayer.visible &&
+        onPlayerLayer.placed &&
+        onPlayerLayer.sheet &&
+        onPlayerLayer.sheet.name === AMBUSH_NAME &&
+        onPlayerLayer.row &&
+        onPlayerLayer.row.kind === 'exact' &&
+        onPlayerLayer.row.max === AMBUSH_MAX_HP,
+      onPlayerLayer.sheet && onPlayerLayer.row
+        ? `${onPlayerLayer.row.current}/${onPlayerLayer.row.max} — one field moved, and nothing else was written`
+        : `sheet ${JSON.stringify(onPlayerLayer.sheet)}, vitals ${JSON.stringify(onPlayerLayer.row)}`,
+    )
+
+    await client.mutation('board:setLayer', {
+      code,
+      dmCode,
+      tokenId: hiddenToken.tokenId,
+      layer: 'dm',
+    })
+    const backOnDmLayer = await layerState()
+    check(
+      'and back: hiding the coin again took the sheet, the row and the placement off the wire',
+      backOnDmLayer.layer === 'dm' &&
+        backOnDmLayer.sheet === null &&
+        backOnDmLayer.row === null &&
+        !backOnDmLayer.visible &&
+        !backOnDmLayer.placed,
+      `sheet ${JSON.stringify(backOnDmLayer.sheet)}, ${backOnDmLayer.rows} vitals rows against ${onPlayerLayer.rows} while it was shown`,
+    )
+    // ⚠️ **THE CLAIM THE WHOLE SECTION IS FOR.** Three different answers to "what may this
+    // seat read", and one unchanged array of grants behind all three. A deployment that
+    // migrated `controllerIds` on a layer change — revoking on the way out, restoring on the
+    // way in — would pass every check above and fail this one, and it is the bug that turns
+    // "prepare the ambush, hand over the pet, then reveal it" into a grant the DM has to
+    // write twice.
+    check(
+      'the stored grant was byte-identical in all three states — the coin moved, the grant did not',
+      onDmLayer.granted === onPlayerLayer.granted &&
+        onPlayerLayer.granted === backOnDmLayer.granted &&
+        // The positive control: without it three nulls, or three empty arrays from a
+        // deployment that never wrote the grant, would agree with each other perfectly.
+        onDmLayer.granted === JSON.stringify([seatA.playerId]),
+      `${onDmLayer.granted} → ${onPlayerLayer.granted} → ${backOnDmLayer.granted}`,
+    )
+
+    // 29. THE DM'S TOKENS TAB: THE FOUR WRITES THAT EDIT A COIN AFTER IT EXISTS.
+    //
+    // Nothing edited a token before this milestone. `board.addToken` created one and
+    // `board.setControllers` handed it round, so a name typed wrong, art at the wrong crop, a
+    // coin bound to nothing and a coin on a layer nobody is looking at were all permanent —
+    // the DM's only repair was to delete the row and make another. Four mutations fix that,
+    // split by **what kind of fact each write is** rather than gathered into one: cosmetics
+    // in `updateToken`, the two secrecy fields in `setLayer` and `setCharacter` one at a
+    // time, and `setArt` on its own because it is the only token write that destroys data
+    // outside the row it patches. Section 28 above is the whole of `setLayer`'s round trip,
+    // so this section is the other three, plus the one query in this application a browser
+    // may call holding **no credential at all**.
+    //
+    // ⚠️ **What only a deployment can settle, write by write.** Three of the four are things
+    // convex-test cannot be asked rather than things it merely was not asked:
+    //
+    //   - **`setArt` destroys a blob, and convex-test's file storage is an in-memory stub
+    //     keyed on the content hash.** Every upload in this script is the same seventy
+    //     bytes, so locally they are *one* entry — and a swap that deleted the wrong blob,
+    //     the right blob twice, or neither, all look identical against a store that never
+    //     had two. There are no signed URLs to stop resolving either, and "that bearer link
+    //     is dead now" is the entire claim being made.
+    //   - **`updateToken` is the Milestone 1 bug on a third field.** A lone UTF-16 surrogate
+    //     in a token's name is refused by Convex's own *argument* validation, at the
+    //     function boundary, before `requireTokenAppearance` ever runs — which is why
+    //     `requireText` deliberately carries no surrogate check of its own, and why the
+    //     local suite structurally cannot reproduce the refusal. A fractional size and a NaN
+    //     are the other half of the same point: both are perfectly ordinary float64s that
+    //     survive the boundary and are refused by the handler, and this is where they
+    //     actually cross a wire.
+    //   - **`setCharacter` clears a binding with `null`, beside an array nobody wrote.**
+    //     `undefined` is not a Convex value, so whether *none* comes back as a present key
+    //     holding null or as no key at all is a question only a real round trip settles —
+    //     and this is the one place in the app where the distinction is real rather than
+    //     stylistic. Next to it, `controllerIds` changes with **nothing written to the
+    //     token**, which is exactly the derived-value drift this script's field-by-field
+    //     comparison exists to name.
+    //   - **`games:list` reads every game in the deployment.** Locally that is a fixture
+    //     with two rows in it. Here it is seventy-odd real games made by real runs, and the
+    //     row this run looks for is one this run inserted — which is also the only way to
+    //     find out that a truncated list is truncated from the wrong end.
+
+    // (a) A BLOB THAT IS REALLY GONE.
+    //
+    // Two real uploads: a real signed URL each time and a real POST of real bytes. The first
+    // check is the one the content-hash stub makes unaskable — the same seventy bytes
+    // uploaded twice are two blobs with two ids and two URLs — and every claim below is a
+    // statement about exactly one of them, so without it they are statements about nothing.
+    const firstArt = await uploadPng(client, code, dmCode)
+    uploads.push(firstArt)
+    const secondArt = await uploadPng(client, code, dmCode)
+    uploads.push(secondArt)
+    check(
+      'the same bytes uploaded twice became two distinct blobs',
+      Boolean(firstArt) && Boolean(secondArt) && firstArt !== secondArt,
+      `${firstArt} against ${secondArt}`,
+    )
+
+    const editable = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      name: 'Coin the DM Is Still Editing',
+      layer: 'player',
+      sizeSquares: 1,
+      tint: '#8e44ad',
+      imageId: firstArt,
+      x: 300,
+      y: 1500,
+    })
+    created.push(editable.tokenId)
+
+    // Captured off `board:tokens` as the DM, which is the only place a signed URL is minted
+    // — `setArt` deliberately returns null rather than handing one back, because a mutation
+    // that minted one would be minting outside the filter that decides who may have it.
+    const artBefore = await tokensOf(editable.tokenId)
+    const oldArtUrl = artBefore ? artBefore.artUrl : null
+    const oldArtFetch = oldArtUrl ? await fetch(oldArtUrl) : null
+    check(
+      'the coin came back with a signed art URL that resolves',
+      oldArtFetch !== null && oldArtFetch.ok,
+      oldArtFetch ? `${oldArtFetch.status} from the URL the DM was sent` : 'no art URL came back',
+    )
+
+    await client.mutation('board:setArt', {
+      code,
+      dmCode,
+      tokenId: editable.tokenId,
+      imageId: secondArt,
+    })
+    const artAfter = await tokensOf(editable.tokenId)
+    const newArtUrl = artAfter ? artAfter.artUrl : null
+    const newArtFetch = newArtUrl ? await fetch(newArtUrl) : null
+    check(
+      'board:setArt pointed the coin at a different URL, and that one resolves',
+      newArtUrl !== null && newArtUrl !== oldArtUrl && newArtFetch !== null && newArtFetch.ok,
+      newArtFetch
+        ? `${newArtFetch.status} from a URL that differs: ${newArtUrl !== oldArtUrl}`
+        : 'no new art URL came back',
+    )
+    // ⚠️ **THE CHECK NOTHING BUT A DEPLOYMENT CAN MAKE.** The URL captured before the swap
+    // is a bearer link, unguessable but not permission-checked, and the promise
+    // `replaceTokenArt` makes is that the bytes behind it are gone rather than merely
+    // unreferenced. A 404 is that promise kept. Anything else — a 200, a 403, a redirect —
+    // means a swap left a live copy of the DM's old art behind for whoever had the string,
+    // and no local suite can tell the difference because no local suite ever had a URL.
+    const staleArtFetch = oldArtUrl ? await fetch(oldArtUrl) : null
+    check(
+      'the blob it replaced is really gone — the URL captured before the swap now 404s',
+      staleArtFetch !== null && staleArtFetch.status === 404,
+      staleArtFetch ? `${staleArtFetch.status} from the stale URL` : 'no stale URL to re-fetch',
+    )
+    // And the reference moved with the pointer, which is what makes the delete above the only
+    // one that was ever permitted: `files.discard` refuses a blob a token still points at,
+    // through `tokenReferencesImage`, so the only transaction allowed to delete the outgoing
+    // art is the one that stopped referencing it.
+    await refuses('files:discard refused the new blob, because the coin now references it', () =>
+      client.mutation('files:discard', { code, dmCode, imageId: secondArt }),
+    )
+    // The other half of that, and the property the cleanup registry at the bottom of this
+    // file rests on: `discard` returns early when the blob is not in storage, so discarding
+    // one `setArt` has already deleted is a no-op rather than a second error on top of the
+    // first. Asserted through what it did *not* disturb, because "it did not throw" is a
+    // claim the run's own catch already makes.
+    await client.mutation('files:discard', { code, dmCode, imageId: firstArt })
+    const artAfterDiscard = await tokensOf(editable.tokenId)
+    const liveArtFetch = newArtUrl ? await fetch(newArtUrl) : null
+    check(
+      'discarding the blob setArt had already deleted was a no-op, and left the live art alone',
+      artAfterDiscard &&
+        artAfterDiscard.artUrl === newArtUrl &&
+        liveArtFetch !== null &&
+        liveArtFetch.ok,
+      liveArtFetch
+        ? `${liveArtFetch.status} from the live URL afterwards — this is what makes sweeping the whole upload list safe`
+        : 'no live URL to re-fetch',
+    )
+
+    // (b) `board:setCharacter`: THE DERIVED HALF, AND THE `null` KEY.
+    //
+    // The coin is granted to seat B first, so that the two arrays on the payload are
+    // genuinely different arrays throughout: `grantedPlayerIds` is what the DM wrote down and
+    // `controllerIds` is the rule computed from it, and a rebind moves the second without
+    // touching the first. A derived value changing with no write behind it is precisely what
+    // `firstDifference`'s field-by-field naming exists to catch — and the reason the stored
+    // half must not be migrated is written out at `setTokenCharacter`: a token still listing
+    // the seat that played the creature it is no longer bound to is a stale grant that
+    // authorises a real drag.
+    await client.mutation('board:setControllers', {
+      code,
+      dmCode,
+      tokenId: editable.tokenId,
+      playerIds: [seatB.playerId],
+    })
+    grantedTokens.push(editable.tokenId)
+    await client.mutation('board:setCharacter', {
+      code,
+      dmCode,
+      tokenId: editable.tokenId,
+      characterId: human.characterId,
+    })
+    const boundToHero = await tokensOf(editable.tokenId)
+    const grantWritten = boundToHero ? JSON.stringify(boundToHero.grantedPlayerIds) : 'no row'
+    check(
+      'binding a coin to a claimed hero composed the holder into controllerIds and into no grant',
+      boundToHero &&
+        boundToHero.characterId === human.characterId &&
+        boundToHero.controllerIds.length === 2 &&
+        boundToHero.controllerIds.includes(seatA.playerId) &&
+        boundToHero.controllerIds.includes(seatB.playerId) &&
+        grantWritten === JSON.stringify([seatB.playerId]),
+      boundToHero
+        ? `effective ${JSON.stringify(boundToHero.controllerIds)} against granted ${grantWritten}`
+        : 'no token row came back',
+    )
+
+    await client.mutation('board:setCharacter', {
+      code,
+      dmCode,
+      tokenId: editable.tokenId,
+      characterId: grantedCreature.characterId,
+    })
+    const rebound = await tokensOf(editable.tokenId)
+    check(
+      'the rebind dropped the holder from controllerIds while the stored grant did not move',
+      rebound &&
+        rebound.characterId === grantedCreature.characterId &&
+        JSON.stringify(rebound.controllerIds) === JSON.stringify([seatB.playerId]) &&
+        JSON.stringify(rebound.grantedPlayerIds) === grantWritten,
+      rebound
+        ? `effective ${JSON.stringify(rebound.controllerIds)} against granted ${JSON.stringify(rebound.grantedPlayerIds)}, unchanged from ${grantWritten}`
+        : 'no token row came back',
+    )
+
+    // ⚠️ **`characterId: null` AS A PRESENT KEY.** `undefined` is not a Convex value, so a
+    // cleared binding has to become *something* on the way out — `publicTokens` spells it
+    // `?? null` for that reason, and the stored document spells it as an absent field. This
+    // is the one place in the app where the difference between those two spellings is
+    // observable, and only a real round trip can say which one arrives: a payload that
+    // dropped the key instead would leave every client reading `token.characterId` as
+    // `undefined` and comparing it against `null` for ever afterwards.
+    await client.mutation('board:setCharacter', {
+      code,
+      dmCode,
+      tokenId: editable.tokenId,
+      characterId: null,
+    })
+    const unbound = await tokensOf(editable.tokenId)
+    check(
+      'unbinding came back as a present characterId key holding null, with the grant unmoved',
+      unbound &&
+        'characterId' in unbound &&
+        unbound.characterId === null &&
+        JSON.stringify(unbound.grantedPlayerIds) === grantWritten &&
+        JSON.stringify(unbound.controllerIds) === JSON.stringify([seatB.playerId]),
+      unbound
+        ? `keys: ${Object.keys(unbound).sort().join(', ')}, characterId ${JSON.stringify(unbound.characterId)}`
+        : 'no token row came back',
+    )
+
+    // (c) `board:updateToken`, AND THE MILESTONE 1 BUG CLASS ON A THIRD FIELD.
+    //
+    // The accepted write first, so the refusals after it have something to have left alone.
+    // Compared field by field rather than field at a time, because a rename, a resize and a
+    // re-tint are one absolute write — the `scenes.updateGrid` shape — and `firstDifference`
+    // names *which* of the three moved instead of reporting that something did.
+    const editedAppearance = {
+      name: EDITED_TOKEN_NAME,
+      sizeSquares: EDITED_TOKEN_SIZE,
+      tint: EDITED_TOKEN_TINT,
+    }
+    const appearanceOf = (token) =>
+      token === null
+        ? null
+        : { name: token.name, sizeSquares: token.sizeSquares, tint: token.tint }
+
+    await client.mutation('board:updateToken', {
+      code,
+      dmCode,
+      tokenId: editable.tokenId,
+      ...editedAppearance,
+    })
+    const renamed = await tokensOf(editable.tokenId)
+    const appearanceDrift = renamed
+      ? firstDifference(editedAppearance, appearanceOf(renamed), 'appearance')
+      : 'no token row came back'
+    check(
+      `board:updateToken round-tripped a name at exactly ${MAX_TOKEN_NAME_LENGTH} code units, astral pairs and all`,
+      appearanceDrift === null &&
+        // Asserted rather than trusted: an innocent edit to the fixture is exactly how a
+        // boundary test stops sitting on the boundary, and the two counts differing is the
+        // whole reason this name is the one being sent.
+        EDITED_TOKEN_NAME.length === MAX_TOKEN_NAME_LENGTH &&
+        [...EDITED_TOKEN_NAME].length < MAX_TOKEN_NAME_LENGTH,
+      appearanceDrift ??
+        `${EDITED_TOKEN_NAME.length} code units, ${[...EDITED_TOKEN_NAME].length} code points, ${EDITED_TOKEN_SIZE} squares, tint ${renamed.tint}`,
+    )
+
+    // THE MILESTONE 1 BUG ITSELF. A lone high surrogate is a perfectly ordinary
+    // one-character string to `requireText` — which is why that function deliberately does
+    // not test for one — so this refusal comes from Convex's argument validation at the
+    // function boundary, before any handler runs. Nothing in the local suite can produce it.
+    await refuses('board:updateToken refused a lone UTF-16 surrogate in the name', () =>
+      client.mutation('board:updateToken', {
+        code,
+        dmCode,
+        tokenId: editable.tokenId,
+        ...editedAppearance,
+        name: 'Half an emoji: \uD800',
+      }),
+    )
+    // And the other mechanism, on the field beside it. 1.5 and NaN are both perfectly good
+    // float64s, so both sail through the argument validator and are refused by
+    // `isUsableTokenSize` instead — which tests `Number.isInteger`, already false for NaN,
+    // which is why `updateToken` carries no `requireFinite` of its own. A suite that does not
+    // apply value validation cannot tell those two refusals apart from each other or from
+    // the one above; this is where all three actually cross a wire.
+    for (const [label, sizeSquares] of [
+      ['a fractional token size', 1.5],
+      ['NaN as a token size', Number.NaN],
+    ]) {
+      await refuses(`board:updateToken refused ${label}`, () =>
+        client.mutation('board:updateToken', {
+          code,
+          dmCode,
+          tokenId: editable.tokenId,
+          ...editedAppearance,
+          sizeSquares,
+        }),
+      )
+    }
+    const survivingAppearance = await tokensOf(editable.tokenId)
+    const survivorDrift = survivingAppearance
+      ? firstDifference(editedAppearance, appearanceOf(survivingAppearance), 'appearance')
+      : 'no token row came back'
+    check(
+      'every refused edit left the coin exactly as the accepted one had left it',
+      survivorDrift === null,
+      survivorDrift ?? `still ${survivingAppearance.sizeSquares} squares, tint ${survivingAppearance.tint}`,
+    )
+
+    // (d) `games:list` AND `games:checkDmCode`: THE FIRST READS A BROWSER MAKES HOLDING
+    // NOTHING AT ALL.
+    //
+    // Every other query in this file is scoped to one game by a code somebody typed.
+    // `games:list` takes **no arguments**, reads across the whole deployment, and is
+    // subscribed to by every idle browser that loads the site — so it is the first payload in
+    // this application whose audience is *anyone*, and the only cross-game read available
+    // with no credential of any kind. That makes it worth a real round trip twice over: the
+    // rows it returns were written by other runs and other people rather than by a fixture,
+    // and the `returns:` validator that keeps the three DM secrets out of it is derived by
+    // subtraction from a projection built for a different audience.
+    const seatsBeforeCheck = await client.query('players:list', { code })
+    const listing = await client.query('games:list', {})
+    const listedRow = listing.find((row) => row.name === gameName) ?? null
+    check(
+      'games:list carried this run’s own game, named and attributed',
+      listedRow !== null &&
+        listedRow.createdByName === SMOKE_DM_NAME &&
+        listedRow.status === 'lobby',
+      listedRow
+        ? `positive control — ${listing.length} rows, this one run by ${JSON.stringify(listedRow.createdByName)}`
+        : `not among ${listing.length} rows, so either the list is truncated from the wrong end or this run's game is not in it`,
+    )
+    // ⚠️ **THE KEY SET IS WHAT HOLDS, AND THE SUBSTRING SCAN IS THE WEAKER HALF.** A join
+    // code is six characters out of a thirty-one letter alphabet, so it can occur by chance
+    // inside a document id — the same class of trap `OPAQUE_KEYS` exists for, which is why
+    // the scan below runs over the redacted copy. What actually forbids a code is the *shape*
+    // of the row, and the shape is a subtraction: `publicGameListingValidator` is
+    // `publicGameValidator.omit('code', 'activeSceneId')`, so a new **non-secret** field
+    // added upstream for the audience that holds a join code would arrive here silently and
+    // widen the audience that holds nothing. Pinning the five names is the only thing
+    // standing between an upstream addition and an audience nobody chose.
+    const listingKeys = listedRow ? Object.keys(listedRow).sort().join(',') : 'no row'
+    check(
+      'a landing-page row carries exactly five keys, and `code` is not one of them',
+      listingKeys === '_creationTime,_id,createdByName,name,status',
+      `keys: ${listingKeys}`,
+    )
+    const listingSerialised = JSON.stringify(redactOpaque(listing))
+    check(
+      'no join code, DM code, salt or recovery hash appears anywhere in the landing payload',
+      !listing.some((row) => 'code' in row || 'dmCode' in row) &&
+        !listingSerialised.includes(code) &&
+        !listingSerialised.includes(dmCode) &&
+        !listingSerialised.includes('dmRecovery') &&
+        // The positive control, and it is the load-bearing half: without it every scan here
+        // passes on an empty array, which is exactly what a broken query returns.
+        listingSerialised.includes(gameName),
+      `${listing.length} rows scanned for ${code} and for an eight-character DM code — positive control included`,
+    )
+
+    // `checkDmCode` is a new oracle and answers a bare boolean, which is the whole of its
+    // design: no game, no code, no seat, nothing a caller could mistake for proof. A `true`
+    // authorises nothing — `requireDm` re-checks the code on every single call it gates
+    // (CLAUDE.md invariant 7) — and it expires the moment it is read.
+    const twiddledDmCode = `${dmCode[0] === 'A' ? 'B' : 'A'}${dmCode.slice(1)}`
+    const verdicts = {
+      right: await client.query('games:checkDmCode', { code, dmCode }),
+      twiddled: await client.query('games:checkDmCode', { code, dmCode: twiddledDmCode }),
+      unknownGame: await client.query('games:checkDmCode', { code: UNKNOWN_JOIN_CODE, dmCode }),
+    }
+    check(
+      'games:checkDmCode said true for the code, and false for a twiddle and an unknown game',
+      verdicts.right === true &&
+        verdicts.twiddled === false &&
+        verdicts.unknownGame === false &&
+        // Bare booleans rather than anything truthy: the return validator is `v.boolean()`
+        // and a caller writing `if (verdict)` must not be able to be handed a payload.
+        Object.values(verdicts).every((verdict) => typeof verdict === 'boolean'),
+      `${JSON.stringify(verdicts)} — the twiddle is the same length and the same alphabet, one character out`,
+    )
+    // ⚠️ **AND IT CREATED NO SEAT.** A query cannot write, which is exactly why this is a
+    // query: the DM badge follows a seat, this call is made before anybody has chosen a
+    // display name, and `elevateDm` stays the only thing that moves the badge. That is a
+    // statement about every future edit to the function rather than about today's body, and
+    // the deployment is what enforces it — so the roster is compared before and after,
+    // unredacted, because a seat created and a seat renamed are both changes worth failing on.
+    const seatsAfterCheck = await client.query('players:list', { code })
+    check(
+      'asking three times created no seat and renamed none',
+      JSON.stringify(seatsBeforeCheck) === JSON.stringify(seatsAfterCheck) &&
+        // The positive control: two empty rosters would agree perfectly. This game has the
+        // DM's own seat and the three this run joined.
+        seatsBeforeCheck.length > 1,
+      `${seatsBeforeCheck.length} seats before, ${seatsAfterCheck.length} after — positive control included`,
+    )
   } catch (error) {
     const data = error && error.data ? ` ${JSON.stringify(error.data)}` : ''
     record('the run completed without an unexpected error', false, `${error.message ?? error}${data}`)
@@ -1990,10 +3728,40 @@ async function main() {
     // Best effort, and each step is guarded on its own rather than the batch: an
     // assertion that fails halfway leaves the rest to be cleaned up, and a run that
     // abandoned two forty-entry sheets every time it failed would be a slow leak
-    // into the same budget the upload limits exist to protect. There is no API for
-    // deleting a game — that is Milestone 7's admin view — so the scene, its blob,
-    // the tokens and the characters are what can go.
+    // into the same budget the upload limits exist to protect. The scene, its blob,
+    // the tokens and the characters are what can go from here.
+    //
+    // ⚠️ **The game document is still left behind, and that is now a decision rather
+    // than a missing API.** `convex/admin.ts` can delete one — but it is an
+    // `internalMutation`, deliberately, so that it did not have to answer "who may
+    // delete a game" ahead of the milestone that owns the question. Reaching it means
+    // holding the deployment's admin credentials and shelling out to the Convex CLI,
+    // and this script needs neither: it authenticates with a game code and a DM code
+    // like any other client, over `ConvexHttpClient`. Wiring it up here would make the
+    // *cleanup* path of a test depend on deploy credentials it does not otherwise use,
+    // to save a call to `npm run prune-games` that sweeps every run at once. So the
+    // litter is swept by the broom rather than by each run, and the line below says so.
     if (code && dmCode) {
+      // Grants and reservations first, and on their own rather than left to disappear with
+      // the token or the character they hang off. Both are state *about somebody else's
+      // screen*, both are undoable through an ordinary mutation, and each `quietly` step
+      // is guarded separately — so a run that fails between reserving a hero and handing
+      // it over does not depend on the removal below succeeding to leave the game tidy.
+      for (const tokenId of grantedTokens) {
+        await quietly(() =>
+          client.mutation('board:setControllers', { code, dmCode, tokenId, playerIds: [] }),
+        )
+      }
+      for (const characterId of reservedCharacters) {
+        await quietly(() =>
+          client.mutation('characters:setReserved', {
+            code,
+            dmCode,
+            characterId,
+            reserved: false,
+          }),
+        )
+      }
       for (const tokenId of created) {
         await quietly(() => client.mutation('board:removeToken', { code, dmCode, tokenId }))
       }
@@ -2001,13 +3769,34 @@ async function main() {
         await quietly(() => client.mutation('characters:remove', { code, dmCode, characterId }))
       }
       if (sceneId) await quietly(() => client.mutation('scenes:remove', { code, dmCode, sceneId }))
+      // The seats go too, which they did not before: `players.leave` has always existed
+      // and the note here used to say otherwise. It is also the mutation that revokes a
+      // departing seat's grants, so this sweep is a second, blunter exercise of
+      // `revokeControlForSeat` on whatever the loop above did not reach.
+      for (const playerId of seats) {
+        await quietly(() => client.mutation('players:leave', { code, playerId }))
+      }
+      // ⚠️ **The uploads go LAST, and the ordering is the whole reason this loop is a loop
+      // rather than a line beside each upload.** `files.discard` refuses any blob a scene or
+      // a token still references — that is what stops a mis-sequenced catch handler blanking
+      // the map out from under the table — so running it before the removals above would
+      // report a failed cleanup step for every blob that was doing its job.
+      //
+      // After them, every id on this list is one of three things: consumed and already
+      // deleted with its row, deleted by `replaceTokenArt` when section 29 swapped the art,
+      // or an **orphan** — bytes from a run that failed between the POST and the mutation
+      // that would have adopted them. `discard` returns early on a blob that is not in
+      // storage, so it is a no-op on the first two, and it is the only thing in the
+      // application that can reclaim the third. That idempotence is exactly what makes
+      // running it over the whole list safe rather than a list of guesses about which
+      // uploads survived a run that failed halfway.
+      for (const imageId of uploads) {
+        await quietly(() => client.mutation('files:discard', { code, dmCode, imageId }))
+      }
       console.log(
-        `\n  cleaned up the scene, ${created.length} tokens and ${createdCharacters.length} characters`,
+        `\n  cleaned up the scene, ${created.length} tokens, ${createdCharacters.length} characters and ${seats.length} seats, and swept ${uploads.length} uploads`,
       )
-      // The seat Milestone 4's lock check joined on goes the same way as the game
-      // it sits in: there is no API for removing either yet. A row holding a display
-      // name is a rounding error against the budget two forty-entry sheets would be.
-      console.log(`  the game itself remains: ${code} (no delete API before Milestone 7)`)
+      console.log(`  the game itself remains: ${code} — \`npm run prune-games\` sweeps these up`)
     } else {
       console.log('\n  nothing to clean up: the game was never created')
     }

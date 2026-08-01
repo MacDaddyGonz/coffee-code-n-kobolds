@@ -48,9 +48,11 @@ export const PALADIN: ClassLibrary = {
     feats: [
       {
         name: 'Longsword',
-        text: 'Your sword arm, and the plainest line on the sheet. Roll 1d20+STR+PROF to hit something within five feet of you; this is the damage it takes. Your shield is already counted in your Armour Class.',
+        text: 'Your sword arm, and the plainest line on the sheet. A swing at something within five feet of you; this is the damage it takes. Your shield is already counted in your Armour Class.',
         roll: '1d8+STR',
         level: null,
+        category: 'weapon',
+        toHit: '1d20+STR+PROF',
         catalogueKey: null,
       },
       {
@@ -58,6 +60,7 @@ export const PALADIN: ClassLibrary = {
         text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
         roll: null,
         level: null,
+        category: 'passive',
         catalogueKey: 'lay-on-hands',
       },
       {
@@ -65,6 +68,7 @@ export const PALADIN: ClassLibrary = {
         text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
         roll: null,
         level: null,
+        category: 'passive',
         catalogueKey: null,
       },
     ],
@@ -105,9 +109,11 @@ export const PALADIN: ClassLibrary = {
         feats: [
           {
             name: 'Longsword',
-            text: 'Roll 1d20+STR+PROF to hit something within five feet of you; this is the damage it takes. On a hit you may spend a spell slot for a Divine Smite.',
+            text: 'A swing at something within five feet of you; this is the damage it takes. On a hit you may spend a spell slot for a Divine Smite.',
             roll: '1d8+STR',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+STR+PROF',
             catalogueKey: null,
           },
           {
@@ -115,6 +121,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: 'lay-on-hands',
           },
           {
@@ -122,6 +129,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage: 2d8 for a 1st-level slot, another 1d8 per level above that, and 1d8 more again against undead and fiends.',
             roll: '2d8',
             level: null,
+            category: 'action',
             catalogueKey: 'divine-smite',
           },
           {
@@ -129,6 +137,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -136,6 +145,7 @@ export const PALADIN: ClassLibrary = {
             text: 'While you are wearing armour your Armour Class is 1 higher. It is already counted in the 19 on this sheet.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -143,6 +153,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Once per rest, an action makes your longsword blaze with light for a minute. It sheds bright light 20 feet around you, and while it burns you add your Charisma modifier to every attack roll made with it — so your to-hit becomes the roll listed here.',
             roll: '1d20+STR+CHA+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
         ],
@@ -152,6 +163,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -159,6 +171,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
             roll: '1d4',
             level: 1,
+            category: 'action',
             catalogueKey: 'bless',
           },
         ],
@@ -193,9 +206,11 @@ export const PALADIN: ClassLibrary = {
         feats: [
           {
             name: 'Longsword',
-            text: 'Roll 1d20+STR+PROF to hit something within five feet of you; this is the damage it takes. On a hit you may spend a spell slot for a Divine Smite.',
+            text: 'A swing at something within five feet of you; this is the damage it takes. On a hit you may spend a spell slot for a Divine Smite.',
             roll: '1d8+STR',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+STR+PROF',
             catalogueKey: null,
           },
           {
@@ -203,6 +218,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: 'lay-on-hands',
           },
           {
@@ -210,6 +226,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage: 2d8 for a 1st-level slot, another 1d8 per level above that, and 1d8 more again against undead and fiends.',
             roll: '2d8',
             level: null,
+            category: 'action',
             catalogueKey: 'divine-smite',
           },
           {
@@ -217,6 +234,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -224,6 +242,7 @@ export const PALADIN: ClassLibrary = {
             text: 'While you are wearing armour your Armour Class is 1 higher. It is already counted in the 19 on this sheet.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -231,6 +250,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Once per rest, an action makes your longsword blaze with light for a minute. It sheds bright light 20 feet around you, and while it burns you add your Charisma modifier to every attack roll made with it — so your to-hit becomes the roll listed here.',
             roll: '1d20+STR+CHA+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -238,6 +258,7 @@ export const PALADIN: ClassLibrary = {
             text: 'The other use of Channel Divinity. Every undead and fiend within 30 feet that fails a Wisdom saving throw spends the next minute trying to get away from you and will not willingly come near you again until it ends.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -247,6 +268,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -254,6 +276,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
             roll: '1d4',
             level: 1,
+            category: 'action',
             catalogueKey: 'bless',
           },
           {
@@ -261,6 +284,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A bonus action wraps a shimmering field around a creature within 60 feet. Its Armour Class rises by 2 for the next ten minutes, while you concentrate — usually cast on whoever is being hit hardest.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -268,6 +292,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A willing creature you touch cannot be frightened for the next minute, and gains temporary hit points equal to your Charisma modifier at the start of each of its turns while you concentrate.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -302,9 +327,11 @@ export const PALADIN: ClassLibrary = {
         feats: [
           {
             name: 'Longsword',
-            text: 'Roll 1d20+STR+PROF to hit something within five feet of you; this is the damage it takes. You now swing twice on your turn, and either hit can carry a Divine Smite.',
+            text: 'A swing at something within five feet of you; this is the damage it takes. You now swing twice on your turn, and either hit can carry a Divine Smite.',
             roll: '1d8+STR',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+STR+PROF',
             catalogueKey: null,
           },
           {
@@ -312,6 +339,7 @@ export const PALADIN: ClassLibrary = {
             text: 'When you take the Attack action you attack twice instead of once. Roll each swing separately — this is the single biggest jump the class ever gets, and it doubles what a smite-heavy turn can do.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -319,6 +347,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: 'lay-on-hands',
           },
           {
@@ -326,6 +355,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage: 2d8 for a 1st-level slot, another 1d8 per level above that, and 1d8 more again against undead and fiends.',
             roll: '2d8',
             level: null,
+            category: 'action',
             catalogueKey: 'divine-smite',
           },
           {
@@ -333,6 +363,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -340,6 +371,7 @@ export const PALADIN: ClassLibrary = {
             text: 'While you are wearing armour your Armour Class is 1 higher. It is already counted in the 19 on this sheet.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -347,6 +379,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Once per rest, an action makes your longsword blaze with light for a minute. It sheds bright light 20 feet around you, and while it burns you add your Charisma modifier to every attack roll made with it — so your to-hit becomes the roll listed here.',
             roll: '1d20+STR+CHA+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -354,6 +387,7 @@ export const PALADIN: ClassLibrary = {
             text: 'The other use of Channel Divinity. Every undead and fiend within 30 feet that fails a Wisdom saving throw spends the next minute trying to get away from you and will not willingly come near you again until it ends.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -363,6 +397,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -370,6 +405,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
             roll: '1d4',
             level: 1,
+            category: 'action',
             catalogueKey: 'bless',
           },
           {
@@ -377,6 +413,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A bonus action wraps a shimmering field around a creature within 60 feet. Its Armour Class rises by 2 for the next ten minutes, while you concentrate — usually cast on whoever is being hit hardest.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -384,6 +421,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A willing creature you touch cannot be frightened for the next minute, and gains temporary hit points equal to your Charisma modifier at the start of each of its turns while you concentrate.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -391,6 +429,7 @@ export const PALADIN: ClassLibrary = {
             text: 'For ten minutes a creature you touch is warded against aberrations, celestials, elementals, fey, fiends and undead: those creatures attack it at disadvantage, and they cannot charm or frighten it at all.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -398,6 +437,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A bonus action makes your weapon glow for a minute while you concentrate. Every hit you land with it deals the extra radiant damage listed here, on top of the weapon\'s own.',
             roll: '1d4',
             level: 1,
+            category: 'action',
             catalogueKey: null,
           },
         ],
@@ -432,9 +472,11 @@ export const PALADIN: ClassLibrary = {
         feats: [
           {
             name: 'Longsword',
-            text: 'Roll 1d20+STR+PROF to hit something within five feet of you; this is the damage it takes. You swing twice on your turn, and either hit can carry a Divine Smite.',
+            text: 'A swing at something within five feet of you; this is the damage it takes. You swing twice on your turn, and either hit can carry a Divine Smite.',
             roll: '1d8+STR',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+STR+PROF',
             catalogueKey: null,
           },
           {
@@ -442,6 +484,7 @@ export const PALADIN: ClassLibrary = {
             text: 'When you take the Attack action you attack twice instead of once. Roll each swing separately — this is the single biggest jump the class ever gets, and it doubles what a smite-heavy turn can do.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -449,6 +492,7 @@ export const PALADIN: ClassLibrary = {
             text: 'While you are conscious, you and every ally within 10 feet of you add your Charisma modifier to every saving throw. It is always on and needs nothing spent — standing near the paladin is the point of the paladin.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -456,6 +500,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: 'lay-on-hands',
           },
           {
@@ -463,6 +508,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage. A 2nd-level slot now deals the 3d8 listed here, and it is 1d8 more again against undead and fiends.',
             roll: '3d8',
             level: null,
+            category: 'action',
             catalogueKey: 'divine-smite',
           },
           {
@@ -470,6 +516,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -477,6 +524,7 @@ export const PALADIN: ClassLibrary = {
             text: 'While you are wearing armour your Armour Class is 1 higher. It is already counted in the 19 on this sheet.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -484,6 +532,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Once per rest, an action makes your longsword blaze with light for a minute. It sheds bright light 20 feet around you, and while it burns you add your Charisma modifier to every attack roll made with it — so your to-hit becomes the roll listed here.',
             roll: '1d20+STR+CHA+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -491,6 +540,7 @@ export const PALADIN: ClassLibrary = {
             text: 'The other use of Channel Divinity. Every undead and fiend within 30 feet that fails a Wisdom saving throw spends the next minute trying to get away from you and will not willingly come near you again until it ends.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -500,6 +550,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -507,6 +558,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
             roll: '1d4',
             level: 1,
+            category: 'action',
             catalogueKey: 'bless',
           },
           {
@@ -514,6 +566,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A bonus action wraps a shimmering field around a creature within 60 feet. Its Armour Class rises by 2 for the next ten minutes, while you concentrate — usually cast on whoever is being hit hardest.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -521,6 +574,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A willing creature you touch cannot be frightened for the next minute, and gains temporary hit points equal to your Charisma modifier at the start of each of its turns while you concentrate.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -528,6 +582,7 @@ export const PALADIN: ClassLibrary = {
             text: 'For ten minutes a creature you touch is warded against aberrations, celestials, elementals, fey, fiends and undead: those creatures attack it at disadvantage, and they cannot charm or frighten it at all.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -535,6 +590,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A bonus action makes your weapon glow for a minute while you concentrate. Every hit you land with it deals the extra radiant damage listed here, on top of the weapon\'s own.',
             roll: '1d4',
             level: 1,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -542,6 +598,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Three creatures gain 5 hit points, to both their current and their maximum, for eight hours. Another 5 for each slot level above 2nd.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: 'aid',
           },
           {
@@ -549,6 +606,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Bind yourself to a willing creature for an hour. Its Armour Class and its saving throws each improve by 1, and it takes only half of any damage dealt to it — you take the other half yourself, however far away you are.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -588,9 +646,11 @@ export const PALADIN: ClassLibrary = {
         feats: [
           {
             name: 'Greatsword',
-            text: 'Two hands, no shield. Roll 1d20+STR+PROF to hit something within five feet of you; this is the damage it takes. On a hit you may spend a spell slot for a Divine Smite.',
+            text: 'Two hands, no shield. A swing at something within five feet of you; this is the damage it takes. On a hit you may spend a spell slot for a Divine Smite.',
             roll: '2d6+STR',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+STR+PROF',
             catalogueKey: null,
           },
           {
@@ -598,6 +658,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: 'lay-on-hands',
           },
           {
@@ -605,6 +666,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage: 2d8 for a 1st-level slot, another 1d8 per level above that, and 1d8 more again against undead and fiends.',
             roll: '2d8',
             level: null,
+            category: 'action',
             catalogueKey: 'divine-smite',
           },
           {
@@ -612,6 +674,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -619,6 +682,7 @@ export const PALADIN: ClassLibrary = {
             text: 'When a two-handed weapon rolls a 1 or a 2 for damage, reroll that die and take the new number, even if it is worse. Your greatsword lands closer to its best far more often.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -626,6 +690,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Once per rest, a bonus action swears vengeance on one creature you can see within 10 feet. For the next minute every attack you make against that one enemy is rolled with advantage — the oath in a single line.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -635,6 +700,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -642,6 +708,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Up to three creatures within 30 feet subtract the die from every attack roll and saving throw they make for the next minute, while you concentrate. Each one that succeeds on a Charisma saving throw shrugs it off.',
             roll: '1d4',
             level: 1,
+            category: 'action',
             catalogueKey: null,
           },
         ],
@@ -676,9 +743,11 @@ export const PALADIN: ClassLibrary = {
         feats: [
           {
             name: 'Greatsword',
-            text: 'Two hands, no shield. Roll 1d20+STR+PROF to hit something within five feet of you; this is the damage it takes. On a hit you may spend a spell slot for a Divine Smite.',
+            text: 'Two hands, no shield. A swing at something within five feet of you; this is the damage it takes. On a hit you may spend a spell slot for a Divine Smite.',
             roll: '2d6+STR',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+STR+PROF',
             catalogueKey: null,
           },
           {
@@ -686,6 +755,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: 'lay-on-hands',
           },
           {
@@ -693,6 +763,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage: 2d8 for a 1st-level slot, another 1d8 per level above that, and 1d8 more again against undead and fiends.',
             roll: '2d8',
             level: null,
+            category: 'action',
             catalogueKey: 'divine-smite',
           },
           {
@@ -700,6 +771,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -707,6 +779,7 @@ export const PALADIN: ClassLibrary = {
             text: 'When a two-handed weapon rolls a 1 or a 2 for damage, reroll that die and take the new number, even if it is worse. Your greatsword lands closer to its best far more often.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -714,6 +787,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Once per rest, a bonus action swears vengeance on one creature you can see within 10 feet. For the next minute every attack you make against that one enemy is rolled with advantage — the oath in a single line.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -721,6 +795,7 @@ export const PALADIN: ClassLibrary = {
             text: 'The other use of Channel Divinity. Name one creature you can see within 60 feet: unless it succeeds on a Wisdom saving throw it is frightened of you for a minute, and attacks at disadvantage for as long as it can see you.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -730,6 +805,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -737,6 +813,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Up to three creatures within 30 feet subtract the die from every attack roll and saving throw they make for the next minute, while you concentrate. Each one that succeeds on a Charisma saving throw shrugs it off.',
             roll: '1d4',
             level: 1,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -744,6 +821,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A bonus action marks one creature you can see as your quarry for the next hour, while you concentrate. Every weapon hit you land on it deals the extra damage listed here, and if it dies you may mark something else.',
             roll: '1d6',
             level: 1,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -751,6 +829,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A bonus action: your next weapon hit within the minute carries psychic force as well, and the target must succeed on a Wisdom saving throw or be frightened of you while you concentrate.',
             roll: '1d6',
             level: 1,
+            category: 'action',
             catalogueKey: null,
           },
         ],
@@ -785,9 +864,11 @@ export const PALADIN: ClassLibrary = {
         feats: [
           {
             name: 'Greatsword',
-            text: 'Two hands, no shield. Roll 1d20+STR+PROF to hit something within five feet of you; this is the damage it takes. You now swing twice on your turn, and either hit can carry a Divine Smite.',
+            text: 'Two hands, no shield. A swing at something within five feet of you; this is the damage it takes. You now swing twice on your turn, and either hit can carry a Divine Smite.',
             roll: '2d6+STR',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+STR+PROF',
             catalogueKey: null,
           },
           {
@@ -795,6 +876,7 @@ export const PALADIN: ClassLibrary = {
             text: 'When you take the Attack action you attack twice instead of once. Roll each swing separately — and with Vow of Enmity sworn, both of them are rolled with advantage against your quarry.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -802,6 +884,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: 'lay-on-hands',
           },
           {
@@ -809,6 +892,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage: 2d8 for a 1st-level slot, another 1d8 per level above that, and 1d8 more again against undead and fiends.',
             roll: '2d8',
             level: null,
+            category: 'action',
             catalogueKey: 'divine-smite',
           },
           {
@@ -816,6 +900,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -823,6 +908,7 @@ export const PALADIN: ClassLibrary = {
             text: 'When a two-handed weapon rolls a 1 or a 2 for damage, reroll that die and take the new number, even if it is worse. Your greatsword lands closer to its best far more often.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -830,6 +916,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Once per rest, a bonus action swears vengeance on one creature you can see within 10 feet. For the next minute every attack you make against that one enemy is rolled with advantage — the oath in a single line.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -837,6 +924,7 @@ export const PALADIN: ClassLibrary = {
             text: 'The other use of Channel Divinity. Name one creature you can see within 60 feet: unless it succeeds on a Wisdom saving throw it is frightened of you for a minute, and attacks at disadvantage for as long as it can see you.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -846,6 +934,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -853,6 +942,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Up to three creatures within 30 feet subtract the die from every attack roll and saving throw they make for the next minute, while you concentrate. Each one that succeeds on a Charisma saving throw shrugs it off.',
             roll: '1d4',
             level: 1,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -860,6 +950,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A bonus action marks one creature you can see as your quarry for the next hour, while you concentrate. Every weapon hit you land on it deals the extra damage listed here, and if it dies you may mark something else.',
             roll: '1d6',
             level: 1,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -867,6 +958,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A bonus action: your next weapon hit within the minute carries psychic force as well, and the target must succeed on a Wisdom saving throw or be frightened of you while you concentrate.',
             roll: '1d6',
             level: 1,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -874,6 +966,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A bonus action: your next weapon hit sets the target alight. It takes the damage again at the start of each of its turns until it or somebody beside it beats out the flames with a Constitution saving throw.',
             roll: '1d6',
             level: 1,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -881,6 +974,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A bonus action makes your weapon glow for a minute while you concentrate. Every hit you land with it deals the extra radiant damage listed here, on top of the weapon\'s own.',
             roll: '1d4',
             level: 1,
+            category: 'action',
             catalogueKey: null,
           },
         ],
@@ -915,9 +1009,11 @@ export const PALADIN: ClassLibrary = {
         feats: [
           {
             name: 'Greatsword',
-            text: 'Two hands, no shield. Roll 1d20+STR+PROF to hit something within five feet of you; this is the damage it takes. You swing twice on your turn, and either hit can carry a Divine Smite.',
+            text: 'Two hands, no shield. A swing at something within five feet of you; this is the damage it takes. You swing twice on your turn, and either hit can carry a Divine Smite.',
             roll: '2d6+STR',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+STR+PROF',
             catalogueKey: null,
           },
           {
@@ -925,6 +1021,7 @@ export const PALADIN: ClassLibrary = {
             text: 'When you take the Attack action you attack twice instead of once. Roll each swing separately — and with Vow of Enmity sworn, both of them are rolled with advantage against your quarry.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -932,6 +1029,7 @@ export const PALADIN: ClassLibrary = {
             text: 'While you are conscious, you and every ally within 10 feet of you add your Charisma modifier to every saving throw. It is always on and needs nothing spent — standing near the paladin is the point of the paladin.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -939,6 +1037,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: 'lay-on-hands',
           },
           {
@@ -946,6 +1045,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage. A 2nd-level slot now deals the 3d8 listed here, and it is 1d8 more again against undead and fiends.',
             roll: '3d8',
             level: null,
+            category: 'action',
             catalogueKey: 'divine-smite',
           },
           {
@@ -953,6 +1053,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -960,6 +1061,7 @@ export const PALADIN: ClassLibrary = {
             text: 'When a two-handed weapon rolls a 1 or a 2 for damage, reroll that die and take the new number, even if it is worse. Your greatsword lands closer to its best far more often.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -967,6 +1069,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Once per rest, a bonus action swears vengeance on one creature you can see within 10 feet. For the next minute every attack you make against that one enemy is rolled with advantage — the oath in a single line.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -974,6 +1077,7 @@ export const PALADIN: ClassLibrary = {
             text: 'The other use of Channel Divinity. Name one creature you can see within 60 feet: unless it succeeds on a Wisdom saving throw it is frightened of you for a minute, and attacks at disadvantage for as long as it can see you.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -983,6 +1087,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
             roll: '2d8+CHA',
             level: 1,
+            category: 'action',
             catalogueKey: 'cure-wounds',
           },
           {
@@ -990,6 +1095,7 @@ export const PALADIN: ClassLibrary = {
             text: 'Up to three creatures within 30 feet subtract the die from every attack roll and saving throw they make for the next minute, while you concentrate. Each one that succeeds on a Charisma saving throw shrugs it off.',
             roll: '1d4',
             level: 1,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -997,6 +1103,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A bonus action marks one creature you can see as your quarry for the next hour, while you concentrate. Every weapon hit you land on it deals the extra damage listed here, and if it dies you may mark something else.',
             roll: '1d6',
             level: 1,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -1004,6 +1111,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A bonus action: your next weapon hit within the minute carries psychic force as well, and the target must succeed on a Wisdom saving throw or be frightened of you while you concentrate.',
             roll: '1d6',
             level: 1,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -1011,6 +1119,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A bonus action: your next weapon hit sets the target alight. It takes the damage again at the start of each of its turns until it or somebody beside it beats out the flames with a Constitution saving throw.',
             roll: '1d6',
             level: 1,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -1018,6 +1127,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A bonus action makes your weapon glow for a minute while you concentrate. Every hit you land with it deals the extra radiant damage listed here, on top of the weapon\'s own.',
             roll: '1d4',
             level: 1,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -1025,6 +1135,7 @@ export const PALADIN: ClassLibrary = {
             text: 'A bonus action: you vanish in a puff of silver mist and reappear in an unoccupied space you can see up to 30 feet away.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: 'misty-step',
           },
           {
@@ -1032,6 +1143,7 @@ export const PALADIN: ClassLibrary = {
             text: 'One humanoid within 60 feet is held rigid — unable to move, act or speak — while you concentrate, and repeats its Wisdom saving throw at the end of each of its turns. Attacks made against it from within five feet are critical hits.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: 'hold-person',
           },
         ],

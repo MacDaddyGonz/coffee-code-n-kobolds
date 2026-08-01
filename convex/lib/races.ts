@@ -13,7 +13,7 @@
 
 import { v } from 'convex/values'
 
-import type { AbilityKey, SheetEntry } from './sheet'
+import type { AbilityKey, ContentEntry } from './sheet'
 
 export const RACE_KEYS = [
   'human',
@@ -70,10 +70,15 @@ export type Race = {
   hpPerLevel?: number
   /** Feet added to the base 35. The Goliath, and only the Goliath. */
   speedBonus?: number
+  // Both `ContentEntry` — the sheet entry with its **category answered**. Taken from
+  // lib/sheet.ts rather than from lib/library/types.ts, which declares the same alias:
+  // this module is imported by the browser for its dropdown, and `bundleGuard` and
+  // `corpusGuard` both refuse a specifier naming a corpus directory. The shared type
+  // lives in the module both sides may already see.
   /** Spells this race hands over for free, appended to the sheet's spell list. */
-  grantedSpells?: Omit<SheetEntry, 'id'>[]
+  grantedSpells?: ContentEntry[]
   /** Feats and abilities handed over for free, appended to the sheet's feat list. */
-  grantedFeats?: Omit<SheetEntry, 'id'>[]
+  grantedFeats?: ContentEntry[]
   /** Spendable once per long rest. Empty for the six that have nothing to spend. */
   perRest?: PerRestAbility[]
 }
@@ -154,6 +159,9 @@ export const RACES: readonly Race[] = [
         roll: null,
         level: 0,
         catalogueKey: null,
+        // Nothing is rolled and nothing is aimed — the cantrip is declared and it is
+        // up, which is the definition of a passive rather than a judgement made here.
+        category: 'passive',
       },
     ],
   },
@@ -177,6 +185,10 @@ export const RACES: readonly Race[] = [
         roll: '2d6',
         level: null,
         catalogueKey: null,
+        // An `action` despite the name: the cone simply goes off and the target saves
+        // against it, so there is nothing to land first and therefore no to-hit. A
+        // `weapon` here would promise the dice work a second roll that does not exist.
+        category: 'action',
       },
     ],
   },

@@ -29,13 +29,19 @@ import {
   MAX_ROLL_DICE,
   MAX_SPEED,
   MIN_SPEED,
+  SHEET_ENTRY_CATEGORIES,
+  attackBonusOf,
+  categoryOf,
   isMonsterSheet,
   isValidRoll,
   normaliseRoll,
+  rollShapeOf,
   sheetProblem,
   storedSheetProblem,
+  toHitFromBonus,
+  toHitOf,
 } from './sheet'
-import type { NpcSheet, StoredSheet } from './sheet'
+import type { NpcSheet, SheetEntry, StoredSheet } from './sheet'
 
 // ---------------------------------------------------------------------------
 // The corpus, enumerated once.
@@ -1165,5 +1171,318 @@ describe('the labels a creature carries beside its sheet', () => {
     expect(bestiaryOf(doc)).not.toBeNull()
     expect(resolveSheet(doc).kind).toBe('npc')
     expect(sheetProblem(resolveSheet(doc))).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 9. The entry taxonomy, which for this corpus is derived rather than authored
+//
+// ⚠️ **None of the 129 stat blocks was edited to add a category or a to-hit.**
+// `resolve.ts` derives both structurally: an attack is a `weapon` because the
+// corpus already separates `attacks` from `abilities`, an ability is an `action`
+// or a `passive` according to whether it rolls anything, and every attack's
+// to-hit is composed from the creature's one `attackBonus` through
+// `toHitFromBonus`.
+//
+// That is a saving of a hundred and fifty-nine hand edits and a hundred and
+// fifty-nine chances to disagree — and it is only sound if the structural claims
+// it rests on are true. They are asserted here rather than trusted, at every one
+// of the ten ratings, because a CR shift moves the attack bonus and the whole
+// point of composing rather than storing is that every to-hit moves with it.
+// ---------------------------------------------------------------------------
+
+describe('a creature resolves to a sheet whose categories were never written down', () => {
+  /** The lines the resolver built from `combat.attacks`, under their own prefix. */
+  function attacksOf(sheet: NpcSheet): SheetEntry[] {
+    return sheet.actions.filter((action) => action.id.startsWith('atk:'))
+  }
+
+  /** And from `combat.abilities`. The prefix is what keeps a Bite and a Bite apart. */
+  function abilitiesOf(sheet: NpcSheet): SheetEntry[] {
+    return sheet.actions.filter((action) => action.id.startsWith('abl:'))
+  }
+
+  /**
+   * ⚠️ **The claim `attackEntry` rests on, and the one that proves the to-hit
+   * tracks a CR shift.**
+   *
+   * Every attack is a `weapon` by construction, and its to-hit is the creature's
+   * single `attackBonus` spelled as a roll. Asserted at all ten ratings rather than
+   * at the entry's own, because scaling is exactly when the two could come apart:
+   * the bonus is recomputed from the benchmark row on every shift, and a to-hit
+   * composed once and cached — or composed from the wrong layer — would leave a
+   * creature whose statline moves and whose attacks do not.
+   *
+   * The expected value is read through `attackBonusOf`, which is the one accessor
+   * that decides what an absent bonus means, rather than off the sheet field
+   * directly. That is the same routing `resolveBestiary` uses, so this is a test of
+   * the composition rather than a restatement of it.
+   */
+  test('every attack is a weapon whose to-hit is the creature bonus, at all ten ratings', () => {
+    const wrong: string[] = []
+    let checked = 0
+    for (const { entry, label } of FIGHTERS) {
+      for (const cr of RATINGS) {
+        const sheet = resolvedAt(entry.key, cr)
+        const bonus = attackBonusOf(sheet)
+        const expected = toHitFromBonus(bonus ?? 0)
+        const attacks = attacksOf(sheet)
+        // A combat block always states an attack bonus, so an absent one here is
+        // itself the failure rather than a case to tolerate.
+        if (bonus === null) wrong.push(`${label} @ CR ${cr}: no attack bonus on the sheet`)
+        if (attacks.length !== (entry.combat?.attacks.length ?? 0)) {
+          wrong.push(`${label} @ CR ${cr}: ${attacks.length} attack lines, corpus has ${entry.combat?.attacks.length}`)
+        }
+        for (const attack of attacks) {
+          checked += 1
+          const where = `${label} @ CR ${cr} → ${attack.name}`
+          if (attack.category !== 'weapon') wrong.push(`${where} category ${attack.category}`)
+          if (attack.toHit !== expected) wrong.push(`${where} toHit ${attack.toHit} ≠ ${expected}`)
+          if (attack.roll === null) wrong.push(`${where} has no damage`)
+        }
+      }
+    }
+    expect(wrong).toEqual([])
+    // Stated so a loop that silently shrank is visible rather than merely green.
+    expect(checked).toBeGreaterThan(1000)
+  })
+
+  /**
+   * ⚠️ **Asserted, not trusted** — `abilityEntry`'s comment says in as many words
+   * that "no ability in the corpus is a weapon", and this is the assertion it defers
+   * to. It matters because the derivation cannot express one: an ability's category
+   * is read off `roll === null` and can only ever be `action` or `passive`, so a
+   * creature whose ability genuinely has to land first would be silently published
+   * as something that simply goes off. That is a content decision somebody has to
+   * make, not a shape the resolver can guess, and the day it changes this test is
+   * what asks the question.
+   */
+  test('and no ability resolves to a weapon at any rating', () => {
+    const weapons: string[] = []
+    let checked = 0
+    for (const { entry, label } of FIGHTERS) {
+      for (const cr of RATINGS) {
+        for (const ability of abilitiesOf(resolvedAt(entry.key, cr))) {
+          checked += 1
+          if (ability.category === 'weapon') weapons.push(`${label} @ CR ${cr} → ${ability.name}`)
+          // And therefore never carries a to-hit, which is the consequence that
+          // would actually be visible: a line announcing "uses" with an attack roll
+          // attached to it.
+          if (ability.toHit !== undefined) {
+            weapons.push(`${label} @ CR ${cr} → ${ability.name} carries a to-hit`)
+          }
+        }
+      }
+    }
+    expect(weapons).toEqual([])
+    expect(checked).toBeGreaterThan(1000)
+  })
+
+  /**
+   * The whole resolved list, checked against the arity rule the validator enforces.
+   * `every creature at every rating resolves to a sheet the database would accept`
+   * already runs `sheetProblem` over these, but it stops at the first problem on a
+   * sheet — this says which lines, all of them, and it reads the categories through
+   * `categoryOf` and `toHitOf` so the accessors are exercised on real payloads
+   * rather than on hand-built fixtures.
+   */
+  test('every resolved line carries exactly the rolls its category promises', () => {
+    const wrong: string[] = []
+    for (const { entry, label } of ENTRIES) {
+      for (const cr of RATINGS) {
+        const sheet = resolvedAt(entry.key, cr)
+        for (const action of sheet.actions) {
+          const category = categoryOf(action)
+          const shape = rollShapeOf(category)
+          const where = `${label} @ CR ${cr} → ${action.name} (${category})`
+          expect(SHEET_ENTRY_CATEGORIES, where).toContain(category)
+          if (shape.toHit !== (action.toHit !== undefined)) wrong.push(`${where} toHit`)
+          if (shape.roll !== (action.roll !== null)) wrong.push(`${where} roll`)
+          // `toHitOf` is the fail-closed read, and on a resolved sheet it must
+          // agree with the stored field exactly — there is nothing here for it to
+          // be protecting against.
+          if (toHitOf(action) !== (action.toHit ?? null)) wrong.push(`${where} toHitOf disagrees`)
+        }
+      }
+    }
+    expect(wrong).toEqual([])
+  })
+
+  /**
+   * ⚠️ **Never a zero term.** `ROLL_PATTERN` would accept `1d20+0` — `\d{1,3}`
+   * matches `0` — so the grammar is not the guard, and a creature scaled down to no
+   * bonus at all is exactly how one would be produced. A bare `1d20` is the right
+   * answer; `1d20+0` and `1d20-0` are both a rendering somebody would file a bug
+   * about, and `-0` is genuinely reachable because `Math.round(-0.3)` produces it.
+   */
+  test('and no composed to-hit ever names a zero bonus', () => {
+    const offenders: string[] = []
+    for (const { entry, label } of FIGHTERS) {
+      for (const cr of RATINGS) {
+        for (const attack of attacksOf(resolvedAt(entry.key, cr))) {
+          const toHit = attack.toHit as string
+          const where = `${label} @ CR ${cr} → ${attack.name}: ${toHit}`
+          if (toHit.includes('+0') || toHit.includes('-0')) offenders.push(where)
+          if (!isValidRoll(toHit)) offenders.push(`${where} is not a roll`)
+          if (!toHit.startsWith('1d20')) offenders.push(`${where} is not a d20 roll`)
+          // A monster has no ability scores and no level, so its to-hit is flat —
+          // the same asymmetry `no NPC action references an ability token` asserts
+          // about the catalogue, here on a corpus nobody typed the numbers into.
+          if (/\b(STR|DEX|CON|INT|WIS|CHA|PROF)\b/.test(toHit)) {
+            offenders.push(`${where} names a token a reduced sheet cannot resolve`)
+          }
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  /**
+   * The positive control. Every assertion above is an empty-array comparison over a
+   * loop, and an empty array is also what a loop that read nothing produces — a
+   * `FIGHTERS` list that had lost its combat blocks, or an id prefix that changed.
+   */
+  test('and the sweeps above actually read attacks, on a corpus that has some', () => {
+    expect(FIGHTERS.length).toBeGreaterThan(80)
+    const sample = resolvedAt(FIGHTERS[0].entry.key, FIGHTERS[0].entry.cr)
+    expect(attacksOf(sample).length).toBeGreaterThan(0)
+    expect(attacksOf(sample).length).toBe(FIGHTERS[0].combat.attacks.length)
+    // And the needle the zero-bonus sweep is looking for is one these patterns
+    // would actually find.
+    expect('1d20+0'.includes('+0')).toBe(true)
+    expect(toHitFromBonus(0)).toBe('1d20')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 10. The ordering hazard
+// ---------------------------------------------------------------------------
+
+describe('an overridden attack bonus reaches the attacks as well as the statline', () => {
+  /**
+   * ⚠️ **THE TEST THIS SECTION EXISTS FOR.**
+   *
+   * `resolveBestiary` merges the DM's overrides *first* and builds the actions
+   * *afterwards*, because every attack's to-hit is composed from `attackBonus` and
+   * `withCreatureOverrides` patches that field while leaving `actions` alone.
+   * Composing before the merge gives a creature whose sheet reads +12 and whose
+   * every weapon rolls the unoverridden number.
+   *
+   * **That failure is invisible on screen**, which is the whole reason it needs a
+   * test rather than a careful reading. Both numbers arrive in the same payload and
+   * both render without complaint; the DM sees +12 beside the armour class, clicks
+   * the scimitar, and the dice throw +4. Nothing errors, nothing is out of range,
+   * and no validator has an opinion — `sheetProblem` is perfectly happy with a
+   * to-hit that disagrees with the sheet it sits on, because it has no way to know
+   * they were meant to be the same number.
+   *
+   * ADR 0007 kept one attack bonus per creature specifically so that a claw and a
+   * bite could never disagree. This is that decision arriving through the back door,
+   * with the sheet disagreeing with itself instead.
+   */
+  test('an overridden bonus is on the statline and on every attack, and they agree', () => {
+    const doc = {
+      sheet: {
+        kind: 'bestiary',
+        entryKey: 'goblin',
+        cr: 1,
+        overrides: { attackBonus: 12 },
+      } as StoredSheet,
+    }
+    const sheet = resolveSheet(doc) as NpcSheet
+
+    // Both halves, stated separately. Either one alone passes over the bug.
+    expect(sheet.attackBonus).toBe(12)
+    expect(sheet.actions[0].toHit).toBe('1d20+12')
+
+    // And the override really moved something, so the two agreeing is not the
+    // trivial agreement of nothing having happened.
+    const unoverridden = resolvedAt('goblin', 1)
+    expect(unoverridden.attackBonus).not.toBe(12)
+    expect(unoverridden.actions[0].toHit).not.toBe('1d20+12')
+    expect(unoverridden.actions[0].toHit).toBe(toHitFromBonus(unoverridden.attackBonus as number))
+  })
+
+  /**
+   * The same, over every creature that fights and at a bonus chosen so that no
+   * creature's own value could be it by coincidence. One creature agreeing could be
+   * luck; a hundred and some cannot.
+   */
+  test('for every fighting creature, and at every rating', () => {
+    const wrong: string[] = []
+    for (const { entry, label } of FIGHTERS) {
+      for (const cr of RATINGS) {
+        const sheet = resolveSheet({
+          sheet: { kind: 'bestiary', entryKey: entry.key, cr, overrides: { attackBonus: 17 } },
+        }) as NpcSheet
+        if (sheet.attackBonus !== 17) wrong.push(`${label} @ CR ${cr}: statline ${sheet.attackBonus}`)
+        for (const action of sheet.actions) {
+          if (!action.id.startsWith('atk:')) continue
+          if (action.toHit !== '1d20+17') {
+            wrong.push(`${label} @ CR ${cr} → ${action.name}: ${action.toHit}`)
+          }
+        }
+      }
+    }
+    expect(wrong).toEqual([])
+    // 17 is outside nothing's range by construction, so state that it is not simply
+    // the number every creature already had.
+    expect(FIGHTERS.every(({ combat }) => combat.attackBonus !== 17)).toBe(true)
+  })
+
+  /**
+   * A negative override, which is the case `toHitFromBonus`'s sign handling exists
+   * for — and a zero one, which is the case that must not render as `1d20+0`.
+   */
+  test('and a negative or zero override composes a sensible roll', () => {
+    const negative = resolveSheet({
+      sheet: { kind: 'bestiary', entryKey: 'goblin', cr: 1, overrides: { attackBonus: -3 } },
+    }) as NpcSheet
+    expect(negative.attackBonus).toBe(-3)
+    expect(negative.actions[0].toHit).toBe('1d20-3')
+
+    const zero = resolveSheet({
+      sheet: { kind: 'bestiary', entryKey: 'goblin', cr: 1, overrides: { attackBonus: 0 } },
+    }) as NpcSheet
+    expect(zero.attackBonus).toBe(0)
+    expect(zero.actions[0].toHit).toBe('1d20')
+    expect(zero.actions[0].toHit).not.toContain('+0')
+  })
+
+  /**
+   * The DM's own extra actions are **left exactly as written** — they are ordinary
+   * sheet entries, the DM chose their category and their to-hit, and rewriting
+   * either would be the resolver overruling the last layer of resolution. In
+   * particular the creature's composed to-hit must not be stamped onto them.
+   */
+  test('but the DM’s own extra actions keep the category and to-hit they were given', () => {
+    const extra: SheetEntry = {
+      id: 'dm-1',
+      name: 'Warhorn',
+      text: 'A signal that brings two more goblins.',
+      roll: null,
+      level: null,
+      catalogueKey: null,
+      category: 'passive',
+    }
+    const sheet = resolveSheet({
+      sheet: {
+        kind: 'bestiary',
+        entryKey: 'goblin',
+        cr: 1,
+        overrides: { attackBonus: 12, extraActions: [extra] },
+      } as StoredSheet,
+    }) as NpcSheet
+
+    const mine = sheet.actions.find((action) => action.id === 'dm-1')
+    expect(mine).toBeDefined()
+    expect(mine?.category).toBe('passive')
+    expect('toHit' in (mine as unknown as Record<string, unknown>)).toBe(false)
+    // The creature's own attacks still took the override, so the two policies are
+    // both in force on one sheet rather than one having replaced the other.
+    expect(sheet.actions[0].toHit).toBe('1d20+12')
+    // And the DM's line is last, after the corpus's attacks and abilities.
+    expect(sheet.actions[sheet.actions.length - 1].id).toBe('dm-1')
+    expect(sheetProblem(sheet)).toBeNull()
   })
 })

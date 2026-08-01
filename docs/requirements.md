@@ -82,6 +82,136 @@ is a live constraint rather than a stale one — two of the Battle Master's best
 Trip Attack and Pushing Attack, were left out of the library because of it, and their dice went to
 manoeuvres that do the same job without knocking anybody prone.
 
+#### The screen and the sheet taxonomy — 2026-08-01 — [ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md)
+
+Two amendments, and neither is to the rule set — which is why they are stated separately from the
+one above. The first corrects a description of the **screen**; the second names a distinction the
+spec always relied on and never wrote down.
+
+**"Slide-out panel" — no longer true of either panel.** The *Game board screen* section above lists
+the player character sheet panel and the DM panel as *slide-out* panels, and the *Player mode*
+section says a player "can toggle the character sheet panel". Both are now **tabs in a persistent
+right-hand panel**, beside the game feed and the DM's tools, with a draggable divider between that
+panel and the map.
+
+The reason is the feed. The spec asks for a game feed *and* a character sheet, and a player who
+clicks a roll on their sheet is the one person at the table who cannot see the feed line they just
+created — because the two now share a panel. That is a real cost, and it is paid deliberately: the
+alternative is a third floating overlay competing with the map for the same corner. What buys it
+back is the floating roll announcement over the map, which the dice work adds and which everyone
+sees, including the person who rolled. So this is one requirement's presentation changed to make
+another requirement work, rather than a preference.
+
+Nothing in the lists of *what the panels contain* moved. The DM panel is still tabbed and still
+holds what it held; the character sheet still shows a character sheet.
+
+**A sheet item is one of three things, and the spec assumed it without saying so.** *"Clicking an
+item on a character sheet sends the roll to the game feed"* is written as though every item has one
+roll. Three do not behave that way: a **weapon** is a to-hit *and* a damage — two rolls — an
+**action** rolls once, and a **passive** is declared and rolls nothing at all. Every entry now
+records which it is, and a weapon carries its to-hit as a second field rather than as a sentence a
+parser would have to find inside its description.
+
+This is not a rule being added. Nothing is adjudicated with it, no roll is evaluated, and the dice
+are still the next milestone's work — it is the spec's own sentence made precise enough to
+implement, and the wording of the roll announcement is generated from it rather than written per
+entry.
+
+**Skills are listed alphabetically now**, thirteen of them, each annotated with its ability —
+`Athletics (STR)` — rather than grouped under ability headings. The grouping made a reader learn
+the grouping before they could find a skill; the annotation answers the same question in place.
+
+#### Seats, sheets and control — 2026-08-01 — [ADR 0009](adr/0009-who-plays-what-and-what-control-grants.md)
+
+Three amendments, and **none of them is a change to the rule set** — which is why, like the entry
+above, they are stated apart from the Milestone 4 one. Nothing was added to the *Included* list and
+nothing was lifted from the *Excluded* list. Two of these correct a description of the **screen**
+and one records a consequence of [ADR 0002](adr/0002-defer-user-accounts.md) that the original text
+could not have anticipated, because it assumed accounts. Nothing new is adjudicated, evaluated or
+rolled.
+
+**"Can only interact with and move their assigned character token" — widened, one deliberate act at
+a time.** *Player mode* above says a player may move their own character's token and nothing else.
+That is still the **default**, and it is still what a player gets without the DM doing anything. But
+the DM may now hand any token to any seats, and a granted seat may move that token **and read the
+sheet behind it, including its exact hit points**. The wolf the party is fighting alongside is the
+case this exists for: a pet a player cannot damage is a sheet to look at. Two limits keep this from
+being a hole rather than a feature. The grant is of the **token**, so a grant on a DM-layer token
+shows a player nothing at all — the coin is absent from their board and the sheet is absent with it.
+And it grants **sight and hit points, not authorship**: a granted creature is not a stat block a
+player may rewrite. Everything the DM has *not* handed over is refused exactly as before, by the
+same predicate in the same module.
+
+**"When logged in, users can … Create a 'Character' (or many characters)" — in this version the DM
+creates and players claim.** *Accounts and games* above describes character creation as something a
+logged-in person does with their own characters, which presumes the accounts ADR 0002 declined. With
+no accounts, the question of who may create one had to be answered some other way, and the answer is
+the DM: `characters.create` requires the DM code on every path, for heroes, NPCs and monsters alike.
+A player picks up an unclaimed character from the table instead. **This is a further consequence of
+ADR 0002 rather than a new decision** — a character still belongs to the game and not to an
+identity, the pointer still runs seat → character, and deleting every seat still leaves the
+characters standing for somebody else to claim. Only the typing moved. A character may additionally
+be **reserved** by the DM, which means absent from every player's payload rather than greyed out in
+it: a disabled row still publishes a name, and for a character built for a player who has not
+arrived yet, the name is the spoiler.
+
+**The DM panel's five-tab list — no longer that arrangement.** *DM mode* above describes a tabbed
+panel of *All player character sheets*, *All NPC character sheets*, *Token list*, *Modal image
+library* and *Background music*. The first two were two views of one list and are now a single
+selector, grouped into **Characters, NPCs and Monsters**, at the top of the DM's *Sheets* tab beside
+the sheet it selects — with all three creation routes above it. The remaining three are unbuilt and
+belong to the game editor, so the *DM tools* tab currently holds the map controls and nothing else.
+**Everything the list said the DM can do, the DM can still do**; what changed is that the sheets are
+no longer inside a tab named for the DM's plumbing. One further split falls out of the same
+correction: **the DM does not play a character**, so where a player sees a *Character* tab the DM
+sees the *Sheets* tab instead of it, not as well.
+
+#### Getting to the table — 2026-08-01 — [ADR 0010](adr/0010-the-way-in-and-the-dms-coins.md)
+
+Two amendments, and **neither is a change to the rule set** — nothing was added to the *Included*
+list and nothing was lifted from the *Excluded* list. The first is the only entry in this section
+that records something the application now **publishes**, which is why it is stated at length rather
+than as a line. The second corrects a description of the **screen**. Nothing new is adjudicated,
+evaluated or rolled, and no ADR is superseded.
+
+**"Games are joined with a Game code" — still true, and no longer the only way to learn a game
+exists.** *Accounts and games* below describes joining as an exchange of a code and nothing else, and
+that was literally the whole of it: `games.getByCode` was a point lookup, there was no list query of
+any kind, and a game you had made but whose code you had lost was unreachable. A landing page now
+lists the **thirty most recently created** games — name, who created it, and when — with a *Join as
+player* and a *Join as DM* button beside each.
+
+⚠️ **The code still admits you, and that distinction is the whole of the change.** Choosing either
+button asks for the game code first, so a row on the landing page says only that a game *exists*. The
+join code is deliberately **absent from that payload** — printing it beside the name would make the
+list a directory of open doors rather than a list of games — as is the DM code, the recovery salt and
+the recovery hash, which are excluded by construction rather than by anybody remembering.
+
+What is genuinely new is the audience. Before this, everything this application would tell you needed
+a join code, and a join code is a bearer credential shared by everybody at one table. **After it, a
+game's name, its creator's display name, its age and whether it is in play are readable by anybody who
+loads the site with no credential at all.** The threat model in [CLAUDE.md](../CLAUDE.md) scopes that
+rather than excusing it — the audience is a small group of trusted colleagues, and a game name is not
+a secret the way a scene name or a creature name is — but it is recorded here because it is the first
+thing this app has ever published without a code, and because the way that sort of thing arrives
+unnoticed is behind a screen.
+
+Two smaller consequences of the same page. A returning player now **picks their seat off a list**,
+each row showing the character it holds, rather than retyping a display name from memory and hoping
+the normalisation matches — which is [ADR 0003](adr/0003-player-identity-without-accounts.md)'s
+idempotence made visible instead of merely true. And a returning DM enters their DM code **at the
+door** and lands already elevated; the elevate and recovery controls stay in *Settings* as well,
+because a DM whose browser loses its code mid-campaign needs a way in that is not a screen they have
+already left.
+
+**"A new player provides their name and selects their race and class" — the DM makes the character
+and the player builds on it.** Read on its own, that sentence describes a player creating a character,
+which the entry above has the DM doing. Both are true in the order they happen: the DM creates the
+character, the player claims an unclaimed one from the table, and **then** chooses its race and class
+on the sheet, which they may do for as long as it is unlocked. Nothing about who may *create* one
+changed, `characters.create` still demands the DM code on every path, and no ADR was superseded to
+make this work — the permission to choose a race and a class on an unlocked sheet was already there.
+
 ## Accounts and games
 
 - Users create an account by providing an email address.

@@ -64,7 +64,14 @@ export function useBoardKeys(args: {
   onNudge: (tokenId: Id<'tokens'>, delta: Cell) => void
   /** Every arrow key has been let go of. Settles the run of nudges. */
   onNudgeEnd: () => void
-  onDeselect: () => void
+  /**
+   * Escape was pressed on the board. Deliberately not `onDeselect`: what Escape
+   * ought to dismiss depends on what is open, and there is more than one thing —
+   * so this hook reports the press and the board decides which layer answers it.
+   * Naming it for one of the outcomes is how it ends up with a second prop for the
+   * next one.
+   */
+  onEscape: () => void
 }): void {
   // Behind a ref so the listeners are attached once. `camera` is a fresh object on
   // every render, so depending on it directly would tear the listeners down and
@@ -95,7 +102,7 @@ export function useBoardKeys(args: {
       // ctrl-0 or the back gesture would be worse than one with no keys at all.
       if (e.ctrlKey || e.metaKey || e.altKey) return
 
-      const { camera, selectedTokenId, onNudge, onDeselect } = latest.current
+      const { camera, selectedTokenId, onNudge, onEscape } = latest.current
       const arrow = ARROWS[e.key]
 
       if (arrow) {
@@ -143,7 +150,7 @@ export function useBoardKeys(args: {
         // obvious one — and swallowing it here would be a way to trap somebody in a
         // modal that no longer closes.
         case 'Escape':
-          onDeselect()
+          onEscape()
           return
         default:
           return

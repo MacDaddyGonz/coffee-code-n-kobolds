@@ -24,14 +24,21 @@ import { useImageUpload } from '@/hooks/useImageUpload'
 import { parseNumber } from '@/lib/utils'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
-import type { PublicToken } from '@convex/lib/board'
 import { MAX_CHARACTER_NAME_LENGTH } from '@convex/lib/codes'
-import { MAX_TOKEN_SQUARES, MIN_TOKEN_SQUARES, isUsableTokenSize } from '@convex/lib/grid'
 import type { PublicScene } from '@convex/lib/scenes'
 import { crLabel } from '@convex/lib/creatures'
 import type { CreatureChoice } from './BestiaryPicker'
 import { BestiaryPicker } from './BestiaryPicker'
-import { NpcSheetFields, defaultNpcStats, npcSheetFrom, npcStatsProblem } from './NpcSheetFields'
+import {
+  CreatureSheetFields,
+  creatureSheetFrom,
+  creatureStatsProblem,
+  defaultCreatureStats,
+} from './CreatureSheetFields'
+import type { Layer } from './LayerChoice'
+import { DM_LAYER_ALERT_TITLE, LayerChoice } from './LayerChoice'
+import type { TokenAppearanceDraft } from './TokenAppearanceFields'
+import { TokenAppearanceFields, isUsableAppearance } from './TokenAppearanceFields'
 
 export type TokenAddDialogProps = {
   code: string
@@ -39,15 +46,17 @@ export type TokenAddDialogProps = {
   scene: PublicScene
 }
 
-/**
- * Taken from the server's own token shape rather than spelled out again. This is
- * the field that decides secrecy, so a third literal of the union is the last thing
- * that should be able to drift from the one the mutation validates against.
- */
-type Layer = PublicToken['layer']
-
 /** A default that is legible on a map without being either team's colour. */
 const DEFAULT_TINT = '#8b5cf6'
+
+/**
+ * What the three appearance fields start at, and what closing the dialog puts them back to.
+ *
+ * A constant rather than three initialisers, so *reset* and *initial* cannot disagree — the
+ * failure that shape prevents is a dialog that opens purple the first time and grey the
+ * second.
+ */
+const EMPTY_APPEARANCE: TokenAppearanceDraft = { name: '', size: '1', tint: DEFAULT_TINT }
 
 /**
  * The character select's third and fourth answers: make a sheet for this token as it is
@@ -60,7 +69,7 @@ const DEFAULT_TINT = '#8b5cf6'
  * its existing meaning of nothing attached. The leading underscores are not decoration:
  * a Convex id is base-32-ish and can never collide with either.
  */
-const NEW_NPC = '__new-npc'
+const NEW_CREATURE = '__new-creature'
 const FROM_BESTIARY = '__from-bestiary'
 
 /**
@@ -81,17 +90,19 @@ const FROM_BESTIARY = '__from-bestiary'
  * DM, and is exactly the right thing for a barrel, a door marker or a crowd of
  * villagers nobody is going to hit. Only creatures that take damage need a sheet.
  *
- * When one does, the bestiary is reachable from here as well as from the NPCs tab, and that
- * is not duplication of the shelf but of the *route to it*: a DM who is halfway through
+ * When one does, the bestiary is reachable from here as well as from the Sheets tab, and
+ * that is not duplication of the shelf but of the *route to it*: a DM who is halfway through
  * adding a coin and realises it needs a stat block should not have to abandon the layer, the
- * size and the art they have already set to go and fetch one. `NpcSheetFields` makes the
- * same argument for the two-number form.
+ * size and the art they have already set to go and fetch one. `CreatureSheetFields` makes
+ * the same argument for the hand-built form — and it is what carries the NPC-or-monster
+ * question into this dialog, so a creature built here is filed the same way as one built
+ * from the Sheets tab rather than landing under NPCs whatever it is.
  */
 export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
   const addToken = useMutation(api.board.addToken)
   const createCharacter = useMutation(api.characters.create)
-  // With the DM code, so monsters are in the list. Without it `characters.list`
-  // answers with the player characters alone — an NPC's *existence* is the spoiler,
+  // With the DM code, so the DM's creatures are in the list. Without it `characters.list`
+  // answers with the player characters alone — a creature's *existence* is the spoiler,
   // which is why the filtering is the query's job and not a `.filter()` here.
   const characters = useQuery(api.characters.list, { code, dmCode })
   const upload = useImageUpload({ code, dmCode, kind: 'token' })
@@ -99,37 +110,39 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
   const fieldId = useId()
 
   const [open, setOpen] = useState(false)
-  const [name, setName] = useState('')
+  // One piece of state for the three cosmetic fields, because `TokenAppearanceFields` is
+  // absolute over all three — and because a name, a size and a colour are one appearance,
+  // which is the shape `board.updateToken` writes them in too.
+  const [appearance, setAppearance] = useState<TokenAppearanceDraft>(EMPTY_APPEARANCE)
   const [layer, setLayer] = useState<Layer>('player')
-  const [size, setSize] = useState('1')
-  const [tint, setTint] = useState(DEFAULT_TINT)
   const [characterId, setCharacterId] = useState('')
-  const [npcName, setNpcName] = useState('')
-  const [npcStats, setNpcStats] = useState(defaultNpcStats)
+  const [creatureName, setCreatureName] = useState('')
+  const [creatureStats, setCreatureStats] = useState(defaultCreatureStats)
   const [creature, setCreature] = useState<CreatureChoice | null>(null)
 
   function changeOpen(next: boolean) {
     setOpen(next)
     if (!next) {
-      setName('')
+      setAppearance(EMPTY_APPEARANCE)
       setLayer('player')
-      setSize('1')
-      setTint(DEFAULT_TINT)
       setCharacterId('')
-      setNpcName('')
-      setNpcStats(defaultNpcStats())
+      setCreatureName('')
+      setCreatureStats(defaultCreatureStats())
       setCreature(null)
       action.clearError()
       upload.reset()
     }
   }
 
-  const sizeSquares = parseNumber(size)
-  const makingNpc = characterId === NEW_NPC
+  // Taken apart once, because five things below name the coin and two send its size. The
+  // draft above is what the fields write to; these are what the mutation and the copy read.
+  const { name, tint } = appearance
+  const sizeSquares = parseNumber(appearance.size)
+  const makingCreature = characterId === NEW_CREATURE
   const fromBestiary = characterId === FROM_BESTIARY
   // Only asked of the fields that are on screen. A blank armour class in a section
   // nobody opened is not a reason to refuse a barrel.
-  const npcProblem = makingNpc ? npcStatsProblem(npcStats) : null
+  const creatureProblem = makingCreature ? creatureStatsProblem(creatureStats) : null
   const busy = action.pending !== null || upload.stage !== null
 
   async function submit(event: React.FormEvent) {
@@ -143,7 +156,7 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
         // the character has to exist before the token can point at it. The failure
         // that leaves is honest and small — a refused token (an oversize image, a
         // full game) can leave a sheet behind with nothing standing on it, and the
-        // NPCs tab deletes it in two clicks. The alternative is a combined
+        // Sheets tab deletes it in two clicks. The alternative is a combined
         // mutation that knows about both tables, which buys atomicity for two
         // paths in four and couples the board's writes to the character editor's.
         //
@@ -162,7 +175,7 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
         const chosenCreature = fromBestiary ? creature : null
 
         let attachTo: Id<'characters'> | undefined
-        if (chosenCreature !== null || makingNpc) {
+        if (chosenCreature !== null || makingCreature) {
           const created = await createCharacter({
             code,
             dmCode,
@@ -171,10 +184,13 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
             // asked for. It holds for a creature off the shelf too, and buys something
             // extra there: three goblins from one entry want three names, and the sheet
             // still says which entry it is reading in its own banner.
-            name: npcName.trim() === '' ? name : npcName,
+            name: creatureName.trim() === '' ? name : creatureName,
+            // A hand-built creature carries the NPC-or-monster answer the fields below
+            // asked for; a linked one needs none, because `groupOf` reads it off the
+            // corpus category of the entry the sheet points at.
             sheet:
               chosenCreature === null
-                ? npcSheetFrom(npcStats)
+                ? creatureSheetFrom(creatureStats)
                 : { kind: 'bestiary', entryKey: chosenCreature.entryKey, cr: chosenCreature.cr },
           })
           attachTo = created.characterId
@@ -235,92 +251,41 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
         </DialogHeader>
 
         <form className="flex flex-col gap-3" onSubmit={(event) => void submit(event)}>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor={`${fieldId}-name`}>Name</Label>
-            <Input
-              id={`${fieldId}-name`}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              maxLength={MAX_CHARACTER_NAME_LENGTH}
-              autoComplete="off"
-              placeholder="Goblin archer"
-              disabled={busy}
-            />
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <Label>Who can see it</Label>
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                type="button"
-                variant={layer === 'player' ? 'default' : 'outline'}
-                aria-pressed={layer === 'player'}
-                disabled={busy}
-                onClick={() => setLayer('player')}
-              >
-                Everyone
-              </Button>
-              <Button
-                type="button"
-                variant={layer === 'dm' ? 'destructive' : 'outline'}
-                aria-pressed={layer === 'dm'}
-                disabled={busy}
-                onClick={() => setLayer('dm')}
-              >
-                Only me — DM layer
-              </Button>
-            </div>
-            {layer === 'dm' ? (
-              <Alert variant="destructive">
-                <AlertTitle>Nobody else will be sent this token at all</AlertTitle>
-                <AlertDescription>
-                  A DM-layer token is absent from every player's data, not merely undrawn — so an
-                  ambush survives a player who reads the network tab. The cost of the same setting
-                  chosen by mistake is a character nobody at the table can see or move, so check it
-                  before you save.
-                </AlertDescription>
-              </Alert>
-            ) : (
-              <p className="text-muted-foreground text-xs">
-                Drawn on every screen at the table, and movable by whoever is playing the character
-                it is attached to.
-              </p>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
+          {/* The name, the size and the colour, shared with the editor — see that
+              component for why they are one thing and not six inputs. The layer picker
+              goes in its slot, so *who can see it* still sits between the name and the
+              numbers: it is the only field here that decides anything about secrecy, and
+              its place in the reading order is part of saying so. */}
+          <TokenAppearanceFields
+            draft={appearance}
+            onChange={setAppearance}
+            disabled={busy}
+            namePlaceholder="Goblin archer"
+          >
             <div className="flex flex-col gap-2">
-              <Label htmlFor={`${fieldId}-size`}>Size in squares</Label>
-              <Input
-                id={`${fieldId}-size`}
-                type="number"
-                min={MIN_TOKEN_SQUARES}
-                max={MAX_TOKEN_SQUARES}
-                step={1}
-                value={size}
-                onChange={(event) => setSize(event.target.value)}
-                className="tabular-nums"
-                disabled={busy}
-              />
-              <p className="text-muted-foreground text-xs">
-                1 for a person, 2 for an ogre. Up to {MAX_TOKEN_SQUARES}.
-              </p>
+              <Label>Who can see it</Label>
+              <LayerChoice layer={layer} onChange={setLayer} disabled={busy} />
+              {/* The title is shared and the body is not: this one is about a mistake to
+                  catch *before* saving, where the editor's is about a press that puts
+                  everything back. See the ⚠️ on `DM_LAYER_ALERT_TITLE`. */}
+              {layer === 'dm' ? (
+                <Alert variant="destructive">
+                  <AlertTitle>{DM_LAYER_ALERT_TITLE}</AlertTitle>
+                  <AlertDescription>
+                    A DM-layer token is absent from every player's data, not merely undrawn — so
+                    an ambush survives a player who reads the network tab. The cost of the same
+                    setting chosen by mistake is a character nobody at the table can see or move,
+                    so check it before you save.
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <p className="text-muted-foreground text-xs">
+                  Drawn on every screen at the table, and movable by whoever is playing the
+                  character it is bound to.
+                </p>
+              )}
             </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor={`${fieldId}-tint`}>Colour</Label>
-              <Input
-                id={`${fieldId}-tint`}
-                type="color"
-                value={tint}
-                onChange={(event) => setTint(event.target.value)}
-                className="h-8 px-1 py-1"
-                disabled={busy}
-              />
-              <p className="text-muted-foreground text-xs">
-                The coin's colour, and its ring when it has art.
-              </p>
-            </div>
-          </div>
+          </TokenAppearanceFields>
 
           <ImagePicker
             id={`${fieldId}-art`}
@@ -340,12 +305,19 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
               onChange={(event) => setCharacterId(event.target.value)}
             >
               <option value="">Nothing — no sheet, no health bar</option>
-              <option value={NEW_NPC}>New NPC sheet…</option>
+              <option value={NEW_CREATURE}>New creature sheet…</option>
               <option value={FROM_BESTIARY}>From the bestiary…</option>
-              {/* Grouped, because the two kinds are chosen for different reasons: a
-                  hero is picked so its player can move the coin, a monster so the DM
-                  can hit it. Both lists come from one query — and the monsters are in
-                  it only because that query was given a DM code it verified. */}
+              {/* Grouped, because the two are chosen for different reasons: a hero is
+                  picked so its player can move the coin, a creature so the DM can hit it.
+                  Both lists come from one query — and the creatures are in it only
+                  because that query was given a DM code it verified.
+
+                  **One heading for the creatures rather than the selector's two**, and
+                  the filter is still `kind` rather than `group`. `kind` is the field that
+                  says a row is the DM's at all, which is the only question this select
+                  asks; splitting NPCs from monsters is a *reading* aid for a list of
+                  every sheet in the game, and here it would be two headings over what is
+                  usually three goblins. */}
               <optgroup label="Player characters">
                 {(characters ?? [])
                   .filter((character) => character.kind === 'pc')
@@ -355,7 +327,7 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
                     </option>
                   ))}
               </optgroup>
-              <optgroup label="NPCs">
+              <optgroup label="Creatures">
                 {(characters ?? [])
                   .filter((character) => character.kind === 'npc')
                   .map((character) => (
@@ -372,21 +344,25 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
             </p>
           </div>
 
-          {makingNpc ? (
+          {makingCreature ? (
             <div className="flex flex-col gap-3 rounded-lg border p-3">
               <div className="flex flex-col gap-2">
-                <Label htmlFor={`${fieldId}-npc-name`}>NPC name</Label>
+                <Label htmlFor={`${fieldId}-creature-sheet-name`}>Creature name</Label>
                 <Input
-                  id={`${fieldId}-npc-name`}
-                  value={npcName}
-                  onChange={(event) => setNpcName(event.target.value)}
+                  id={`${fieldId}-creature-sheet-name`}
+                  value={creatureName}
+                  onChange={(event) => setCreatureName(event.target.value)}
                   maxLength={MAX_CHARACTER_NAME_LENGTH}
                   autoComplete="off"
                   placeholder={name.trim() === '' ? 'Same as the token' : name}
                   disabled={busy}
                 />
               </div>
-              <NpcSheetFields stats={npcStats} onChange={setNpcStats} disabled={busy} />
+              <CreatureSheetFields
+                stats={creatureStats}
+                onChange={setCreatureStats}
+                disabled={busy}
+              />
               <p className="text-muted-foreground text-xs">
                 The sheet is yours alone. Players are sent a word for this creature's health —
                 healthy, bloodied, badly hurt, down — and never the numbers.
@@ -439,16 +415,18 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
                   // empty — a DM who has already typed `Guard #3` meant it, and three coins
                   // from one entry wanting three names is the normal case rather than the
                   // exception.
-                  setName((was) => (was.trim() === '' ? choice.name : was))
+                  setAppearance((was) =>
+                    was.name.trim() === '' ? { ...was, name: choice.name } : was,
+                  )
                 }}
               />
 
               <div className="flex flex-col gap-2">
-                <Label htmlFor={`${fieldId}-creature-name`}>Sheet name (optional)</Label>
+                <Label htmlFor={`${fieldId}-shelf-sheet-name`}>Sheet name (optional)</Label>
                 <Input
-                  id={`${fieldId}-creature-name`}
-                  value={npcName}
-                  onChange={(event) => setNpcName(event.target.value)}
+                  id={`${fieldId}-shelf-sheet-name`}
+                  value={creatureName}
+                  onChange={(event) => setCreatureName(event.target.value)}
                   maxLength={MAX_CHARACTER_NAME_LENGTH}
                   autoComplete="off"
                   placeholder={name.trim() === '' ? 'Same as the token' : name}
@@ -458,14 +436,15 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
             </div>
           ) : null}
 
-          <FieldError message={action.error ?? npcProblem} />
+          <FieldError message={action.error ?? creatureProblem} />
 
           <DialogFormFooter
             busy={busy}
             canSubmit={
-              name.trim() !== '' &&
-              isUsableTokenSize(sizeSquares) &&
-              npcProblem === null &&
+              // The shared predicate, so *what the server will accept* is asked in one
+              // place for both the dialog and the editor.
+              isUsableAppearance(appearance) &&
+              creatureProblem === null &&
               // A shelf entry chosen, when the shelf is the answer. Refused rather than
               // silently adding a coin with no sheet, which is what the select's own empty
               // option is for and is not what was asked for here.

@@ -24,6 +24,7 @@
 // of lib/library/types.ts.
 
 import {
+  bestiaryCategoryOf,
   bestiaryEntry,
   type BestiaryAbility,
   type BestiaryAttack,
@@ -40,13 +41,15 @@ import {
   type TagKey,
   type TierNumber,
 } from './creatures'
-import { librarySheet, type LibraryEntry } from './library'
+import { librarySheet } from './library'
 import { race, type Race } from './races'
 import type {
   AbilityScores,
   BestiarySheet,
+  CharacterGroup,
   CharacterKind,
   CharacterSheet,
+  ContentEntry,
   CreatureSkills,
   NpcSheet,
   PcSheet,
@@ -57,10 +60,14 @@ import type {
 import {
   MAX_ENTRY_ID_LENGTH,
   SPEED_FEET,
+  attackBonusOf,
+  categoryForRoll,
+  creatureGroupOf,
   defaultNpcSheet,
   defaultPcSheet,
   isMonsterSheet,
   noSkills,
+  toHitFromBonus,
   withCreatureOverrides,
   withOverrides,
   withoutUndefined,
@@ -126,6 +133,68 @@ export function resolveSheet(doc: { sheet?: StoredSheet }): CharacterSheet {
  */
 export function kindOf(doc: { sheet?: StoredSheet }): CharacterKind {
   return isMonsterSheet(doc.sheet) ? 'npc' : 'pc'
+}
+
+/**
+ * Which of the DM's three headings this character sits under: Characters, NPCs, Monsters.
+ *
+ * The schema has four stored *kinds* and they do not map onto three groups — `pc` and
+ * `preset` are both characters, and `npc` and `bestiary` are each either of the other two
+ * — so the mapping is this function and is asked nowhere else. The client never computes
+ * it; `publicCharacterValidator` carries the resolved answer.
+ *
+ * **A linked creature derives its group and a hand-built one stores it**, which is the
+ * same split every other number on these sheets already makes. A bestiary entry declares
+ * its category on the *file* it lives in rather than on the entry (see
+ * lib/bestiary/types.ts), so `social` is an NPC and `monster` or `enemy` is a monster; a
+ * hand-typed sheet has no corpus to ask, so the dialog asks instead and the answer is
+ * stored in `NpcSheet.group`.
+ *
+ * ⚠️ **This is a display discriminator and `kindOf` above is a security one, and the
+ * difference is what makes the defaults here safe.** Both of the values this can return
+ * for a creature are DM-only — a player receives neither, because `maySeeCharacter`
+ * refused the whole row before anybody asked which heading it went under — so a wrong
+ * answer misfiles a row and can never publish one. That is why an unanswered hand-built
+ * sheet may simply default, and why a retired entry key may fall back to `'monster'`
+ * rather than refusing. Compare `isMonsterSheet`, whose default is fail-closed because
+ * getting *that* wrong publishes a dragon. Do not merge the two questions, and do not
+ * copy this function's tolerance across to that one.
+ *
+ * Exhaustive, with a `never` arm, for the reason `kindOf` gives: a fifth stored kind
+ * should fail `npm run lint` here rather than pick a heading by accident.
+ */
+export function groupOf(doc: { sheet?: StoredSheet }): CharacterGroup {
+  const stored = doc.sheet
+  if (stored === undefined) return 'character'
+
+  switch (stored.kind) {
+    case 'pc':
+    case 'preset':
+      return 'character'
+    case 'npc':
+      // Absent means nobody was asked — every creature typed in before this field
+      // existed, and `defaultNpcSheet`, which deliberately omits it. See that function.
+      //
+      // The default is `creatureGroupOf`'s rather than a `?? 'npc'` written out here,
+      // because the two sheet forms have to draw the same answer and cannot call this
+      // function: lib/resolve.ts imports both corpora, which `bundleGuard.test.ts`
+      // forbids `src/` from reaching. lib/sheet.ts is the half of the question that is
+      // safe in a browser.
+      return creatureGroupOf(stored)
+    case 'bestiary': {
+      // A retired key resolves to a monster rather than throwing, exactly as
+      // `resolveBestiary` keeps a retired creature readable: this runs inside
+      // `characters.list`, and a throw here would blank the DM's whole panel over one
+      // creature nobody can look up.
+      const category = bestiaryCategoryOf(stored.entryKey)
+      return category === 'social' ? 'npc' : 'monster'
+    }
+    default: {
+      const unknownKind: never = stored
+      void unknownKind
+      return 'monster'
+    }
+  }
 }
 
 /** The stored selections, or null for a character that is not built from the library. */
@@ -409,6 +478,11 @@ function applyRace(sheet: PcSheet, chosen: Race, level: number): PcSheet {
     roll: null,
     level: null,
     catalogueKey: null,
+    // A trait is built from `traitName` and `traitText` and has no roll by
+    // construction, so `passive` is the only coherent answer rather than a choice. A
+    // race whose trait rolls something grants a feat or a spell instead — which is
+    // what the Dragonborn's breath weapon already does.
+    category: 'passive',
   }
 
   return {
@@ -480,32 +554,60 @@ function resolveBestiary(stored: BestiarySheet): NpcSheet {
 
   const scaled = scaleCombat(combat, entry.cr, stored.cr)
 
+  // ⚠️ **The numbers are merged first and the actions are built afterwards, and that
+  // ordering is load-bearing.** Every attack's to-hit is composed *from* `attackBonus`,
+  // and `withCreatureOverrides` patches that field while leaving `actions` alone — so
+  // composing before the merge would give a creature whose sheet reads +12 and whose
+  // every weapon rolls 1d20+4. That is the "two spellings of one number" ADR 0007 went
+  // out of its way not to create, arriving through the back door, and it would be
+  // invisible on screen because both readings come from the same payload.
+  //
   // Through `withoutUndefined` because `saveDc` is optional on both sides: most creatures
   // force no saving throws, and naming the key while handing it `undefined` is a different
   // write from omitting the key, since `undefined` is not a Convex value.
-  const base: NpcSheet = withoutUndefined({
-    kind: 'npc' as const,
-    armourClass: scaled.armourClass,
-    maxHp: scaled.maxHp,
-    initiativeBonus: scaled.initiativeBonus,
+  const merged = withCreatureOverrides(
+    withoutUndefined({
+      kind: 'npc' as const,
+      armourClass: scaled.armourClass,
+      maxHp: scaled.maxHp,
+      initiativeBonus: scaled.initiativeBonus,
+      // Empty, so that the merge contributes the DM's `extraActions` and nothing else to
+      // this field. The corpus's own go in front of them below, which is the order the
+      // merge produced before and the order the sheet shows.
+      actions: [],
+      notes: entry.notes,
+      speed: scaled.speed,
+      passivePerception: scaled.passivePerception,
+      attackBonus: scaled.attackBonus,
+      saveDc: scaled.saveDc ?? undefined,
+      skills: creatureSkillsFrom(scaled.skills),
+    }),
+    stored.overrides,
+  )
+
+  // Read through `attackBonusOf` rather than off the local, so the number on the entries
+  // and the number on the statline come from the one accessor that decides what an absent
+  // bonus means. A combat block always states one, so the fallback is unreachable from
+  // here — and is the honest answer if it ever is not: a bare 1d20.
+  const toHit = toHitFromBonus(attackBonusOf(merged) ?? 0)
+
+  return {
+    ...merged,
     // Attacks first, then abilities, under distinct prefixes. The prefix is what stops a
     // creature whose bite and whose Bite ability share a name colliding on one id, and
     // `entryId` derives the rest from the name rather than the position so that a CR shift
     // — which rewrites the damage on every attack — does not renumber the list and make
     // React read it as wholly replaced.
     actions: [
-      ...scaled.attacks.map((attack, index) => withId(attackEntry(attack), 'atk', index)),
+      ...scaled.attacks.map((attack, index) => withId(attackEntry(attack, toHit), 'atk', index)),
       ...scaled.abilities.map((ability, index) => withId(abilityEntry(ability), 'abl', index)),
+      // The DM's own, contributed by the merge above and **left exactly as written**.
+      // They are ordinary sheet entries: the DM chose their category and their to-hit,
+      // and rewriting either would be this function overruling the last layer of
+      // resolution.
+      ...merged.actions,
     ],
-    notes: entry.notes,
-    speed: scaled.speed,
-    passivePerception: scaled.passivePerception,
-    attackBonus: scaled.attackBonus,
-    saveDc: scaled.saveDc ?? undefined,
-    skills: creatureSkillsFrom(scaled.skills),
-  })
-
-  return withCreatureOverrides(base, stored.overrides)
+  }
 }
 
 /**
@@ -522,7 +624,7 @@ function resolveBestiary(stored: BestiarySheet): NpcSheet {
  * though the claw and the bite had separate bonuses, which is precisely the reduction
  * `npcSheetValidator` chose not to make.
  */
-function attackEntry(attack: BestiaryAttack): LibraryEntry {
+function attackEntry(attack: BestiaryAttack, toHit: string): ContentEntry {
   return {
     name: attack.name,
     text: attackText(attack),
@@ -532,16 +634,39 @@ function attackEntry(attack: BestiaryAttack): LibraryEntry {
     // badge claim this line came from somewhere it did not.
     level: null,
     catalogueKey: null,
+    // **Every attack is a weapon by construction.** The corpus already separates
+    // `attacks` from `abilities`, and an attack is exactly the thing that has to land
+    // before its damage applies — so this is read off the structure rather than declared
+    // on a hundred and fifty-nine hand-written attacks, which would be that many edits
+    // and that many chances to disagree.
+    category: 'weapon',
+    // Composed by the caller from the creature's one `attackBonus` and passed in, never
+    // stored per attack. The note above on why the bonus is not in the *text* applies
+    // unchanged: there is still one number, and this is it spelled as a roll.
+    toHit,
   }
 }
 
-function abilityEntry(ability: BestiaryAbility): LibraryEntry {
+function abilityEntry(ability: BestiaryAbility): ContentEntry {
   return {
     name: ability.name,
     text: ability.text,
     roll: ability.roll,
     level: null,
     catalogueKey: null,
+    // Derived structurally, like `attackEntry`'s `weapon` above: an ability that rolls
+    // something is an action and one that does not is a passive. **No ability in the
+    // corpus is a weapon** — every one carrying a roll is a rider on a hit already
+    // landed, a saving throw, or a burst — and the corpus test asserts that rather than
+    // trusting it.
+    //
+    // Through `categoryForRoll` rather than spelled out here, because this *is*
+    // `categoryOf`'s default and `entriesProblem`'s arity rule is anchored to it. A
+    // copy that drifted would mint actions the validator then refuses, and it would
+    // show up as a DM's creature failing to save rather than as a failing test.
+    // `categoryOf` itself cannot be called: it takes a `SheetEntry` and this is
+    // building a `ContentEntry`, which has no id yet.
+    category: categoryForRoll(ability.roll),
   }
 }
 
@@ -624,7 +749,7 @@ function clampLevel(level: number): number {
  * `sheetProblem` insists ids are unique within a sheet, so the library's integrity
  * test asserts no sheet repeats a name.
  */
-function withId(entry: LibraryEntry, prefix: string, index: number): SheetEntry {
+function withId(entry: ContentEntry, prefix: string, index: number): SheetEntry {
   return { ...entry, id: entryId(prefix, entry.name || String(index)) }
 }
 

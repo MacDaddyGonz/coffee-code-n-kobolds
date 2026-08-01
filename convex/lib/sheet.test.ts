@@ -20,18 +20,34 @@ import {
   MAX_INITIATIVE_BONUS,
   MAX_LEVEL,
   MAX_MAX_HP,
+  MAX_ATTACK_BONUS,
   MAX_NPC_NOTES_LENGTH,
+  MAX_ROLL_LENGTH,
   MAX_SHEET_ENTRIES,
   MAX_SPELL_LEVEL,
   MIN_ABILITY_SCORE,
   MIN_ARMOUR_CLASS,
+  MIN_ATTACK_BONUS,
   MIN_LEVEL,
   MIN_MAX_HP,
   MIN_SPELL_LEVEL,
+  CHARACTER_GROUPS,
+  CHARACTER_GROUP_LABELS,
+  CREATURE_GROUPS,
+  CREATURE_GROUP_CHOICES,
+  characterGroupValidator,
+  creatureGroupValidator,
   ROLL_MODIFIER_TOKENS,
   ROLL_PATTERN,
+  SHEET_ENTRY_CATEGORIES,
+  SHEET_ENTRY_CATEGORY_LABELS,
   abilityModifier,
+  categoryOf,
   clampHp,
+  rollShapeOf,
+  sheetEntryCategoryValidator,
+  toHitFromBonus,
+  toHitOf,
   defaultNpcSheet,
   defaultPcSheet,
   defaultSheetFor,
@@ -60,6 +76,7 @@ import type {
   PcSheet,
   PresetSheet,
   SheetEntry,
+  SheetEntryCategory,
   StoredSheet,
 } from './sheet'
 
@@ -1347,5 +1364,1002 @@ describe('storedSheetProblem on a preset', () => {
     const snapshot = structuredClone(stored)
     storedSheetProblem(stored)
     expect(stored).toEqual(snapshot)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The entry taxonomy: `category`, `toHit`, and the arity rule between them.
+//
+// ⚠️ **Both fields are optional, and that is what makes this section hard to
+// write honestly.** A fixture that silently dropped either would produce exactly
+// the same green tick as one that carried it correctly — the entry would simply
+// read as a pre-milestone entry, which is a shape everything here is required to
+// accept. So the assertions below are about **presence and absence** wherever a
+// dropped field and a correctly-absent field would otherwise look identical,
+// using `'toHit' in entry` rather than `entry.toHit === undefined`: the second is
+// true of a key that is present and holding `undefined`, which is a different
+// document as far as Convex is concerned.
+// ---------------------------------------------------------------------------
+
+/**
+ * An entry exactly as it was written **before this milestone**: neither key
+ * present at all.
+ *
+ * Spelled out rather than built from `entry()` so that the shape is visible at
+ * the point of use, and so that adding a default `category` to `entry()` later
+ * cannot quietly turn every legacy test in this file into a modern one.
+ */
+function legacyEntry(overrides: Partial<SheetEntry> = {}): SheetEntry {
+  const built: SheetEntry = {
+    id: 'legacy-1',
+    name: 'Something From Before',
+    text: 'Typed in by a DM in Milestone 3.',
+    roll: null,
+    level: null,
+    catalogueKey: null,
+    ...overrides,
+  }
+  return built
+}
+
+/** A category the union has never heard of, as a deployment skew would deliver one. */
+const ALIEN_CATEGORY = 'legendary' as unknown as SheetEntryCategory
+
+describe('the category union, its validator and its labels', () => {
+  /**
+   * `SHEET_ENTRY_CATEGORIES` is a type and `sheetEntryCategoryValidator` is a
+   * value, and sheet.ts writes the three names out twice on purpose — "a Convex
+   * validator is a value and the list is a type, and the one test pinning the two
+   * together is cheaper than the generic that would build one from the other."
+   *
+   * This is that one test. Without it the two copies are free to disagree, and the
+   * direction that hurts is a category the code accepts and the *schema* refuses,
+   * which surfaces as a save that fails against the real deployment and passes
+   * against convex-test — the class of failure only `npm run test:smoke` has ever
+   * caught here.
+   */
+  test('the validator admits exactly the three categories, in the same order', () => {
+    const members = (sheetEntryCategoryValidator as unknown as {
+      members: { kind: string; value: unknown }[]
+    }).members
+    expect(members.map((member) => member.kind)).toEqual(['literal', 'literal', 'literal'])
+    expect(members.map((member) => member.value)).toEqual([...SHEET_ENTRY_CATEGORIES])
+  })
+
+  /**
+   * The labels are documented as being "in the order the sections appear", so the
+   * order is part of the contract rather than incidental to how the object was
+   * typed. A `Record` keyed by the union catches a *missing* key at compile time
+   * and says nothing at all about the order they were written in.
+   */
+  test('every category has a non-empty heading, in section order', () => {
+    expect(Object.keys(SHEET_ENTRY_CATEGORY_LABELS)).toEqual([...SHEET_ENTRY_CATEGORIES])
+    for (const category of SHEET_ENTRY_CATEGORIES) {
+      expect(SHEET_ENTRY_CATEGORY_LABELS[category].trim(), category).not.toBe('')
+    }
+    // Three distinct headings — two sections sharing one would be a sheet that
+    // reads as though it had lost a list.
+    expect(new Set(Object.values(SHEET_ENTRY_CATEGORY_LABELS)).size).toBe(3)
+  })
+
+  test('there are exactly three of them and no duplicates', () => {
+    expect([...SHEET_ENTRY_CATEGORIES]).toEqual(['weapon', 'action', 'passive'])
+    expect(new Set(SHEET_ENTRY_CATEGORIES).size).toBe(SHEET_ENTRY_CATEGORIES.length)
+  })
+})
+
+describe('rollShapeOf', () => {
+  test('states how many rolls each category promises', () => {
+    expect(rollShapeOf('weapon')).toEqual({ toHit: true, roll: true })
+    expect(rollShapeOf('action')).toEqual({ toHit: false, roll: true })
+    expect(rollShapeOf('passive')).toEqual({ toHit: false, roll: false })
+  })
+
+  /**
+   * Only a weapon promises a second field, which is the property `categoryOf`'s
+   * doc leans on when it rules `weapon` out as a possible default: a default that
+   * asserted a `toHit` exists would promise one that no legacy entry has.
+   */
+  test('only a weapon asks for a to-hit, and a passive asks for nothing', () => {
+    const asking = SHEET_ENTRY_CATEGORIES.filter((category) => rollShapeOf(category).toHit)
+    expect(asking).toEqual(['weapon'])
+    const rolling = SHEET_ENTRY_CATEGORIES.filter((category) => rollShapeOf(category).roll)
+    expect(rolling).toEqual(['weapon', 'action'])
+  })
+
+  /** The fail-closed runtime default, reachable only by casting past the compiler. */
+  test('an unrecognised category promises nothing', () => {
+    expect(rollShapeOf(ALIEN_CATEGORY)).toEqual({ toHit: false, roll: false })
+  })
+})
+
+describe('categoryOf', () => {
+  /**
+   * **The derived default, which is a stored fact restated rather than a guess.**
+   * `roll === null` is the definition of a passive, so an entry written before the
+   * field existed already records the one thing the category turns on.
+   */
+  test('an entry with no category and no roll is a passive', () => {
+    expect(categoryOf(legacyEntry({ roll: null }))).toBe('passive')
+  })
+
+  test('an entry with no category but a roll is an action', () => {
+    expect(categoryOf(legacyEntry({ roll: '2d6' }))).toBe('action')
+    expect(categoryOf(legacyEntry({ roll: '1d8+WIS' }))).toBe('action')
+  })
+
+  /**
+   * ⚠️ **Never `weapon`.** It is the only category that asserts a second field
+   * exists, and nothing distinguishes a greatsword's `1d8+STR` from Cure Wounds'
+   * `2d8+WIS` — so a default of `weapon` would announce a heal as an attack. This
+   * is asserted over both roll shapes rather than assumed from the two tests above.
+   */
+  test('and never guesses weapon, whatever the roll looks like', () => {
+    for (const roll of [null, '1d8+STR', '2d6', '1d20+PROF', '1d10+DEX+PROF']) {
+      expect(categoryOf(legacyEntry({ roll })), `roll ${roll}`).not.toBe('weapon')
+    }
+  })
+
+  test('a stored category is returned as it was stored', () => {
+    for (const category of SHEET_ENTRY_CATEGORIES) {
+      // Paired with a coherent roll, so the answer cannot be coming from the
+      // derivation by coincidence.
+      const roll = rollShapeOf(category).roll ? '1d8' : null
+      expect(categoryOf(legacyEntry({ category, roll })), category).toBe(category)
+    }
+  })
+
+  /**
+   * And returned as stored even when the roll disagrees with it — the accessor
+   * reads a field, it does not adjudicate one. An incoherent pair is
+   * `entriesProblem`'s to refuse, and a `categoryOf` that quietly corrected one
+   * would make that refusal unreachable.
+   */
+  test('a stored category wins over the derivation, even when the two disagree', () => {
+    expect(categoryOf(legacyEntry({ category: 'passive', roll: '2d6' }))).toBe('passive')
+    expect(categoryOf(legacyEntry({ category: 'action', roll: null }))).toBe('action')
+    expect(categoryOf(legacyEntry({ category: 'weapon', roll: null }))).toBe('weapon')
+  })
+
+  /**
+   * A schema push is not atomic, so a document written by a newer deployment can
+   * be read by an older one. An unknown category falls back to the derived default
+   * rather than being handed on to a `switch` that has never heard of it.
+   */
+  test('a category outside the union reads as the derived default', () => {
+    expect(categoryOf(legacyEntry({ category: ALIEN_CATEGORY, roll: null }))).toBe('passive')
+    expect(categoryOf(legacyEntry({ category: ALIEN_CATEGORY, roll: '2d6' }))).toBe('action')
+  })
+
+  /**
+   * ⚠️ **A discrepancy between `rollShapeOf`'s doc comment and what the save path
+   * actually does, pinned here as behaviour rather than papered over.**
+   *
+   * That comment argues its runtime default of "a passive" is fail-closed because
+   * "an entry carrying rolls is *refused on save* by `entriesProblem`". It is not,
+   * and cannot be: `entriesProblem` asks `rollShapeOf(categoryOf(entry))`, and
+   * `categoryOf` has already replaced the unknown category with the derived
+   * default — so `rollShapeOf` is never handed one, its default branch is
+   * unreachable from the save path, and the entry is **accepted**.
+   *
+   * That is arguably the better outcome (an entry with a roll really is an action
+   * as far as anything downstream can tell) but it is not what the comment says
+   * happens, and the next person to rely on the refusal should find this test.
+   */
+  test('and is therefore accepted on save rather than refused, whatever rollShapeOf says', () => {
+    const alien = legacyEntry({ id: 'x1', category: ALIEN_CATEGORY, roll: '2d6' })
+    expect(rollShapeOf(ALIEN_CATEGORY)).toEqual({ toHit: false, roll: false })
+    expect(categoryOf(alien)).toBe('action')
+    expect(sheetProblem(pc({ feats: [alien] }))).toBeNull()
+  })
+})
+
+describe('toHitOf', () => {
+  test('reads a weapon its to-hit', () => {
+    expect(toHitOf(legacyEntry({ category: 'weapon', roll: '1d8+STR', toHit: '1d20+STR+PROF' })))
+      .toBe('1d20+STR+PROF')
+    expect(toHitOf(legacyEntry({ category: 'weapon', roll: '2d6', toHit: '1d20+4' }))).toBe('1d20+4')
+  })
+
+  /**
+   * ⚠️ **Null on anything that is not a weapon, whatever the document says.**
+   *
+   * Unreachable through a validated sheet, because `entriesProblem` refuses a
+   * stored to-hit on an action or a passive — and kept for the seconds after a
+   * deploy when a document written by newer code is read by older code. A to-hit
+   * that outlives its category is a roll nobody asked for, arriving on a line that
+   * announces "uses".
+   */
+  test('refuses to read a to-hit off an action or a passive that carries one anyway', () => {
+    expect(toHitOf(legacyEntry({ category: 'action', roll: '2d6', toHit: '1d20+9' }))).toBeNull()
+    expect(toHitOf(legacyEntry({ category: 'passive', roll: null, toHit: '1d20+9' }))).toBeNull()
+  })
+
+  /**
+   * And the same for an entry that has a to-hit but **no** category — which reads
+   * as an action or a passive by derivation and so gets the same refusal. This is
+   * the case a real deployment skew would actually produce.
+   */
+  test('and off an entry with no category at all', () => {
+    expect(toHitOf(legacyEntry({ roll: '2d6', toHit: '1d20+9' }))).toBeNull()
+    expect(toHitOf(legacyEntry({ roll: null, toHit: '1d20+9' }))).toBeNull()
+    expect(toHitOf(legacyEntry({ category: ALIEN_CATEGORY, roll: '2d6', toHit: '1d20+9' })))
+      .toBeNull()
+  })
+
+  test('an empty to-hit is no to-hit', () => {
+    expect(toHitOf(legacyEntry({ category: 'weapon', roll: '1d8', toHit: '' }))).toBeNull()
+  })
+
+  test('an absent to-hit is no to-hit', () => {
+    expect(toHitOf(legacyEntry({ category: 'weapon', roll: '1d8' }))).toBeNull()
+    expect(toHitOf(legacyEntry({ roll: null }))).toBeNull()
+  })
+})
+
+describe('toHitFromBonus', () => {
+  /**
+   * ⚠️ **Never `1d20+0`.** `ROLL_PATTERN` would accept it — `\d{1,3}` matches `0` —
+   * so the grammar is not the guard and the check has to be explicit. A bare
+   * `1d20` is what a creature with no bonus rolls.
+   */
+  test('a bonus of zero is a bare 1d20, and negative zero is too', () => {
+    expect(toHitFromBonus(0)).toBe('1d20')
+    expect(toHitFromBonus(-0)).toBe('1d20')
+    // `Math.round(-0.3)` is `-0`, which is the way negative zero actually arrives.
+    expect(toHitFromBonus(-0.3)).toBe('1d20')
+    expect(toHitFromBonus(-0.5)).toBe('1d20')
+    expect(toHitFromBonus(0.4)).toBe('1d20')
+  })
+
+  test('a positive bonus is added and a negative one subtracted', () => {
+    expect(toHitFromBonus(4)).toBe('1d20+4')
+    expect(toHitFromBonus(1)).toBe('1d20+1')
+    expect(toHitFromBonus(12)).toBe('1d20+12')
+    // A Giant Rat is worse at hitting than nothing at all, which is why the bound
+    // goes below zero.
+    expect(toHitFromBonus(-1)).toBe('1d20-1')
+    expect(toHitFromBonus(-2)).toBe('1d20-2')
+  })
+
+  test('a fractional bonus is rounded rather than refused', () => {
+    expect(toHitFromBonus(3.4)).toBe('1d20+3')
+    expect(toHitFromBonus(3.5)).toBe('1d20+4')
+    expect(toHitFromBonus(-2.6)).toBe('1d20-3')
+  })
+
+  /** A non-finite float64 reaches a stored document the same way it reaches a speed. */
+  test('a nonsense bonus is a bare 1d20 rather than a nonsense roll', () => {
+    for (const value of NOT_A_NUMBER) {
+      expect(toHitFromBonus(value), String(value)).toBe('1d20')
+    }
+  })
+
+  /**
+   * **The property, over the whole stored range.** `MIN_ATTACK_BONUS` to
+   * `MAX_ATTACK_BONUS` is every bonus a validated sheet can hold, and every one of
+   * them has to come back out as something `isValidRoll` accepts — otherwise a
+   * creature the database stored happily has an attack the roll grammar refuses.
+   */
+  test('every bonus in range produces a roll the grammar accepts', () => {
+    for (let bonus = MIN_ATTACK_BONUS; bonus <= MAX_ATTACK_BONUS; bonus += 1) {
+      const roll = toHitFromBonus(bonus)
+      expect(isValidRoll(roll), `${bonus} → ${roll}`).toBe(true)
+      expect(roll.startsWith('1d20'), `${bonus} → ${roll}`).toBe(true)
+      expect(roll.length, `${bonus} → ${roll}`).toBeLessThanOrEqual(MAX_ROLL_LENGTH)
+    }
+  })
+
+  /**
+   * And never a zero term, over a sweep wide enough to include every way one could
+   * be produced: the integer zero, both signed zeroes, and the fractions that round
+   * to them.
+   */
+  test('and never emits a zero term', () => {
+    const sweep: number[] = [...NOT_A_NUMBER, 0, -0, 0.49, -0.49, 0.5, -0.5]
+    for (let bonus = MIN_ATTACK_BONUS - 5; bonus <= MAX_ATTACK_BONUS + 5; bonus += 0.25) {
+      sweep.push(bonus)
+    }
+    for (const bonus of sweep) {
+      const roll = toHitFromBonus(bonus)
+      expect(roll, String(bonus)).not.toContain('+0')
+      expect(roll, String(bonus)).not.toContain('-0')
+      expect(isValidRoll(roll), `${bonus} → ${roll}`).toBe(true)
+    }
+  })
+
+  /**
+   * The grammar has the last word rather than the arithmetic. `\d{1,3}` cannot
+   * hold four digits, so a bonus far outside the stored bounds falls back to a bare
+   * `1d20` rather than producing a string the validator would refuse — the same
+   * stance the foot of `scaleRoll` takes.
+   */
+  test('a bonus too large for the grammar falls back rather than escaping it', () => {
+    expect(toHitFromBonus(999)).toBe('1d20+999')
+    expect(toHitFromBonus(1000)).toBe('1d20')
+    expect(toHitFromBonus(-1000)).toBe('1d20')
+  })
+
+  test('is a pure function of its argument', () => {
+    expect(toHitFromBonus(7)).toBe(toHitFromBonus(7))
+    expect(toHitFromBonus(7)).toBe('1d20+7')
+  })
+})
+
+describe('normaliseSheet carries the entry taxonomy', () => {
+  /**
+   * ⚠️ **The assertion this file has never had, and the one the milestone turns
+   * on.** `normaliseEntry` rebuilds an entry field by field — which is deliberate,
+   * it is what stops an unknown field riding into the database — and this codebase
+   * has twice shipped a field added to a validator and not added to a rebuild,
+   * silently discarded on every write with the form still showing the value it had
+   * just binned. Both times only `npm run test:smoke` caught it.
+   *
+   * Both new fields are optional, so a rebuild that dropped them would produce a
+   * perfectly valid entry and every other test in this file would stay green.
+   * Presence is therefore asserted directly.
+   */
+  test('both fields survive a round trip through the normaliser', () => {
+    const sheet = pc({
+      feats: [entry({ id: 'f1', category: 'weapon', roll: '1d8+STR', toHit: '1d20+STR+PROF' })],
+      spells: [entry({ id: 's1', category: 'action', roll: '2d8+WIS', level: 1 })],
+    })
+    const out = normaliseSheet(sheet) as PcSheet
+    const weapon = out.feats[0] as unknown as Record<string, unknown>
+    expect('category' in weapon).toBe(true)
+    expect('toHit' in weapon).toBe(true)
+    expect(weapon.category).toBe('weapon')
+    expect(weapon.toHit).toBe('1d20+STR+PROF')
+    const action = out.spells[0] as unknown as Record<string, unknown>
+    expect(action.category).toBe('action')
+    expect('toHit' in action).toBe(false)
+  })
+
+  /** The same on the other variant, where a monster's actions live. */
+  test('and on an NPC sheet, whose actions share the shape', () => {
+    const out = normaliseSheet(
+      npc({ actions: [entry({ id: 'a1', category: 'weapon', roll: '2d6+3', toHit: '1d20+5' })] }),
+    ) as NpcSheet
+    const action = out.actions[0] as unknown as Record<string, unknown>
+    expect('category' in action).toBe(true)
+    expect('toHit' in action).toBe(true)
+    expect(action).toMatchObject({ category: 'weapon', toHit: '1d20+5' })
+  })
+
+  /**
+   * A to-hit goes through `normaliseRoll` for the reason the damage does: a
+   * hand-typed `1d20 + str` and a picked `1d20+STR` must end up byte-identical
+   * rather than merely equivalent, or the picker's "already has this one"
+   * comparison is against a string nobody stored.
+   */
+  test('a hand-typed to-hit is normalised exactly as a hand-typed roll is', () => {
+    const out = normaliseSheet(
+      pc({
+        feats: [
+          entry({ id: 'f1', category: 'weapon', roll: '1d8 + str', toHit: '1d20 + str + prof' }),
+        ],
+      }),
+    ) as PcSheet
+    expect(out.feats[0].roll).toBe('1d8+STR')
+    expect(out.feats[0].toHit).toBe('1d20+STR+PROF')
+  })
+
+  /**
+   * `DEX` is the one modifier token containing a `D`, and the separator is
+   * lowercased only between two digits precisely so that a to-hit scaled off it
+   * survives. The damage half of this is already covered; the to-hit is a second
+   * field with the same hazard.
+   */
+  test('and a DEX to-hit survives the separator rule that once destroyed it', () => {
+    const out = normaliseSheet(
+      pc({ feats: [entry({ id: 'f1', category: 'weapon', roll: '1d6+DEX', toHit: '1d20 + dex + prof' })] }),
+    ) as PcSheet
+    expect(out.feats[0].toHit).toBe('1d20+DEX+PROF')
+    expect(isValidRoll(out.feats[0].toHit as string)).toBe(true)
+  })
+
+  /**
+   * An empty to-hit is dropped **to no key at all**, not written as an empty
+   * string and not written as `undefined`. `undefined` is not a Convex value, so
+   * naming a key and handing it one is a different write from omitting the key —
+   * and `entriesProblem` decides whether a to-hit exists by asking `!== undefined`,
+   * so a present-but-empty key would read as a to-hit on an entry that has none.
+   */
+  test('an empty or whitespace-only to-hit is dropped to no key at all', () => {
+    for (const toHit of ['', '   ', '\t\n ']) {
+      const out = normaliseSheet(
+        pc({ feats: [entry({ id: 'f1', category: 'passive', roll: null, toHit })] }),
+      ) as PcSheet
+      const built = out.feats[0] as unknown as Record<string, unknown>
+      expect('toHit' in built, JSON.stringify(toHit)).toBe(false)
+      expect(Object.keys(built), JSON.stringify(toHit)).not.toContain('toHit')
+    }
+  })
+
+  /**
+   * ⚠️ **And the mirror image, which is the assertion that actually distinguishes
+   * a working normaliser from one that discards both fields.** An entry that
+   * arrived without either key has to come back without either key.
+   *
+   * The category is deliberately **not materialised**: absent stays a legal state
+   * for as long as the schema says the field is optional, and a normaliser that
+   * filled it in would leave `categoryOf`'s default reachable only by documents
+   * nobody has saved — which is how a default becomes untested code that nobody
+   * notices is wrong.
+   */
+  test('an entry that arrived without either field comes back without either key', () => {
+    const before = legacyEntry({ id: 'f1', roll: '2d6' })
+    expect('category' in before, 'the fixture is not legacy').toBe(false)
+    expect('toHit' in before, 'the fixture is not legacy').toBe(false)
+
+    const out = normaliseSheet(pc({ feats: [before] })) as PcSheet
+    const after = out.feats[0] as unknown as Record<string, unknown>
+    expect('category' in after).toBe(false)
+    expect('toHit' in after).toBe(false)
+    expect(Object.keys(after).sort()).toEqual(
+      ['catalogueKey', 'id', 'level', 'name', 'roll', 'text'],
+    )
+  })
+
+  /** Idempotent on an entry carrying both, like every other part of the normaliser. */
+  test('normalising twice changes nothing', () => {
+    const sheet = pc({
+      feats: [entry({ id: 'f1', category: 'weapon', roll: '1d8+STR', toHit: '1d20 + str' })],
+      spells: [entry({ id: 's1', category: 'passive', roll: null, level: 0 })],
+    })
+    const once = normaliseSheet(sheet)
+    expect(normaliseSheet(once)).toEqual(once)
+  })
+})
+
+describe('sheetProblem refuses an entry whose category and rolls disagree', () => {
+  /**
+   * **The arity rule — the definition of the discriminator, not a cap.** A passive
+   * carrying a roll is a value the roll path will never read, and a weapon with no
+   * to-hit is a category lying about its shape to the one function that switches on
+   * it. Each of the four is asserted with its exact path *and* its exact message,
+   * because the path is what a form marks and the message is what a person reads,
+   * and a refusal that arrives on the wrong field is a refusal nobody can act on.
+   */
+  test('a weapon with no to-hit is refused, naming the field', () => {
+    const problem = sheetProblem(
+      pc({ feats: [entry({ id: 'f1', category: 'weapon', roll: '1d8+STR' })] }),
+    )
+    expect(problem?.path).toBe('feats[0].toHit')
+    expect(problem?.message).toBe(
+      'A weapon needs a roll to hit with. Try something like 1d20+STR+PROF.',
+    )
+  })
+
+  test('an action or a passive carrying a to-hit is refused, naming the field', () => {
+    const action = sheetProblem(
+      pc({ feats: [entry({ id: 'f1', category: 'action', roll: '2d6', toHit: '1d20+4' })] }),
+    )
+    expect(action?.path).toBe('feats[0].toHit')
+    expect(action?.message).toBe(
+      'Only a weapon rolls to hit. Make it a weapon, or clear the to-hit roll.',
+    )
+
+    const passive = sheetProblem(
+      pc({ spells: [entry({ id: 's1', category: 'passive', roll: null, toHit: '1d20+4' })] }),
+    )
+    expect(passive?.path).toBe('spells[0].toHit')
+    expect(passive?.message).toBe(
+      'Only a weapon rolls to hit. Make it a weapon, or clear the to-hit roll.',
+    )
+  })
+
+  test('a weapon or an action with no roll is refused, naming the roll', () => {
+    const weapon = sheetProblem(
+      pc({ feats: [entry({ id: 'f1', category: 'weapon', roll: null, toHit: '1d20+STR' })] }),
+    )
+    expect(weapon?.path).toBe('feats[0].roll')
+    expect(weapon?.message).toBe(
+      'A weapon and an action both roll something. Give it a roll, or make it a passive.',
+    )
+
+    const action = sheetProblem(pc({ feats: [entry({ id: 'f1', category: 'action', roll: null })] }))
+    expect(action?.path).toBe('feats[0].roll')
+    expect(action?.message).toBe(
+      'A weapon and an action both roll something. Give it a roll, or make it a passive.',
+    )
+  })
+
+  test('a passive carrying a roll is refused, naming the roll', () => {
+    const problem = sheetProblem(
+      npc({ actions: [entry({ id: 'a1', category: 'passive', roll: '2d6' })] }),
+    )
+    expect(problem?.path).toBe('actions[0].roll')
+    expect(problem?.message).toBe(
+      'A passive is declared rather than rolled. Clear the roll, or make it an action.',
+    )
+  })
+
+  /** The coherent combinations, so the four refusals above are not simply "no entry passes". */
+  test('and accepts every coherent combination on both variants', () => {
+    const coherent: SheetEntry[] = [
+      entry({ id: 'w1', category: 'weapon', roll: '1d8+STR', toHit: '1d20+STR+PROF' }),
+      entry({ id: 'a1', category: 'action', roll: '2d8+WIS' }),
+      entry({ id: 'p1', category: 'passive', roll: null }),
+    ]
+    expect(sheetProblem(pc({ feats: coherent }))).toBeNull()
+    expect(sheetProblem(npc({ actions: coherent }))).toBeNull()
+  })
+
+  /**
+   * The refusal is reported against the offending entry rather than the first one,
+   * for the reason `problemAtEntry` exists: a form marks one row, and marking the
+   * wrong row is worse than marking none.
+   */
+  test('naming the index of the entry that is actually wrong', () => {
+    const problem = sheetProblem(
+      pc({
+        feats: [
+          entry({ id: 'f0', category: 'passive', roll: null }),
+          entry({ id: 'f1', category: 'action', roll: '2d6' }),
+          entry({ id: 'f2', category: 'weapon', roll: '1d8' }),
+        ],
+      }),
+    )
+    expect(problem?.path).toBe('feats[2].toHit')
+  })
+
+  /**
+   * ⚠️ **A to-hit has to be a d20 roll, and the shared grammar does not say so.**
+   *
+   * This started life as a test recording the *absence* of this rule: the field was
+   * documented as "`1d20+STR+PROF` on a hero; `1d20+4` on a monster" and checked only
+   * against `rollProblem`, which is the grammar every damage expression shares — so
+   * `2d6+STR` saved cleanly and the dice work would have thrown two d6 at an armour
+   * class. The gap was reachable by a DM typing into the entry editor or an override
+   * diff, never by generated content, and it is now closed by `toHitProblem`.
+   *
+   * The three cases below are the ones the check has to separate, and the third is
+   * the reason a `startsWith` on its own is not enough: the grammar permits a d100,
+   * so `1d200` shares the prefix and is not a d20.
+   */
+  test('a to-hit that is not a d20 roll is refused', () => {
+    const odd = entry({ id: 'f1', category: 'weapon', roll: '1d8+STR', toHit: '2d6+STR' })
+    // The grammar has no objection — which is exactly why the grammar was not enough.
+    expect(isValidRoll('2d6+STR')).toBe(true)
+
+    const problem = sheetProblem(pc({ feats: [odd] }))
+    expect(problem?.path).toBe('feats[0].toHit')
+    expect(problem?.message).toContain('one d20')
+
+    // Two d20s is advantage spelled into the content permanently, rather than the
+    // toggle it is meant to be at the moment of rolling.
+    expect(
+      sheetProblem(
+        pc({ feats: [entry({ id: 'f1', category: 'weapon', roll: '1d8', toHit: '2d20+STR' })] }),
+      )?.path,
+    ).toBe('feats[0].toHit')
+
+    // Shares the prefix, is not a d20.
+    expect(
+      sheetProblem(
+        pc({ feats: [entry({ id: 'f1', category: 'weapon', roll: '1d8', toHit: '1d200' })] }),
+      )?.path,
+    ).toBe('feats[0].toHit')
+
+    // And the two legitimate shapes still pass: a hero's tokens, a monster's flat number.
+    for (const good of ['1d20+STR+PROF', '1d20+4', '1d20-2', '1d20']) {
+      expect(
+        sheetProblem(
+          pc({ feats: [entry({ id: 'f1', category: 'weapon', roll: '1d8', toHit: good })] }),
+        ),
+      ).toBeNull()
+    }
+
+    // The accessor still hands back whatever is stored: adjudicating a roll is not
+    // its job, and a document written by a newer deployment must read as it was written.
+    expect(toHitOf(odd)).toBe('2d6+STR')
+  })
+
+  /**
+   * The grammar is checked before the arity, deliberately, so a malformed to-hit
+   * gets the sentence saying what is wrong with it rather than the one about which
+   * category may carry one. Asserted because the two messages are both plausible
+   * here and only one of them helps.
+   */
+  test('a malformed to-hit gets the grammar message, not the category one', () => {
+    const problem = sheetProblem(
+      pc({ feats: [entry({ id: 'f1', category: 'passive', roll: null, toHit: 'not-a-roll' })] }),
+    )
+    expect(problem?.path).toBe('feats[0].toHit')
+    expect(problem?.message).toContain('is not a roll')
+  })
+})
+
+describe('the roll length bound', () => {
+  /**
+   * ⚠️ **The grammar has a ceiling on the dice and none on the length.**
+   * `ROLL_PATTERN`'s trailing `(?:[+-]…)*` repeats without limit, so `1d6+1+1+1…` a
+   * thousand times over is a perfectly *valid* roll — and there are now two such
+   * fields on every one of up to forty entries.
+   *
+   * Both fixtures are built to an exact length and their lengths asserted, so a
+   * change to `MAX_ROLL_LENGTH` makes this test fail loudly rather than quietly
+   * testing a different bound than it says.
+   */
+  const AT_LIMIT = `1d10${'+1'.repeat(18)}`
+  const OVER_LIMIT = `1d100${'+1'.repeat(18)}`
+
+  test('the fixtures sit exactly on and exactly past the bound, and both are valid rolls', () => {
+    expect(MAX_ROLL_LENGTH).toBe(40)
+    expect(AT_LIMIT.length).toBe(MAX_ROLL_LENGTH)
+    expect(OVER_LIMIT.length).toBe(MAX_ROLL_LENGTH + 1)
+    // The point of the bound: the grammar itself has no objection to either.
+    expect(isValidRoll(AT_LIMIT)).toBe(true)
+    expect(isValidRoll(OVER_LIMIT)).toBe(true)
+  })
+
+  test('a roll on the bound is accepted and one past it is refused', () => {
+    expect(sheetProblem(pc({ feats: [entry({ id: 'f1', roll: AT_LIMIT })] }))).toBeNull()
+
+    const problem = sheetProblem(pc({ feats: [entry({ id: 'f1', roll: OVER_LIMIT })] }))
+    expect(problem?.path).toBe('feats[0].roll')
+    expect(problem?.message).toBe(`Keep a roll to ${MAX_ROLL_LENGTH} characters or fewer.`)
+  })
+
+  /**
+   * **And on the to-hit, which is the field the bound was actually widened for.**
+   * A sheet holding forty weapons now has eighty roll strings on it rather than
+   * forty, so a bound enforced on one field and not the other halves the guarantee.
+   *
+   * These fixtures have to be *d20* rolls where the two above do not: a to-hit is
+   * checked for being one d20 as well as for its length, so reusing the `1d10` pair
+   * would have this test passing on the wrong refusal. Built to exact lengths and
+   * asserted, for the same reason the others are.
+   */
+  const TO_HIT_AT_LIMIT = `1d20${'+1'.repeat(18)}`
+  const TO_HIT_OVER_LIMIT = `1d20+10${'+1'.repeat(17)}`
+
+  test('the to-hit fixtures are d20 rolls sitting exactly on and past the bound', () => {
+    expect(TO_HIT_AT_LIMIT.length).toBe(MAX_ROLL_LENGTH)
+    expect(TO_HIT_OVER_LIMIT.length).toBe(MAX_ROLL_LENGTH + 1)
+    expect(isValidRoll(TO_HIT_AT_LIMIT)).toBe(true)
+    expect(isValidRoll(TO_HIT_OVER_LIMIT)).toBe(true)
+  })
+
+  test('a to-hit on the bound is accepted and one past it is refused', () => {
+    const ok = entry({ id: 'f1', category: 'weapon', roll: '1d8', toHit: TO_HIT_AT_LIMIT })
+    expect(sheetProblem(pc({ feats: [ok] }))).toBeNull()
+
+    const problem = sheetProblem(
+      pc({
+        feats: [entry({ id: 'f1', category: 'weapon', roll: '1d8', toHit: TO_HIT_OVER_LIMIT })],
+      }),
+    )
+    expect(problem?.path).toBe('feats[0].toHit')
+    expect(problem?.message).toBe(`Keep a roll to ${MAX_ROLL_LENGTH} characters or fewer.`)
+  })
+
+  /**
+   * An empty to-hit box is a *missing* value, not a malformed one — the distinction
+   * the editor form depends on, since `sheetProblem` drives it as somebody types and
+   * `normaliseEntry` has not run yet.
+   */
+  test('an empty to-hit on a weapon asks for one rather than calling it malformed', () => {
+    const problem = sheetProblem(
+      pc({ feats: [entry({ id: 'f1', category: 'weapon', roll: '1d8', toHit: '' })] }),
+    )
+    expect(problem?.path).toBe('feats[0].toHit')
+    expect(problem?.message).toContain('A weapon needs a roll to hit with')
+  })
+
+  /** And an empty one on an action is simply absent, not "only a weapon rolls to hit". */
+  test('an empty to-hit on an action is read as absent', () => {
+    expect(
+      sheetProblem(pc({ feats: [entry({ id: 'f1', category: 'action', roll: '1d8', toHit: '' })] })),
+    ).toBeNull()
+  })
+
+  /** On a monster's actions too — one shape, one set of rules, both lists. */
+  test('on an NPC action as well', () => {
+    const problem = sheetProblem(npc({ actions: [entry({ id: 'a1', roll: OVER_LIMIT })] }))
+    expect(problem?.path).toBe('actions[0].roll')
+    expect(problem?.message).toBe(`Keep a roll to ${MAX_ROLL_LENGTH} characters or fewer.`)
+  })
+})
+
+describe('a sheet written before this milestone is still saveable', () => {
+  /**
+   * ⚠️ **THE MOST IMPORTANT TEST IN THIS FILE, and the reason `categoryOf`'s
+   * default is derived rather than constant.**
+   *
+   * `characters.sheet` already holds entries with neither field. If any of the four
+   * new arity refusals fires on one of them, every hand-built sheet in every
+   * existing game becomes unsaveable on its next edit — and the failure would first
+   * appear to a DM mid-session, as a Save button that has stopped working on a
+   * character they did not change.
+   *
+   * The property that makes this safe is that `categoryOf`'s derived default *is*
+   * the arity rule restated: a legacy entry with no roll reads as a passive and has
+   * none, one with a roll reads as an action and has one, and neither has ever had
+   * a to-hit. Both roll shapes are exercised, on both sheet variants, because the
+   * rule is enforced in one place for all four lists.
+   */
+  const LEGACY_FEATS: SheetEntry[] = [
+    legacyEntry({ id: 'old-1', name: 'Rage', text: 'Declared, never rolled.', roll: null }),
+    legacyEntry({ id: 'old-2', name: 'Second Wind', text: 'Catch your breath.', roll: '1d10' }),
+    legacyEntry({ id: 'old-3', name: 'Great Weapon', text: 'A swing.', roll: '2d6+STR' }),
+  ]
+  const LEGACY_SPELLS: SheetEntry[] = [
+    legacyEntry({ id: 'old-4', name: 'Shield', text: 'Up until your next turn.', roll: null, level: 1 }),
+    legacyEntry({ id: 'old-5', name: 'Fire Bolt', text: 'A mote of fire.', roll: '1d10', level: 0 }),
+    legacyEntry({
+      id: 'old-6',
+      name: 'Cure Wounds',
+      text: 'Touch a creature.',
+      roll: '2d8+WIS',
+      level: 1,
+      catalogueKey: 'cure-wounds',
+    }),
+  ]
+
+  /**
+   * Anti-vacuity, and it is not decoration. Every assertion in this section would
+   * pass just as well over fixtures that had quietly acquired a `category` — which
+   * is exactly what a helper carrying a default would do to them — and would then
+   * be testing the modern shape under a heading that promises the old one.
+   */
+  test('the fixtures really are pre-milestone entries, with neither key present', () => {
+    const all = [...LEGACY_FEATS, ...LEGACY_SPELLS]
+    expect(all.length).toBe(6)
+    for (const line of all) {
+      const built = line as unknown as Record<string, unknown>
+      expect('category' in built, `${line.name} has a category`).toBe(false)
+      expect('toHit' in built, `${line.name} has a to-hit`).toBe(false)
+    }
+    // Both roll shapes are represented, so neither half of the rule is untested.
+    expect(all.some((line) => line.roll === null)).toBe(true)
+    expect(all.some((line) => line.roll !== null)).toBe(true)
+  })
+
+  test('a legacy PC sheet still validates', () => {
+    expect(sheetProblem(pc({ feats: LEGACY_FEATS, spells: LEGACY_SPELLS }))).toBeNull()
+  })
+
+  test('a legacy NPC sheet still validates', () => {
+    const actions = [...LEGACY_FEATS, ...LEGACY_SPELLS].map((line) => ({ ...line, level: null }))
+    expect(sheetProblem(npc({ actions }))).toBeNull()
+  })
+
+  /**
+   * And it survives the round trip the mutation actually performs — normalise,
+   * then validate — without acquiring either key on the way through. A normaliser
+   * that materialised a category would make this pass while changing every stored
+   * document in the game on its next save.
+   */
+  test('and survives normalise-then-validate without acquiring either key', () => {
+    const sheet = pc({ feats: LEGACY_FEATS, spells: LEGACY_SPELLS })
+    const out = normaliseSheet(sheet) as PcSheet
+    expect(sheetProblem(out)).toBeNull()
+    for (const line of [...out.feats, ...out.spells]) {
+      const built = line as unknown as Record<string, unknown>
+      expect('category' in built, `${line.name} gained a category`).toBe(false)
+      expect('toHit' in built, `${line.name} gained a to-hit`).toBe(false)
+    }
+  })
+
+  /**
+   * The same for the two override diffs, which hold entries of the identical shape
+   * and are validated by the identical function — a stored preset written before
+   * this milestone has legacy entries in `extraFeats` exactly as a hand-built sheet
+   * has them in `feats`.
+   */
+  test('and a legacy preset override still validates', () => {
+    const stored: StoredSheet = {
+      kind: 'preset',
+      race: 'human',
+      classKey: 'fighter',
+      subclassKey: 'champion',
+      level: 3,
+      locked: false,
+      overrides: { extraFeats: [LEGACY_FEATS[0]], extraSpells: [LEGACY_SPELLS[1]] },
+    }
+    expect(storedSheetProblem(stored)).toBeNull()
+    expect(normaliseStoredSheet(stored)).toEqual(stored)
+  })
+
+  /**
+   * And a legacy creature override, the fourth of the six array positions this one
+   * entry shape occupies.
+   */
+  test('and a legacy bestiary override still validates', () => {
+    const stored: StoredSheet = {
+      kind: 'bestiary',
+      entryKey: 'goblin',
+      cr: 1,
+      overrides: { extraActions: [legacyEntry({ id: 'dm-1', roll: '2d6' })] },
+    }
+    expect(storedSheetProblem(stored)).toBeNull()
+  })
+})
+
+describe('normaliseSheet carries a creature’s group', () => {
+  /**
+   * ⚠️ **THE FIELD-BY-FIELD REBUILD TRAP, MET FOR THE THIRD TIME.**
+   *
+   * `normaliseSheet` rebuilds an `NpcSheet` field by field — which is deliberate, it is
+   * what stops an unknown field riding into the database — and this codebase has now
+   * twice shipped a field added to a validator and not added to the rebuild: silently
+   * discarded on every write, with the form still showing the value it had just binned.
+   * Both times only `npm run test:smoke` caught it, because a dropped optional field
+   * leaves a perfectly valid sheet behind and every other test stays green.
+   *
+   * `group` is optional, so the same trap was waiting for it. Presence is therefore
+   * asserted directly rather than through a value comparison that a default could
+   * satisfy.
+   */
+  test('a stored group survives the round trip', () => {
+    for (const group of ['npc', 'monster'] as const) {
+      const out = normaliseSheet(npc({ group })) as NpcSheet
+      const built = out as unknown as Record<string, unknown>
+      expect('group' in built, group).toBe(true)
+      expect(out.group, group).toBe(group)
+    }
+  })
+
+  /**
+   * ⚠️ **AND THE MIRROR IMAGE, WHICH IS THE HALF THAT ACTUALLY CATCHES THE TRAP.**
+   *
+   * A creature that arrived without the key has to come back without it. `undefined` is
+   * not a Convex value, so a rebuild that wrote `group: sheet.group` unconditionally
+   * would be making a *different write* from one that omits the field — which the local
+   * suite cannot tell apart from the correct one, and which `board-smoke.mjs` reports as
+   * `present on one side only`. Hence `'group' in sheet` rather than a check that the
+   * value is undefined: the two are the same assertion in JavaScript and different
+   * assertions against a real deployment.
+   *
+   * Absent also has to stay a legal state for as long as the schema says the field is
+   * optional. A normaliser that filled it in would leave `groupOf`'s documented default
+   * reachable only by documents nobody has saved, which is how a default becomes untested
+   * code that nobody notices is wrong.
+   */
+  test('a creature that arrived without a group comes back without the key', () => {
+    const before = npc()
+    expect('group' in before, 'the fixture already has a group').toBe(false)
+
+    const out = normaliseSheet(before) as NpcSheet
+    const built = out as unknown as Record<string, unknown>
+    expect('group' in built).toBe(false)
+    expect(Object.keys(built)).not.toContain('group')
+  })
+
+  /**
+   * `defaultNpcSheet` is the second field-by-field rebuild and it made the opposite
+   * decision on purpose: it omits `group` rather than writing `'npc'`, so a hand-built
+   * creature with no answer defaults through the accessor instead of storing one.
+   *
+   * That matters at exactly one place — the create dialog spreads the default and then
+   * puts the DM's answer over the top — and it is asserted here because it is a decision
+   * two functions away from where its consequences show up.
+   */
+  test('defaultNpcSheet omits the field rather than defaulting it', () => {
+    const built = defaultNpcSheet() as unknown as Record<string, unknown>
+    expect('group' in built).toBe(false)
+  })
+
+  /** Idempotent in both directions, like every other part of the normaliser. */
+  test('normalising twice changes nothing, with the key and without it', () => {
+    for (const sheet of [npc(), npc({ group: 'monster' })]) {
+      const once = normaliseSheet(sheet)
+      expect(normaliseSheet(once)).toEqual(once)
+      expect(Object.keys(once as unknown as Record<string, unknown>).sort()).toEqual(
+        Object.keys(sheet as unknown as Record<string, unknown>).sort(),
+      )
+    }
+  })
+
+  /**
+   * The stored form, through the door the mutation actually uses. `normaliseStoredSheet`
+   * delegates to `normaliseSheet` for a hand-built creature, so this is the same rebuild
+   * reached the way `characters.create` reaches it — and `toEqual` over the whole sheet
+   * is what would catch a field dropped anywhere in it, not only this one.
+   */
+  test('and the same holds through normaliseStoredSheet, which is what the mutation calls', () => {
+    const withGroup: StoredSheet = npc({ group: 'monster' })
+    expect(normaliseStoredSheet(withGroup)).toEqual(withGroup)
+    expect(storedSheetProblem(withGroup)).toBeNull()
+
+    const without: StoredSheet = npc()
+    expect(normaliseStoredSheet(without)).toEqual(without)
+    expect(storedSheetProblem(without)).toBeNull()
+    expect(
+      'group' in (normaliseStoredSheet(without) as unknown as Record<string, unknown>),
+    ).toBe(false)
+  })
+
+  /**
+   * The group is a creature's alone, and the two hero variants have nowhere to put one —
+   * so a `pc` sheet carrying the key is an unknown field, and the rebuild drops it for
+   * the reason every field-by-field rebuild in this file exists.
+   */
+  test('a group smuggled onto a hero sheet is dropped', () => {
+    const smuggled = { ...pc(), group: 'monster' } as unknown as StoredSheet
+    const out = normaliseStoredSheet(smuggled) as unknown as Record<string, unknown>
+    expect('group' in out).toBe(false)
+  })
+
+  /**
+   * The two unions, spelled once each and asserted against each other. `CreatureGroup` is
+   * what a DM's creature can be; `CharacterGroup` is that widened by the one group a
+   * creature can never be in, and it is what `publicCharacterValidator` sends.
+   *
+   * Worth pinning because they are declared separately and a fifth heading added to one
+   * and not the other would compile: the selector would gain a tab that nothing can ever
+   * be filed under, or a creature would be filed under a heading the payload cannot carry.
+   */
+  test('the creature groups are exactly the character groups minus “character”', () => {
+    expect([...CREATURE_GROUPS]).toEqual(['npc', 'monster'])
+    expect([...CHARACTER_GROUPS]).toEqual(['character', 'npc', 'monster'])
+    expect(CHARACTER_GROUPS.filter((group) => group !== 'character')).toEqual([...CREATURE_GROUPS])
+  })
+
+  /**
+   * Each list is a type and each validator is a value, and sheet.ts writes the names out
+   * twice on purpose — the convention `sheetEntryCategoryValidator` states and that the
+   * test above it enforces: "a Convex validator is a value and the list is a type, and the
+   * one test pinning the two together is cheaper than the generic that would build one
+   * from the other."
+   *
+   * These two unions had the convention and not the test. Without it the copies are free
+   * to disagree, and the direction that hurts is a group the code accepts and the *schema*
+   * refuses — a save that fails against the real deployment and passes against
+   * convex-test, which is the class of failure only `npm run test:smoke` has ever caught
+   * here. `characterGroupValidator` fails the other way and just as quietly: it is what
+   * `publicCharacterValidator` sends, so a heading missing from it makes `characters.list`
+   * throw for the whole table over one creature.
+   */
+  test('each validator admits exactly its own groups, in the same order', () => {
+    const literalsOf = (validator: unknown) =>
+      (validator as { members: { kind: string; value: unknown }[] }).members
+
+    const creature = literalsOf(creatureGroupValidator)
+    expect(creature.map((member) => member.kind)).toEqual(['literal', 'literal'])
+    expect(creature.map((member) => member.value)).toEqual([...CREATURE_GROUPS])
+
+    const character = literalsOf(characterGroupValidator)
+    expect(character.map((member) => member.kind)).toEqual(['literal', 'literal', 'literal'])
+    expect(character.map((member) => member.value)).toEqual([...CHARACTER_GROUPS])
+  })
+
+  /**
+   * The record `CreatureGroupToggle` iterates. A `Record` keyed by the union catches a
+   * *missing* group at compile time and says nothing about the order, about a key left
+   * blank, or about two groups sharing a word — and a toggle with two buttons reading the
+   * same thing is a control nobody can use.
+   */
+  test('every creature group has a button label and an example, in list order', () => {
+    expect(Object.keys(CREATURE_GROUP_CHOICES)).toEqual([...CREATURE_GROUPS])
+    for (const group of CREATURE_GROUPS) {
+      expect(CREATURE_GROUP_CHOICES[group].label.trim(), group).not.toBe('')
+      expect(CREATURE_GROUP_CHOICES[group].hint.trim(), group).not.toBe('')
+    }
+    const labels = CREATURE_GROUPS.map((group) => CREATURE_GROUP_CHOICES[group].label)
+    expect(new Set(labels).size).toBe(CREATURE_GROUPS.length)
+  })
+
+  /**
+   * The record the DM's sheet selector and the token editor's rebind select both iterate,
+   * pinned on the same three terms as the one above — because a `Record` keyed by the union
+   * catches a *missing* group at compile time and says nothing about the order, about a key
+   * left blank, or about two groups printing the same word.
+   *
+   * The last of those is what makes this worth a test rather than a comment now that there is
+   * one record instead of three: two headings reading *Monsters* is a selector where a DM
+   * cannot tell which list they are looking at, and it would be one typo in one file that
+   * every screen inherits at once. That inheritance is the point of consolidating them, and it
+   * cuts both ways.
+   */
+  test('every character group has a heading, in list order, all distinct', () => {
+    expect(Object.keys(CHARACTER_GROUP_LABELS)).toEqual([...CHARACTER_GROUPS])
+    for (const group of CHARACTER_GROUPS) {
+      expect(CHARACTER_GROUP_LABELS[group].trim(), group).not.toBe('')
+    }
+    const headings = CHARACTER_GROUPS.map((group) => CHARACTER_GROUP_LABELS[group])
+    expect(new Set(headings).size).toBe(CHARACTER_GROUPS.length)
   })
 })

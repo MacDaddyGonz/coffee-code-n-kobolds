@@ -199,8 +199,18 @@ async function makeSeat(t: Harness, code: string, displayName: string) {
   return playerId
 }
 
-async function makePc(t: Harness, code: string, name: string, sheet = pcSheet()) {
-  const { characterId } = await t.mutation(api.characters.create, { code, name, sheet })
+/**
+ * ⚠️ **Takes the DM code, because creating a character is the DM's on every path
+ * now** — including a hero's.
+ *
+ * That is worth a line here rather than only in `characters.test.ts`, because this
+ * suite is about who may *read* what, and a fixture that needs the DM code to build a
+ * hero could be misread as saying the hero is a secret. It is not: the code decides who
+ * may create, and the sheet decides who may see. Every assertion below still runs
+ * against a payload fetched with no code at all.
+ */
+async function makePc(t: Harness, code: string, dmCode: string, name: string, sheet = pcSheet()) {
+  const { characterId } = await t.mutation(api.characters.create, { code, dmCode, name, sheet })
   return characterId
 }
 
@@ -313,7 +323,7 @@ async function vitalsFixture(t: Harness) {
   const sceneId = await makeScene(t, game.code, game.dmCode)
   const seat = await makeSeat(t, game.code, 'Ana')
 
-  const pc = await makePc(t, game.code, PC_NAME)
+  const pc = await makePc(t, game.code, game.dmCode, PC_NAME)
   await t.mutation(api.characters.claim, { code: game.code, playerId: seat, characterId: pc })
   await setHp(t, game.code, game.dmCode, pc, PC_CURRENT_HP)
   const pcToken = await addToken(t, game.code, game.dmCode, sceneId, {
@@ -415,6 +425,17 @@ async function playerPayloads(
       t.query(api.bestiary.entry, { code, dmCode: wrong, key: PERSON_KEY }),
     ),
     'characters.vitals': await t.query(api.characters.vitals, { code }),
+    /**
+     * ⚠️ **The seat id matters to this query now, so the sweep has to send one.**
+     * `characters.vitals` takes a `playerId` and answers `exact` for a creature that
+     * seat has been granted — which means the no-seat payload alone stopped being the
+     * whole of what a player's client can fetch. No grant is written in this fixture,
+     * so the answer must still be a band; the granted direction is section (j).
+     */
+    'characters.vitals (the seat’s own id)': await t.query(api.characters.vitals, {
+      code,
+      playerId: seat,
+    }),
     'characters.vitals (wrong dm code)': await t.query(api.characters.vitals, {
       code,
       dmCode: wrong,
@@ -442,7 +463,21 @@ async function playerPayloads(
     'scenes.active': await t.query(api.scenes.active, { code }),
     'games.getByCode': await t.query(api.games.getByCode, { code }),
     'players.list': await t.query(api.players.list, { code }),
-    'players.listNames': await t.query(api.players.listNames, { code }),
+    /**
+     * ⚠️ **The one query in the sweep that is not scoped to this game, and it is here
+     * as a replacement rather than an addition.** `players.listNames` used to hold this
+     * slot; it is gone, because the name gate mounted it beside `players.list {code}`
+     * for a strict subset of the same rows. Deleting the line would have shrunk the
+     * sweep silently, which is the failure mode a sweep exists to prevent — so the new
+     * public query a client can reach with **no credential at all** takes its place.
+     *
+     * `games.list` reads *every* game in the deployment rather than the one this fixture
+     * built, so the scan now also proves the cross-game read carries nothing: the
+     * creature's name and its hit points are in a game whose join code this caller is
+     * not even supplying, and a projection that leaked a field would leak it from all
+     * thirty rows at once.
+     */
+    'games.list': await t.query(api.games.list, {}),
   }
 }
 
@@ -480,6 +515,23 @@ async function bandOf(
 // (a) The payload scan
 // ---------------------------------------------------------------------------
 
+/**
+ * ⚠️ **RE-SCOPED, NOT RELAXED: everything below is about an *ungranted* creature.**
+ *
+ * Control now widens this milestone's headline secret — a seat the DM has handed a
+ * creature receives its **exact** hit points rather than a band — so "a player sees no
+ * exact NPC hit points" is no longer the whole rule, and a suite that went on asserting
+ * it without saying which player would be asserting something false by omission.
+ *
+ * What is asserted here is the half that did not move, and it is the larger half:
+ * **nothing about the grant machinery reaches a creature nobody was granted.** No grant
+ * is written anywhere in `vitalsFixture`, and the payloads are swept with a seat id as
+ * well as without one, because the seat id is the argument that changed.
+ *
+ * The other direction is section (j) at the foot of this file, and it is not optional:
+ * a grant that quietly did nothing would pass every scan in this section and be
+ * discovered at the table.
+ */
 describe('a player inspecting network traffic sees no exact NPC hit points', () => {
   test('no payload fetched without the DM code contains the numbers, the sheet or the notes', async () => {
     const t = harness()
@@ -976,7 +1028,7 @@ describe('refusing an NPC is indistinguishable from it not existing', () => {
     const t = harness()
     const fixture = await vitalsFixture(t)
     const other = await makeGame(t, 'Other Table', 'Sam')
-    const theirs = await makePc(t, other.code, 'Their Hero')
+    const theirs = await makePc(t, other.code, other.dmCode, 'Their Hero')
     const ghost = await vanishedCharacterId(t, fixture.code)
 
     const ask = (characterId: Id<'characters'>, playerId?: Id<'players'>) =>
@@ -1002,7 +1054,7 @@ describe('refusing an NPC is indistinguishable from it not existing', () => {
     const t = harness()
     const fixture = await vitalsFixture(t)
     const other = await makeGame(t, 'Other Table', 'Sam')
-    const theirs = await makePc(t, other.code, 'Their Hero')
+    const theirs = await makePc(t, other.code, other.dmCode, 'Their Hero')
     const ghost = await vanishedCharacterId(t, fixture.code)
     const ben = await makeSeat(t, fixture.code, 'Ben')
 
@@ -1023,7 +1075,7 @@ describe('refusing an NPC is indistinguishable from it not existing', () => {
     const t = harness()
     const fixture = await vitalsFixture(t)
     const other = await makeGame(t, 'Other Table', 'Sam')
-    const theirs = await makePc(t, other.code, 'Their Hero')
+    const theirs = await makePc(t, other.code, other.dmCode, 'Their Hero')
     const ghost = await vanishedCharacterId(t, fixture.code)
     const ben = await makeSeat(t, fixture.code, 'Ben')
 
@@ -1324,10 +1376,13 @@ describe('Milestone 4: resolution runs server-side, and Milestone 3’s guarante
     const fixture = await vitalsFixture(t)
     const { code, dmCode } = fixture
 
-    // (1) Creating one needs no DM code — because it is not a monster — and it is a
-    // hero to a caller who has none.
+    // (1) Creating one takes the DM code, like every other create — and what comes out
+    // is a hero to a caller who has none. ⚠️ This used to read "needs no DM code,
+    // because it is not a monster"; the code now decides *who may create* rather than
+    // *what is created*, and the second half is what is asserted here.
     const { characterId: hero } = await t.mutation(api.characters.create, {
       code,
+      dmCode,
       name: PRESET_NAME,
       sheet: presetSheet(),
     })
@@ -1335,8 +1390,8 @@ describe('Milestone 4: resolution runs server-side, and Milestone 3’s guarante
       (await t.query(api.characters.list, { code })).find((row) => row._id === hero)?.kind,
     ).toBe('pc')
 
-    // (2) The DM code does not change what it is. Passing it to `create` builds the
-    // same hero, visible to everybody, rather than a hidden one.
+    // (2) A second one, built the same way and listed the same way, so the assertion
+    // below is about two heroes rather than about one that happened to work.
     const { characterId: alsoHero } = await t.mutation(api.characters.create, {
       code,
       name: 'Second Opinion',
@@ -1399,6 +1454,7 @@ describe('Milestone 4: resolution runs server-side, and Milestone 3’s guarante
 
     const { characterId: hero } = await t.mutation(api.characters.create, {
       code,
+      dmCode,
       name: PRESET_NAME,
       sheet: presetSheet(),
     })
@@ -1443,6 +1499,7 @@ describe('Milestone 4: resolution runs server-side, and Milestone 3’s guarante
 
     await t.mutation(api.characters.create, {
       code: fixture.code,
+      dmCode: fixture.dmCode,
       name: PRESET_NAME,
       sheet: presetSheet({ race: 'goliath', classKey: 'wizard', subclassKey: 'evocation' }),
     })
@@ -1485,6 +1542,7 @@ describe('Milestone 4: resolution runs server-side, and Milestone 3’s guarante
     const fixture = await vitalsFixture(t)
     await t.mutation(api.characters.create, {
       code: fixture.code,
+      dmCode: fixture.dmCode,
       name: PRESET_NAME,
       sheet: presetSheet(),
     })
@@ -1515,6 +1573,7 @@ describe('Milestone 4: resolution runs server-side, and Milestone 3’s guarante
 
     const { characterId: hero } = await t.mutation(api.characters.create, {
       code,
+      dmCode,
       name: PRESET_NAME,
       sheet: presetSheet(),
     })
@@ -1846,8 +1905,16 @@ describe('a player inspecting network traffic sees nothing off the DM’s shelf'
 
   /**
    * `playerId` is routing rather than identity, so a player can pass any seat's id —
-   * including the DM's, whose badge is in the public roster. None of it opens a creature,
-   * because the refusal that guards a secret keys off the DM code alone.
+   * including the DM's, whose badge is in the public roster. None of it opens a creature.
+   *
+   * ⚠️ **The sentence that used to finish this comment — "because the refusal that guards
+   * a secret keys off the DM code alone" — is no longer true in general, and the fixture
+   * is what makes it true here.** A grant is a second door, opened by the DM deliberately,
+   * and a seat id passed against a granted creature *does* open it (that residual is
+   * sanctioned; closing it needs accounts, which ADR 0002 has declined). `bestiaryFixture`
+   * writes no grant, so every seat below has been granted nothing, and what is being
+   * asserted is that a seat id on its own — badge or otherwise — is worth exactly nothing.
+   * Section (j) walks the other side of that door.
    */
   test('no seat id, badge or otherwise, opens a creature’s sheet', async () => {
     const t = harness()
@@ -1869,5 +1936,253 @@ describe('a player inspecting network traffic sees nothing off the DM’s shelf'
     const vitals = await t.query(api.characters.vitals, { code: fixture.code })
     expect(rowFor(vitals, fixture.creature)?.kind).toBe('band')
     expect(rowFor(vitals, fixture.person)?.kind).toBe('band')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (j) Milestone 7: control widens the headline secret, by exactly one seat
+// ---------------------------------------------------------------------------
+//
+// THE OTHER DIRECTION, AND IT IS NOT OPTIONAL. Every scan above holds that an ungranted
+// creature's exact hit points reach nobody. On its own that is satisfied by a grant that
+// does not work at all — which would be a feature discovered broken at the table, and
+// which would look exactly like this suite passing.
+//
+// So the two are written as a pair. `visibleVitals` sends `exact` for
+// `isDm || controlled.has(id)`, and `controlled` is built from the same visible-token set
+// the band rule uses, so a grant can only ever upgrade a creature the caller can already
+// see standing on their board. It opens nothing new; it changes what may be read about
+// something already open.
+//
+// The reason it has to send `exact` rather than a band is not symmetry. `HpControls`
+// renders its `−`/`+` only on the `exact` variant, on the stated grounds that a caller who
+// may edit hit points is always sent them — so a granted player with a band would get the
+// party's wolf with no way to take damage on it. That is a feature that looks broken
+// rather than one that looks restricted, which is why the widening exists.
+
+/** The DM hands one token to a set of seats. */
+async function setControllers(
+  t: Harness,
+  fixture: { code: string; dmCode: string },
+  tokenId: Id<'tokens'>,
+  playerIds: Id<'players'>[],
+) {
+  await t.mutation(api.board.setControllers, {
+    code: fixture.code,
+    dmCode: fixture.dmCode,
+    tokenId,
+    playerIds,
+  })
+}
+
+describe('a granted seat is sent exact hit points, and only that seat', () => {
+  /**
+   * THE WIDENING, BOUNDED IN ONE TEST. Ana is handed the monster and Ben is not, so one
+   * query answers two different things for two seats at one table — which is the whole
+   * reason `characters.vitals` took a `playerId` and split its cache entry per seat.
+   *
+   * Ben's side is the full payload scan rather than a kind check, because the interesting
+   * failure is not "Ben's row said band" but "the numbers turned up in something else of
+   * Ben's on the way past".
+   */
+  test('the granted seat gets exact, the ungranted seat gets a band and nothing else', async () => {
+    const t = harness()
+    const fixture = await vitalsFixture(t)
+    const { code, seat: ana, npc, npcToken } = fixture
+    const ben = await makeSeat(t, code, 'Ben')
+
+    await setControllers(t, fixture, npcToken, [ana])
+
+    const forAna = rowFor(await t.query(api.characters.vitals, { code, playerId: ana }), npc)
+    expect(forAna).toEqual({
+      kind: 'exact',
+      characterId: npc,
+      current: NPC_CURRENT_HP,
+      max: NPC_MAX_HP,
+      // A monster has no hit dice at all — the reduced sheet carries none — so both
+      // travel as null rather than as a zero somebody could spend.
+      hitDiceCount: null,
+      hitDiceRemaining: null,
+      spentPerRest: [],
+    })
+
+    // Ben was granted nothing, and neither was the caller with no seat at all — which is
+    // the fail-closed case, since `undefined` means no grants rather than every grant.
+    for (const who of [{ playerId: ben }, {}]) {
+      const rows = await t.query(api.characters.vitals, { code, ...who })
+      expect(rowFor(rows, npc)?.kind, JSON.stringify(who)).toBe('band')
+
+      const serialised = JSON.stringify(rows) ?? ''
+      expect(containsNumber(serialised, NPC_MAX_HP), 'the maximum leaked').toBe(false)
+      expect(containsNumber(serialised, NPC_CURRENT_HP), 'the current total leaked').toBe(false)
+    }
+
+    // And the grant does not open the *sheet* to Ben either. The two secrets travel by
+    // different routes — the numbers through the vitals union, the stat block through
+    // `maySeeCharacter` — and both stay shut for him.
+    //
+    // ⚠️ Scanned as **Ben's** payloads rather than through `playerPayloads`, which sends
+    // `fixture.seat` — that is Ana, who has been granted the creature, so her payloads
+    // now legitimately carry it. A sweep that had reused the shared helper here would
+    // have been asserting the opposite of what it says.
+    for (const [name, payload] of Object.entries({
+      'characters.sheet (ben’s id)': await t.query(api.characters.sheet, {
+        code,
+        characterId: npc,
+        playerId: ben,
+      }),
+      'characters.list': await t.query(api.characters.list, { code }),
+      'characters.vitals (ben’s id)': await t.query(api.characters.vitals, {
+        code,
+        playerId: ben,
+      }),
+      'board.tokens': await t.query(api.board.tokens, { code }),
+      'players.list': await t.query(api.players.list, { code }),
+    })) {
+      const serialised = JSON.stringify(payload) ?? ''
+      expect(serialised, `${name} leaked the NPC's name`).not.toContain(NPC_NAME)
+      expect(serialised, `${name} leaked the NPC's notes`).not.toContain(NPC_NOTES)
+      expect(serialised, `${name} leaked an NPC action`).not.toContain(NPC_ACTION_NAME)
+    }
+
+    // ⚠️ **The sanctioned residual, stated rather than left to be discovered.** Ana's own
+    // payload does carry the sheet, and `playerId` is routing rather than identity — so
+    // Ben passing Ana's id reads what Ana was granted. That is a fourth decline of
+    // accounts (ADR 0002) rather than an oversight: the door was opened by the DM on
+    // purpose, and closing the residual needs identity rather than another check.
+    // Asserted so that anyone tightening this later knows they are changing a decision.
+    expect(
+      await t.query(api.characters.sheet, { code, characterId: npc, playerId: ana }),
+    ).not.toBeNull()
+  })
+
+  /**
+   * ⚠️ **THE COMPOSITION, ON THE HIT-POINT SIDE.** `controlledCharacterIds` is built from
+   * `visibleTokens`, so a grant written onto a DM-layer token contributes nothing: the
+   * token was filtered out before anybody asked who held its lead.
+   *
+   * A creature on the DM layer produces **no row at all** rather than a band, because
+   * `visibleCharacterIds` is what decides whether the caller is told about it — otherwise
+   * the length of this array would publish how many monsters the DM has prepared. So the
+   * assertion is absence, and the grant does not turn it into presence.
+   */
+  test('a grant on a DM-layer token produces no row, let alone an exact one', async () => {
+    const t = harness()
+    const fixture = await vitalsFixture(t)
+    const { code, dmCode, sceneId, seat: ana } = fixture
+
+    const hidden = await makeNpc(t, code, dmCode, 'Something Waiting', npcSheet())
+    const hiddenToken = await addToken(t, code, dmCode, sceneId, {
+      name: 'Not On Their Board',
+      layer: 'dm',
+      characterId: hidden,
+    })
+    await setControllers(t, fixture, hiddenToken, [ana])
+
+    const rows = await t.query(api.characters.vitals, { code, playerId: ana })
+    expect(rowFor(rows, hidden)).toBeUndefined()
+    expect(JSON.stringify(rows) ?? '').not.toContain(hidden)
+
+    // The control, and it is the whole point of this test: the DM does get a row, so the
+    // creature exists and has hit points — the player is being told nothing rather than
+    // being told about an empty game.
+    expect(rowFor(await t.query(api.characters.vitals, { code, dmCode }), hidden)?.kind).toBe(
+      'exact',
+    )
+  })
+
+  /**
+   * The half of a grant that makes it worth having: the player holding the lead can spend
+   * the creature's hit points.
+   *
+   * `adjustHp` takes `allowControl: true` for exactly this — a grant that could not spend
+   * a hit point would be a sheet to look at — while `updateSheet` takes `false`, because
+   * lending somebody a wolf is not handing them the wolf's stat block to rewrite. Both
+   * directions are asserted, because the pair *is* the decision.
+   */
+  test('the granted seat may take damage on the creature but may not rewrite it', async () => {
+    const t = harness()
+    const fixture = await vitalsFixture(t)
+    const { code, seat: ana, npc, npcToken } = fixture
+
+    await setControllers(t, fixture, npcToken, [ana])
+
+    const { currentHp } = await t.mutation(api.characters.adjustHp, {
+      code,
+      characterId: npc,
+      delta: -7,
+      playerId: ana,
+    })
+    expect(currentHp).toBe(NPC_CURRENT_HP - 7)
+    expect(
+      rowFor(await t.query(api.characters.vitals, { code, playerId: ana }), npc),
+    ).toMatchObject({ kind: 'exact', current: NPC_CURRENT_HP - 7 })
+
+    // Authorship is not granted. The refusal is `CharacterNotFound` rather than
+    // `CharacterNotYours`, because `updateSheet` passes no controlled set at all and the
+    // creature is therefore invisible to it — which is the same answer a fabricated id
+    // gets, and the right one.
+    await expectKind(
+      t.mutation(api.characters.updateSheet, {
+        code,
+        characterId: npc,
+        sheet: npcSheet({ maxHp: 4, notes: '', actions: [] }),
+        playerId: ana,
+      }),
+      'CharacterNotFound',
+    )
+    expect(
+      rowFor(await t.query(api.characters.vitals, { code, playerId: ana }), npc),
+    ).toMatchObject({ max: NPC_MAX_HP })
+  })
+
+  /** Revoking is the same door shutting: the exact numbers go back to being a band. */
+  test('revoking the grant puts the creature back on a band', async () => {
+    const t = harness()
+    const fixture = await vitalsFixture(t)
+    const { code, seat: ana, npc, npcToken } = fixture
+
+    await setControllers(t, fixture, npcToken, [ana])
+    expect(rowFor(await t.query(api.characters.vitals, { code, playerId: ana }), npc)?.kind).toBe(
+      'exact',
+    )
+
+    await setControllers(t, fixture, npcToken, [])
+
+    const rows = await t.query(api.characters.vitals, { code, playerId: ana })
+    expect(rowFor(rows, npc)?.kind).toBe('band')
+    const serialised = JSON.stringify(rows) ?? ''
+    expect(containsNumber(serialised, NPC_MAX_HP)).toBe(false)
+    expect(containsNumber(serialised, NPC_CURRENT_HP)).toBe(false)
+
+    // And the write path closed with it, rather than lagging a subscription behind.
+    await expectKind(
+      t.mutation(api.characters.adjustHp, { code, characterId: npc, delta: -1, playerId: ana }),
+      'CharacterNotFound',
+    )
+  })
+
+  /**
+   * ⚠️ **A hero's hit points are exact for everybody and were never gated**, so the grant
+   * must not have quietly turned `characters.vitals` into a per-seat query in the wrong
+   * direction — one where a seat that was granted nothing now sees *less* than it did.
+   *
+   * requirements.md asks for `20/45` above a hero's token for the whole table, and the
+   * cheapest way to break that while every other test in this file passes is to make the
+   * `exact` branch depend on the seat argument rather than adding to it.
+   */
+  test('a hero stays exact for every seat id and for none, grant or no grant', async () => {
+    const t = harness()
+    const fixture = await vitalsFixture(t)
+    const { code, dmCode, seat: ana, pc, npcToken } = fixture
+    const ben = await makeSeat(t, code, 'Ben')
+    await setControllers(t, fixture, npcToken, [ana])
+
+    for (const who of [{}, { playerId: ana }, { playerId: ben }, { dmCode }]) {
+      expect(
+        rowFor(await t.query(api.characters.vitals, { code, ...who }), pc),
+        JSON.stringify(who),
+      ).toMatchObject({ kind: 'exact', current: PC_CURRENT_HP, max: PC_MAX_HP })
+    }
   })
 })

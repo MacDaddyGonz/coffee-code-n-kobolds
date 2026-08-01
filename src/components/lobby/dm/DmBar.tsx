@@ -22,7 +22,11 @@ export type DmBarProps = {
  * When it is elevated: a DM badge, "change recovery phrase", and "stand down"
  * (which only forgets the local code — it changes nothing about the game).
  *
- * Per-seat DM actions live in <Lobby>, next to the rows they act on.
+ * Per-seat DM actions are not here: they live in `LobbyRoster` and
+ * `LobbyCharacterDmActions`, next to the rows they act on, which the Table tab draws.
+ * What is left is the game-level half, and the Settings tab is what mounts it — which
+ * is also what finally makes recovery reachable during a running game, since this bar
+ * used to disappear the moment play started.
  */
 export function DmBar({ code, dm }: DmBarProps) {
   // Survives the swap between the two branches below, which is the point: the

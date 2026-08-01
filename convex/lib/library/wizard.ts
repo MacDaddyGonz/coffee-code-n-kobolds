@@ -66,6 +66,7 @@ export const WIZARD: ClassLibrary = {
         text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
         roll: '1d20+INT+PROF',
         level: null,
+        category: 'action',
         catalogueKey: null,
       },
       {
@@ -73,15 +74,18 @@ export const WIZARD: ClassLibrary = {
         text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
         roll: null,
         level: null,
+        category: 'passive',
         catalogueKey: null,
       },
     ],
     spells: [
       {
         name: 'Fire Bolt',
-        text: 'A mote of fire hurled at one target within 120 feet. Make a ranged spell attack; on a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
+        text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
         roll: '1d10',
         level: 0,
+        category: 'weapon',
+        toHit: '1d20+INT+PROF',
         catalogueKey: 'fire-bolt',
       },
       {
@@ -89,6 +93,7 @@ export const WIZARD: ClassLibrary = {
         text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
         roll: null,
         level: 0,
+        category: 'passive',
         catalogueKey: 'mage-hand',
       },
       {
@@ -96,6 +101,7 @@ export const WIZARD: ClassLibrary = {
         text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
         roll: '3d4+3',
         level: 1,
+        category: 'action',
         catalogueKey: 'magic-missile',
       },
     ],
@@ -134,6 +140,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
             roll: '1d20+INT+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -141,6 +148,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -148,15 +156,18 @@ export const WIZARD: ClassLibrary = {
             text: 'When one of your evocation spells would catch your friends, choose a few of them — one more than the spell\'s level — and the blast passes them by entirely. They take no damage and they need no saving throw. This is what stops Fireball being the spell you are afraid to cast.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
         spells: [
           {
             name: 'Fire Bolt',
-            text: 'A mote of fire hurled at one target within 120 feet. Make a ranged spell attack; on a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
+            text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
             roll: '1d10',
             level: 0,
+            category: 'weapon',
+            toHit: '1d20+INT+PROF',
             catalogueKey: 'fire-bolt',
           },
           {
@@ -164,6 +175,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
             roll: null,
             level: 0,
+            category: 'passive',
             catalogueKey: 'mage-hand',
           },
           {
@@ -171,6 +183,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
             roll: '3d4+3',
             level: 1,
+            category: 'action',
             catalogueKey: 'magic-missile',
           },
           {
@@ -178,6 +191,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'shield',
           },
           {
@@ -185,6 +199,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
             roll: '3d6',
             level: 1,
+            category: 'action',
             catalogueKey: 'burning-hands',
           },
         ],
@@ -221,6 +236,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
             roll: '1d20+INT+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -228,6 +244,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -235,15 +252,18 @@ export const WIZARD: ClassLibrary = {
             text: 'When one of your evocation spells would catch your friends, choose a few of them — one more than the spell\'s level — and the blast passes them by entirely. They take no damage and they need no saving throw. This is what stops Fireball being the spell you are afraid to cast.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
         spells: [
           {
             name: 'Fire Bolt',
-            text: 'A mote of fire hurled at one target within 120 feet. Make a ranged spell attack; on a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
+            text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
             roll: '1d10',
             level: 0,
+            category: 'weapon',
+            toHit: '1d20+INT+PROF',
             catalogueKey: 'fire-bolt',
           },
           {
@@ -251,6 +271,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
             roll: null,
             level: 0,
+            category: 'passive',
             catalogueKey: 'mage-hand',
           },
           {
@@ -258,6 +279,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
             roll: '3d4+3',
             level: 1,
+            category: 'action',
             catalogueKey: 'magic-missile',
           },
           {
@@ -265,6 +287,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'shield',
           },
           {
@@ -272,6 +295,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
             roll: '3d6',
             level: 1,
+            category: 'action',
             catalogueKey: 'burning-hands',
           },
           {
@@ -279,13 +303,16 @@ export const WIZARD: ClassLibrary = {
             text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'detect-magic',
           },
           {
             name: 'Scorching Ray',
-            text: 'Three rays of fire, aimed at one target or split between several, each needing its own ranged spell attack. The damage listed is for a single ray.',
+            text: 'Three rays of fire, aimed at one target or split between several, each rolled separately. The damage listed is for a single ray.',
             roll: '2d6',
             level: 2,
+            category: 'weapon',
+            toHit: '1d20+INT+PROF',
             catalogueKey: 'scorching-ray',
           },
         ],
@@ -322,6 +349,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
             roll: '1d20+INT+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -329,6 +357,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -336,15 +365,18 @@ export const WIZARD: ClassLibrary = {
             text: 'When one of your evocation spells would catch your friends, choose a few of them — one more than the spell\'s level — and the blast passes them by entirely. They take no damage and they need no saving throw. This is what stops Fireball being the spell you are afraid to cast.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
         spells: [
           {
             name: 'Fire Bolt',
-            text: 'A mote of fire hurled at one target within 120 feet. Make a ranged spell attack; on a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
+            text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
             roll: '1d10',
             level: 0,
+            category: 'weapon',
+            toHit: '1d20+INT+PROF',
             catalogueKey: 'fire-bolt',
           },
           {
@@ -352,6 +384,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
             roll: null,
             level: 0,
+            category: 'passive',
             catalogueKey: 'mage-hand',
           },
           {
@@ -359,6 +392,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
             roll: '3d4+3',
             level: 1,
+            category: 'action',
             catalogueKey: 'magic-missile',
           },
           {
@@ -366,6 +400,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'shield',
           },
           {
@@ -373,6 +408,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
             roll: '3d6',
             level: 1,
+            category: 'action',
             catalogueKey: 'burning-hands',
           },
           {
@@ -380,13 +416,16 @@ export const WIZARD: ClassLibrary = {
             text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'detect-magic',
           },
           {
             name: 'Scorching Ray',
-            text: 'Three rays of fire, aimed at one target or split between several, each needing its own ranged spell attack. The damage listed is for a single ray.',
+            text: 'Three rays of fire, aimed at one target or split between several, each rolled separately. The damage listed is for a single ray.',
             roll: '2d6',
             level: 2,
+            category: 'weapon',
+            toHit: '1d20+INT+PROF',
             catalogueKey: 'scorching-ray',
           },
           {
@@ -394,6 +433,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A roaring sphere of flame fills a 20-foot radius around a point within 150 feet, going round corners to do it. Each creature there takes the damage, halved on a successful Dexterity saving throw. Another 1d6 per slot level above 3rd.',
             roll: '8d6',
             level: 3,
+            category: 'action',
             catalogueKey: 'fireball',
           },
           {
@@ -401,6 +441,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A stroke of lightning 100 feet long and 5 feet wide leaps from your hand. Everything in the line takes the damage, halved on a successful Dexterity saving throw.',
             roll: '8d6',
             level: 3,
+            category: 'action',
             catalogueKey: 'lightning-bolt',
           },
         ],
@@ -437,6 +478,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
             roll: '1d20+INT+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -444,6 +486,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -451,6 +494,7 @@ export const WIZARD: ClassLibrary = {
             text: 'When one of your evocation spells would catch your friends, choose a few of them — one more than the spell\'s level — and the blast passes them by entirely. They take no damage and they need no saving throw. This is what stops Fireball being the spell you are afraid to cast.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -458,15 +502,18 @@ export const WIZARD: ClassLibrary = {
             text: 'A creature that succeeds on its saving throw against one of your cantrips still takes half the damage. Your smallest spells stop being wasted turns.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
         spells: [
           {
             name: 'Fire Bolt',
-            text: 'A mote of fire hurled at one target within 120 feet. Make a ranged spell attack; on a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
+            text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
             roll: '1d10',
             level: 0,
+            category: 'weapon',
+            toHit: '1d20+INT+PROF',
             catalogueKey: 'fire-bolt',
           },
           {
@@ -474,6 +521,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
             roll: null,
             level: 0,
+            category: 'passive',
             catalogueKey: 'mage-hand',
           },
           {
@@ -481,6 +529,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
             roll: '3d4+3',
             level: 1,
+            category: 'action',
             catalogueKey: 'magic-missile',
           },
           {
@@ -488,6 +537,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'shield',
           },
           {
@@ -495,6 +545,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
             roll: '3d6',
             level: 1,
+            category: 'action',
             catalogueKey: 'burning-hands',
           },
           {
@@ -502,13 +553,16 @@ export const WIZARD: ClassLibrary = {
             text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'detect-magic',
           },
           {
             name: 'Scorching Ray',
-            text: 'Three rays of fire, aimed at one target or split between several, each needing its own ranged spell attack. The damage listed is for a single ray.',
+            text: 'Three rays of fire, aimed at one target or split between several, each rolled separately. The damage listed is for a single ray.',
             roll: '2d6',
             level: 2,
+            category: 'weapon',
+            toHit: '1d20+INT+PROF',
             catalogueKey: 'scorching-ray',
           },
           {
@@ -516,6 +570,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A sharp rap rings out, heard 300 feet away, and one locked door, chest, box or gate within 60 feet comes open — a bar lifts, a padlock springs, a stuck lid gives. Whatever it opened stays open for a minute. Everyone nearby hears it, so it is an answer to a locked door rather than a quiet one.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -523,6 +578,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A roaring sphere of flame fills a 20-foot radius around a point within 150 feet, going round corners to do it. Each creature there takes the damage, halved on a successful Dexterity saving throw. Another 1d6 per slot level above 3rd.',
             roll: '8d6',
             level: 3,
+            category: 'action',
             catalogueKey: 'fireball',
           },
           {
@@ -530,6 +586,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A stroke of lightning 100 feet long and 5 feet wide leaps from your hand. Everything in the line takes the damage, halved on a successful Dexterity saving throw.',
             roll: '8d6',
             level: 3,
+            category: 'action',
             catalogueKey: 'lightning-bolt',
           },
           {
@@ -537,6 +594,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A reaction that interrupts a spell you can see being cast within 60 feet. The caster makes a Constitution saving throw, and on a failure the spell does nothing and the slot is spent anyway.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: 'counterspell',
           },
         ],
@@ -575,6 +633,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
             roll: '1d20+INT+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -582,6 +641,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -589,15 +649,18 @@ export const WIZARD: ClassLibrary = {
             text: 'After a long rest, roll the dice shown and write both numbers down. Once each, and before the die is rolled, you may replace an attack roll, a saving throw or an ability check made by you or by a creature you can see with one of your numbers — a glimpse of the future you get to hand out.',
             roll: '2d20',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
         ],
         spells: [
           {
             name: 'Fire Bolt',
-            text: 'A mote of fire hurled at one target within 120 feet. Make a ranged spell attack; on a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
+            text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
             roll: '1d10',
             level: 0,
+            category: 'weapon',
+            toHit: '1d20+INT+PROF',
             catalogueKey: 'fire-bolt',
           },
           {
@@ -605,6 +668,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
             roll: null,
             level: 0,
+            category: 'passive',
             catalogueKey: 'mage-hand',
           },
           {
@@ -612,6 +676,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
             roll: '3d4+3',
             level: 1,
+            category: 'action',
             catalogueKey: 'magic-missile',
           },
           {
@@ -619,6 +684,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'shield',
           },
           {
@@ -626,6 +692,7 @@ export const WIZARD: ClassLibrary = {
             text: 'For an hour you understand the literal meaning of any language spoken near you, and you can read any writing you touch, a page at a time. It does not let you speak or write the language back, and a cipher or a magical script stays a mystery.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -662,6 +729,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
             roll: '1d20+INT+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -669,6 +737,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -676,15 +745,18 @@ export const WIZARD: ClassLibrary = {
             text: 'After a long rest, roll the dice shown and write both numbers down. Once each, and before the die is rolled, you may replace an attack roll, a saving throw or an ability check made by you or by a creature you can see with one of your numbers — a glimpse of the future you get to hand out.',
             roll: '2d20',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
         ],
         spells: [
           {
             name: 'Fire Bolt',
-            text: 'A mote of fire hurled at one target within 120 feet. Make a ranged spell attack; on a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
+            text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
             roll: '1d10',
             level: 0,
+            category: 'weapon',
+            toHit: '1d20+INT+PROF',
             catalogueKey: 'fire-bolt',
           },
           {
@@ -692,6 +764,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
             roll: null,
             level: 0,
+            category: 'passive',
             catalogueKey: 'mage-hand',
           },
           {
@@ -699,6 +772,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
             roll: '3d4+3',
             level: 1,
+            category: 'action',
             catalogueKey: 'magic-missile',
           },
           {
@@ -706,6 +780,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'shield',
           },
           {
@@ -713,6 +788,7 @@ export const WIZARD: ClassLibrary = {
             text: 'For an hour you understand the literal meaning of any language spoken near you, and you can read any writing you touch, a page at a time. It does not let you speak or write the language back, and a cipher or a magical script stays a mystery.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -720,6 +796,7 @@ export const WIZARD: ClassLibrary = {
             text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'detect-magic',
           },
           {
@@ -727,6 +804,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A bonus action: you vanish in a puff of silver mist and reappear in an unoccupied space you can see up to 30 feet away.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: 'misty-step',
           },
         ],
@@ -763,6 +841,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
             roll: '1d20+INT+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -770,6 +849,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -777,15 +857,18 @@ export const WIZARD: ClassLibrary = {
             text: 'After a long rest, roll the dice shown and write both numbers down. Once each, and before the die is rolled, you may replace an attack roll, a saving throw or an ability check made by you or by a creature you can see with one of your numbers — a glimpse of the future you get to hand out.',
             roll: '2d20',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
         ],
         spells: [
           {
             name: 'Fire Bolt',
-            text: 'A mote of fire hurled at one target within 120 feet. Make a ranged spell attack; on a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
+            text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
             roll: '1d10',
             level: 0,
+            category: 'weapon',
+            toHit: '1d20+INT+PROF',
             catalogueKey: 'fire-bolt',
           },
           {
@@ -793,6 +876,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
             roll: null,
             level: 0,
+            category: 'passive',
             catalogueKey: 'mage-hand',
           },
           {
@@ -800,6 +884,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
             roll: '3d4+3',
             level: 1,
+            category: 'action',
             catalogueKey: 'magic-missile',
           },
           {
@@ -807,6 +892,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'shield',
           },
           {
@@ -814,6 +900,7 @@ export const WIZARD: ClassLibrary = {
             text: 'For an hour you understand the literal meaning of any language spoken near you, and you can read any writing you touch, a page at a time. It does not let you speak or write the language back, and a cipher or a magical script stays a mystery.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -821,6 +908,7 @@ export const WIZARD: ClassLibrary = {
             text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'detect-magic',
           },
           {
@@ -828,6 +916,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A bonus action: you vanish in a puff of silver mist and reappear in an unoccupied space you can see up to 30 feet away.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: 'misty-step',
           },
           {
@@ -835,6 +924,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A roaring sphere of flame fills a 20-foot radius around a point within 150 feet, going round corners to do it. Each creature there takes the damage, halved on a successful Dexterity saving throw. Another 1d6 per slot level above 3rd.',
             roll: '8d6',
             level: 3,
+            category: 'action',
             catalogueKey: 'fireball',
           },
           {
@@ -842,6 +932,7 @@ export const WIZARD: ClassLibrary = {
             text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: 'dispel-magic',
           },
         ],
@@ -878,6 +969,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
             roll: '1d20+INT+PROF',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
           {
@@ -885,6 +977,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -892,15 +985,18 @@ export const WIZARD: ClassLibrary = {
             text: 'After a long rest, roll the dice shown and write all three numbers down. Once each, and before the die is rolled, you may replace an attack roll, a saving throw or an ability check made by you or by a creature you can see with one of your numbers — three glimpses of the future a day now, rather than two.',
             roll: '3d20',
             level: null,
+            category: 'action',
             catalogueKey: null,
           },
         ],
         spells: [
           {
             name: 'Fire Bolt',
-            text: 'A mote of fire hurled at one target within 120 feet. Make a ranged spell attack; on a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
+            text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
             roll: '1d10',
             level: 0,
+            category: 'weapon',
+            toHit: '1d20+INT+PROF',
             catalogueKey: 'fire-bolt',
           },
           {
@@ -908,6 +1004,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
             roll: null,
             level: 0,
+            category: 'passive',
             catalogueKey: 'mage-hand',
           },
           {
@@ -915,6 +1012,7 @@ export const WIZARD: ClassLibrary = {
             text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
             roll: '3d4+3',
             level: 1,
+            category: 'action',
             catalogueKey: 'magic-missile',
           },
           {
@@ -922,6 +1020,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'shield',
           },
           {
@@ -929,6 +1028,7 @@ export const WIZARD: ClassLibrary = {
             text: 'For an hour you understand the literal meaning of any language spoken near you, and you can read any writing you touch, a page at a time. It does not let you speak or write the language back, and a cipher or a magical script stays a mystery.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -936,6 +1036,7 @@ export const WIZARD: ClassLibrary = {
             text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
             roll: null,
             level: 1,
+            category: 'passive',
             catalogueKey: 'detect-magic',
           },
           {
@@ -943,6 +1044,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A bonus action: you vanish in a puff of silver mist and reappear in an unoccupied space you can see up to 30 feet away.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: 'misty-step',
           },
           {
@@ -950,6 +1052,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A sharp rap rings out, heard 300 feet away, and one locked door, chest, box or gate within 60 feet comes open — a bar lifts, a padlock springs, a stuck lid gives. Whatever it opened stays open for a minute. Everyone nearby hears it, so it is an answer to a locked door rather than a quiet one.',
             roll: null,
             level: 2,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -957,6 +1060,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A roaring sphere of flame fills a 20-foot radius around a point within 150 feet, going round corners to do it. Each creature there takes the damage, halved on a successful Dexterity saving throw. Another 1d6 per slot level above 3rd.',
             roll: '8d6',
             level: 3,
+            category: 'action',
             catalogueKey: 'fireball',
           },
           {
@@ -964,6 +1068,7 @@ export const WIZARD: ClassLibrary = {
             text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: 'dispel-magic',
           },
           {
@@ -971,6 +1076,7 @@ export const WIZARD: ClassLibrary = {
             text: 'A reaction that interrupts a spell you can see being cast within 60 feet. The caster makes a Constitution saving throw, and on a failure the spell does nothing and the slot is spent anyway.',
             roll: null,
             level: 3,
+            category: 'passive',
             catalogueKey: 'counterspell',
           },
         ],

@@ -23,8 +23,8 @@ export default defineSchema({
     dmRecoverySalt: v.string(),
     dmRecoveryHash: v.string(),
     // The board everyone is looking at. Optional because a game has no scene until
-    // the DM uploads a map. Scene *switching* for the whole group is Milestone 7;
-    // this field is the data it will drive.
+    // the DM uploads a map. Scene *switching* for the whole group is the DM-tooling
+    // milestone; this field is the data it will drive.
     activeSceneId: v.optional(v.id('scenes')),
     // 'lobby' until the DM presses Start, then 'playing' and every client flips to
     // the board. Optional only because adding a required field to a table that
@@ -98,6 +98,22 @@ export default defineSchema({
     // — an allow-list of the publishable kinds, so that a fifth member fails the
     // typecheck rather than quietly reaching every player at the table.
     sheet: v.optional(storedSheetValidator),
+    // A character the DM has built for somebody who is not here yet. Reserved means
+    // **absent from a player's payload**, not greyed out in it: a disabled row still
+    // publishes a name, and the name is the spoiler.
+    //
+    // Top-level rather than a field inside `sheet`, deliberately. It is not a property
+    // of the sheet — putting it in the union would let `updateSheet` change it and make
+    // `normaliseStoredSheet` responsible for carrying it — and it is a *second* reason to
+    // withhold a row, composed with `maySeeCharacter` at the call site rather than folded
+    // into it. Folding it in would make a reserved character one the DM cannot assign,
+    // because `characters.assign` calls `requireVisibleCharacter` with `isDm` hard-coded
+    // false, and being assignable is the one thing reserving it was for.
+    //
+    // Optional for the reason every field added to this table is: adding a required one
+    // to a populated table fails the schema push. Read through `isReservedCharacter` in
+    // lib/characters.ts, never directly.
+    reserved: v.optional(v.boolean()),
   }).index('by_gameId', ['gameId']),
 
   // HOW A CHARACTER IS DOING RIGHT NOW, split from the sheet that says what it is.
@@ -166,13 +182,13 @@ export default defineSchema({
   // Position lives in `tokenPositions`, per CLAUDE.md invariant 2.
   //
   // Scoped to the game rather than to one scene, so a recurring villain can stand
-  // on several boards. Milestone 7 grows this into the token library.
+  // on several boards. The game-editor milestone grows this into the token library.
   tokens: defineTable({
     gameId: v.id('games'),
     name: v.string(),
     // Two members, not the three layers in requirements.md: the background layer is
-    // the scene image itself, and no token ever lives on it. Images on layers are
-    // Milestone 7.
+    // the scene image itself, and no token ever lives on it. Images on layers are the
+    // DM-tooling milestone.
     //
     // THE SECRET IS HERE. A 'dm' token must never reach a player client, and it has
     // the same shape as a 'player' one — so a `returns:` validator cannot catch a
@@ -188,6 +204,24 @@ export default defineSchema({
     // also why this is optional rather than a union with null — see the roadmap's
     // open question about NPC sheets; nothing here constrains the answer.
     characterId: v.optional(v.id('characters')),
+    // THE SEATS THE DM HAS GRANTED THIS TOKEN TO — the explicit half of control, and
+    // only the explicit half. The *effective* set is the grants plus the seat holding
+    // the token's character, composed by `effectiveControllersOf` in lib/board.ts, and
+    // there is deliberately nowhere here for that derived member to be written down: two
+    // documents authoritative for one relation is the denormalisation ADR 0004 rejected
+    // for `layer`.
+    //
+    // Keyed on `players` ids rather than on characters, because granting the party a pet
+    // grants it to people and a character is claimed by exactly one seat anyway. Seat ids
+    // survive a cleared browser — `players.join` is idempotent on `nameKey` (ADR 0003) —
+    // so a grant does not evaporate when somebody's laptop restarts.
+    //
+    // Zero grants and no claim means the DM alone, which is the correction Milestone 2
+    // shipped after the first real session: an unattached token is the DM's.
+    //
+    // Optional because this table has held rows since tokens existed. Read through
+    // `grantedControllersOf`, never directly.
+    controllerIds: v.optional(v.array(v.id('players'))),
   })
     .index('by_gameId', ['gameId'])
     .index('by_characterId', ['characterId']),

@@ -4,18 +4,18 @@ import { FieldError } from '@/components/FieldError'
 import { HpControls } from '@/components/HpControls'
 import type { BuilderSelections } from '@/components/sheet/CharacterBuilder'
 import { CharacterBuilder } from '@/components/sheet/CharacterBuilder'
+import { CreatureSheetForm } from '@/components/sheet/CreatureSheetForm'
 import { CreatureEntryMissing, CreatureSheetView } from '@/components/sheet/CreatureSheetView'
+import { EditorBody, EditorFooter } from '@/components/sheet/EditorColumn'
 import { HitDiceControls } from '@/components/sheet/HitDiceControls'
-import { NpcSheetForm } from '@/components/sheet/NpcSheetForm'
 import { PcSheetForm } from '@/components/sheet/PcSheetForm'
 import { PresetSheetView } from '@/components/sheet/PresetSheetView'
 import { RestControls } from '@/components/sheet/RestControls'
-import { SheetField } from '@/components/sheet/SheetFields'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
-import { SheetFooter } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { PublicSheet, PublicVitals } from '@convex/lib/characters'
 import { MAX_CHARACTER_NAME_LENGTH, collapseWhitespace } from '@convex/lib/codes'
@@ -79,8 +79,8 @@ export type CharacterSheetEditorProps = {
  * **There is no read-only mode, and that is a property of the query rather than an
  * omission here.** `characters.sheet` answers through `requireEditableCharacter` — the
  * same gate `characters.updateSheet` uses — so a sheet that arrived at this component
- * is one this caller may also change. Another seat's hero and every NPC without the DM
- * code come back as `null` and never reach it.
+ * is one this caller may also change. Another seat's hero, and every creature the DM has
+ * neither the code for nor a grant on, come back as `null` and never reach it.
  *
  * What `isDm` buys is therefore not access but *authorship*: a character built from the
  * library holds selections rather than numbers, and the rule about who may change which
@@ -375,9 +375,13 @@ export function CharacterSheetEditor({
    */
   function sheetBody() {
     switch (draft.kind) {
+      // The stored discriminator, untouched: `kind: 'npc'` is what every hand-built
+      // creature document in every game holds, and it covers both of the DM's headings.
+      // Which one a particular creature sits under is `group`, a field on the sheet that
+      // `CreatureSheetForm` is the control for.
       case 'npc':
         return (
-          <NpcSheetForm sheet={draft} problem={problem} disabled={saving} onChange={setDraft} />
+          <CreatureSheetForm sheet={draft} problem={problem} disabled={saving} onChange={setDraft} />
         )
 
       case 'preset':
@@ -461,27 +465,72 @@ export function CharacterSheetEditor({
 
   return (
     <>
-      <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-4">
+      <EditorBody>
         <div className="flex flex-col gap-3">
-          <SheetField id="character-name" label="Name">
-            <div className="flex items-center gap-2">
-              <Input
-                id="character-name"
-                value={name}
-                maxLength={MAX_CHARACTER_NAME_LENGTH}
-                aria-invalid={nameProblem !== null || undefined}
-                disabled={saving}
-                autoComplete="off"
-                onChange={(event) => setName(event.target.value)}
-              />
-              {/* The *resolved* kind, because that is the one a reader means. A preset
-                  resolves to a hero, and a badge reading "preset" would name the storage
-                  form rather than the character. */}
-              <Badge variant={saved.sheet.kind === 'npc' ? 'secondary' : 'outline'}>
-                {saved.sheet.kind === 'npc' ? 'NPC' : 'Player character'}
-              </Badge>
-            </div>
-          </SheetField>
+          {/* **This is the panel's title, and the question it answers is "whose sheet am
+              I looking at" — the one question the whole panel exists to answer.** It used
+              to be a `SheetField`, so the name read at exactly the weight of the armour
+              class three rows down, and both the player's Character tab and the DM's
+              Sheets tab inherited that: a list of fields with a name somewhere in it
+              rather than a sheet belonging to somebody.
+
+              ⚠️ **Do not tidy this back into a labelled field, and do not add a heading
+              above one either.** The name has to appear exactly once — a heading over a
+              small captioned box below it is the same string twice, two things to keep in
+              step, and the shorter of the two is the one that would go stale. So the
+              input keeps every bit of its behaviour and gives up only its chrome: the
+              border goes transparent (rather than away, so the row does not move by a
+              pixel when it is there), the fill goes, the padding shrinks to almost
+              nothing, and the type becomes the `font-heading` idiom one step up from the
+              `text-sm` `<h3>`s further down the sheet and one step below `GameHeader`'s
+              `text-xl`.
+
+              What it deliberately does **not** give up is the focus ring or
+              `aria-invalid`. A box that reads as text and can still be typed into is only
+              honest if it says so the moment you reach it with the keyboard, and an empty
+              name still has to be able to turn red — `nameProblem` disables Save, and the
+              field it is about is this one.
+
+              Not a real `<h2>` wrapped round the input, either: a heading whose entire
+              content is a form control is a heading with no accessible name, and it would
+              trade a working label for markup that only looks more correct. The `Name`
+              label therefore stays and goes `sr-only`, which is what keeps the input's
+              accessible name — `LobbyRenameForm` and `BestiaryPicker`'s search box take
+              the same position, for the same reason. `htmlFor` was always the part doing
+              the work; the visible caption never was. */}
+          <div className="flex items-center gap-2">
+            <Label htmlFor="character-name" className="sr-only">
+              Name
+            </Label>
+            <Input
+              id="character-name"
+              // `md:text-lg` as well as `text-lg`, because `Input`'s own class list drops
+              // to `md:text-sm` at the breakpoint this app is always past.
+              className="font-heading h-auto border-transparent px-1 py-0.5 text-lg font-semibold disabled:bg-transparent md:text-lg dark:bg-transparent dark:disabled:bg-transparent"
+              value={name}
+              maxLength={MAX_CHARACTER_NAME_LENGTH}
+              aria-invalid={nameProblem !== null || undefined}
+              disabled={saving}
+              autoComplete="off"
+              onChange={(event) => setName(event.target.value)}
+            />
+            {/* The *resolved* kind, because that is the one a reader means. A preset
+                resolves to a hero, and a badge reading "preset" would name the storage
+                form rather than the character.
+
+                **"Creature" rather than "NPC" or "Monster", and the vagueness is
+                deliberate.** `kind` has two values where the DM's headings have three,
+                and the field that tells an innkeeper from an owlbear is `group`, which
+                a *resolved* sheet does not carry — a linked creature is grouped by the
+                corpus category of its entry, which is read on the server and never
+                travels. Printing one of the two names here would therefore be a guess
+                that is wrong about half the DM's shelf, and copy that guesses is worse
+                than copy that does not. The control that does answer it is on the form
+                below. */}
+            <Badge variant={saved.sheet.kind === 'npc' ? 'secondary' : 'outline'}>
+              {saved.sheet.kind === 'npc' ? 'Creature' : 'Player character'}
+            </Badge>
+          </div>
           <FieldError message={nameProblem} />
 
           {/* Hit points are not part of the sheet and are not saved with it. They live
@@ -504,10 +553,10 @@ export function CharacterSheetEditor({
               for Save. The server draws the same line — hit dice are on the vitals row
               for it.
 
-              An NPC gets nothing here, and the test is the resolved sheet's kind rather
-              than a null in the payload. The reduced sheet has no hit dice to have spent,
-              so there is no state to show, no permission being applied and nothing an
-              NPC's DM is being kept from.
+              A creature gets nothing here, and the test is the resolved sheet's kind
+              rather than a null in the payload. The reduced sheet has no hit dice to have
+              spent, so there is no state to show, no permission being applied and nothing
+              the creature's DM is being kept from.
 
               The faces come from `saved` and not from the draft: `hitDiceCount` was read
               off the stored sheet, so pairing it with a die size somebody is halfway
@@ -529,7 +578,7 @@ export function CharacterSheetEditor({
             hand-built hero, which this milestone still supports on purpose, even though
             `characters.longRest` has always worked on any character.
 
-            An NPC gets nothing, which is the same call `HitDiceControls` makes: the
+            A creature gets nothing, which is the same call `HitDiceControls` makes: the
             reduced sheet has no hit dice to hand back and no race to have spent
             anything, so there is no state to show rather than a permission being
             applied.
@@ -552,9 +601,9 @@ export function CharacterSheetEditor({
         ) : null}
 
         {sheetBody()}
-      </div>
+      </EditorBody>
 
-      <SheetFooter>
+      <EditorFooter>
         <span className="text-muted-foreground min-w-0 flex-1 text-xs">
           {failure ? (
             <span className="text-destructive" role="alert">
@@ -576,7 +625,7 @@ export function CharacterSheetEditor({
         >
           {saving ? 'Saving…' : 'Save sheet'}
         </Button>
-      </SheetFooter>
+      </EditorFooter>
     </>
   )
 }
@@ -640,8 +689,8 @@ function storedOf(sheet: PublicSheet): StoredSheet {
  * The level to carry across when a sheet is rebuilt from the library, which two of the four
  * stored kinds do not have.
  *
- * A monster has no level and neither does a creature, so both read as 1. That is not a
- * default standing in for a missing value — it is the answer to "what level should the hero
+ * A hand-built creature has no level and neither does a linked one, so both read as 1. That
+ * is not a default standing in for a missing value — it is the answer to "what level should the hero
  * this is about to become start at", and the only sheet in the game that could be converted
  * from either is one nobody has built yet.
  */

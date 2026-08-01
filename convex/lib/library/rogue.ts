@@ -56,6 +56,8 @@ export const ROGUE: ClassLibrary = {
         text: 'A light, quick blade. One attack on your turn for this much piercing damage, aimed with Dexterity rather than Strength — which is exactly what lets Sneak Attack ride along with it.',
         roll: '1d8+DEX',
         level: null,
+        category: 'weapon',
+        toHit: '1d20+DEX+PROF',
         catalogueKey: null,
       },
       {
@@ -63,6 +65,8 @@ export const ROGUE: ClassLibrary = {
         text: 'A ranged attack out to 80 feet, and further with disadvantage. Sneak Attack works from across the room just as well as it does from behind someone.',
         roll: '1d6+DEX',
         level: null,
+        category: 'weapon',
+        toHit: '1d20+DEX+PROF',
         catalogueKey: null,
       },
       {
@@ -70,6 +74,7 @@ export const ROGUE: ClassLibrary = {
         text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Almost all of a rogue\'s damage comes from this one line.',
         roll: '1d6',
         level: null,
+        category: 'action',
         catalogueKey: 'sneak-attack',
       },
       {
@@ -77,6 +82,7 @@ export const ROGUE: ClassLibrary = {
         text: 'Count your proficiency bonus twice for Stealth and for Sleight of Hand. A rogue is not merely good at those two; a rogue is the person you send.',
         roll: null,
         level: null,
+        category: 'passive',
         catalogueKey: null,
       },
       {
@@ -84,6 +90,7 @@ export const ROGUE: ClassLibrary = {
         text: 'A private mixture of slang, hand signs and chalk marks. You can bury a message inside an ordinary conversation, and read one somebody has left scratched on a doorframe.',
         roll: null,
         level: null,
+        category: 'passive',
         catalogueKey: null,
       },
     ],
@@ -123,6 +130,8 @@ export const ROGUE: ClassLibrary = {
             text: 'A light, quick blade. One attack on your turn for this much piercing damage, aimed with Dexterity rather than Strength — which is exactly what lets Sneak Attack ride along with it.',
             roll: '1d8+DEX',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+DEX+PROF',
             catalogueKey: null,
           },
           {
@@ -130,6 +139,8 @@ export const ROGUE: ClassLibrary = {
             text: 'A ranged attack out to 80 feet, and further with disadvantage. Sneak Attack works from across the room just as well as it does from behind someone.',
             roll: '1d6+DEX',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+DEX+PROF',
             catalogueKey: null,
           },
           {
@@ -137,6 +148,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Two dice now, and it grows again at level 4.',
             roll: '2d6',
             level: null,
+            category: 'action',
             catalogueKey: 'sneak-attack',
           },
           {
@@ -144,6 +156,7 @@ export const ROGUE: ClassLibrary = {
             text: 'A bonus action on every turn of every fight, spent to Dash, to Disengage or to Hide. It is what makes a rogue hard to pin an attack on: strike, and then be somewhere nobody is looking.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -151,6 +164,7 @@ export const ROGUE: ClassLibrary = {
             text: 'That same bonus action can also pick a lock, spring a trap with your thieves\' tools, or lift something out of a pocket. A Thief does the clever thing mid-fight instead of asking the party to wait.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -158,6 +172,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Count your proficiency bonus twice for Stealth and for Sleight of Hand. A rogue is not merely good at those two; a rogue is the person you send.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -165,6 +180,7 @@ export const ROGUE: ClassLibrary = {
             text: 'A private mixture of slang, hand signs and chalk marks. You can bury a message inside an ordinary conversation, and read one somebody has left scratched on a doorframe.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -202,6 +218,8 @@ export const ROGUE: ClassLibrary = {
             text: 'A light, quick blade. One attack on your turn for this much piercing damage, aimed with Dexterity rather than Strength — which is exactly what lets Sneak Attack ride along with it.',
             roll: '1d8+DEX',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+DEX+PROF',
             catalogueKey: null,
           },
           {
@@ -209,6 +227,8 @@ export const ROGUE: ClassLibrary = {
             text: 'A ranged attack out to 80 feet, and further with disadvantage. Sneak Attack works from across the room just as well as it does from behind someone.',
             roll: '1d6+DEX',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+DEX+PROF',
             catalogueKey: null,
           },
           {
@@ -216,6 +236,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Still two dice this level; your Dexterity is what improved.',
             roll: '2d6',
             level: null,
+            category: 'action',
             catalogueKey: 'sneak-attack',
           },
           {
@@ -223,6 +244,7 @@ export const ROGUE: ClassLibrary = {
             text: 'A bonus action on every turn of every fight, spent to Dash, to Disengage or to Hide. It is what makes a rogue hard to pin an attack on: strike, and then be somewhere nobody is looking.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -230,6 +252,7 @@ export const ROGUE: ClassLibrary = {
             text: 'That same bonus action can also pick a lock, spring a trap with your thieves\' tools, or lift something out of a pocket. A Thief does the clever thing mid-fight instead of asking the party to wait.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -237,6 +260,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Count your proficiency bonus twice for Stealth and for Sleight of Hand. A rogue is not merely good at those two; a rogue is the person you send.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -244,6 +268,7 @@ export const ROGUE: ClassLibrary = {
             text: 'A private mixture of slang, hand signs and chalk marks. You can bury a message inside an ordinary conversation, and read one somebody has left scratched on a doorframe.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -281,6 +306,8 @@ export const ROGUE: ClassLibrary = {
             text: 'A light, quick blade. One attack on your turn for this much piercing damage, aimed with Dexterity rather than Strength — which is exactly what lets Sneak Attack ride along with it.',
             roll: '1d8+DEX',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+DEX+PROF',
             catalogueKey: null,
           },
           {
@@ -288,6 +315,8 @@ export const ROGUE: ClassLibrary = {
             text: 'A ranged attack out to 80 feet, and further with disadvantage. Sneak Attack works from across the room just as well as it does from behind someone.',
             roll: '1d6+DEX',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+DEX+PROF',
             catalogueKey: null,
           },
           {
@@ -295,6 +324,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Three dice now, which is why this level hits so much harder.',
             roll: '3d6',
             level: null,
+            category: 'action',
             catalogueKey: 'sneak-attack',
           },
           {
@@ -302,6 +332,7 @@ export const ROGUE: ClassLibrary = {
             text: 'When an attacker you can see hits you, your reaction halves the damage. Once a round, every round, at no cost — the single best reason a rogue survives standing next to something enormous.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -309,6 +340,7 @@ export const ROGUE: ClassLibrary = {
             text: 'A bonus action on every turn of every fight, spent to Dash, to Disengage or to Hide. It is what makes a rogue hard to pin an attack on: strike, and then be somewhere nobody is looking.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -316,6 +348,7 @@ export const ROGUE: ClassLibrary = {
             text: 'That same bonus action can also pick a lock, spring a trap with your thieves\' tools, or lift something out of a pocket. A Thief does the clever thing mid-fight instead of asking the party to wait.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -323,6 +356,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Count your proficiency bonus twice for Stealth and for Sleight of Hand. A rogue is not merely good at those two; a rogue is the person you send.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -330,6 +364,7 @@ export const ROGUE: ClassLibrary = {
             text: 'A private mixture of slang, hand signs and chalk marks. You can bury a message inside an ordinary conversation, and read one somebody has left scratched on a doorframe.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -367,6 +402,8 @@ export const ROGUE: ClassLibrary = {
             text: 'A light, quick blade. One attack on your turn for this much piercing damage, aimed with Dexterity rather than Strength — which is exactly what lets Sneak Attack ride along with it.',
             roll: '1d8+DEX',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+DEX+PROF',
             catalogueKey: null,
           },
           {
@@ -374,6 +411,8 @@ export const ROGUE: ClassLibrary = {
             text: 'A ranged attack out to 80 feet, and further with disadvantage. Sneak Attack works from across the room just as well as it does from behind someone.',
             roll: '1d6+DEX',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+DEX+PROF',
             catalogueKey: null,
           },
           {
@@ -381,6 +420,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Four dice: one well-set-up hit can end a fight.',
             roll: '4d6',
             level: null,
+            category: 'action',
             catalogueKey: 'sneak-attack',
           },
           {
@@ -388,6 +428,7 @@ export const ROGUE: ClassLibrary = {
             text: 'When an attacker you can see hits you, your reaction halves the damage. Once a round, every round, at no cost — the single best reason a rogue survives standing next to something enormous.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -395,6 +436,7 @@ export const ROGUE: ClassLibrary = {
             text: 'When something like a fireball asks you for a Dexterity saving throw for half damage, a success now means you take none of it at all, and a failure means you take half.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -402,6 +444,7 @@ export const ROGUE: ClassLibrary = {
             text: 'A bonus action on every turn of every fight, spent to Dash, to Disengage or to Hide. It is what makes a rogue hard to pin an attack on: strike, and then be somewhere nobody is looking.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -409,6 +452,7 @@ export const ROGUE: ClassLibrary = {
             text: 'That same bonus action can also pick a lock, spring a trap with your thieves\' tools, or lift something out of a pocket. A Thief does the clever thing mid-fight instead of asking the party to wait.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -416,6 +460,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Climbing comes to you as naturally as walking, so a drainpipe, a bookcase or a rough wall is simply a route to somewhere. A running jump carries you further than anyone your size has any business managing.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -423,6 +468,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Count your proficiency bonus twice for Stealth and for Sleight of Hand. A rogue is not merely good at those two; a rogue is the person you send.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -430,6 +476,7 @@ export const ROGUE: ClassLibrary = {
             text: 'A private mixture of slang, hand signs and chalk marks. You can bury a message inside an ordinary conversation, and read one somebody has left scratched on a doorframe.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -469,6 +516,8 @@ export const ROGUE: ClassLibrary = {
             text: 'A light, quick blade. One attack on your turn for this much piercing damage, aimed with Dexterity rather than Strength — which is exactly what lets Sneak Attack ride along with it.',
             roll: '1d8+DEX',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+DEX+PROF',
             catalogueKey: null,
           },
           {
@@ -476,6 +525,8 @@ export const ROGUE: ClassLibrary = {
             text: 'A ranged attack out to 80 feet, and further with disadvantage. Sneak Attack works from across the room just as well as it does from behind someone.',
             roll: '1d6+DEX',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+DEX+PROF',
             catalogueKey: null,
           },
           {
@@ -483,6 +534,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Two dice now, and it grows again at level 4.',
             roll: '2d6',
             level: null,
+            category: 'action',
             catalogueKey: 'sneak-attack',
           },
           {
@@ -490,6 +542,7 @@ export const ROGUE: ClassLibrary = {
             text: 'A bonus action on every turn of every fight, spent to Dash, to Disengage or to Hide. It is what makes a rogue hard to pin an attack on: strike, and then be somewhere nobody is looking.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -497,6 +550,7 @@ export const ROGUE: ClassLibrary = {
             text: 'You have advantage on attacks against any creature that has not yet taken a turn in the fight, and a hit on anything that has not noticed you at all is a critical hit — doubled dice, Sneak Attack included. Win the initiative roll and the first round is yours.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -504,6 +558,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Count your proficiency bonus twice for Stealth and for Deception. An Assassin lives on getting close before anybody wonders who they are.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -511,6 +566,7 @@ export const ROGUE: ClassLibrary = {
             text: 'A private mixture of slang, hand signs and chalk marks. You can bury a message inside an ordinary conversation, and read one somebody has left scratched on a doorframe.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -548,6 +604,8 @@ export const ROGUE: ClassLibrary = {
             text: 'A light, quick blade. One attack on your turn for this much piercing damage, aimed with Dexterity rather than Strength — which is exactly what lets Sneak Attack ride along with it.',
             roll: '1d8+DEX',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+DEX+PROF',
             catalogueKey: null,
           },
           {
@@ -555,6 +613,8 @@ export const ROGUE: ClassLibrary = {
             text: 'A ranged attack out to 80 feet, and further with disadvantage. Sneak Attack works from across the room just as well as it does from behind someone.',
             roll: '1d6+DEX',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+DEX+PROF',
             catalogueKey: null,
           },
           {
@@ -562,6 +622,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Still two dice this level; your Dexterity is what improved.',
             roll: '2d6',
             level: null,
+            category: 'action',
             catalogueKey: 'sneak-attack',
           },
           {
@@ -569,6 +630,7 @@ export const ROGUE: ClassLibrary = {
             text: 'A bonus action on every turn of every fight, spent to Dash, to Disengage or to Hide. It is what makes a rogue hard to pin an attack on: strike, and then be somewhere nobody is looking.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -576,6 +638,7 @@ export const ROGUE: ClassLibrary = {
             text: 'You have advantage on attacks against any creature that has not yet taken a turn in the fight, and a hit on anything that has not noticed you at all is a critical hit — doubled dice, Sneak Attack included. Win the initiative roll and the first round is yours.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -583,6 +646,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Count your proficiency bonus twice for Stealth and for Deception. An Assassin lives on getting close before anybody wonders who they are.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -590,6 +654,7 @@ export const ROGUE: ClassLibrary = {
             text: 'A private mixture of slang, hand signs and chalk marks. You can bury a message inside an ordinary conversation, and read one somebody has left scratched on a doorframe.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -627,6 +692,8 @@ export const ROGUE: ClassLibrary = {
             text: 'A light, quick blade. One attack on your turn for this much piercing damage, aimed with Dexterity rather than Strength — which is exactly what lets Sneak Attack ride along with it.',
             roll: '1d8+DEX',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+DEX+PROF',
             catalogueKey: null,
           },
           {
@@ -634,6 +701,8 @@ export const ROGUE: ClassLibrary = {
             text: 'A ranged attack out to 80 feet, and further with disadvantage. Sneak Attack works from across the room just as well as it does from behind someone.',
             roll: '1d6+DEX',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+DEX+PROF',
             catalogueKey: null,
           },
           {
@@ -641,6 +710,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Three dice now, which is why this level hits so much harder.',
             roll: '3d6',
             level: null,
+            category: 'action',
             catalogueKey: 'sneak-attack',
           },
           {
@@ -648,6 +718,7 @@ export const ROGUE: ClassLibrary = {
             text: 'When an attacker you can see hits you, your reaction halves the damage. Once a round, every round, at no cost — the single best reason a rogue survives standing next to something enormous.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -655,6 +726,7 @@ export const ROGUE: ClassLibrary = {
             text: 'A bonus action on every turn of every fight, spent to Dash, to Disengage or to Hide. It is what makes a rogue hard to pin an attack on: strike, and then be somewhere nobody is looking.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -662,6 +734,7 @@ export const ROGUE: ClassLibrary = {
             text: 'You have advantage on attacks against any creature that has not yet taken a turn in the fight, and a hit on anything that has not noticed you at all is a critical hit — doubled dice, Sneak Attack included. Win the initiative roll and the first round is yours.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -669,6 +742,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Count your proficiency bonus twice for Stealth and for Deception. An Assassin lives on getting close before anybody wonders who they are.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -676,6 +750,7 @@ export const ROGUE: ClassLibrary = {
             text: 'A private mixture of slang, hand signs and chalk marks. You can bury a message inside an ordinary conversation, and read one somebody has left scratched on a doorframe.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],
@@ -713,6 +788,8 @@ export const ROGUE: ClassLibrary = {
             text: 'A light, quick blade. One attack on your turn for this much piercing damage, aimed with Dexterity rather than Strength — which is exactly what lets Sneak Attack ride along with it.',
             roll: '1d8+DEX',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+DEX+PROF',
             catalogueKey: null,
           },
           {
@@ -720,6 +797,8 @@ export const ROGUE: ClassLibrary = {
             text: 'A ranged attack out to 80 feet, and further with disadvantage. Sneak Attack works from across the room just as well as it does from behind someone.',
             roll: '1d6+DEX',
             level: null,
+            category: 'weapon',
+            toHit: '1d20+DEX+PROF',
             catalogueKey: null,
           },
           {
@@ -727,6 +806,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Once on your turn, add this to the damage of a hit with a finesse or a ranged weapon — either when you have advantage on the attack, or when an ally of yours is beside the target and you do not have disadvantage. Four dice: one well-set-up hit can end a fight.',
             roll: '4d6',
             level: null,
+            category: 'action',
             catalogueKey: 'sneak-attack',
           },
           {
@@ -734,6 +814,7 @@ export const ROGUE: ClassLibrary = {
             text: 'When an attacker you can see hits you, your reaction halves the damage. Once a round, every round, at no cost — the single best reason a rogue survives standing next to something enormous.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -741,6 +822,7 @@ export const ROGUE: ClassLibrary = {
             text: 'When something like a fireball asks you for a Dexterity saving throw for half damage, a success now means you take none of it at all, and a failure means you take half.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -748,6 +830,7 @@ export const ROGUE: ClassLibrary = {
             text: 'A bonus action on every turn of every fight, spent to Dash, to Disengage or to Hide. It is what makes a rogue hard to pin an attack on: strike, and then be somewhere nobody is looking.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -755,6 +838,7 @@ export const ROGUE: ClassLibrary = {
             text: 'You have advantage on attacks against any creature that has not yet taken a turn in the fight, and a hit on anything that has not noticed you at all is a critical hit — doubled dice, Sneak Attack included. Win the initiative roll and the first round is yours.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -762,6 +846,7 @@ export const ROGUE: ClassLibrary = {
             text: 'An hour with your disguise kit and you are somebody else entirely — a name, a face, a manner and papers to match. You have advantage on Deception checks made to keep the act up.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -769,6 +854,7 @@ export const ROGUE: ClassLibrary = {
             text: 'Count your proficiency bonus twice for Stealth and for Deception. An Assassin lives on getting close before anybody wonders who they are.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
           {
@@ -776,6 +862,7 @@ export const ROGUE: ClassLibrary = {
             text: 'A private mixture of slang, hand signs and chalk marks. You can bury a message inside an ordinary conversation, and read one somebody has left scratched on a doorframe.',
             roll: null,
             level: null,
+            category: 'passive',
             catalogueKey: null,
           },
         ],

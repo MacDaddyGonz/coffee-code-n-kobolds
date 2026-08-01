@@ -153,7 +153,16 @@ export function CreatureSheetView({
             {/* The name from the bestiary rather than the character's own, which the DM
                 may well have changed to "the innkeeper" — this line is about which entry
                 the sheet is reading, and the character's name is already in the header
-                above it. */}
+                above it.
+
+                **Already a heading, and deliberately a smaller one than that header.**
+                The character's name at the top of the panel is the answer to "whose sheet
+                am I looking at" and now reads as the panel's title; this is the answer to
+                "and where are its numbers coming from", which is a section of that sheet
+                rather than a rival title for it. So it stays at the `text-sm` weight
+                every other `<h3>` in this file uses. Nothing here is an editable name, so
+                there is no captioned-field problem to fix — the one that had it is
+                `CharacterSheetEditor`. */}
             <h3 className="font-heading text-sm font-medium">
               {creature.name}{' '}
               <span className="text-muted-foreground font-normal tabular-nums">

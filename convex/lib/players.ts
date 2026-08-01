@@ -100,6 +100,45 @@ export async function findClaimHolder(
 }
 
 /**
+ * The same relation as `findClaimHolder`, read off a roster already in hand:
+ * character → the seat playing it, for every seat that is playing one.
+ *
+ * **This lives here because the claim pointer does.** `setSeatCharacter` below claims
+ * to be the one place the relation is written; this is the one place it is inverted,
+ * so the two halves of "a seat points at a character, and never the reverse"
+ * (ADR 0002) sit in the module that owns the table. It had been written out verbatim
+ * three times — in `publicTokens`, in `boardCharacterAccess` and in
+ * `publicCharacters` — each with its own copy of the non-null assertion, in two
+ * modules that are forbidden from reading this table directly.
+ *
+ * Built once per query rather than looked up per row, which is the reason all three
+ * callers wanted it: a board holds up to `MAX_TOKENS_PER_GAME` rows, so the
+ * `findClaimHolder`-per-row form would be two hundred index reads on a subscription
+ * every client at the table holds open.
+ *
+ * A typed loop rather than `new Map(seats.filter(…).map(…))`, so the `characterId!`
+ * that shape forces disappears — the compiler narrows the field inside the `if` and
+ * there is no assertion left to be wrong.
+ *
+ * ⚠️ **At most one holder per character, and the last seat wins if that is ever
+ * false.** Nothing enforces the uniqueness in the schema: `claim` refuses a character
+ * another seat holds and `assign` releases the previous holder first, so the state is
+ * unreachable through the supported writes, and `findClaimHolder` would throw on it
+ * where this quietly picks one. Both answers are defensible for something that cannot
+ * happen; what matters is that the choice is made once, here, rather than differently
+ * in three copies.
+ */
+export function holderByCharacter(
+  seats: Doc<'players'>[],
+): Map<Id<'characters'>, Doc<'players'>> {
+  const byCharacter = new Map<Id<'characters'>, Doc<'players'>>()
+  for (const seat of seats) {
+    if (seat.characterId) byCharacter.set(seat.characterId, seat)
+  }
+  return byCharacter
+}
+
+/**
  * Point a seat at a character, or at nothing.
  *
  * The one place the claim pointer is written, so `characters.claim`, `release`,
@@ -118,6 +157,35 @@ export async function setSeatCharacter(
   characterId: Id<'characters'> | null,
 ) {
   await ctx.db.patch('players', seatId, { characterId: characterId ?? undefined })
+}
+
+/**
+ * Every seat in a game. For the purge tool in `convex/admin.ts`, and for nothing a
+ * client can reach.
+ *
+ * It lives here rather than there because this table belongs to this module the way
+ * `tokens` belongs to lib/board.ts — the same reason `setSeatCharacter` above is the
+ * one writer of the claim pointer. Nothing greps for it, unlike the two secret-bearing
+ * pairs, but a purge is exactly the sort of code that grows its own copy of a table
+ * read if there is nowhere obvious to put one.
+ *
+ * **`revokeControlForSeat` is deliberately not called, and `players.leave` calling it
+ * is not an inconsistency.** That mutation removes one seat from a game that carries
+ * on, so a grant naming it would outlive it and render as a row the DM's dialog cannot
+ * name. Here the tokens holding those grants have already gone — see the purge order
+ * in `convex/admin.ts`, which is chosen so that every pointer is deleted before the
+ * thing it points at. Sweeping two hundred tokens per seat to mend rows that no longer
+ * exist would be the expensive way to reach the same state.
+ */
+export async function deleteSeatsInGame(
+  ctx: MutationCtx,
+  gameId: Id<'games'>,
+): Promise<number> {
+  const seats = await listSeats(ctx, gameId)
+  for (const seat of seats) {
+    await ctx.db.delete('players', seat._id)
+  }
+  return seats.length
 }
 
 /** Clears the claim on `characterId` from whichever seat holds it, if any. */
