@@ -1365,7 +1365,7 @@ describe('board.addToken', () => {
 //
 // Two things are asserted elsewhere on purpose rather than four times over here. The DM
 // gate is one table-driven loop in the `DM gating` describe further down, because all four
-// share `requireDm` → `requireMovableToken(…, true)` → argument checks → a writer. And
+// share `requireDm` → `requireDmToken` → argument checks → a writer. And
 // what a rebind does to the *derived* half of control is beside the Milestone 7 control
 // tests at the bottom of this file, where the fixture that can express it already lives.
 //
@@ -2113,12 +2113,19 @@ describe('DM gating', () => {
    * ⚠️ **One loop over four mutations rather than four copies of the describe above, and
    * the table is the point.**
    *
-   * Every one of these begins `requireDm` → `requireMovableToken(…, true)`, where the
-   * literal `true` is discharged by the line above it and by nothing else. That is one
-   * property shared by four handlers, so it wants one assertion parameterised four ways: a
-   * hand-written describe each is four places for the fifth token mutation to be forgotten,
-   * and the one that gets forgotten is the one written in a hurry — which is also the one
-   * most likely to have the pair in the wrong order.
+   * Every one of these begins `requireDm` → `requireDmToken`, and the pair is the whole
+   * gate. That is one property shared by four handlers, so it wants one assertion
+   * parameterised four ways: a hand-written describe each is four places for the fifth
+   * token mutation to be forgotten, and the one that gets forgotten is the one written in
+   * a hurry — which is also the one most likely to have reached for the wrong lookup.
+   *
+   * ⚠️ **The table still earns its place now that `requireDmToken` exists, and it is worth
+   * saying why rather than assuming.** The helper is what makes the two lines *hard to get
+   * wrong* — the literal `true` and the ordering property live inside it, so a call site
+   * cannot mis-spell either — but nothing mechanical stops a sixth mutation calling
+   * `requireMovableToken` directly with an `isDm` it computed itself, or running its writer
+   * before its gate. This tests the composition through the public API, which is the only
+   * place that distinction is observable.
    *
    * Every argument below differs from what the fixture's token already stores — a
    * different name, size, tint, layer, character and blob — so a write that landed is

@@ -21,8 +21,12 @@ export type TableTabProps = {
    * which carries the reasoning; this tab adds nothing to it and deliberately does not
    * decide the destination, because the destination is a tab and a tab body does not own
    * the strip above it.
+   *
+   * ⚠️ **Required at this hop as well as the next**, so that a dropped wire is a compile
+   * error rather than a claim that silently leads nowhere — which is the bug the callback
+   * exists to fix. A pass-through that may be `undefined` is the one shape that hides it.
    */
-  onClaimed?: () => void;
+  onClaimed: () => void;
 };
 
 /**

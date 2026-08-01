@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from 'convex/react'
 
-import { LobbyRow, LobbyRowSkeletons, LobbyRows } from '@/components/lobby/LobbyRow'
+import { LobbyRowEmpty, LobbyRowSkeletons, LobbyRows } from '@/components/lobby/LobbyRow'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import type { Door } from '@/lib/joinDoor'
 import { api } from '@convex/_generated/api'
@@ -57,13 +57,7 @@ export function GameList() {
         {games === undefined ? (
           <LobbyRowSkeletons rows={3} />
         ) : games.length === 0 ? (
-          <LobbyRows>
-            <LobbyRow>
-              <span className="text-muted-foreground text-sm">
-                No games yet — start one below.
-              </span>
-            </LobbyRow>
-          </LobbyRows>
+          <LobbyRowEmpty>No games yet — start one below.</LobbyRowEmpty>
         ) : (
           <LobbyRows>
             {/* The server's order, newest first, taken as given: `order('desc')` on
@@ -80,14 +74,11 @@ export function GameList() {
         )}
       </CardContent>
 
-      <JoinDoorDialog
-        game={opening?.game ?? null}
-        // Whatever the last door was while nothing is open. It is not read then —
-        // the dialog renders nothing without a game — and defaulting is what keeps
-        // the two facts in one piece of state.
-        door={opening?.door ?? 'player'}
-        onClose={() => setOpening(null)}
-      />
+      {/* The pair goes down whole. Splitting it into `game` and `door` props meant
+          inventing a value for the second one while nothing was open — a `'player'`
+          nothing reads, standing in for the field that decides which credential the
+          dialog asks for, which is the last field to want a fabricated default. */}
+      <JoinDoorDialog opening={opening} onClose={() => setOpening(null)} />
     </Card>
   )
 }

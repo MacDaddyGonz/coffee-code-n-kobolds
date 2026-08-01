@@ -1,8 +1,9 @@
 import { useId } from 'react'
 import { useQuery } from 'convex/react'
 
-import { CodeInput } from '@/components/CodeInput'
+import { CODE_ALPHABET_HINT, CodeInput } from '@/components/CodeInput'
 import { DialogFormFooter } from '@/components/DialogFormFooter'
+import { VerdictLine } from '@/components/VerdictLine'
 import { Label } from '@/components/ui/label'
 import { verdictMessage, verdictOf } from '@/lib/joinDoor'
 import { api } from '@convex/_generated/api'
@@ -28,11 +29,17 @@ export type JoinCodeStepProps = {
  * — so this step is where the credential actually arrives. Without it the landing
  * page would be a list of games anyone could walk into.
  *
- * The check is `games.getByCode`, which the *Join with a code* panel beside the list
- * already holds with the same argument shape, so a browser that has both on screen
- * pays for one subscription. `'skip'` until the code could plausibly match
- * something, so half-typed codes are not a stream of lookups all answering "no such
- * game" — the same reasoning, and the same guard, as that panel.
+ * The check is `games.getByCode`, the same query the *Join with a code* panel beside
+ * the list holds. ⚠️ **The two share a subscription only while both fields hold the
+ * same string**, because a Convex cache key includes the argument *values* — and that
+ * is the uncommon case rather than the usual one, since that panel prefills itself
+ * from `getLastGameCode()`. So a returning visitor typing a different code in here
+ * quite normally pays for a second cache entry, which is the whole of the cost: one
+ * transient entry, dropped when the dialog unmounts. It is written down to stop
+ * somebody "sharing" the two later by widening an argument to make the keys agree —
+ * there is nothing here worth doing that for. `'skip'` until the code could plausibly
+ * match something, so half-typed codes are not a stream of lookups all answering "no
+ * such game" — the same reasoning, and the same guard, as that panel.
  *
  * ⚠️ **The verdict is `verdictOf`'s and not this component's**, and that is where
  * the interesting rule lives: the resolved game is compared by `_id` against the row
@@ -77,27 +84,30 @@ export function JoinCodeStep({ game, typed, onTyped, onResolved, onCancel }: Joi
           aria-describedby={`${alphabetHintId} ${verdictId}`}
           aria-invalid={verdict.kind === 'noSuchGame' || verdict.kind === 'wrongGame'}
         />
+        {/* One sentence derived from `CODE_ALPHABET`, shared with the panel below the
+            list — see `CODE_ALPHABET_HINT`. */}
         <p id={alphabetHintId} className="text-muted-foreground text-xs">
-          Codes never contain I, L, O, 0 or 1.
+          {CODE_ALPHABET_HINT}
         </p>
         {/*
-          Fixed height and `aria-live`, so the dialog does not jump as the message
-          appears and so a screen reader hears the answer without moving focus off
-          the field. It is deliberately the *only* thing this line says: there is no
-          "that's the right code" reassurance, because the Continue button going live
-          is that, and a field that congratulates you on typing six characters is
-          noise. `verdictMessage` returns null for both of the states with nothing
-          to report.
+          `VerdictLine` reserves the height and carries the live region, so the dialog
+          does not jump as the message appears and a screen reader hears the answer
+          without focus moving off the field.
+
+          The message is deliberately the *only* thing this line ever says: there is no
+          "that's the right code" reassurance, because the Continue button going live is
+          that, and a field that congratulates you on typing six characters is noise.
+          `verdictMessage` returns null for both of the states with nothing to report,
+          and the reserved height is why that costs no movement.
+
+          `checking` is the one arm that is not a refusal, so it is the one arm that is
+          not in the destructive colour — the two null-message arms could be either.
         */}
-        <p
+        <VerdictLine
           id={verdictId}
-          aria-live="polite"
-          className={`min-h-5 text-sm ${
-            verdict.kind === 'checking' ? 'text-muted-foreground' : 'text-destructive'
-          }`}
-        >
-          {message}
-        </p>
+          message={message}
+          tone={verdict.kind === 'checking' ? 'muted' : 'destructive'}
+        />
       </div>
 
       <DialogFormFooter

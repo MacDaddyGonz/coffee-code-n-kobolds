@@ -12,6 +12,7 @@ import {
   publicTokenValidator,
   publicTokens,
   replaceTokenArt,
+  requireDmToken,
   requireMovableToken,
   setTokenAppearance,
   setTokenCharacter,
@@ -381,16 +382,7 @@ export const updateToken = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const game = await requireDm(ctx, args.code, args.dmCode)
-    // The literal `true` is discharged by the `requireDm` on the line above, which threw
-    // unless this caller holds the DM code — it is not a locally computed `isDm` of the
-    // kind CLAUDE.md invariant 7 forbids. It is only true while those two lines stay in
-    // that order, and the three mutations below repeat the same pair for the same reason.
-    //
-    // The shared TOKEN_NOT_FOUND refusal is kept even though a caller who holds the DM
-    // code has no existence oracle to gain, for the reason `setControllers` gives: the
-    // parity across every refusal is the constant's whole value, and one call site quietly
-    // opting out is how a shared refusal becomes several literals again.
-    const token = await requireMovableToken(ctx, game, args.tokenId, true)
+    const token = await requireDmToken(ctx, game, args.tokenId)
 
     const appearance = requireTokenAppearance(args)
 
@@ -423,9 +415,7 @@ export const setLayer = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const game = await requireDm(ctx, args.code, args.dmCode)
-    // `true` discharged by the `requireDm` on the line above, as on `updateToken`, and
-    // only while those two lines stay in that order.
-    const token = await requireMovableToken(ctx, game, args.tokenId, true)
+    const token = await requireDmToken(ctx, game, args.tokenId)
 
     await setTokenLayer(ctx, token, args.layer)
     return null
@@ -477,9 +467,7 @@ export const setCharacter = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const game = await requireDm(ctx, args.code, args.dmCode)
-    // `true` discharged by the `requireDm` on the line above, as on `updateToken`, and
-    // only while those two lines stay in that order.
-    const token = await requireMovableToken(ctx, game, args.tokenId, true)
+    const token = await requireDmToken(ctx, game, args.tokenId)
 
     if (args.characterId !== null) {
       await getCharacterInGame(ctx, game._id, args.characterId)
@@ -538,9 +526,7 @@ export const setArt = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const game = await requireDm(ctx, args.code, args.dmCode)
-    // `true` discharged by the `requireDm` on the line above, as on `updateToken`, and
-    // only while those two lines stay in that order.
-    const token = await requireMovableToken(ctx, game, args.tokenId, true)
+    const token = await requireDmToken(ctx, game, args.tokenId)
 
     if (args.imageId !== null) await requireTokenArt(ctx, args.imageId)
 
@@ -593,14 +579,10 @@ export const setControllers = mutation({
       })
     }
 
-    // Through the same lookup `removeToken` uses, with the literal `true` discharged by
-    // the `requireDm` above — it is not a locally computed `isDm` of the kind invariant
-    // 7 forbids, and it is only true while those lines stay in that order. The shared
-    // TOKEN_NOT_FOUND refusal is kept even though the DM already holds the code and so
-    // there is no existence oracle to worry about here: the parity is the constant's
-    // whole value, and one call site quietly opting out of it is how a shared refusal
-    // becomes three literals again.
-    const token = await requireMovableToken(ctx, game, args.tokenId, true)
+    // Through the same lookup the other five DM-gated token mutations use — the bound
+    // form of `requireMovableToken`, which is where the reasoning about what the DM code
+    // has already discharged now lives.
+    const token = await requireDmToken(ctx, game, args.tokenId)
 
     // Every id checked against this game before any of it is written. A stray seat from
     // another game would be a grant nothing in this game can render, name or revoke —
@@ -627,11 +609,7 @@ export const removeToken = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const game = await requireDm(ctx, args.code, args.dmCode)
-    // The literal `true` is discharged by the `requireDm` on the line above, which
-    // threw unless this caller holds the DM code — it is not a locally computed
-    // `isDm` of the kind CLAUDE.md invariant 7 forbids. It is only true while those
-    // two lines stay in that order.
-    const token = await requireMovableToken(ctx, game, args.tokenId, true)
+    const token = await requireDmToken(ctx, game, args.tokenId)
 
     // Placements first, across every scene rather than the current one. They are
     // what points at the token, so removing them first means no order of

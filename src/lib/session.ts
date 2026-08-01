@@ -86,18 +86,24 @@ export function getDisplayNameForGame(code: string): string | null {
 /**
  * Which seat this browser is in one game, plus the two global prefills.
  *
- * Returns whether all three landed. The three results are collected into locals
- * before they are combined rather than `&&`-ed inline, because `&&` short-circuits:
- * a first failure would skip the other two writes, which is exactly wrong here.
- * These are three independent keys and a browser that can take some of them should
- * be given all of the ones it can — the per-game name is what avoids the name gate
- * next visit, and the two prefills are worth having even if it does not.
+ * ⚠️ **Returns whether the *per-game* key landed, and nothing about the other two.**
+ * That key is the one with a consequence a person will notice: it is what `useSeat`
+ * reads at mount, so losing it is being asked which seat you are all over again — which
+ * is exactly the sentence the landing page's join door puts on screen when this answers
+ * `false`. The two prefills are a saved keystroke on the next visit and nothing more, so
+ * folding them into the answer made that sentence *wrong* in the one case it could
+ * differ: a quota failure on `lastGameCode` alone warned somebody about a seat that had
+ * in fact been remembered perfectly.
+ *
+ * All three are still attempted. The two prefills are called for their effect and their
+ * result deliberately dropped, which is also what makes a short-circuiting `&&`
+ * unavailable to a later edit: there is nothing left to combine.
  */
 export function rememberDisplayName(code: string, displayName: string): boolean {
   const seat = write(KEY.displayNameFor(code), displayName)
-  const lastName = write(KEY.lastDisplayName, displayName)
-  const lastCode = write(KEY.lastGameCode, code)
-  return seat && lastName && lastCode
+  write(KEY.lastDisplayName, displayName)
+  write(KEY.lastGameCode, code)
+  return seat
 }
 
 export function forgetDisplayName(code: string) {

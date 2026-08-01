@@ -33,9 +33,12 @@ type LobbyCharactersProps = {
    * cannot: it has no idea it is inside a tab. So the caller says what "done" leads to,
    * which is `RightPane`'s `setTab('sheet')`.
    *
-   * Optional, because two callers are plausible and only one of them is in a tab strip —
-   * `TableTab` threads this and a lobby screen with nowhere to go would pass nothing.
-   * Absent means the claim simply lands, which is what this card did before.
+   * ⚠️ **Required, and it was optional.** There is one caller, it always passes one, and
+   * the failure the optionality allowed is the exact bug this callback was shipped to fix:
+   * a wire dropped anywhere along the two hops from `RightPane` would type-check and leave
+   * a player on a list whose job is done, with no idea the race and class are somewhere
+   * else. A hypothetical second caller with nowhere to send anybody can pass a no-op and
+   * say so in one line; the compiler cannot ask about an argument nobody has to give.
    *
    * ⚠️ **Success only, and only for a claim.** `useLobbyAction.run` resolves `false` once
    * the refusal is on screen, so a claim two people fired at once must not move the
@@ -44,7 +47,7 @@ type LobbyCharactersProps = {
    * `LobbyRoster`, acts on somebody else's seat, and would be steering the wrong
    * browser's tabs even if it could.
    */
-  onClaimed?: () => void
+  onClaimed: () => void
 }
 
 /**
@@ -85,16 +88,17 @@ export function LobbyCharacters({
   // `RosterDmActions`' `onAssign` hands its dialog so it knows whether to close. Nothing
   // is inferred from the mutation's own return value: `claim` may be refused for reasons
   // this browser's last frame could not know about, and `run` is where that lands.
+  //
+  // The boolean is not handed back, unlike the three row actions below: the one call site
+  // is `void claim(character)`, and a resolved value nobody reads is a promise somebody
+  // eventually feels obliged to wire something to.
   const claim = (character: LobbyCharacter) =>
     action
       .run(`claim:${character._id}`, `Could not pick up ${character.name}.`, () =>
         claimCharacter({ code, playerId, characterId: character._id }),
       )
       .then((done) => {
-        if (done) onClaimed?.()
-        // Handed back rather than swallowed, so this reads the same as every other row
-        // action here and a future caller can wait on it.
-        return done
+        if (done) onClaimed()
       })
 
   const release = (character: LobbyCharacter) =>

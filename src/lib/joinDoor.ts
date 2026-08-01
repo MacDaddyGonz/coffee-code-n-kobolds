@@ -1,5 +1,5 @@
 import type { Id } from '@convex/_generated/dataModel'
-import { isCompleteJoinCode } from '@convex/lib/codes'
+import { DM_CODE_LENGTH, isCompleteJoinCode } from '@convex/lib/codes'
 
 /**
  * What happens between clicking a door on the landing page and arriving at the
@@ -11,7 +11,15 @@ import { isCompleteJoinCode } from '@convex/lib/codes'
  * would otherwise make inline in JSX, where the client vitest project (node
  * environment, `src/**\/*.test.ts` only) cannot reach it. The dialog is left
  * holding state and chrome, which is the part a manual browser pass genuinely does
- * check, and the two rules worth being sure of are checked in `joinDoor.test.ts`.
+ * check, and every rule here is checked in `joinDoor.test.ts`.
+ *
+ * ⚠️ **Both doors' verdicts live here, and the second one was the point of saying
+ * "everything".** The DM door's four messages were once a nested ternary in JSX with
+ * a colour rule of their own, which made them the only unasserted copy on the screen
+ * — and the drift `verdictOf` warns about below, between a skip condition and the
+ * line that says a lookup is in flight, was live and unguarded in exactly the half
+ * nothing tested. A decision that reaches a field is either in this file or it is not
+ * checked.
  */
 
 /** Which door was clicked on the row. Two, because a DM and a player want different things. */
@@ -85,6 +93,15 @@ export function verdictOf(args: {
 }
 
 /**
+ * Both fields on this screen are a code with a lookup behind it, and both say this
+ * while the lookup is out. One constant rather than two identical literals: the two
+ * doors ask for different credentials but the *waiting* is the same waiting, and a
+ * reword that reached one of them and not the other would read as two different
+ * things happening.
+ */
+const CHECKING_MESSAGE = 'Checking that code…'
+
+/**
  * The line to print under the code field, or null when there is nothing to say.
  *
  * `incomplete` and `ok` both answer null, and they are the same answer for
@@ -99,7 +116,7 @@ export function verdictOf(args: {
 export function verdictMessage(verdict: CodeVerdict): string | null {
   switch (verdict.kind) {
     case 'checking':
-      return 'Checking that code…'
+      return CHECKING_MESSAGE
     case 'noSuchGame':
       return 'No game with that code.'
     case 'wrongGame':
@@ -107,6 +124,108 @@ export function verdictMessage(verdict: CodeVerdict): string | null {
     case 'incomplete':
     case 'ok':
       return null
+  }
+}
+
+/**
+ * What the DM code typed at the second step of the DM door currently means.
+ *
+ * Built the same way as `CodeVerdict` — one discriminated union for one field, so the
+ * caller renders exactly one line of text for whichever state it is in — and
+ * deliberately a *second* union rather than arms added to that one: this field is
+ * checked by `games.checkDmCode`, which answers
+ * a bare boolean, so there is no row to compare and neither `noSuchGame` nor
+ * `wrongGame` has anything to mean here. Sharing the type would put two arms on
+ * screen that this field can never reach, and an `ok` carrying a `code` it has no
+ * server spelling of.
+ *
+ * ⚠️ **`ok` carries nothing, and that is the same decision `games.checkDmCode`
+ * makes.** A `true` from that query authorises nothing and expires the moment it is
+ * read — every DM-only call re-verifies the code server-side through `requireDm`
+ * (CLAUDE.md invariant 7). A verdict carrying a token, a game document or anything
+ * else would be one refactor from being treated as proof.
+ */
+export type DmCodeVerdict =
+  /** Not eight characters yet, so not worth asking the server about. */
+  | { kind: 'incomplete' }
+  /** Eight characters, and `checkDmCode` is in flight. */
+  | { kind: 'checking' }
+  /** The server says this is not the DM code for this game. */
+  | { kind: 'wrongCode' }
+  | { kind: 'ok' }
+
+/**
+ * Is the DM code field long enough to be worth asking the server about?
+ *
+ * Exported because the caller has to answer the same question one moment earlier than
+ * `dmVerdictOf` does — it decides whether to subscribe at all — and the two answers
+ * have to be one answer. This is the DM code's counterpart to `isCompleteJoinCode`,
+ * which `JoinCodeStep` and `verdictOf` already share for exactly that reason, and the
+ * field it guards used to compute the same length test twice in one component.
+ *
+ * There is nothing to normalise on the way: `CodeInput` caps the field at
+ * `DM_CODE_LENGTH` as it is typed. Note that it caps it with `normaliseJoinCode`,
+ * which is more forgiving than the server's `normaliseDmCode` — a pre-existing
+ * asymmetry recorded in `DmCodeStep`'s docblock, and generous only in the DM's favour.
+ */
+export function isCompleteDmCode(typed: string): boolean {
+  return typed.length === DM_CODE_LENGTH
+}
+
+/**
+ * Does the DM code typed at the door run this game?
+ *
+ * Here rather than in `DmCodeStep`'s JSX for the reason at the top of this file, and
+ * for one specific to this field: **the skip condition and the "checking" line are
+ * the same fact and used to be computed twice.** The step subscribes `checkDmCode`
+ * only once the field is the right length, so `verified` is `undefined` both while a
+ * real lookup is out *and* while nothing has been asked at all — exactly the hazard
+ * `verdictOf` states above, and the failure it produces is a field sitting saying
+ * "Checking that code…" about a request nobody made. Answering `incomplete` first,
+ * from the same length test the caller reads back to decide whether to subscribe,
+ * is what makes the two unable to disagree.
+ *
+ * `verified` is `boolean | undefined` because that is what `useQuery` returns — a
+ * plain shape, so the test needs no Convex.
+ */
+export function dmVerdictOf(args: { typed: string; verified: boolean | undefined }): DmCodeVerdict {
+  const { typed, verified } = args
+
+  // Asked first, and the order matters for the reason `verdictOf` gives: the caller
+  // skips the query while the field is short, so `verified` is `undefined` then too.
+  if (!isCompleteDmCode(typed)) return { kind: 'incomplete' }
+
+  if (verified === undefined) return { kind: 'checking' }
+  return verified ? { kind: 'ok' } : { kind: 'wrongCode' }
+}
+
+/**
+ * The line under the DM code field. Never null, unlike `verdictMessage`.
+ *
+ * The asymmetry is deliberate rather than an oversight in one of the two. The join
+ * code step says nothing on success because the Continue button going live already
+ * says it, and nothing while the field is unfinished because there is nothing to
+ * report yet. Both of those hold here too — and this field still speaks in all four
+ * states, because both of its quiet states have something the other field does not:
+ * a DM code is eight characters of pasted noise, so the unfinished state says *where
+ * to find it*, and the success state reports a **consequence** rather than a
+ * congratulation — that the code is about to be written into this browser's storage,
+ * which is the whole of what this door promises and the one thing a DM sitting at
+ * somebody else's laptop would want to have been told.
+ *
+ * The rejection is `requireDm`'s own wording, so the door and the in-game elevate
+ * control do not describe one refusal two ways.
+ */
+export function dmVerdictMessage(verdict: DmCodeVerdict): string {
+  switch (verdict.kind) {
+    case 'incomplete':
+      return 'The code shown when the game was created.'
+    case 'checking':
+      return CHECKING_MESSAGE
+    case 'ok':
+      return 'That is your game. This browser will remember the code.'
+    case 'wrongCode':
+      return 'That DM code is not right for this game.'
   }
 }
 
@@ -131,8 +250,26 @@ export function verdictMessage(verdict: CodeVerdict): string | null {
  * paths. `/` stays the only pre-game location — see `JoinDoorDialog`'s docblock for
  * why a step is not worth a URL.
  */
-export function stepsFor(door: Door): StepKind[] {
-  return door === 'dm' ? ['gameCode', 'dmCode'] : ['gameCode', 'seat']
+export function stepsFor(door: Door): readonly StepKind[] {
+  return DOOR_STEPS[door]
+}
+
+/**
+ * ⚠️ **A `Record` keyed on `Door` rather than `door === 'dm' ? … : …`, for the reason
+ * CLAUDE.md invariant 9 gives about `isMonsterSheet` and `rollShapeOf`.** An
+ * else-branch is an implicit allow-list of one member with room for any number: add a
+ * *spectator* door or a *resume-as-last-seat* door and a ternary keeps compiling,
+ * keeps passing, and hands the new door the player's step sequence — which is the
+ * sequence that asks for a display name and therefore **writes a seat**. A `Record`
+ * over the union fails to compile until the new door's questions have been decided,
+ * which is the only moment anybody is in a position to decide them.
+ *
+ * Nothing here guards a secret, so unlike `isMonsterSheet` there is no fail-closed
+ * runtime default to get right: the compile-time refusal is the whole of the guard.
+ */
+const DOOR_STEPS: Record<Door, readonly StepKind[]> = {
+  player: ['gameCode', 'seat'],
+  dm: ['gameCode', 'dmCode'],
 }
 
 /**
@@ -153,4 +290,44 @@ export function nextStep(door: Door, current: StepKind): StepKind | 'done' {
   const at = steps.indexOf(current)
   if (at === -1) return 'done'
   return steps[at + 1] ?? 'done'
+}
+
+/**
+ * Which question is actually on screen, given the one the dialog last stored.
+ *
+ * Two things can make the stored step the wrong one to render, and **they get one
+ * rule between them: fall back to the first question this door asks.**
+ *
+ * - **No resolved join code yet.** Both later steps are *about a specific game* —
+ *   one subscribes `checkDmCode` with its code, the other subscribes that game's
+ *   roster — so neither has anything to say before the first step has answered.
+ *   Deriving it here rather than widening the resolved code to `''` at the two call
+ *   sites is what stops a subscription being opened for a game that does not exist.
+ * - **A step this door does not ask**, which the types cannot catch: both doors take
+ *   the same `StepKind`.
+ *
+ * ⚠️ **This deliberately does *not* answer `'done'` for the off-door case, and the
+ * difference from `nextStep` is the question being asked rather than a disagreement.**
+ * `nextStep` is asked *after* a step has been answered, so ending the conversation is
+ * both available to it and the safe answer — nothing is left to ask and each step has
+ * already written its own answer down. This is asked *while* a dialog is open and must
+ * name a question to render; `'done'` is not a question, and there is no third answer
+ * to give. Restarting at the first step is the only thing left, and it is harmless
+ * here for the same reason it would be a loop with no exit there: nothing has been
+ * committed by rendering a field.
+ *
+ * **In practice the off-door arm is unreachable through the current caller**, and it
+ * lives here anyway. The dialog's stored step is only ever written by its reset or by
+ * `nextStep`, and its door cannot change while it is open — so no sequence of clicks
+ * produces a `'seat'` against the DM door today. It is reachable *in principle*
+ * through this module's public contract, which is exactly the argument for the rule
+ * being here rather than in JSX the client vitest project cannot reach: the caller
+ * that makes it reachable is the next one, and the rule will already have been
+ * decided and asserted by then.
+ */
+export function currentStep(args: { door: Door; stored: StepKind; hasCode: boolean }): StepKind {
+  const { door, stored, hasCode } = args
+  const steps = stepsFor(door)
+
+  return hasCode && steps.includes(stored) ? stored : steps[0]
 }

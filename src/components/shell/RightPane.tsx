@@ -9,6 +9,7 @@ import { SettingsTab } from '@/components/shell/tabs/SettingsTab'
 import { SheetTab } from '@/components/shell/tabs/SheetTab'
 import { SheetsTab } from '@/components/shell/tabs/SheetsTab'
 import { TableTab } from '@/components/shell/tabs/TableTab'
+import type { TokenListState } from '@/components/shell/tabs/TokensTab'
 import { TokensTab } from '@/components/shell/tabs/TokensTab'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { tokensArgs } from '@/hooks/useBoard'
@@ -32,6 +33,12 @@ type TabValue = 'feed' | 'sheet' | 'tokens' | 'table' | 'dm' | 'settings'
  * that has a conditional trigger and *not* an entry here leaves a controlled `Tabs` pointed
  * at a value with no trigger and no content, which Radix renders as an empty pane rather
  * than falling back on its own.
+ *
+ * ⚠️ **All three readers go through `onStrip` below, and that is what makes the sentence
+ * above true rather than aspirational.** It was not: the trigger and the `TabsContent` each
+ * branched on `dm.dmCode !== null` inline and only the fallback consulted this Set, so a
+ * third DM-only tab was still three edits — the arrangement the Set was added to prevent.
+ * Adding one is now a member here and nothing else.
  */
 const DM_ONLY_TABS = new Set<TabValue>(['tokens', 'dm'])
 
@@ -61,10 +68,11 @@ export type RightPaneProps = {
  * The tabbed panel beside the map: the feed, this seat's sheet, the DM's coins, the
  * table, the DM's tools and the settings.
  *
- * ⚠️ **Two of the six are the DM's, and both are conditional in three places** — the
- * trigger, the `TabsContent`, and `DM_ONLY_TABS` above, which is what the stand-down
- * fallback reads. Adding a third means all three; missing the third leaves a DM who
- * stands down looking at an empty pane.
+ * ⚠️ **Two of the six are the DM's, and all three places that care about that read one
+ * predicate** — the trigger, the `TabsContent` and the stand-down fallback all ask
+ * `onStrip`, which asks `DM_ONLY_TABS`. Adding a third DM tab is a member in that Set and
+ * a trigger and a body written the same way as these; nothing else has to be remembered,
+ * which is what stops a DM who stands down from being left looking at an empty pane.
  *
  * **Controlled rather than uncontrolled**, which costs one `useState` and buys the
  * two things that need it. The Character tab's empty state has a button that sends
@@ -193,11 +201,37 @@ export const RightPane = memo(function RightPane({
    * frame of a running game looks like anyway. `MapPane` mounts `Board` on the same
    * condition (plus an active scene), so this either shares that subscription's cache
    * entry or is the only holder of it, never a second one.
+   *
+   * ⚠️ **This pane reads `game.status` exactly once, here**, and the `tokenList` below is
+   * what keeps it that way — see its note. (`MapPane` and `StartGameButton` each read it
+   * once for their own region; what must not exist is a second reader *inside* one of
+   * them, deciding the same thing again about the same query.)
    */
-  const tokens = useQuery(
-    api.board.tokens,
-    game.status === 'playing' ? tokensArgs(code, dm.dmCode) : 'skip',
-  )
+  const asked = game.status === 'playing'
+  const tokens = useQuery(api.board.tokens, asked ? tokensArgs(code, dm.dmCode) : 'skip')
+
+  /**
+   * The same array as the *state* it actually represents, for the one consumer that has to
+   * tell the two meanings of `undefined` apart.
+   *
+   * ⚠️ **The state travels rather than the field.** `TokensTab` used to be handed
+   * `game.status` and asked `status !== 'playing'` a second time, purely to distinguish
+   * *the pane never asked* from *the answer has not arrived*. That is one `GameStatus`
+   * switched on in two places with no exhaustiveness anywhere — CLAUDE.md invariant 9's
+   * failure shape applied to a screen: a third member would compile in both, and the tab
+   * would silently draw the lobby's sentence about it. Deriving the union here, at the
+   * expression that already decided whether to ask, means the domain field is read once
+   * and the tab names no status literal at all.
+   *
+   * A fresh object per render, which is deliberately fine: what must stay primitive is
+   * what crosses *into* this memoised component from `GameShell`, not what leaves it for
+   * a child — the same reasoning that lets `selectedToken` and the tokens array go down.
+   */
+  const tokenList: TokenListState = !asked
+    ? { kind: 'notStarted' }
+    : tokens === undefined
+      ? { kind: 'loading' }
+      : { kind: 'ready', tokens }
 
   /**
    * The selected token, found **once for the whole panel**.
@@ -229,17 +263,24 @@ export const RightPane = memo(function RightPane({
     isDm: dm.dmCode !== null,
   })
 
+  /**
+   * Whether a tab is on *this* browser's strip at all: everything that is not the DM's,
+   * plus the DM's when this browser holds the code.
+   *
+   * **One predicate for the three readers below**, which is what `DM_ONLY_TABS` was for
+   * and what it was not achieving. The trigger asks it, the body asks it, and the fallback
+   * asks it — so the next DM-only tab cannot be added to two of the three. The Sheets tab
+   * is deliberately not a member of that Set: it shares the value `sheet` with the player's
+   * Character tab, so a DM standing down on it stays on a trigger that still exists and
+   * simply finds a different panel under it.
+   */
+  const onStrip = (value: TabValue) => !DM_ONLY_TABS.has(value) || dm.dmCode !== null
+
   // A DM standing down takes *both* of their tabs off the strip underneath them, and a
-  // controlled `Tabs` pointed at a value with no trigger and no content shows an
-  // empty pane rather than falling back on its own. Settings is where they will have
-  // just been, and is where the way back in lives.
-  //
-  // Read through `DM_ONLY_TABS` rather than as `tab === 'dm' || tab === 'tokens'`, so that
-  // the next tab added to the DM's strip is one edit rather than a chain somebody extends
-  // in two places out of three. The Sheets tab is deliberately *not* a member: it shares
-  // the value `sheet` with the player's Character tab, so a DM standing down on it stays on
-  // a trigger that still exists and simply finds a different panel under it.
-  const active: TabValue = DM_ONLY_TABS.has(tab) && dm.dmCode === null ? 'settings' : tab
+  // controlled `Tabs` pointed at a value with no trigger and no content shows an empty
+  // pane rather than falling back on its own. Settings is where they will have just been,
+  // and is where the way back in lives.
+  const active: TabValue = onStrip(tab) ? tab : 'settings'
 
   return (
     // `min-h-0` on the tabs root, one of six links in the chain: this is a flex item
@@ -263,13 +304,13 @@ export const RightPane = memo(function RightPane({
             two are the same list read from opposite ends — Sheets reaches every creature and
             asks which coin it stands on, this reaches every coin and asks which creature it
             stands for — so a DM who cannot find something in one looks in the other. Sitting
-            them next to each other is what makes that the obvious move. Narrowed on the code
+            them next to each other is what makes that the obvious move. Through `onStrip`
             for the same reason *DM tools* is: a trigger that is not rendered is not a
             permission either way, and every call behind it re-verifies the code
             server-side. */}
-        {dm.dmCode !== null ? <TabsTrigger value="tokens">Tokens</TabsTrigger> : null}
+        {onStrip('tokens') ? <TabsTrigger value="tokens">Tokens</TabsTrigger> : null}
         <TabsTrigger value="table">Table</TabsTrigger>
-        {dm.dmCode !== null ? <TabsTrigger value="dm">DM tools</TabsTrigger> : null}
+        {onStrip('dm') ? <TabsTrigger value="dm">DM tools</TabsTrigger> : null}
         <TabsTrigger value="settings">Settings</TabsTrigger>
       </TabsList>
 
@@ -326,32 +367,31 @@ export const RightPane = memo(function RightPane({
         </TabPane>
       </TabsContent>
 
-      {/* Narrowed on the code rather than on a boolean, exactly as *DM tools* below is, so
-          the panel takes the value its four mutations need. Not force-mounted, unlike the
-          sheet above: the appearance form inside holds a draft, but it is one field per coin
-          rather than a whole sheet, and the panel is deliberately remounted per selection
-          anyway — so keeping it alive across a glance at the feed would preserve a draft the
-          next click was going to discard. */}
-      {dm.dmCode !== null ? (
+      {/* Through `onStrip`, exactly as *DM tools* below is, so the Set is what decides which
+          tabs are the DM's in all three places. The `&& dm.dmCode !== null` beside it is the
+          *compiler's* rather than the decision's: it is what hands the panel a `string`
+          instead of a `string | null`, and it is the same condition by construction.
+
+          Not force-mounted, unlike the sheet above: the appearance form inside holds a
+          draft, but it is one field per coin rather than a whole sheet, and the panel is
+          deliberately remounted per selection anyway — so keeping it alive across a glance
+          at the feed would preserve a draft the next click was going to discard. */}
+      {onStrip('tokens') && dm.dmCode !== null ? (
         <TabsContent value="tokens" className="min-h-0">
           <TabPane>
             <TokensTab
               code={code}
               dmCode={dm.dmCode}
-              // ⚠️ **The pane's own array, not a second subscription.** `board.tokens`
+              // ⚠️ **The pane's own array, not a second subscription** — as the state it
+              // represents, so that *never asked* and *not arrived* are two values rather
+              // than one `undefined` and a second reading of `game.status`. `board.tokens`
               // resolves a signed storage URL per token server-side, and `{ code, dmCode:
               // undefined }` beside `{ code }` would be a second cache entry for the same
-              // rows — the note on the query above is the long version. Handing the array
-              // (and the token below) across this boundary is free because both are *inside*
-              // the memo: what must stay primitive is what crosses into this component from
-              // `GameShell`, not what leaves it for a child.
-              tokens={tokens}
-              // Which is why the status has to travel with it: the array above is `undefined`
-              // both when the query has not answered *and* when it was never asked, and only
-              // one of those two is worth a skeleton. This is the same condition the `useQuery`
-              // above skips on, handed to the one reader that has to be able to tell the
-              // difference.
-              status={game.status}
+              // rows — the note on the query above is the long version. Handing an object
+              // across this boundary is free because it is built *inside* the memo: what
+              // must stay primitive is what crosses into this component from `GameShell`,
+              // not what leaves it for a child.
+              tokenList={tokenList}
               selectedToken={selectedToken}
               // The map's own gesture, threaded through at last — see the note at the
               // destructuring above. A row in this list is a coin, so picking one writes a
@@ -391,10 +431,11 @@ export const RightPane = memo(function RightPane({
         </TabPane>
       </TabsContent>
 
-      {/* Narrowed on the code rather than on a boolean, so the panel below takes the
-          value its queries need. A trigger that is not rendered is not a permission
-          either way — invariant 7 is settled server-side on every call inside. */}
-      {dm.dmCode !== null ? (
+      {/* Through `onStrip` for the decision and `dm.dmCode !== null` for the type, exactly
+          as the Tokens body above — see the note there. A trigger that is not rendered is
+          not a permission either way: invariant 7 is settled server-side on every call
+          inside. */}
+      {onStrip('dm') && dm.dmCode !== null ? (
         <TabsContent value="dm" className="min-h-0">
           <TabPane>
             <DmToolsTab code={code} dmCode={dm.dmCode} game={game} />

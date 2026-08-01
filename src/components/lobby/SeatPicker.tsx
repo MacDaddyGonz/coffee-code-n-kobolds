@@ -11,7 +11,7 @@ import { Separator } from '@/components/ui/separator'
 import { getLastDisplayName } from '@/lib/session'
 import { api } from '@convex/_generated/api'
 import { MAX_DISPLAY_NAME_LENGTH, normaliseDisplayName } from '@convex/lib/codes'
-import { LobbyRow, LobbyRows, LobbyRowSkeletons } from './LobbyRow'
+import { LobbyRow, LobbyRowEmpty, LobbyRows, LobbyRowSkeletons } from './LobbyRow'
 
 export type SeatPickerProps = {
   code: string
@@ -79,13 +79,7 @@ export function SeatPicker({ code, busy, error, onTakeSeat, footer }: SeatPicker
         {seats === undefined ? (
           <LobbyRowSkeletons rows={3} />
         ) : seats.length === 0 ? (
-          <LobbyRows>
-            <LobbyRow>
-              <span className="text-muted-foreground text-sm">
-                Nobody has joined yet — you will be first.
-              </span>
-            </LobbyRow>
-          </LobbyRows>
+          <LobbyRowEmpty>Nobody has joined yet — you will be first.</LobbyRowEmpty>
         ) : (
           <LobbyRows>
             {/* Join order, oldest first — the server's own order, the same one the

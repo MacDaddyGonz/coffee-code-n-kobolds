@@ -266,10 +266,11 @@ describe('games.create', () => {
 // test — a payload this list truncated to nothing would satisfy any number of
 // `not.toContain`s.
 describe('games.list', () => {
-  // CLAUDE.md invariant 1, against the same three secrets `getByCode` is scanned for,
-  // read out of the database so they are the real stored strings rather than what a
-  // test hoped was stored.
-  test('carries no DM code, no recovery salt and no recovery hash', async () => {
+  // CLAUDE.md invariant 1, against the same three secrets `getByCode` is scanned for
+  // **plus the join code**, which is a secret from *this* audience and not from that one —
+  // the whole point of there being a third audience. All four are read out of the database
+  // so they are the real stored strings rather than what a test hoped was stored.
+  test('carries no join code, no DM code, no recovery salt and no recovery hash', async () => {
     const t = harness()
     const first = await createGame(t, { name: 'Kobold Season', dmName: 'Mike' })
     const second = await createGame(t, {
@@ -283,7 +284,7 @@ describe('games.list', () => {
     const payload = JSON.stringify(listing)
 
     // The positive control, and it is in this test rather than a neighbouring one
-    // deliberately: the six string scans below all pass over an empty array, and they
+    // deliberately: the eight string scans below all pass over an empty array, and they
     // pass just as happily over a payload the cap truncated to nothing. Two rows, both
     // names and a creator name prove the thing being scanned is the real list.
     expect(listing).toHaveLength(2)
@@ -292,6 +293,15 @@ describe('games.list', () => {
     expect(payload).toContain('Ada')
 
     for (const row of rows) {
+      // The join code's scan is the *weaker* of the two assertions guarding it, and it is
+      // here rather than in a test of its own because the other one — the exact key set
+      // pinned below — is what actually holds. Six characters from a 31-letter alphabet,
+      // scanned against a payload containing `_id`s over an overlapping alphabet, can fire
+      // by coincidence: the same class of trap as `containsNumber` in vitals.test.ts, where
+      // a bare `toContain('271')` passed or failed on the clock. Kept anyway, because a
+      // coincidence here is a false failure rather than a false pass, and because a
+      // stringify scan catches the code arriving under a *name* nobody thought to pin.
+      expect(payload).not.toContain(row.code)
       expect(payload).not.toContain(row.dmCode)
       expect(payload).not.toContain(row.dmRecoverySalt)
       expect(payload).not.toContain(row.dmRecoveryHash)
@@ -300,31 +310,15 @@ describe('games.list', () => {
     expect(payload).not.toContain('dmRecovery')
   })
 
-  test('carries no join code', async () => {
-    const t = harness()
-    const created = await createGame(t)
-    const listing = await t.query(api.games.list, {})
-
-    // Positive control: the row is really there to be inspected.
-    expect(listing).toHaveLength(1)
-    expect(listing[0].name).toBe('Kobold Season')
-
-    // The substring scan is the *weaker* half and cannot be the whole test. A join
-    // code is six characters from a 31-letter alphabet, and an `_id` is a long string
-    // over an overlapping alphabet, so this can fire by coincidence — the same class
-    // of trap as `containsNumber` in vitals.test.ts, where a bare `toContain('271')`
-    // passed or failed on the clock. It is kept because a coincidence is a false
-    // failure rather than a false pass, and the assertion that actually holds is the
-    // key below: a field that is absent cannot leak whatever its value happened to be.
-    expect(JSON.stringify(listing)).not.toContain(created.code)
-    expect(Object.keys(listing[0])).not.toContain('code')
-  })
-
   // The pin behind `publicGameListingValidator` being derived with `.omit()`.
   // Subtraction only promises the two named fields are gone; a new *non-secret* field
   // added to `publicGameValidator` for the audience holding a join code would arrive
   // here silently and widen an audience holding nothing at all. This is the test that
   // fails when that happens, and it is the reason the derivation is safe.
+  //
+  // It is also the **stronger** half of the join code's guard, and the reason the scan for
+  // it upstairs is only a scan: a field that is absent from this list cannot leak whatever
+  // its value happened to be, coincidences of alphabet or not.
   test('has exactly the five keys the landing page needs and no sixth', async () => {
     const t = harness()
     await createGame(t)
@@ -447,50 +441,56 @@ describe('games.checkDmCode', () => {
     }
   })
 
-  test('refuses a wrong DM code of the same length', async () => {
+  /**
+   * Every class of wrong DM code, in one table over one game.
+   *
+   * This was three tests — same length, different length, internal whitespace — with the
+   * same body three times over: a harness, a game, a loop of bad codes, and in two of them
+   * the identical positive control. Three names and three fixtures for one property. The
+   * **label on each row buys the names back**, which is the only thing the separate tests
+   * were providing: a failure still says which class of bad code got through, and the
+   * corpus keeps every input it had.
+   *
+   * One positive control at the end rather than one per class, for the reason it existed
+   * in the first place — it proves the comparison is working rather than the query broken,
+   * and that is one statement about one game.
+   */
+  test('refuses every class of wrong DM code', async () => {
     const t = harness()
     const created = await createGame(t)
-    for (const dmCode of [
-      twiddleLast(created.dmCode),
-      twiddleFirst(created.dmCode),
-      'A'.repeat(DM_CODE_LENGTH),
-    ]) {
-      expect(await t.query(api.games.checkDmCode, { code: created.code, dmCode })).toBe(false)
-    }
-    // Positive control: the same call with the real code still answers true, so the
-    // three falses above are the comparison working rather than the query broken.
-    expect(
-      await t.query(api.games.checkDmCode, { code: created.code, dmCode: created.dmCode }),
-    ).toBe(true)
-  })
 
-  // The same corpus `elevateDm` uses against the hand-written length-independent
-  // compare: a prefix, a suffix and a doubled code must all be refused.
-  test('refuses a wrong DM code of a different length, including a prefix', async () => {
-    const t = harness()
-    const created = await createGame(t)
-    for (const dmCode of [
-      created.dmCode.slice(0, DM_CODE_LENGTH - 1),
-      created.dmCode.slice(0, 1),
-      created.dmCode.slice(1),
-      `${created.dmCode}A`,
-      `${created.dmCode}${created.dmCode}`,
-      '',
-      '   ',
-    ]) {
-      expect(await t.query(api.games.checkDmCode, { code: created.code, dmCode })).toBe(false)
-    }
-  })
-
-  // The DM code goes through `normaliseDmCode`, which trims and uppercases and
-  // nothing else — deliberately not `normaliseJoinCode`, which would drop the space
-  // and quietly accept this. The join field is the forgiving one; the check on the
-  // app's only bearer secret is not.
-  test('refuses a DM code broken up by internal whitespace', async () => {
-    const t = harness()
-    const created = await createGame(t)
+    // Worth a sentence rather than only a label. The DM code goes through
+    // `normaliseDmCode`, which trims and uppercases and nothing else — deliberately not
+    // `normaliseJoinCode`, which would drop the space and quietly accept this. The join
+    // field is the forgiving one; the check on the app's only bearer secret is not.
     const split = `${created.dmCode.slice(0, 4)} ${created.dmCode.slice(4)}`
-    expect(await t.query(api.games.checkDmCode, { code: created.code, dmCode: split })).toBe(false)
+
+    // The right-length rows and the wrong-length ones sit in one corpus deliberately: the
+    // compare behind this is hand-written and length-independent, so a prefix, a suffix and
+    // a doubled code are the same kind of question as a twiddled character rather than a
+    // separate concern. It is `elevateDm`'s corpus, per the note on the describe.
+    const wrong: [label: string, dmCode: string][] = [
+      ['last character twiddled', twiddleLast(created.dmCode)],
+      ['first character twiddled', twiddleFirst(created.dmCode)],
+      ['right length, one repeated letter', 'A'.repeat(DM_CODE_LENGTH)],
+      ['one character short', created.dmCode.slice(0, DM_CODE_LENGTH - 1)],
+      ['first character only', created.dmCode.slice(0, 1)],
+      ['a suffix, with the first character dropped', created.dmCode.slice(1)],
+      ['one character too long', `${created.dmCode}A`],
+      ['the whole code doubled', `${created.dmCode}${created.dmCode}`],
+      ['empty', ''],
+      ['whitespace only', '   '],
+      ['broken up by internal whitespace', split],
+    ]
+
+    for (const [label, dmCode] of wrong) {
+      expect(await t.query(api.games.checkDmCode, { code: created.code, dmCode }), label).toBe(
+        false,
+      )
+    }
+
+    // Positive control: the same call with the real code still answers true, so every
+    // false above is the comparison working rather than the query broken.
     expect(
       await t.query(api.games.checkDmCode, { code: created.code, dmCode: created.dmCode }),
     ).toBe(true)
@@ -524,22 +524,13 @@ describe('games.checkDmCode', () => {
     }
   })
 
-  test('returns a bare boolean and not a game, a code or a structure', async () => {
-    const t = harness()
-    const created = await createGame(t)
-    const yes = await t.query(api.games.checkDmCode, {
-      code: created.code,
-      dmCode: created.dmCode,
-    })
-    const no = await t.query(api.games.checkDmCode, {
-      code: created.code,
-      dmCode: twiddleLast(created.dmCode),
-    })
-    expect(typeof yes).toBe('boolean')
-    expect(typeof no).toBe('boolean')
-    expect(yes).toBe(true)
-    expect(no).toBe(false)
-  })
+  // There was a test here asserting `typeof` the answer is `'boolean'`, and it is gone
+  // rather than moved: `returns: v.boolean()` on the query makes that mechanically true,
+  // and the `true` / `false` values it also checked are already asserted by every test
+  // above. A guard that cannot fail dilutes the rule everywhere else — see the note in
+  // `convex/lib/names.ts`, where the same reasoning removed a lone-surrogate check. The
+  // intent it recorded, that nothing but a boolean travels, lives in `checkDmCode`'s own
+  // docblock beside the validator that enforces it.
 
   // A query cannot write, so this asserts the property that turning `checkDmCode` into
   // a mutation would break rather than a behaviour anybody had to implement. It is

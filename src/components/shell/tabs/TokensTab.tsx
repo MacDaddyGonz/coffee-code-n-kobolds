@@ -1,17 +1,48 @@
 import type { ReactElement } from 'react'
-import { useMemo } from 'react'
 
-import { useDmCharacterRows } from '@/components/board/dm/CharacterRows'
-import { TokenEditPanel } from '@/components/board/dm/TokenEditPanel'
+import { useCharactersByGroup } from '@/components/board/dm/CharacterRows'
+import { MISSING_SHEET, TokenEditPanel } from '@/components/board/dm/TokenEditPanel'
 import { TokenSwatch } from '@/components/board/dm/TokenSwatch'
 import { Badge } from '@/components/ui/badge'
 import { PickerRow } from '@/components/ui/picker-row'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { PublicGame } from '@/hooks/useSeat'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicToken } from '@convex/lib/board'
 import type { PublicCharacter } from '@convex/lib/characters'
-import { CHARACTER_GROUPS } from '@convex/lib/sheet'
+
+/**
+ * What this tab has been handed about the board's coins: three states, not an array and a
+ * status.
+ *
+ * ⚠️ **The pane hands down the *state* rather than the domain field, and that is the whole
+ * point of this union.** `RightPane` already decides whether there is a board to ask about
+ * — `game.status === 'playing' ? tokensArgs(…) : 'skip'` — and this tab used to be handed
+ * `game.status` so that it could ask the same question again, purely to tell *the pane has
+ * not asked* apart from *the answer has not arrived*. Two readers of one `GameStatus` is
+ * the shape CLAUDE.md invariant 9 is about, on a screen instead of a secret: a third member
+ * of that union would compile fine in both places and quietly fall into the not-started
+ * branch here, and the compiler could not say so. Building the union at the one expression
+ * that computes `'skip'` means **the pane reads `GameStatus` once and this tab not at all**
+ * — no status literal is named in this file, and the two answers cannot drift because there
+ * is only one of them.
+ *
+ * The three members are the three genuinely different things to draw, which is why they
+ * carry those names rather than the board's vocabulary:
+ *
+ * - `notStarted` — the whole of the lobby, where the query is skipped outright. **A real
+ *   state rather than a hypothetical**: `TokenAddDialog` lives in DM tools and needs a scene
+ *   on the table rather than a started game, so a DM setting an ambush up before pressing
+ *   Start has coins this tab cannot see. Asking `board.tokens` anyway would mean resolving a
+ *   signed storage URL per token for a screen the rest of the shell is not showing either
+ *   (`MapPane` draws a placeholder, not a board), so the honest answer is a sentence saying
+ *   so, in the same words that placeholder uses.
+ * - `loading` — the first frame of a running game, and now only that.
+ * - `ready` — every token in the game.
+ */
+export type TokenListState =
+  | { kind: 'notStarted' }
+  | { kind: 'loading' }
+  | { kind: 'ready'; tokens: PublicToken[] }
 
 export type TokensTabProps = {
   code: string
@@ -19,43 +50,18 @@ export type TokensTabProps = {
   dmCode: string
   /**
    * Every token in the game, from the pane's own `board.tokens` subscription rather than a
-   * second one.
+   * second one — wrapped in the state above so that *not asked* and *not arrived* are
+   * different values here instead of one `undefined` and a second look at `game.status`.
    *
-   * ⚠️ **This array is already the whole answer for a DM, and that is why this tab needed
+   * ⚠️ **The array is already the whole answer for a DM, and that is why this tab needed
    * no new query.** `board.tokens` is game-scoped through `by_gameId` rather than
    * scene-scoped, so for a caller whose DM code checked out it carries the DM-layer coins
    * *and* the coins standing on no scene at all — the two kinds nothing else in the
    * application can reach. A player's copy of the same query has had the first kind
    * filtered out of it by `maySee` before the payload was assembled (CLAUDE.md
    * invariant 1); nothing here does any filtering, because there is nothing left to filter.
-   *
-   * `undefined` for the whole of the lobby, where `RightPane` skips the query outright, and
-   * for the first frame of a running game — two states that look identical from here and
-   * are not, which is what `status` below is for.
    */
-  tokens: PublicToken[] | undefined
-  /**
-   * Whether the game has started, and the *only* thing it is used for: telling *the pane
-   * has not asked* apart from *the answer has not arrived*.
-   *
-   * ⚠️ **Without it this tab shows a skeleton forever in the lobby**, which is a real state
-   * rather than a hypothetical: `TokenAddDialog` lives in DM tools and needs a scene on the
-   * table, not a started game, so a DM setting an ambush up before pressing Start has coins
-   * this tab cannot see. It deliberately mirrors the pane's own skip condition rather than
-   * lifting it — asking `board.tokens` in the lobby means resolving a signed storage URL per
-   * token for a screen the rest of the shell is not showing either (`MapPane` draws a
-   * placeholder, not a board) — so the honest answer is a sentence saying so, in the same
-   * words that placeholder uses.
-   *
-   * Taken off the server's own payload rather than reduced to a boolean by the caller, the
-   * way `Layer` is taken off `PublicToken`, so the pane's skip condition and this tab's
-   * branch are written against one union. It is **not** a mechanical refusal of the kind
-   * invariant 9 is about, and it should not be read as one: a third member of `GameStatus`
-   * would compile fine and fall into the not-started branch. That is the right default —
-   * anything that is not `playing` has no board — but if a third status ever means something
-   * else, this line has to be visited by hand.
-   */
-  status: PublicGame['status']
+  tokenList: TokenListState
   /**
    * The coin the shell has selected, **already found**. `RightPane` holds the one `find`
    * over the array for the whole panel — the focus needs it, the DM's sheet tab needs it,
@@ -102,6 +108,14 @@ export type TokensTabProps = {
  * somewhere down a list they then have to scroll to; with a fixed region below, whatever
  * the shell has selected is already in front of them.
  *
+ * **One subscription of its own: `characters.list`, through `useCharactersByGroup`.** The
+ * coins arrive from the pane. That hook exists for this tab — taking the whole of
+ * `useDmCharacterRows` for the same filing brought a `characters.vitals` subscription with
+ * it, so every point of damage in the game re-rendered up to two hundred coin rows and the
+ * editor to produce byte-identical output. `{ code, dmCode }` is the cache entry `SheetsTab`
+ * already holds either way, so this is one socket and one server-side execution rather than
+ * a second.
+ *
  * ⚠️ **Nothing here computes who controls a token.** `TokenEditPanel` mounts
  * `TokenControlPanel` verbatim for that, which is the one client writer of
  * `board.setControllers` and reads `controllerIds` and `grantedPlayerIds` off the payload
@@ -128,49 +142,38 @@ export type TokensTabProps = {
 export function TokensTab({
   code,
   dmCode,
-  tokens,
-  status,
+  tokenList,
   selectedToken,
   onSelectToken,
 }: TokensTabProps): ReactElement {
   /**
-   * The creature list, for the two things this tab asks of it: the caption on each row, and
-   * the options in the editor's rebind select.
+   * The creature list, for the three things this tab asks of it: the caption on each row,
+   * the creature the selected coin stands for, and the options in the editor's rebind
+   * select.
    *
-   * ⚠️ **The same hook the Sheets tab uses, and therefore the same subscription rather than
-   * a third one.** Convex keys a query on its arguments, so `{ code, dmCode }` here is the
-   * cache entry `SheetsTab` already holds — one socket, one server-side execution — which is
-   * the arrangement `TokenControlPanel` documents for `players.list` and `Roster` documents
-   * for the roster. Its `useVitals` joins one entry too, because `vitalsArgs` drops the seat
-   * whenever a DM code is present, so the board and both sheet panels are already reading it.
-   *
-   * `byGroup` is the reason to take the whole hook rather than the bare query. It is the
-   * `CHARACTER_GROUPS`-keyed record CLAUDE.md invariant 9 argues for — the shape a fourth
-   * group arrives in a select through instead of being stored, counted and unbindable — and
-   * rebuilding it here would be a second copy of that discipline to keep correct.
-   *
-   * What is genuinely surplus is the hit-point half: four `useMutation` refs and an
-   * optimistic-update closure this tab never calls, so `rows.error` is always null here and
-   * nothing renders it. That is a real cost and a small one — no query, no socket, one memo
-   * per mount — and the alternative is the bucketing above written twice.
+   * ⚠️ **`useCharactersByGroup` and not `useDmCharacterRows`.** The hit-point half of that
+   * hook is a real `characters.vitals` subscription, and nothing on this screen prints a
+   * hit point: the rows print a name and a size, and the editor writes appearance, layer,
+   * binding, art and grants. Holding it meant re-rendering the whole tab on every `−5` at
+   * the table for identical output. `byGroup` still comes out of exactly one place — that
+   * hook — which is the `CHARACTER_GROUPS` bucketing CLAUDE.md invariant 9 argues for, so
+   * a fourth group is a compiler question rather than a creature with no row.
    */
-  const rows = useDmCharacterRows(code, dmCode)
+  const roster = useCharactersByGroup(code, dmCode)
 
   /**
-   * Which creature each coin stands for, by id.
+   * Which creature a coin stands for. **The one place this tab answers that**, for a row
+   * and for the selected coin alike.
    *
-   * Built over `CHARACTER_GROUPS` rather than over a flat list, because `byGroup` is what
-   * the hook hands back and iterating the union is what keeps a fourth group's characters
-   * from silently having no name in this list. Memoised on the record, which the hook
-   * already holds still until the roster itself changes.
+   * It used to be answered twice: here by the map, and again inside `TokenEditPanel`, which
+   * flattened `byGroup` into a fresh array and scanned it on every render for the answer
+   * this hash lookup already had. So the panel is handed the resolved creature now.
+   *
+   * A plain function rather than a memo: `roster.byId` is held still by the hook until the
+   * roster itself changes, and this tab is inside `RightPane`'s memo boundary.
    */
-  const charactersById = useMemo(() => {
-    const map = new Map<Id<'characters'>, PublicCharacter>()
-    for (const group of CHARACTER_GROUPS) {
-      for (const character of rows.byGroup[group]) map.set(character._id, character)
-    }
-    return map
-  }, [rows.byGroup])
+  const boundTo = (token: PublicToken) =>
+    token.characterId === null ? null : (roster.byId.get(token.characterId) ?? null)
 
   return (
     // Not a `TabBody`: this tab is two regions of its own rather than one scrolling column.
@@ -204,24 +207,27 @@ export function TokensTab({
           inside a smaller box, and `min-h-16` stops it collapsing to a sliver of scroll bar
           on the way. */}
       <div className="max-h-64 min-h-16 overflow-y-auto border-b p-3">
-        {status !== 'playing' ? (
+        {tokenList.kind === 'notStarted' ? (
           // Not a skeleton, because nothing is coming: the pane has not asked. See the ⚠️
-          // on `status` — the wording follows `MapPanePlaceholder`, which is the sentence
-          // the left half of this screen is showing at the same moment.
+          // on `TokenListState` — the wording follows `MapPanePlaceholder`, which is the
+          // sentence the left half of this screen is showing at the same moment.
           <p className="text-muted-foreground text-sm">
             Nothing on the table yet. Coins are listed here once you have put a map on the table
             and pressed <span className="font-medium">Start the game</span> — both under{' '}
             <span className="font-medium">DM tools</span>. Anything you add before then is kept:
             it appears in this list the moment the board does.
           </p>
-        ) : tokens === undefined ? (
-          // The first frame of a running game, and now only that. Two rows rather than one,
-          // matching `DmCharacterRowsSkeleton`, so the gap reads as a list.
+        ) : tokenList.kind === 'loading' ? (
+          // Two rows rather than one, so the gap reads as a list. `h-14` and not
+          // `DmCharacterRowsSkeleton`'s `h-12`, deliberately: a coin's row carries a swatch
+          // beside its two lines and is the taller of the two, so borrowing that component
+          // would draw a gap the arriving rows then jump out of — and would tie two lists'
+          // row heights together for nothing.
           <div className="flex flex-col gap-2">
             <Skeleton className="h-14 w-full" />
             <Skeleton className="h-14 w-full" />
           </div>
-        ) : tokens.length === 0 ? (
+        ) : tokenList.tokens.length === 0 ? (
           <p className="text-muted-foreground text-sm">
             No coins on the board yet. They are added from{' '}
             <span className="font-medium">DM tools → Map setup → Add a token</span>, which needs a
@@ -230,16 +236,12 @@ export function TokensTab({
           </p>
         ) : (
           <ul className="flex flex-col gap-2">
-            {tokens.map((token) => (
+            {tokenList.tokens.map((token) => (
               <TokenRow
                 key={token._id}
                 token={token}
-                character={
-                  token.characterId === null
-                    ? null
-                    : (charactersById.get(token.characterId) ?? null)
-                }
-                charactersLoading={rows.loading}
+                character={boundTo(token)}
+                charactersLoading={roster.loading}
                 selected={token._id === selectedToken?._id}
                 onSelect={() => onSelectToken(token._id)}
               />
@@ -279,8 +281,11 @@ export function TokensTab({
             code={code}
             dmCode={dmCode}
             token={selectedToken}
-            byGroup={rows.byGroup}
-            loading={rows.loading}
+            byGroup={roster.byGroup}
+            // Resolved here rather than there, by the same function the rows use — see the
+            // note on `boundTo` and the ⚠️ on the panel's own prop.
+            bound={boundTo(selectedToken)}
+            loading={roster.loading}
           />
         )}
       </div>
@@ -328,15 +333,15 @@ function TokenRow({
 
   // Three states rather than two, because "bound to nothing" and "the roster has not
   // arrived" are different answers and printing the first for the second would tell the DM
-  // their coin had come unbound. The fallback is the fourth and should be unreachable:
-  // `characters.remove` detaches every token pointing at the character it deletes, so a
-  // binding with no row behind it means the two payloads are momentarily out of step.
+  // their coin had come unbound. The fallback is the fourth and should be unreachable —
+  // `MISSING_SHEET` carries the reason, and it is that constant rather than a sentence
+  // typed here so that this row and the editor's rebind select say it in one wording.
   const binding =
     token.characterId === null
       ? 'Bound to nothing'
       : charactersLoading
         ? '…'
-        : (character?.name ?? 'A sheet that is no longer there')
+        : (character?.name ?? MISSING_SHEET)
 
   return (
     <li>

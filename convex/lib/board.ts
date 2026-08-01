@@ -36,11 +36,18 @@ export const tokenLayerValidator = v.union(v.literal('player'), v.literal('dm'))
  *
  * Inferred from the validator rather than written out, for the reason the validator
  * itself is written once: a fourth spelling of `'player' | 'dm'` is a fourth place a
- * third member can be added to three of them. The browser does not use this — it
- * derives its own from `PublicToken['layer']`, which comes from the same validator by
- * a different route.
+ * third member can be added to three of them.
+ *
+ * **Deliberately not exported**, unlike `PublicToken` beside it, and the asymmetry is
+ * the point: `setTokenLayer` in this file is the only signature that wants it. The
+ * browser derives its own from `PublicToken['layer']` — the same validator by a
+ * different route — and `board.setLayer` validates its argument against
+ * `tokenLayerValidator` itself, so an export would serve nobody while putting a second
+ * `TokenLayer` in auto-import range beside the *component* of that name in
+ * `src/components/board/TokenLayer.tsx`. An editor picking the wrong one of those is a
+ * confusing failure rather than a loud one.
  */
-export type TokenLayer = Infer<typeof tokenLayerValidator>
+type TokenLayer = Infer<typeof tokenLayerValidator>
 
 /** The public shape of a token. artUrl is a signed storage URL, null when there is no art. */
 export const publicTokenValidator = v.object({
@@ -499,6 +506,46 @@ export async function requireMovableToken(
 }
 
 /**
+ * The token a DM named, or the same `TokenNotFound` throw. `requireMovableToken` above
+ * with its one boolean answered — and **the** place the reasoning for that answer is
+ * written down.
+ *
+ * ⚠️ **Takes a `game` that has already been admitted, not a code and a DM code, so no
+ * authorisation moves into this module.** `requireDm` stays in `convex/board.ts`, where
+ * the codes arrive and where every other gate in the app is; what reaches here is a
+ * document that call has already vouched for. This file holds neither the game code nor
+ * the DM code, which is the split every writer below keeps, and it is why *this* helper
+ * can exist here while the check it depends on cannot.
+ *
+ * That is also what discharges the literal `true`. It is not a locally computed `isDm`
+ * of the kind CLAUDE.md invariant 7 forbids — it is the caller's `requireDm` reported
+ * once instead of re-derived from a seat, a badge or a `playerId`. Six DM-gated
+ * mutations used to pass that literal themselves, each carrying a copy of this
+ * paragraph and each resting on two adjacent lines staying in one order; four copies of
+ * a comment maintaining an ordering property is this codebase's own signal that a shared
+ * fact has no home. It has one now, and a call site cannot reach it without a game.
+ *
+ * **Named for what it actually asks.** For a caller holding the DM code the movability
+ * question has exactly one answer — the DM moves anything on their own board — so what
+ * is left of `requireMovableToken` on that path is *does this token exist on this
+ * board*, which is what all six of these callers want and what the older name stopped
+ * describing. `moveToken` keeps the `isDm` / `playerId` form, because it is the one
+ * caller for which control is a real question.
+ *
+ * **The shared `TOKEN_NOT_FOUND` refusal comes with it**, and is right to, even though a
+ * caller who already holds the DM code has no existence oracle to gain from it: the
+ * parity across every refusal is that constant's whole value, and a call site quietly
+ * opting out is how one shared refusal becomes six literals that drift.
+ */
+export async function requireDmToken(
+  ctx: QueryCtx,
+  game: Doc<'games'>,
+  tokenId: Id<'tokens'>,
+): Promise<Doc<'tokens'>> {
+  return await requireMovableToken(ctx, game, tokenId, true)
+}
+
+/**
  * How far from the asked-for square to look for an empty one. Eight rings is 289
  * squares, which is more of a search than any real board needs — it exists so the
  * loop terminates rather than because anyone will reach it.
@@ -619,7 +666,7 @@ export async function detachCharacterFromTokens(
  * **Takes the document rather than an id**, which the four of them share and
  * `setTokenControllers` does not. The deviation is deliberate: each of these has a
  * reason to compare against what is stored, the caller already holds the row because
- * `requireMovableToken` handed it back, and the comparison buys **no-op suppression**.
+ * `requireDmToken` handed it back, and the comparison buys **no-op suppression**.
  * A DM re-submitting an unchanged form should cost the table nothing, and a patch that
  * changes no field is still a write — Convex rewrites the whole document, invalidating
  * `board.tokens` for every client at the table. It is the reason `revokeControlForSeat`

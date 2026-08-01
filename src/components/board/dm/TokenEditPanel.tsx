@@ -4,12 +4,18 @@ import { useMutation } from 'convex/react'
 
 import { FieldError } from '@/components/FieldError'
 import { ImagePicker } from '@/components/ImagePicker'
+import type { Layer } from '@/components/board/dm/LayerChoice'
+import { DM_LAYER_ALERT_TITLE, LayerChoice } from '@/components/board/dm/LayerChoice'
+import type { TokenAppearanceDraft } from '@/components/board/dm/TokenAppearanceFields'
+import {
+  TokenAppearanceFields,
+  isUsableAppearance,
+} from '@/components/board/dm/TokenAppearanceFields'
 import { TokenControlPanel } from '@/components/board/dm/TokenControlPanel'
 import { TokenSwatch } from '@/components/board/dm/TokenSwatch'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Separator } from '@/components/ui/separator'
@@ -19,20 +25,22 @@ import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicToken } from '@convex/lib/board'
 import type { PublicCharacter } from '@convex/lib/characters'
-import { MAX_CHARACTER_NAME_LENGTH } from '@convex/lib/codes'
-import { MAX_TOKEN_SQUARES, MIN_TOKEN_SQUARES, isUsableTokenSize } from '@convex/lib/grid'
+import { MAX_TOKEN_SQUARES, MIN_TOKEN_SQUARES } from '@convex/lib/grid'
 import type { CharacterGroup } from '@convex/lib/sheet'
 import { CHARACTER_GROUPS, CHARACTER_GROUP_LABELS } from '@convex/lib/sheet'
 
 /**
- * Taken from the server's own token shape rather than spelled out again, the way
- * `TokenAddDialog` takes it. This is the field that decides secrecy, so a fourth literal
- * of the union is the last thing that should be able to drift from the one the mutation
- * validates against. `convex/lib/board.ts` exports a `TokenLayer` too and says in as many
- * words that the browser is not its consumer — both spellings come from
- * `tokenLayerValidator`, by two routes, and this is the route the client already uses.
+ * What a coin bound to a character whose row is *not* in the roster is called.
+ *
+ * ⚠️ **One spelling, and both readers of it are the same state.** A binding with no
+ * character behind it should be unreachable — `characters.remove` detaches every token
+ * pointing at the character it deletes — so it means the two subscriptions are momentarily
+ * out of step. The Tokens tab prints this under the coin's name and the select below shows
+ * it as the current option, because the alternative there is a `<select>` whose value
+ * matches no option, which browsers draw as *Bound to nothing*: the one answer that is
+ * definitely wrong.
  */
-type Layer = PublicToken['layer']
+export const MISSING_SHEET = 'A sheet that is no longer there'
 
 /**
  * The value of the select's *nothing* option.
@@ -61,6 +69,22 @@ export type TokenEditPanelProps = {
    * deliberately not in the bundle (CLAUDE.md invariant 8).
    */
   byGroup: Record<CharacterGroup, PublicCharacter[]>
+  /**
+   * What this coin stands for, **already resolved**, or null when it stands for nothing.
+   *
+   * ⚠️ **Resolved by the tab and not here, because the tab holds the map.** It builds a
+   * `Map` of every character by id for the caption on every row, so it has already answered
+   * this question for the selected coin by the time this panel mounts; re-deriving it here
+   * meant flattening `byGroup` into a fresh array and scanning it, per render, for an answer
+   * one hop up was a hash lookup. It also left the iterate-the-union discipline
+   * (CLAUDE.md invariant 9) written twice for one question.
+   *
+   * Null covers two states deliberately, and nothing below distinguishes them: bound to
+   * nothing, and bound to a row that is momentarily missing — see `MISSING_SHEET`. Every
+   * control here reads `token.characterId` off the payload rather than this, so there is
+   * nothing either state could make them do differently.
+   */
+  bound: PublicCharacter | null
   /** True until that list has arrived. The select is a skeleton in the meantime. */
   loading: boolean
 }
@@ -103,6 +127,7 @@ export function TokenEditPanel({
   dmCode,
   token,
   byGroup,
+  bound,
   loading,
 }: TokenEditPanelProps): ReactElement {
   return (
@@ -113,6 +138,7 @@ export function TokenEditPanel({
           dmCode={dmCode}
           token={token}
           byGroup={byGroup}
+          bound={bound}
           loading={loading}
         />
       </EditorSection>
@@ -201,12 +227,15 @@ function BindingControl({
   dmCode,
   token,
   byGroup,
+  bound,
   loading,
 }: {
   code: string
   dmCode: string
   token: PublicToken
   byGroup: Record<CharacterGroup, PublicCharacter[]>
+  /** The creature this coin stands for, resolved by the tab — see the panel's props. */
+  bound: PublicCharacter | null
   loading: boolean
 }) {
   const setCharacter = useMutation(api.board.setCharacter)
@@ -216,24 +245,6 @@ function BindingControl({
   const fieldId = useId()
 
   const busy = action.pending !== null
-
-  /**
-   * The character this coin is bound to, if the roster has arrived.
-   *
-   * A plain expression rather than a `useMemo`, for the reason `SheetsTab`'s `grantToken`
-   * gives: this component is inside `RightPane`'s memo boundary, so it renders only when
-   * something it reads has genuinely changed, and the list is bounded by the characters in
-   * one game. A dependency array to keep correct would buy nothing.
-   *
-   * `CHARACTER_GROUPS` again rather than three named arrays, so a fourth group cannot make
-   * a bound creature un-findable here while still being bindable above.
-   */
-  const bound =
-    token.characterId === null
-      ? null
-      : (CHARACTER_GROUPS.flatMap((group) => byGroup[group]).find(
-          (character) => character._id === token.characterId,
-        ) ?? null)
 
   function rebind(value: string) {
     // The empty string is the *nothing* option and is compared before anything is treated
@@ -278,6 +289,17 @@ function BindingControl({
         ) : (
           <>
             <option value={UNBOUND}>Bound to nothing — no sheet, no health bar</option>
+            {/* The state that should not happen, named rather than drawn as its opposite.
+                Without an option carrying the coin's own value this select has none that
+                matches, and a `<select>` with no matching option displays the *first* one —
+                which here reads *Bound to nothing* about a coin that is bound to something.
+                Disabled, because it is not an answer a DM should be able to choose; the row
+                in the list above prints the same words for the same reason. */}
+            {token.characterId !== null && bound === null ? (
+              <option value={token.characterId} disabled>
+                {MISSING_SHEET}
+              </option>
+            ) : null}
             {CHARACTER_GROUPS.map((group) =>
               // An empty `<optgroup>` draws a greyed heading over nothing, so a game with no
               // monsters yet would print *Monsters* at the DM and mean it as an absence. The
@@ -344,9 +366,11 @@ function BindingControl({
  * Which layer the coin is on. ⚠️ **The other secrecy write, and the broadest one on the
  * board.**
  *
- * Two buttons rather than a select, and they say what happens rather than naming a layer —
- * `TokenAddDialog` settled that wording and it is repeated here because it is the same
- * question asked about an existing coin. Applied on the press rather than behind a Save,
+ * Two buttons rather than a select, and they say what happens rather than naming a layer.
+ * `TokenAddDialog` settled that wording and this **is** that control now rather than a
+ * second copy of it — `LayerChoice` — because it is the same question asked about an
+ * existing coin, and the app's broadest secrecy write should not have two spellings of
+ * either button. Applied on the press rather than behind a Save,
  * for the reason `GridCalibrator`'s grid checkbox is: this is one decision, not a run of
  * typing to wait out, and a DM revealing an ambush wants it revealed now.
  *
@@ -396,40 +420,18 @@ function LayerControl({
 
   return (
     <div className="flex flex-col gap-2">
-      {/* `aria-pressed` as well as the variant, because a button that looks chosen and
-          does not say so is a button a screen reader reads as an ordinary one — the same
-          point `PickerRow` makes. Both stay live in both states: pressing the one already
-          chosen is a no-op the server suppresses (`setTokenLayer` returns early rather
-          than patching), so there is nothing to guard against and a disabled button here
-          would only hide which of the two is current from anybody who cannot see colour. */}
-      <div className="grid grid-cols-2 gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant={token.layer === 'player' ? 'default' : 'outline'}
-          aria-pressed={token.layer === 'player'}
-          disabled={busy}
-          onClick={() => move('player')}
-        >
-          Everyone
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant={token.layer === 'dm' ? 'destructive' : 'outline'}
-          aria-pressed={token.layer === 'dm'}
-          disabled={busy}
-          onClick={() => move('dm')}
-        >
-          Only me — DM layer
-        </Button>
-      </div>
+      {/* The add dialog's own picker, shared: the layers a DM may create on and may move
+          to are one set, so they are one control saying one pair of things. The value is
+          the server's answer read straight off the payload rather than a draft — this is
+          one decision per gesture, applied on the press. */}
+      <LayerChoice layer={token.layer} onChange={move} disabled={busy} />
 
       {token.layer === 'dm' ? (
         // The *act*, and only the act. What a grant on this coin is doing meanwhile is said
-        // once, under **Controlled by** at the foot of this panel — see the ⚠️ above.
+        // once, under **Controlled by** at the foot of this panel — see the ⚠️ above. The
+        // title is the dialog's, because it is one sentence about one fact.
         <Alert variant="destructive">
-          <AlertTitle>Nobody else is being sent this token at all</AlertTitle>
+          <AlertTitle>{DM_LAYER_ALERT_TITLE}</AlertTitle>
           <AlertDescription>
             It is absent from every player's data rather than merely undrawn, and so is the
             square it is standing on — so <em>that something is standing there</em> is hidden
@@ -488,24 +490,25 @@ function AppearanceForm({
 }) {
   const updateToken = useMutation(api.board.updateToken)
   const action = useLobbyAction()
-  const fieldId = useId()
 
-  const [name, setName] = useState(token.name)
-  // A string, not a number, because that is what an `<input>` holds: a half-deleted field
-  // is `''` and has to stay `''` rather than becoming a 0 the DM has to delete again.
-  const [size, setSize] = useState(String(token.sizeSquares))
-  const [tint, setTint] = useState(token.tint)
+  // One piece of state for the three fields, which is the shape `TokenAppearanceFields`
+  // writes and the shape `board.updateToken` takes.
+  const [draft, setDraft] = useState<TokenAppearanceDraft>({
+    name: token.name,
+    size: String(token.sizeSquares),
+    tint: token.tint,
+  })
 
-  const sizeSquares = parseNumber(size)
+  const sizeSquares = parseNumber(draft.size)
   const busy = action.pending !== null
-  // The same three checks `requireTokenAppearance` runs server-side, in the same order, as
-  // a courtesy rather than as the enforcement — the tint needs none of its own, because a
-  // colour input cannot produce anything but `#rrggbb`.
-  const usable = name.trim() !== '' && isUsableTokenSize(sizeSquares)
+  // The add dialog's own predicate, which is the courtesy half of the check
+  // `requireTokenAppearance` runs server-side.
+  const usable = isUsableAppearance(draft)
   // Nothing to send is a Save with nothing to do. Compared against the payload rather than
   // tracked with a flag, so a DM who types over a name and types it back is not offered a
   // write that would re-push the board for no change.
-  const dirty = name !== token.name || sizeSquares !== token.sizeSquares || tint !== token.tint
+  const dirty =
+    draft.name !== token.name || sizeSquares !== token.sizeSquares || draft.tint !== token.tint
 
   function submit(event: React.FormEvent) {
     event.preventDefault()
@@ -518,9 +521,9 @@ function AppearanceForm({
           code,
           dmCode,
           tokenId: token._id,
-          name,
+          name: draft.name,
           sizeSquares,
-          tint,
+          tint: draft.tint,
         }),
       { report: 'field' },
     )
@@ -528,52 +531,11 @@ function AppearanceForm({
 
   return (
     <form className="flex flex-col gap-3" onSubmit={submit}>
-      <div className="flex flex-col gap-2">
-        <Label htmlFor={`${fieldId}-name`}>Name</Label>
-        <Input
-          id={`${fieldId}-name`}
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          // The character-name limit, because a token names a creature and the server
-          // borrows the same constant rather than inventing a fourth one.
-          maxLength={MAX_CHARACTER_NAME_LENGTH}
-          autoComplete="off"
-          disabled={busy}
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-2">
-          <Label htmlFor={`${fieldId}-size`}>Size in squares</Label>
-          <Input
-            id={`${fieldId}-size`}
-            type="number"
-            min={MIN_TOKEN_SQUARES}
-            max={MAX_TOKEN_SQUARES}
-            step={1}
-            value={size}
-            onChange={(event) => setSize(event.target.value)}
-            className="tabular-nums"
-            disabled={busy}
-          />
-        </div>
-        <div className="flex flex-col gap-2">
-          <Label htmlFor={`${fieldId}-tint`}>Colour</Label>
-          <Input
-            id={`${fieldId}-tint`}
-            type="color"
-            value={tint}
-            onChange={(event) => setTint(event.target.value)}
-            className="h-8 px-1 py-1"
-            disabled={busy}
-          />
-        </div>
-      </div>
-
-      <p className="text-muted-foreground text-xs">
-        1 square for a person, 2 for an ogre, up to {MAX_TOKEN_SQUARES}. The colour is the coin
-        itself when there is no art, and its ring when there is.
-      </p>
+      {/* The add dialog's own three fields, hints included — see `TokenAppearanceFields`
+          for why the copy travels with them. No `children`: the layer question has its own
+          section above, and the DM is editing a coin that already exists rather than
+          deciding what to make. */}
+      <TokenAppearanceFields draft={draft} onChange={setDraft} disabled={busy} />
 
       <FieldError message={action.error} />
 

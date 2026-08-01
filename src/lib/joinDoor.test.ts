@@ -1,7 +1,18 @@
 import { describe, expect, test } from 'vitest'
 
-import { nextStep, stepsFor, verdictMessage, verdictOf } from '@/lib/joinDoor'
+import {
+  type DmCodeVerdict,
+  currentStep,
+  dmVerdictMessage,
+  dmVerdictOf,
+  isCompleteDmCode,
+  nextStep,
+  stepsFor,
+  verdictMessage,
+  verdictOf,
+} from '@/lib/joinDoor'
 import type { Id } from '@convex/_generated/dataModel'
+import { DM_CODE_LENGTH } from '@convex/lib/codes'
 
 /**
  * Convex ids are branded strings and `verdictOf` only ever compares two of them
@@ -123,6 +134,95 @@ describe('verdictMessage', () => {
   })
 })
 
+/** Eight characters, which is what `CodeInput` caps the DM field at. */
+const DM_CODE = 'ABCD2345'
+
+describe('dmVerdictOf', () => {
+  test('a half-typed code is incomplete, not a lookup in flight', () => {
+    // The same trap `verdictOf`'s first test covers, and the reason this function
+    // exists: the caller skips `checkDmCode` while the field is short, so `verified`
+    // is undefined then for a completely different reason than while a real lookup is
+    // out. The order of the tests inside `dmVerdictOf` is all that keeps them apart,
+    // and getting it wrong puts "Checking that code…" under a field nobody has
+    // finished typing into.
+    expect(dmVerdictOf({ typed: '', verified: undefined })).toEqual({ kind: 'incomplete' })
+    expect(dmVerdictOf({ typed: 'ABCD', verified: undefined })).toEqual({ kind: 'incomplete' })
+  })
+
+  // The field is capped at eight by `CodeInput`, so this is unreachable through the
+  // UI — and it is the arm that would be wrong if the length test were ever written
+  // as `>=` or as `length > 0`.
+  test('an over-long code is incomplete too', () => {
+    expect(dmVerdictOf({ typed: `${DM_CODE}9`, verified: undefined })).toEqual({
+      kind: 'incomplete',
+    })
+  })
+
+  test('a complete code with the lookup still out is checking', () => {
+    expect(dmVerdictOf({ typed: DM_CODE, verified: undefined })).toEqual({ kind: 'checking' })
+  })
+
+  test('the server’s verdict is passed through both ways', () => {
+    expect(dmVerdictOf({ typed: DM_CODE, verified: true })).toEqual({ kind: 'ok' })
+    expect(dmVerdictOf({ typed: DM_CODE, verified: false })).toEqual({ kind: 'wrongCode' })
+  })
+
+  // ⚠️ `ok` carries nothing, and that is `checkDmCode`'s own decision restated: a
+  // `true` authorises nothing and expires as it is read, because every DM-only call
+  // re-verifies the code server-side (invariant 7). A verdict with a payload is one
+  // refactor from being treated as proof.
+  test('ok carries no payload at all', () => {
+    expect(Object.keys(dmVerdictOf({ typed: DM_CODE, verified: true }))).toEqual(['kind'])
+  })
+})
+
+describe('isCompleteDmCode', () => {
+  // Shared with `dmVerdictOf` so the caller's `'skip'` and the "checking" line cannot
+  // disagree about whether a request was made. Asserted against the constant rather
+  // than against the number eight.
+  test('is exactly the length the server’s code has', () => {
+    expect(isCompleteDmCode('A'.repeat(DM_CODE_LENGTH))).toBe(true)
+    expect(isCompleteDmCode('A'.repeat(DM_CODE_LENGTH - 1))).toBe(false)
+    expect(isCompleteDmCode('A'.repeat(DM_CODE_LENGTH + 1))).toBe(false)
+    expect(isCompleteDmCode('')).toBe(false)
+  })
+})
+
+describe('dmVerdictMessage', () => {
+  // All four, and never null — unlike `verdictMessage`. The unfinished state says
+  // where to find an eight-character code, and the success state reports the
+  // consequence the person cannot otherwise see: that the code is about to be written
+  // into this browser.
+  test('every state has a sentence, including the two that are not failures', () => {
+    expect(dmVerdictMessage({ kind: 'incomplete' })).toBe(
+      'The code shown when the game was created.',
+    )
+    expect(dmVerdictMessage({ kind: 'ok' })).toBe(
+      'That is your game. This browser will remember the code.',
+    )
+    expect(dmVerdictMessage({ kind: 'wrongCode' })).toBe(
+      'That DM code is not right for this game.',
+    )
+  })
+
+  // ⚠️ The one both doors say, and it is one constant behind both of them. Asserted
+  // against `verdictMessage`'s rather than against a literal, so a reword of either
+  // cannot leave the two fields on this screen describing the same wait two ways.
+  test('waits with the same words the join code field waits with', () => {
+    expect(dmVerdictMessage({ kind: 'checking' })).toBe(verdictMessage({ kind: 'checking' }))
+  })
+
+  test('has something to say for every arm of the union', () => {
+    const kinds: DmCodeVerdict[] = [
+      { kind: 'incomplete' },
+      { kind: 'checking' },
+      { kind: 'ok' },
+      { kind: 'wrongCode' },
+    ]
+    for (const verdict of kinds) expect(dmVerdictMessage(verdict)).toBeTruthy()
+  })
+})
+
 describe('stepsFor', () => {
   test('a player is asked for the code and then which seat they are', () => {
     expect(stepsFor('player')).toEqual(['gameCode', 'seat'])
@@ -153,5 +253,49 @@ describe('nextStep', () => {
   test('a step the door never asks ends the conversation rather than restarting it', () => {
     expect(nextStep('dm', 'seat')).toBe('done')
     expect(nextStep('player', 'dmCode')).toBe('done')
+  })
+})
+
+describe('currentStep', () => {
+  test('renders the stored step once a code has resolved', () => {
+    expect(currentStep({ door: 'dm', stored: 'dmCode', hasCode: true })).toBe('dmCode')
+    expect(currentStep({ door: 'player', stored: 'seat', hasCode: true })).toBe('seat')
+    expect(currentStep({ door: 'player', stored: 'gameCode', hasCode: true })).toBe('gameCode')
+  })
+
+  // Both later steps are about a *specific game* — one subscribes `checkDmCode` with
+  // its code, the other subscribes that game's roster — so neither has anything to say
+  // until the first step has answered. This is what stops a subscription being opened
+  // for a game that does not exist.
+  test('asks for the code first whatever is stored, until one has resolved', () => {
+    expect(currentStep({ door: 'dm', stored: 'dmCode', hasCode: false })).toBe('gameCode')
+    expect(currentStep({ door: 'player', stored: 'seat', hasCode: false })).toBe('gameCode')
+  })
+
+  // ⚠️ The arm that used to disagree with `nextStep`. Both doors take the same
+  // `StepKind`, so the compiler cannot stop one door being asked about the other's
+  // step, and this half of the question had two answers in two places — `'done'` in
+  // the tested module, "start again" in the dialog's JSX. There is only one now, and it
+  // is not `'done'`: this function has to name a question to *render*, and `'done'` is
+  // not a question. Restarting commits nothing, because a rendered field has written
+  // nothing down.
+  test('a step this door does not ask falls back to its first one', () => {
+    expect(currentStep({ door: 'dm', stored: 'seat', hasCode: true })).toBe('gameCode')
+    expect(currentStep({ door: 'player', stored: 'dmCode', hasCode: true })).toBe('gameCode')
+  })
+
+  // Whatever it answers is a step that door actually asks — the property the two arms
+  // above exist to produce, stated once over every combination there is.
+  test('never answers with a step outside the door it was asked about', () => {
+    const doors = ['player', 'dm'] as const
+    const steps = ['gameCode', 'dmCode', 'seat'] as const
+
+    for (const door of doors) {
+      for (const stored of steps) {
+        for (const hasCode of [true, false]) {
+          expect(stepsFor(door)).toContain(currentStep({ door, stored, hasCode }))
+        }
+      }
+    }
   })
 })

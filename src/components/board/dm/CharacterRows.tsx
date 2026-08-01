@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useHpActions, useVitals } from '@/hooks/useVitals'
 import { cn } from '@/lib/utils'
 import { api } from '@convex/_generated/api'
+import type { Id } from '@convex/_generated/dataModel'
 import type { PublicCharacter, PublicVitals } from '@convex/lib/characters'
 import type { CharacterGroup } from '@convex/lib/sheet'
 import { CHARACTER_GROUPS } from '@convex/lib/sheet'
@@ -33,13 +34,31 @@ import { CHARACTER_GROUPS } from '@convex/lib/sheet'
 // cannot use. `CharacterSection` plus a `map` is the same output with nothing hard-wired,
 // and it is what the selector composes.
 
+export type CharactersByGroup = {
+  /** True until the roster arrives. `DmCharacterRowsSkeleton` draws the gap. */
+  loading: boolean
+  /** Every character in the game, filed under the heading the server chose. */
+  byGroup: Record<CharacterGroup, PublicCharacter[]>
+  /**
+   * The same characters by id, for the callers that are joining a name onto something
+   * else — a coin's caption, or the creature a coin is bound to.
+   *
+   * Built here rather than at each of them because it is one `Map` over one payload, and
+   * two of them is two things to keep memoised on the same array.
+   */
+  byId: Map<Id<'characters'>, PublicCharacter>
+}
+
 /**
- * Everything the DM's sheet list needs, wired once.
+ * The DM's roster, read once and filed two ways. **One subscription and no hit points.**
  *
- * Two subscriptions, deliberately separate. The roster changes when somebody is created or
- * claimed; the hit points change several times a round. Folding them together would
- * re-push the whole list on every point of damage, which is the split `characterVitals`
- * exists to make possible in the first place (CLAUDE.md invariant 2).
+ * ⚠️ **Split out of `useDmCharacterRows` because the Tokens tab needs the filing and not
+ * the writing**, and taking the whole hook for it meant taking a `characters.vitals`
+ * subscription with it: every point of damage anywhere in the game re-rendered up to two
+ * hundred coin rows and the whole token editor to produce byte-identical output. During a
+ * fight with the DM parked on that tab it is a handful of full reconciliations a round for
+ * nothing. `useDmCharacterRows` consumes this, so the bucketing below is still written
+ * exactly once.
  *
  * ⚠️ **The groups come from `group` and not from `kind`, and the two fields are not
  * interchangeable.** `kind` answers *may this caller know the character exists* — it is
@@ -55,6 +74,47 @@ import { CHARACTER_GROUPS } from '@convex/lib/sheet'
  * with no heading to find it under. Building the buckets from `CHARACTER_GROUPS` means the
  * selector renders whatever the union says exists, and a fourth member is a missing label
  * the compiler asks about rather than a row nobody can see.
+ *
+ * `{ code, dmCode }` exactly, so every caller shares one cache entry — one socket, one
+ * server-side execution — which is the arrangement `Roster` documents for `players.list`.
+ * Holding the code is not what authorises the list either: `characters.list` returns
+ * creatures only when it is given a code it verifies server-side, so a browser with an
+ * invented one gets the player characters and a refusal from every write (invariant 7).
+ */
+export function useCharactersByGroup(code: string, dmCode: string): CharactersByGroup {
+  const characters = useQuery(api.characters.list, { code, dmCode })
+
+  const byGroup = useMemo(() => {
+    const buckets = Object.fromEntries(
+      CHARACTER_GROUPS.map((group) => [group, [] as PublicCharacter[]]),
+    ) as Record<CharacterGroup, PublicCharacter[]>
+    // Creation order within each heading, because that is the order the list arrives in
+    // and the order the DM built the encounter in.
+    for (const character of characters ?? []) buckets[character.group].push(character)
+    return buckets
+  }, [characters])
+
+  const byId = useMemo(() => {
+    const map = new Map<Id<'characters'>, PublicCharacter>()
+    for (const character of characters ?? []) map.set(character._id, character)
+    return map
+  }, [characters])
+
+  return { loading: characters === undefined, byGroup, byId }
+}
+
+/**
+ * Everything the DM's sheet list needs, wired once: the roster above, plus the four writes
+ * a row offers and the hit points it prints.
+ *
+ * Two subscriptions, deliberately separate. The roster changes when somebody is created or
+ * claimed; the hit points change several times a round. Folding them together would
+ * re-push the whole list on every point of damage, which is the split `characterVitals`
+ * exists to make possible in the first place (CLAUDE.md invariant 2).
+ *
+ * ⚠️ **Take this only if you are drawing hit points or offering one of the writes.** The
+ * `characters.vitals` subscription is the expensive half and a caller that reads
+ * `byGroup` alone pays for it in re-renders — `useCharactersByGroup` is that caller's hook.
  *
  * No `playerId` anywhere in here. A seat id is a routing argument rather than proof of
  * anything (ADR 0003), and the DM code is what these mutations actually check — so sending
@@ -77,7 +137,7 @@ import { CHARACTER_GROUPS } from '@convex/lib/sheet'
  * exactly what it should get (invariant 7).
  */
 export function useDmCharacterRows(code: string, dmCode: string) {
-  const characters = useQuery(api.characters.list, { code, dmCode })
+  const roster = useCharactersByGroup(code, dmCode)
   const vitals = useVitals(code, dmCode, null)
   const hp = useHpActions({ code, dmCode, playerId: null })
   const removeCharacter = useMutation(api.characters.remove)
@@ -101,21 +161,10 @@ export function useDmCharacterRows(code: string, dmCode: string) {
       () => setReserved({ code, dmCode, characterId: character._id, reserved }),
     )
 
-  const byGroup = useMemo(() => {
-    const buckets = Object.fromEntries(
-      CHARACTER_GROUPS.map((group) => [group, [] as PublicCharacter[]]),
-    ) as Record<CharacterGroup, PublicCharacter[]>
-    // Creation order within each heading, because that is the order the list arrives in
-    // and the order the DM built the encounter in.
-    for (const character of characters ?? []) buckets[character.group].push(character)
-    return buckets
-  }, [characters])
-
   return {
-    /** Undefined until the roster arrives. `DmCharacterRowsSkeleton` draws the gap. */
-    loading: characters === undefined,
-    /** Every character in the game, filed under the heading the server chose. */
-    byGroup,
+    // `loading`, `byGroup` and `byId` handed straight on rather than re-derived: this hook
+    // adds the writes and the hit points and nothing about how the list is filed.
+    ...roster,
     /**
      * Both failure channels, already merged. A refused delete comes through the shared
      * action hook and a refused `−5` through the hit-point hook, which *reports* rather

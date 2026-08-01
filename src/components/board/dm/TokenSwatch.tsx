@@ -3,7 +3,16 @@ import type { ReactElement } from 'react'
 import { initialsOf, readableInk } from '@/lib/avatar'
 import { cn } from '@/lib/utils'
 
-/** The two sizes anything has wanted so far: beside a line of text, and on its own. */
+/**
+ * The two sizes a coin has wanted so far: beside a line of text in the DM's list, and
+ * beside a file field in the editor.
+ *
+ * ⚠️ **`ProfileIcon` has a constant of the same name and these are not its values**, which
+ * is worth saying because the shared name reads like a shared vocabulary and there is none:
+ * a coin is a picture of a creature and is drawn a step larger than a seat's generated
+ * initials at both sizes. Changing one of the four numbers to match the other file would
+ * make one of the two lists wrong.
+ */
 const SIZE_CLASSES: Record<'sm' | 'md', string> = {
   sm: 'size-8 text-[0.625rem]',
   md: 'size-12 text-sm',
@@ -70,7 +79,21 @@ export function TokenSwatch({
         // is a server-minted string, but interpolating any URL into a CSS `url(...)` is a
         // habit that only has to be wrong once, and `object-cover` is the same `cover`
         // fit `TokenCoin`'s fill pattern computes by hand.
-        <img src={artUrl} alt="" className="size-full object-cover" />
+        //
+        // ⚠️ **`loading="lazy"` matters here rather than being a habit.** The DM's token
+        // list is a `max-h-64` scroll box showing about four rows, so a game with sixty
+        // coins would otherwise fetch sixty signed URLs and decode sixty images the moment
+        // the tab is opened — and some of them are genuinely cold, because this list
+        // deliberately includes the DM-layer coins and the ones on no scene, which Konva
+        // has never drawn. `decoding="async"` keeps the decode of the ones that *are* in
+        // view off the frame that reveals the tab.
+        <img
+          src={artUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className="size-full object-cover"
+        />
       )}
     </span>
   )

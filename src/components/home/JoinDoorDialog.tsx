@@ -12,16 +12,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { type Door, type StepKind, nextStep, stepsFor } from '@/lib/joinDoor'
+import { type Door, type StepKind, currentStep, nextStep } from '@/lib/joinDoor'
 import { rememberDisplayName, rememberDmCode } from '@/lib/session'
 import { DmCodeStep } from './DmCodeStep'
 import type { GameListing } from './GameListRow'
 import { JoinCodeStep } from './JoinCodeStep'
 
 export type JoinDoorDialogProps = {
-  /** The row that was clicked, or null — which is how this dialog is closed. */
-  game: GameListing | null
-  door: Door
+  /**
+   * The row that was clicked and the door that was clicked on it, or null — which is
+   * how this dialog is closed.
+   *
+   * One prop rather than two, because the two facts are never separately known: a
+   * click names both at once, so a `door` of its own would need a value invented for
+   * every frame in which nothing is open — and `door` is the field that decides which
+   * credential gets asked for. It is also exactly the object the caller already holds.
+   */
+  opening: { game: GameListing; door: Door } | null
   onClose: () => void
 }
 
@@ -80,9 +87,14 @@ export type JoinDoorDialogProps = {
  * confusing unexplained: the DM lands as a plain player, and the player is asked
  * which seat they are all over again having just picked it off a list.
  */
-export function JoinDoorDialog({ game, door, onClose }: JoinDoorDialogProps) {
+export function JoinDoorDialog({ opening, onClose }: JoinDoorDialogProps) {
   const navigate = useNavigate()
 
+  /**
+   * The question this dialog last decided to ask. What is *rendered* is
+   * `currentStep`'s answer below, which corrects two things this cannot know on its
+   * own — see there.
+   */
   const [storedStep, setStoredStep] = useState<StepKind>('gameCode')
   const [typedGameCode, setTypedGameCode] = useState('')
   const [typedDmCode, setTypedDmCode] = useState('')
@@ -97,30 +109,34 @@ export function JoinDoorDialog({ game, door, onClose }: JoinDoorDialogProps) {
    */
   const [leaving, setLeaving] = useState(false)
 
-  const steps = stepsFor(door)
-
   /**
-   * The step actually on screen, which is not quite the one in state, and both
-   * corrections are structural rather than defensive.
+   * The step actually on screen, which is not quite the one in state.
    *
-   * **Without a resolved join code there is only one question worth asking.** Both
-   * later steps are *about a specific game* — one subscribes `checkDmCode` with its
-   * code, the other subscribes that game's roster — so neither has anything to say
-   * before the first step has answered. Deriving that here rather than widening
-   * `resolvedCode` to `''` at the two call sites keeps the header and the body
-   * agreeing about which question is being asked.
-   *
-   * **And never a step this door does not ask.** `storedStep` and `steps` come from
-   * two different props reset at two different moments, so this is the render-side
-   * half of the same care `nextStep` takes when it answers `'done'` for a step off
-   * its own door instead of looping back to the start.
+   * ⚠️ **The corrections live in `joinDoor.ts`, and that is the point of the split.**
+   * They used to be a two-branch ternary here, and one of those branches disagreed
+   * with the tested module about what a step this door does not ask should do —
+   * `nextStep` answers `'done'`, this answered "start again". Two answers to one
+   * question, in a decision that picks which credential field is on screen, with the
+   * untestable copy winning. `currentStep` is now the only place either correction is
+   * made and both are asserted; `null` here means there is no door open to ask about.
    */
-  const step: StepKind =
-    resolvedCode === null ? 'gameCode' : steps.includes(storedStep) ? storedStep : steps[0]
+  const step: StepKind | null =
+    opening === null
+      ? null
+      : currentStep({
+          door: opening.door,
+          stored: storedStep,
+          hasCode: resolvedCode !== null,
+        })
 
   /** Nothing typed into this dialog outlives it. See `ElevateDialog.forgetInput`. */
   function reset() {
-    setStoredStep(steps[0])
+    // The same value the state above initialises to, and the first question of both
+    // doors. Which of those two facts is doing the work does not matter, because
+    // neither is observable: `currentStep` answers with this door's first step for any
+    // stored value at all while no code has resolved, which is always true right after
+    // a reset.
+    setStoredStep('gameCode')
     // Not prefilled from `getLastGameCode()`, unlike the panel below the list: a row
     // names *this* game, so last game's code is the one answer that is certainly
     // wrong, and prefilling it would open the dialog already complaining.
@@ -153,7 +169,11 @@ export function JoinDoorDialog({ game, door, onClose }: JoinDoorDialogProps) {
    * cannot have invented a credential on the way.
    */
   function advance(from: StepKind, code: string) {
-    const next = nextStep(door, from)
+    // Only a mounted step calls this, so there is always a door — the test is here
+    // because the door now travels with the game in one prop rather than beside it.
+    if (opening === null) return
+
+    const next = nextStep(opening.door, from)
     if (next !== 'done') {
       setStoredStep(next)
       return
@@ -177,6 +197,11 @@ export function JoinDoorDialog({ game, door, onClose }: JoinDoorDialogProps) {
    */
   function takeSeat(displayName: string) {
     if (leaving || resolvedCode === null) return
+    // The answer is about the *per-game* key alone, which is the one this sentence
+    // describes: it is what `useSeat` reads at mount, so losing it is the seat question
+    // being asked again. `rememberDisplayName` also writes two prefills and deliberately
+    // says nothing about them — folding them in made this warning fire for a browser
+    // that had remembered the seat perfectly.
     if (!rememberDisplayName(resolvedCode, displayName)) {
       toast.warning(
         'This browser has storage turned off, so you will be asked which seat you are again when you arrive.',
@@ -209,18 +234,24 @@ export function JoinDoorDialog({ game, door, onClose }: JoinDoorDialogProps) {
     advance('dmCode', resolvedCode)
   }
 
-  const prompt = game === null ? null : promptFor(door, step, game.name)
+  const prompt =
+    opening === null || step === null ? null : promptFor(opening.door, step, opening.game.name)
 
   return (
     <Dialog
-      open={game !== null}
+      open={opening !== null}
       onOpenChange={(next) => {
         if (!next) close()
       }}
     >
       {/* Mounted only while there is a game, so a closed dialog holds no step, no
-          subscription and no typed code. */}
-      {game !== null && prompt !== null ? (
+          subscription and no typed code.
+
+          All three tests say the same thing — `step` and `prompt` are non-null exactly
+          when `opening` is — and all three are here because TypeScript cannot narrow one
+          local from the *value* of another. Naming them is what lets the branches below
+          take a `StepKind` and a `GameListing` rather than working around a maybe. */}
+      {opening !== null && step !== null && prompt !== null ? (
         // Wider on the seat step, and only there. `DialogContent`'s default
         // `sm:max-w-sm` is right for a single code field and too narrow for the seat
         // list, which puts a name field and its button side by side and a roster row
@@ -248,7 +279,7 @@ export function JoinDoorDialog({ game, door, onClose }: JoinDoorDialogProps) {
           */}
           {step === 'gameCode' || resolvedCode === null ? (
             <JoinCodeStep
-              game={game}
+              game={opening.game}
               typed={typedGameCode}
               onTyped={setTypedGameCode}
               onResolved={(code) => {
@@ -293,6 +324,34 @@ export function JoinDoorDialog({ game, door, onClose }: JoinDoorDialogProps) {
   )
 }
 
+type Prompt = { title: string; description: string }
+
+/**
+ * What the first step's header says, per door.
+ *
+ * ⚠️ **A `Record` keyed on `Door` rather than `door === 'dm' ? … : …`**, for the reason
+ * `DOOR_STEPS` in `joinDoor.ts` is one and the reason CLAUDE.md invariant 9 gives: an
+ * else-branch is an allow-list of one member with room for any number, so a third door
+ * would silently arrive wearing the player's heading — *Join* rather than *Run*, which
+ * is the one pair on this screen that must not read alike, since it is all that tells
+ * somebody mid-sequence which door they walked through. A `Record` fails to compile
+ * until the new door has been given words of its own.
+ *
+ * Only this step forks. The two later ones are asked by one door each, so their headings
+ * are the same sentence whoever is reading them.
+ */
+const GAME_CODE_PROMPTS: Record<Door, (gameName: string) => Prompt> = {
+  dm: (gameName) => ({
+    title: `Run ${gameName}`,
+    description: 'Two codes: the join code for the game, then the DM code for it.',
+  }),
+  player: (gameName) => ({
+    title: `Join ${gameName}`,
+    // Says why a list that already names the game still asks for a code.
+    description: 'The code from whoever is running it — the one thing the list cannot tell you.',
+  }),
+}
+
 /**
  * What the header says, per door and per step.
  *
@@ -300,24 +359,10 @@ export function JoinDoorDialog({ game, door, onClose }: JoinDoorDialogProps) {
  * only thing telling somebody mid-sequence which of the two doors they walked
  * through, and the pair that must not read alike is *Join* against *Run*.
  */
-function promptFor(
-  door: Door,
-  step: StepKind,
-  gameName: string,
-): { title: string; description: string } {
+function promptFor(door: Door, step: StepKind, gameName: string): Prompt {
   switch (step) {
     case 'gameCode':
-      return door === 'dm'
-        ? {
-            title: `Run ${gameName}`,
-            description: 'Two codes: the join code for the game, then the DM code for it.',
-          }
-        : {
-            title: `Join ${gameName}`,
-            // Says why a list that already names the game still asks for a code.
-            description:
-              'The code from whoever is running it — the one thing the list cannot tell you.',
-          }
+      return GAME_CODE_PROMPTS[door](gameName)
     case 'dmCode':
       return {
         title: 'Your DM code',
