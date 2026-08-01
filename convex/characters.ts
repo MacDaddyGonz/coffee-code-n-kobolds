@@ -38,6 +38,9 @@ import {
 } from './lib/characters'
 import { bestiaryEntry } from './lib/bestiary'
 import { crValidator } from './lib/creatures'
+// The feed's own choke point, for the one thing this file has to ask of it: a deleted
+// character's lines go with it. No row of `feed` is read or written here either.
+import { deleteFeedForCharacter } from './lib/feed'
 import {
   MAX_CHARACTERS_PER_GAME,
   findGameByCode,
@@ -1258,9 +1261,18 @@ export const setReserved = mutation({
 /**
  * Gated on the DM code: this is the one irreversible operation on durable data.
  *
- * Three pointers are cleared before the document goes, in the order that leaves
- * nothing dangling however the transaction is read: the seat's claim, then the
- * tokens standing on it, then the character and its vitals row together.
+ * Everything pointing at the character is dealt with before the document goes, in the
+ * order that leaves nothing dangling however the transaction is read: the seat's claim,
+ * then the tokens standing on it, then the feed lines that name it, then the character
+ * and its vitals row together.
+ *
+ * ⚠️ **The feed is deleted rather than repaired, and it goes immediately before the row
+ * it points at** — `purgeGame`'s rule, which is that a row is deleted before the row it
+ * points at and never after. The other two are repairs, because a token and a seat both
+ * *survive* this mutation; a feed line does not, since a line naming a character that has
+ * gone is unreadable to everybody including the DM (`visibleFeed` drops it) while still
+ * occupying the sixty-line window everybody else's rolls have to fit into. See
+ * `deleteFeedForCharacter`.
  */
 export const remove = mutation({
   args: { code: v.string(), dmCode: v.string(), characterId: v.id('characters') },
@@ -1274,6 +1286,7 @@ export const remove = mutation({
     // this a hero's coin would quietly become undraggable and lose its health bar,
     // with nothing on screen to say why.
     await detachCharacterFromTokens(ctx, character._id)
+    await deleteFeedForCharacter(ctx, character._id)
     await deleteCharacter(ctx, character._id)
     return null
   },

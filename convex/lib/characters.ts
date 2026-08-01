@@ -170,6 +170,77 @@ export function isReservedCharacter(character: Doc<'characters'>): boolean {
   return character.reserved === true
 }
 
+/**
+ * The reservation as a *filter* — whether it withholds this row from this caller — in the
+ * one spelling the two list builders below share.
+ *
+ * Extracted because `isDm || !isReservedCharacter(character)` was about to exist twice,
+ * and "reserved is hidden from players" written twice is the thing that comes to be
+ * written differently: `publicCharacters` builds the character list and
+ * `readableCharacterIds` builds the set the feed is filtered against, and a row withheld
+ * from one while its name is printed by the other publishes exactly what reserving it
+ * withholds. That failure has happened once already in this file — see the ⚠️ on
+ * `playerCharacterNames`, which is the same leak between a list and a roster.
+ *
+ * ⚠️ **Still a second predicate composed at the call site, and folded into neither of the
+ * other two.** It is `&&`-ed beside `maySeeCharacter` and `mayHearOf` rather than living
+ * inside either, for the reasons `isReservedCharacter` above sets out at length: folded
+ * into the sight rule it would make a reserved character one **the DM cannot assign**,
+ * because `claim` and `assign` both ask that question with `isDm` hard-coded false, and
+ * being assignable to the player it was built for is the one thing reserving it was for.
+ * Naming the composition is not the same act as performing it somewhere else.
+ */
+function isWithheldAsReserved(character: Doc<'characters'>, isDm: boolean): boolean {
+  return !isDm && isReservedCharacter(character)
+}
+
+/**
+ * Whether this caller may be told that this character **did something** — the feed's
+ * question, which is not the sheet's.
+ *
+ * ⚠️ **A new question with a new name, deliberately not folded into `maySeeCharacter`.**
+ * That predicate decides whose *sheet* may be opened; this decides whose *name may appear
+ * in a line saying they rolled something*. The two genuinely differ, and a collapse fails
+ * in whichever direction it is made. Ask the sheet question about a feed row and `Goblin
+ * Archer attacks with their Shortbow` is suppressed for the very players watching the
+ * arrow land, because a player who can see a goblin's coin still may not read its stat
+ * block. Widen the sheet question to admit what the feed admits and that goblin's armour
+ * class, hit dice and the DM's notes on it go out with the line. Two names is the cheap
+ * way to keep two answers, and it is the arrangement `isReservedCharacter` already argues
+ * for one function up.
+ *
+ * **The `visible` disjunct is honest rather than lax.** `board.tokens` has *already*
+ * published that goblin's name and its coin to that player — that is what a player-layer
+ * token is — so a feed that withheld the line would be secrecy theatre against a client
+ * which can read the name off its own board. What it must not do is announce a creature
+ * the caller cannot see, and it cannot: a token on the DM layer, or a creature with no
+ * token at all, is in neither set, because `boardCharacterAccess` filtered that row out
+ * before its loop began. **That is the ambush case, and it is the whole point** — the
+ * DM's prepared encounter rolls nothing anybody hears about until the coin is on the
+ * board, and reveals both in the one write to `layer`.
+ *
+ * **It composes `maySeeCharacter` and never substitutes for it.** The sheet rule runs
+ * first and unchanged, `controlled` is passed straight through to it, and the disjunct
+ * only ever adds. `controlled` is optional here for the reason it is optional there:
+ * absent means no grants, which is the fail-closed answer, and a caller who genuinely has
+ * a set has one because it went and read the board for it.
+ *
+ * ⚠️ **The exposure `visible` inherits is stated rather than left to be discovered.**
+ * `boardCharacterAccess` reads tokens game-wide rather than per-scene, so a creature
+ * standing on a player-layer token on a map nobody is looking at counts as visible. That
+ * is exactly how `characters.vitals` already behaves — the same set, from the same read —
+ * so this is not a new hole, and the control is the same one it has always been: the DM
+ * layer. A creature the DM has not put in front of anybody belongs on it.
+ */
+export function mayHearOf(
+  character: Doc<'characters'>,
+  isDm: boolean,
+  visible: ReadonlySet<Id<'characters'>>,
+  controlled?: ReadonlySet<Id<'characters'>>,
+): boolean {
+  return maySeeCharacter(character, isDm, controlled) || visible.has(character._id)
+}
+
 // ---------------------------------------------------------------------------
 // Public shapes
 // ---------------------------------------------------------------------------
@@ -544,7 +615,7 @@ export async function publicCharacters(
   return characters
     .filter(
       (character) =>
-        maySeeCharacter(character, isDm) && (isDm || !isReservedCharacter(character)),
+        maySeeCharacter(character, isDm) && !isWithheldAsReserved(character, isDm),
     )
     .map((character) => {
       const holder = holders.get(character._id) ?? null
@@ -565,6 +636,49 @@ export async function publicCharacters(
         createdAt: character._creationTime,
       }
     })
+}
+
+/**
+ * Every character in this game whose name this caller may be told, as a set of ids.
+ *
+ * The set `lib/feed.ts` filters its rows against, and the reason that module can decide
+ * what a player hears without reading one row of `characters`: **a `Set` of ids leaves
+ * here and never a `Doc`** — the same narrow crossing `boardCharacterAccess` makes in the
+ * other direction, and the arrangement that lets a third choke point exist without any
+ * two of them reading each other's tables.
+ *
+ * **Two predicates, `&&`-ed here and merged nowhere**, which is `publicCharacters`'s
+ * arrangement above and the precedent `isReservedCharacter`'s own doc comment argues for
+ * at length. `mayHearOf` withholds a creature because it is a secret;
+ * `isWithheldAsReserved` withholds a hero because the DM has set it aside for somebody who
+ * has not arrived — and a reserved character's *name* is precisely what reserving it
+ * withholds, so a feed line naming one would undo the whole flag.
+ *
+ * ⚠️ **Unlike the reserved filter on the roster, this one is genuinely reachable.** That
+ * one guards a state nothing can produce and is written anyway; this one guards something
+ * a DM does on purpose — the grouped Sheets selector rolls initiative row by row, and a
+ * reserved hero has a row, so `Seraphine the Unarrived rolls initiative` is one click away
+ * from the whole table for a character nobody is supposed to know exists yet.
+ *
+ * `allCharacters` reused rather than a second read, so this shares the one bound and the
+ * one range read over the table that every other reader in this module goes through.
+ */
+export async function readableCharacterIds(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+  isDm: boolean,
+  visible: ReadonlySet<Id<'characters'>>,
+  controlled?: ReadonlySet<Id<'characters'>>,
+): Promise<Set<Id<'characters'>>> {
+  const characters = await allCharacters(ctx, gameId)
+
+  const readable = new Set<Id<'characters'>>()
+  for (const character of characters) {
+    if (!mayHearOf(character, isDm, visible, controlled)) continue
+    if (isWithheldAsReserved(character, isDm)) continue
+    readable.add(character._id)
+  }
+  return readable
 }
 
 /**

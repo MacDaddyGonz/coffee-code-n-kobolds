@@ -1,12 +1,17 @@
 import { defineSchema, defineTable } from 'convex/server'
 import { v } from 'convex/values'
 
-// The two literal unions this schema shares with the queries that project them and
-// the mutations that take them as arguments. Imported rather than re-spelled so the
-// table definition and the public payload cannot end up disagreeing about which
-// members exist — see the notes beside each field below.
+// The shapes this schema shares with the queries that project them and the mutations
+// that take them as arguments. Imported rather than re-spelled so the table definition
+// and the public payload cannot end up disagreeing about which members exist — see the
+// notes beside each field below.
+//
+// The two from lib/roll.ts are the same arrangement for a document a client never
+// projects field by field: a feed row's subject and its result travel whole, so the
+// stored shape and the public one are one definition rather than two that agree.
 import { tokenLayerValidator } from './lib/board'
 import { gameStatusValidator } from './lib/games'
+import { feedSubjectValidator, rollResultValidator } from './lib/roll'
 import { storedSheetValidator } from './lib/sheet'
 
 export default defineSchema({
@@ -244,4 +249,65 @@ export default defineSchema({
     .index('by_sceneId', ['sceneId'])
     .index('by_tokenId', ['tokenId'])
     .index('by_sceneId_and_tokenId', ['sceneId', 'tokenId']),
+
+  // WHAT HAPPENED, AND WHO MAY HEAR ABOUT IT — the game feed.
+  //
+  // THE SECRET IS `characterId`. A line reading `Ancient Red Dragon attacks with their
+  // Bite` publishes a name the DM has not revealed, and it has precisely the shape of a
+  // line about a hero — so no `returns:` validator can tell the two apart, and the guard
+  // has to be structural for the third time in this schema. `lib/feed.ts` is the only
+  // module in `convex/` allowed to read *or write* this table, and `leakGuard.test.ts`
+  // greps the sources to keep it that way (invariant 8).
+  //
+  // Note that the question it is filtered by is a **new** one rather than the sheet rule
+  // reused: `mayHearOf` in lib/characters.ts decides whose name may appear in a line
+  // saying they did something, which is not `maySeeCharacter`'s question about whose
+  // sheet may be opened. A player watching a goblin's coin may hear that it attacked and
+  // still may not read its armour class.
+  //
+  // ⚠️ **Every field here is required, and "none" is spelled `null` rather than absent —
+  // a decision, not an oversight.** Read against the tables above, where nearly every
+  // added field carries the opposite comment, that inversion needs saying out loud. The
+  // rule those comments record is that a field is optional *because adding a required one
+  // to a populated table fails the schema push*; the pressure is the rows that already
+  // exist. This table is new and has none, so nothing forces the weaker spelling, and
+  // required-with-`null` is one state per meaning instead of two — which is the
+  // convention ADR 0008 settled after `SheetEntry` came to spell "none" both ways.
+  //
+  // It is also why the field-by-field rebuild trap that ADR settled does not bite here:
+  // this milestone adds no field to any *populated* table, so there is nothing for
+  // `board-smoke.mjs` to report as `present on one side only`.
+  feed: defineTable({
+    gameId: v.id('games'),
+    // THE VISIBILITY KEY, and the only field `lib/feed.ts` filters a row on. Whose line
+    // this is, so `mayHearOf` can decide whether this caller may be told it exists.
+    //
+    // `null` is an **ad-hoc roll** — somebody typed `2d6` into the dice tray. It names
+    // nobody, so there is no secret in it and the whole table sees it.
+    characterId: v.union(v.id('characters'), v.null()),
+    // A BREADCRUMB, NOT A FOREIGN KEY: the character's name as it stood when the roll
+    // happened, copied rather than looked up. The same reasoning `catalogueKey` and
+    // `FeedSubject`'s `entry` are written with — a feed row is *what happened*, so it is
+    // written down, and a rename an hour later must not rewrite history.
+    //
+    // It is not a second spelling of the secret either. A row this caller may not hear
+    // about is dropped whole, so a name here only ever reaches somebody `characterId`
+    // has already admitted.
+    actorName: v.string(),
+    // The facts the sentence is generated from, never the English itself — see the header
+    // of lib/roll.ts, which is where that argument lives.
+    subject: feedSubjectValidator,
+    // What the dice did, or `null` for a line with no dice in it at all: a passive being
+    // declared, or an alt-clicked description.
+    roll: v.union(rollResultValidator, v.null()),
+    // The DM's "just for me". A second, unrelated reason to withhold a row, `&&`-ed with
+    // the visibility question in `visibleFeed` rather than folded into it — the same
+    // arrangement `isReservedCharacter` keeps beside `maySeeCharacter`.
+    dmOnly: v.boolean(),
+  })
+    .index('by_gameId', ['gameId'])
+    // For `deleteFeedForCharacter`, which runs when the DM deletes a character. One line
+    // here against a scan of a table that grows all evening, on a delete path — which is
+    // the trade this codebase argues against making the other way round.
+    .index('by_characterId', ['characterId']),
 })
