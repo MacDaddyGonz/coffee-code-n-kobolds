@@ -310,6 +310,11 @@ export function JoinDoorDialog({ opening, onClose }: JoinDoorDialogProps) {
           // code-only join and `opened` is null until the first step answers, so the two
           // are null together on exactly one screen: the code field of a code-only join,
           // which is the one place nothing can be named.
+          //
+          // Both are passed unconditionally, including on the path where they name the
+          // same game. `promptFor` compares them, and it can only do that if it is handed
+          // both — a `row` suppressed here on the grounds that `opened` is more specific
+          // would take the comparison away from the one function positioned to make it.
           row: opening.game?.name ?? null,
           opened: resolvedGame?.name ?? null,
         })
@@ -418,6 +423,13 @@ type Prompt = { title: string; description: string }
  * last moment before they commit to walking into it. Collapsing the two into
  * `row ?? opened` would lose which of those two sentences the header is entitled to say,
  * and the copy for the row's doors would silently change the day the fallback fired.
+ *
+ * ⚠️ **They can now disagree with a row present, which is what makes keeping both load
+ * bearing rather than merely tidy.** `JoinCodeStep`'s wrong-game escape hatch continues
+ * with the game a typed code opened after a row claimed a different one, so *the row that
+ * was clicked* and *the game this is about* are two facts that a single field would have
+ * had to choose between — and either choice is wrong on one of the two paths. Holding both
+ * is what lets `promptFor` ask whether they differ.
  */
 type Naming = {
   /** The clicked row's name, or null for a code-only join. */
@@ -473,16 +485,41 @@ const GAME_CODE_PROMPTS: Record<Door, (gameName: string | null) => Prompt> = {
  * telling somebody mid-sequence which of the two doors they walked through, and the pair
  * that must not read alike is *Join* against *Run*.
  *
- * ⚠️ **The seat step names the game only when nothing has named it yet**, which is the
- * one place a `Naming` with two fields earns its keep. Arriving here from a row, the game
- * was named on the row and again in the title of the step before, so a third mention is
- * noise — and that path's copy is byte-identical to what it has always been. Arriving
- * here from a typed code, *nothing on screen has ever said which game this is*: the old
- * card said it in a line under the code field, and saying it here instead says it later
- * and better, immediately before the seat is committed to. It falls back to the row's
- * sentence if both names are somehow absent, which is unreachable — this step does not
- * render until a code has resolved — and is the right way round anyway: a heading with a
- * hole where a name should be is worse than a heading that says one thing less.
+ * ⚠️ **The seat step names the game whenever the game it is about is not the one the row
+ * named**, which is the one place a `Naming` with two fields earns its keep. Two ways for
+ * that to be true, and they arrive from opposite directions:
+ *
+ * - **No row at all.** Nothing on screen has ever said which game this is — the old
+ *   *Join with a code* card said it in a line under the code field, and saying it here
+ *   instead says it later and better, immediately before the seat is committed to.
+ * - **A row that was overridden.** `JoinCodeStep`'s wrong-game escape hatch continues
+ *   with the game the *code* opened rather than the game the row claimed, so the row is
+ *   no longer what this dialog is about. Without this, somebody who took that way out
+ *   would pick a seat under a header still implying the row they clicked — which is
+ *   precisely the confusion the escape hatch was built to end, reappearing one screen
+ *   later.
+ *
+ * **One rule covers both, and it is a comparison rather than a null test.** Print
+ * `opened` when there is an `opened` and it differs from `row`. The no-row case satisfies
+ * that because `row` is null; the override case satisfies it because the two names are
+ * genuinely different games' names. Arriving normally from a row, the two strings are
+ * equal and the line stays away — that path's copy is byte-identical to what it has always
+ * been, which is the property worth keeping, since the game was already named on the row
+ * and again in the title of the step before.
+ *
+ * ⚠️ **This compares names, and that is safe here for the one reason it is never safe in
+ * `verdictOf`.** Two games may share a title, so an override between same-named games
+ * leaves this saying nothing extra — and *saying nothing extra is right*, because the
+ * string it would print is the string already above it. Nothing is decided by the
+ * comparison: the identity question was settled by `_id` one step earlier, and all that
+ * hangs on this is whether a heading repeats a word. The `_id` needed to be exact and this
+ * needs only to be about the *text*, which is why widening `resolvedGame` to carry an id
+ * for the sake of it would be precision bought for a decision that has no use for any.
+ *
+ * The `opened !== null` half also keeps the fallback the right way round for the
+ * unreachable case where both names are absent — this step does not render until a code
+ * has resolved, and a heading with a hole where a name should be is worse than a heading
+ * that says one thing less.
  */
 function promptFor(door: Door, step: StepKind, naming: Naming): Prompt {
   switch (step) {
@@ -497,7 +534,7 @@ function promptFor(door: Door, step: StepKind, naming: Naming): Prompt {
       return {
         title: 'Which seat is yours?',
         description:
-          naming.row === null && naming.opened !== null
+          naming.opened !== null && naming.opened !== naming.row
             ? `Joining ${naming.opened}. Use the same name as last time and your character comes back with you.`
             : 'Use the same name as last time and your character comes back with you.',
       }

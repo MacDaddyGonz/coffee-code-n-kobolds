@@ -42,8 +42,27 @@ export type CodeVerdict =
   /** Complete, and the lookup is in flight. */
   | { kind: 'checking' }
   | { kind: 'noSuchGame' }
-  /** A real game, but not the one whose row was clicked. */
-  | { kind: 'wrongGame' }
+  /**
+   * A real game, but not the one whose row was clicked — and **it carries the game the
+   * code did open**.
+   *
+   * ⚠️ **The payload is here because the refusal was correct and was still a dead
+   * end.** A DM holding a perfectly good code for their own game found it was not on
+   * the landing page at all — the list is capped at thirty rows and theirs had aged off
+   * the end — so the only doors on screen belonged to other people's games. They
+   * clicked the one they recognised the creator of, pasted their code, and were told
+   * *that code is not for this game*: true, and the least useful true sentence
+   * available. It says what is not the case and nothing about what is, while
+   * `games.getByCode` had already resolved the game that code opens and this arm was
+   * throwing it away. The one fact that dissolves the confusion was in hand and being
+   * withheld.
+   *
+   * So it travels. The `name` is what lets the message say which game the code opens;
+   * the `code` is the **server's** spelling of it, so a caller offering to go there
+   * instead has the value it would navigate with rather than the one somebody typed —
+   * the same reason `ok` carries `resolved.code` and not `typed`.
+   */
+  | { kind: 'wrongGame'; opened: { code: string; name: string } }
   /** Verified. `code` is the **server's** spelling of it. */
   | { kind: 'ok'; code: string }
 
@@ -59,6 +78,16 @@ export type CodeVerdict =
  * a name comparison would wave it through and drop somebody into a stranger's game
  * that looked exactly like the one they meant. `joinDoor.test.ts` pins that case
  * specifically, because it is the one an innocent-looking simplification breaks.
+ *
+ * ⚠️ **The refusal now names the game the code opens, and that is not the same thing as
+ * consulting the name.** The `wrongGame` arm carries `resolved.name` so the sentence
+ * under the field can say *which* game was reached, but the decision above is `!==` on
+ * two ids and reads no name at all — the payload is assembled after the comparison has
+ * already gone against the row. Two games called *Tomb of the Coffee Lich* still
+ * produce a refusal that prints that title twice, once in the row above and once in the
+ * message, and the test that pins the same-name case pins the sentence too, because a
+ * message built out of a name is exactly the change that makes somebody wonder whether
+ * the comparison could be built out of one as well. It cannot.
  *
  * ⚠️ **`expectedGameId` may be `null`, and that is a distinct legitimate case rather
  * than a hole in the paragraph above.** The comparison exists because a row plus a
@@ -80,16 +109,20 @@ export type CodeVerdict =
  * server's spelling out of here is what makes it impossible for a caller to reach
  * for the other one by accident, since the typed string is not in the result at all.
  *
- * `resolved` is deliberately a structural `{ _id, code }` rather than the query's
- * `PublicGame`: this function needs two fields, and asking for the whole document
- * would drag a Convex `FunctionReturnType` into the test for no gain.
+ * `resolved` is deliberately a structural `{ _id, code, name }` rather than the query's
+ * `PublicGame`: this function needs three fields, and asking for the whole document
+ * would drag a Convex `FunctionReturnType` into the test for no gain. It grew from two
+ * to three when the refusal started naming what it refused, and the reason to keep it
+ * structural got stronger rather than weaker on the way — the point of listing the
+ * fields is that adding a fourth is a decision somebody makes here, in a file with no
+ * Convex behind it, rather than something a payload quietly brings with it.
  */
 export function verdictOf(args: {
   typed: string
   /** The clicked row's game, or `null` when a code was typed with no row behind it. */
   expectedGameId: Id<'games'> | null
   /** `undefined` = in flight, `null` = no such game. Structural so the test needs no Convex. */
-  resolved: { _id: Id<'games'>; code: string } | null | undefined
+  resolved: { _id: Id<'games'>; code: string; name: string } | null | undefined
 }): CodeVerdict {
   const { typed, expectedGameId, resolved } = args
 
@@ -108,7 +141,12 @@ export function verdictOf(args: {
   // which is the only one that makes the comparison inapplicable. Ordering them this
   // way round is what keeps a bad code answering `noSuchGame` for a code-only join
   // rather than falling straight through to `ok`.
-  if (expectedGameId !== null && resolved._id !== expectedGameId) return { kind: 'wrongGame' }
+  // The comparison is two ids. The payload is assembled *after* it has already gone
+  // against the row, out of the document the comparison rejected — so what the caller
+  // gets is "here is the game you actually reached", never an input to the decision.
+  if (expectedGameId !== null && resolved._id !== expectedGameId) {
+    return { kind: 'wrongGame', opened: { code: resolved.code, name: resolved.name } }
+  }
 
   return { kind: 'ok', code: resolved.code }
 }
@@ -133,6 +171,21 @@ const CHECKING_MESSAGE = 'Checking that code…'
  * the wording be asserted at all, and the wrong-game sentence is the one worth
  * asserting: it is the only message on this screen that a reader would otherwise
  * assume said "no such game".
+ *
+ * ⚠️ **The wrong-game sentence is the only one built out of data**, and the reason is the
+ * dead end that arm's own docblock describes. The wording it replaced — *that code is not
+ * for this game* — was a correct refusal that read as *your code is wrong*, because it
+ * named the thing that was not true and nothing that was. Naming the game the code opens
+ * turns the refusal into an orientation: the same sentence both explains the refusal and
+ * answers the question the person was actually asking, which is *where does my code go,
+ * then?*
+ *
+ * Note what it deliberately does not say. It does not tell anybody the row they clicked
+ * was the mistake, because it may not have been — a code for a game that has aged off the
+ * capped list and a code pasted into the wrong row produce the identical refusal, and this
+ * function cannot tell them apart. Reporting the fact and letting the reader draw the
+ * conclusion is the only honest shape available, and it happens to be the one that works
+ * for both.
  */
 export function verdictMessage(verdict: CodeVerdict): string | null {
   switch (verdict.kind) {
@@ -141,7 +194,7 @@ export function verdictMessage(verdict: CodeVerdict): string | null {
     case 'noSuchGame':
       return 'No game with that code.'
     case 'wrongGame':
-      return 'That code is not for this game.'
+      return `That code opens ${verdict.opened.name}, not this game.`
     case 'incomplete':
     case 'ok':
       return null
