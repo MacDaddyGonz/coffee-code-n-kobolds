@@ -9,9 +9,9 @@ import { debounce } from '@/lib/throttle'
  *
  * It is `CharacterSheetEditor`'s ability grid and nothing more arbitrary than that:
  * six ability scores, each with a save column and a derived bonus beside it, do not
- * fold. The number is the same 576 pixels as the `sm:max-w-xl` the drawer already
- * uses for the identical reason, so the sheet is the same shape in a tab as it is in
- * `CharacterSheetDrawer`.
+ * fold. The number was arrived at as the `sm:max-w-xl` of the slide-out drawer the
+ * editor used to be mounted in; that drawer is gone and this is now the only place the
+ * measurement is stated, which is the right number of places for it.
  */
 export const MIN_RIGHT_PANE = 576
 

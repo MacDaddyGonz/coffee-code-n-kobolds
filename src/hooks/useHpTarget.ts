@@ -25,10 +25,12 @@ export type HpTarget = {
  * and `useTokenSelection`'s documentation of *why* it is shaped the way it is is
  * most of what that file is worth. Twenty lines of state is the cheaper copy.
  *
- * The condition differs too, and that difference is a bug fix in itself:
- * `canEditHp` has no layer clause where `canMove` requires the player layer, so a
- * hero the DM has moved onto the DM layer has hit points their own player may
- * still edit. Deriving the editor from the selection made those unreachable.
+ * The condition differs too, and that difference is a bug fix in itself: hit points
+ * follow the *character*, so `canEditHp` is true for the player playing it whatever
+ * the token is doing, where `canMove` asks only whether this seat is one of the
+ * token's controllers. A hero the DM has moved onto their own layer therefore has
+ * hit points their player may still edit and a coin they may not pick up, and
+ * deriving the editor from the selection made exactly those unreachable.
  */
 export function useHpTarget(tokens: BoardToken[]): HpTarget {
   const [hpTokenId, setHpTokenId] = useState<Id<'tokens'> | null>(null)

@@ -5,16 +5,25 @@
 // shadcn calls a slide-out drawer a "Sheet". This application's whole subject
 // matter is *character sheets*. So `Sheet` here means the drawer and nothing else,
 // and every domain component that renders one is named `CharacterSheet*` —
-// `CharacterSheetDrawer`, `CharacterSheetView`, `CharacterSheetEditor` — so that a
-// reader is never left wondering which sense of the word an identifier is in. The
-// primitives below keep shadcn's names on purpose rather than being renamed to
-// something like `Drawer`: the day this set is updated from upstream, a file that
-// has quietly diverged in naming is a merge nobody can review.
+// `CharacterSheetView`, `CharacterSheetEditor` — so that a reader is never left
+// wondering which sense of the word an identifier is in. The primitives below keep
+// shadcn's names on purpose rather than being renamed to something like `Drawer`:
+// the day this set is updated from upstream, a file that has quietly diverged in
+// naming is a merge nobody can review.
 //
 // Built on Radix's Dialog, exactly as ui/dialog.tsx is, and deliberately as close a
 // sibling to it as the behaviour allows — same import style, same `data-slot`
 // values, same close button. The differences are that this one is pinned to an edge
 // and slides, and that the content is a scrolling column rather than a centred box.
+//
+// ⚠️ **Nothing in this application calls it any more.** Every panel that used to slide
+// over the board is a tab in the persistent right-hand panel, and the last drawer —
+// `CharacterSheetDrawer`, which put a character sheet over the map — went with the DM's
+// old sub-tabs. The file stays because it is an unmodified part of the shadcn set rather
+// than something this repo wrote, and deleting one member of a set that is updated as a
+// set makes the next update a merge with a hole in it. Treat it as available rather than
+// as in use: a reader who finds a `<Sheet>` in a diff should ask why the thing being
+// built is not a tab.
 
 import * as React from "react"
 import { Dialog as SheetPrimitive } from "radix-ui"
@@ -67,20 +76,20 @@ function SheetOverlay({
  * left out here rather than carried unused: an untested code path in a shared
  * primitive is worse than an absent one.
  *
- * ⚠️ **Since the DM's tools became a tab in a persistent right-hand panel, `left` is
- * the only side with a caller** — `CharacterSheetDrawer`, which is pinned there
- * precisely because that panel owns the right-hand edge of the screen. So the
- * argument above now points at `right` too, and it is worth answering rather than
- * leaving it standing over a line it would delete.
+ * ⚠️ **Neither side has a caller any longer.** This used to say `left` was the only
+ * one, naming the drawer that put a character sheet over the map; that drawer has been
+ * deleted along with the DM sub-tabs it opened from, so the sentence would now be a
+ * claim about a component that does not exist. Both entries are kept for the reason the
+ * file header gives — an unmodified member of the shadcn set is cheaper to keep than to
+ * re-add — and the argument above still says why top and bottom are not here.
  *
- * **`right` stays, and the difference from top and bottom is that it is the
- * *default*.** `SheetContent`'s signature says `side = "right"`, matching upstream,
- * so removing the entry does not remove a code path — it forces the default to become
- * `left`, which is a silent change to what every future `<SheetContent>` written
- * without a side does, in a primitive this file's opening comment says is kept close
- * to upstream so that the next update from it is a merge somebody can review. Top and
- * bottom could be dropped for free because nothing could reach them by accident. This
- * one is reached by omission, which is the opposite property.
+ * **If one of the two ever had to go it would be `left`, not `right`, and that is the
+ * non-obvious half.** `SheetContent`'s signature says `side = "right"`, matching
+ * upstream, so removing `right` would not remove a code path — it would force the
+ * default to become `left`, silently changing what every future `<SheetContent>`
+ * written without a side does. Top and bottom could be dropped for free because nothing
+ * could reach them by accident. `right` is reached by omission, which is the opposite
+ * property.
  */
 const SIDE_CLASSES = {
   right:

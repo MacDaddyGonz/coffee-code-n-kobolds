@@ -133,11 +133,12 @@ export function Board({
    * Selecting a token is how you pick it up to move it, and that is not a request
    * to edit its hit points: the editor used to appear under a creature the moment
    * you touched it, over the squares you were dragging towards. Worse, it made the
-   * editor unreachable for a case that is entirely legitimate — `canEditHp` has no
-   * layer clause where `canMove` requires the player layer, so a hero the DM has
-   * moved onto the DM layer could not be selected by their own player and so could
-   * not have their hit points adjusted from the board at all. Asking the right
-   * question closes that without a special case for it.
+   * editor unreachable for a case that is entirely legitimate — hit points follow the
+   * character, so `canEditHp` is true for the player playing it, where `canMove` asks
+   * whether this seat is one of the token's controllers. A hero the DM has moved onto
+   * their own layer is therefore one its player may heal and may not drag, and while
+   * the editor hung off the selection they could do neither. Asking the right question
+   * closes that without a special case for it.
    *
    * Handed the **smoothed** array, deliberately. The board before interpolation is
    * the same creature but not the same position, so anchoring to it would leave the

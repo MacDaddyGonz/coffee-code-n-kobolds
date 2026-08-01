@@ -1,11 +1,8 @@
 import type { ReactElement } from "react";
 
-import { DmNpcPanel } from "@/components/board/dm/DmNpcPanel";
-import { DmSheetsPanel } from "@/components/board/dm/DmSheetsPanel";
 import { MapSetupPanel } from "@/components/board/dm/MapSetupPanel";
 import { StartGameButton } from "@/components/board/dm/StartGameButton";
 import { TabBody } from "@/components/shell/TabPane";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { PublicGame } from "@/hooks/useSeat";
 
 export type DmToolsTabProps = {
@@ -17,9 +14,9 @@ export type DmToolsTabProps = {
 };
 
 /**
- * The DM's tools: Map, Sheets and NPCs, plus the switch that starts the game.
+ * The DM's tools: the map, and the switch that starts the game.
  *
- * The three tabs are the ones that used to float over the canvas behind a *DM tools*
+ * These panels are the ones that used to float over the canvas behind a *DM tools*
  * button, moved here whole rather than rebuilt. Three things went away in the move
  * and each is worth naming, because each was a workaround for being over the map:
  * the `pointer-events-none` wrapper that stopped the reserved space from becoming a
@@ -27,7 +24,18 @@ export type DmToolsTabProps = {
  * A panel in its own column swallows no clicks meant for a token, needs nothing
  * behind it to show through, and is not in the way when it is open.
  *
- * **Start lives under Map**, next to the map it refuses to start without, and it is
+ * **It had a Sheets sub-tab and an NPCs sub-tab, and both are gone rather than moved
+ * twice.** They were two views of one list, three clicks inside a tab named for the DM's
+ * plumbing — and the second of them held the DM's most-used act, adding a creature. That
+ * list is now the selector at the top of the Sheets tab, beside the sheet it selects, and
+ * all three creation routes are with it. What is left here is genuinely plumbing.
+ *
+ * **One panel, so no tab strip.** A `TabsList` with a single trigger is a control that
+ * cannot do anything, and it would read as a promise that there is something else behind
+ * it. The tab keeps its name: the DM-tooling milestone puts sub-tabs back, and renaming a
+ * tab twice teaches the group nothing.
+ *
+ * **Start lives under the map**, next to the thing it refuses to start without, and it is
  * the same button that used to be in the lobby: `games.start` is what turns the whole
  * table over, and *Stop the game* is what turns it back. Nothing is lost either
  * way — scenes, tokens and positions all survive.
@@ -37,44 +45,22 @@ export type DmToolsTabProps = {
  * server-side (CLAUDE.md invariant 7), so a player who forced this on would get a
  * panel of controls and a refusal from each one.
  */
-export function DmToolsTab({
-  code,
-  dmCode,
-  game,
-}: DmToolsTabProps): ReactElement {
+export function DmToolsTab({ code, dmCode, game }: DmToolsTabProps): ReactElement {
   return (
-    // One scroll container for the whole tab, with the inner strip sticky at the top
-    // of it: the calibrator, both dialogs' triggers and a party of six with their
-    // monsters are together taller than any pane, and the way back to the other tab
-    // must not scroll off above them.
+    // One scroll container for the whole tab: the calibrator and the token dialog's
+    // trigger are together taller than any pane on a small window.
     <TabBody>
-      <Tabs defaultValue="map">
-        <TabsList className="sticky top-0 z-10 w-full">
-          <TabsTrigger value="map">Map</TabsTrigger>
-          <TabsTrigger value="sheets">Sheets</TabsTrigger>
-          <TabsTrigger value="npcs">NPCs</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="map" className="flex flex-col gap-3">
-          <MapSetupPanel code={code} dmCode={dmCode} />
-          <div className="flex justify-end">
-            <StartGameButton
-              code={code}
-              dmCode={dmCode}
-              status={game.status}
-              hasScene={game.activeSceneId !== null}
-            />
-          </div>
-        </TabsContent>
-
-        <TabsContent value="sheets">
-          <DmSheetsPanel code={code} dmCode={dmCode} />
-        </TabsContent>
-
-        <TabsContent value="npcs">
-          <DmNpcPanel code={code} dmCode={dmCode} />
-        </TabsContent>
-      </Tabs>
+      <div className="flex flex-col gap-3">
+        <MapSetupPanel code={code} dmCode={dmCode} />
+        <div className="flex justify-end">
+          <StartGameButton
+            code={code}
+            dmCode={dmCode}
+            status={game.status}
+            hasScene={game.activeSceneId !== null}
+          />
+        </div>
+      </div>
     </TabBody>
   );
 }

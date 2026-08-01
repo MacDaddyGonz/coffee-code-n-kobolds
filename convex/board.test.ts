@@ -64,8 +64,19 @@ async function makeSeat(t: Harness, code: string, displayName: string) {
   return playerId
 }
 
-async function makeCharacter(t: Harness, code: string, name: string) {
-  const { characterId } = await t.mutation(api.characters.create, { code, name })
+/**
+ * Takes the whole game rather than its join code, because **creating a character is
+ * the DM's on every path now** and the fixture therefore needs both codes.
+ *
+ * Every call site already had the object in hand. This suite is about the board; the
+ * create gate itself is asserted in `characters.test.ts`.
+ */
+async function makeCharacter(t: Harness, game: { code: string; dmCode: string }, name: string) {
+  const { characterId } = await t.mutation(api.characters.create, {
+    code: game.code,
+    dmCode: game.dmCode,
+    name,
+  })
   return characterId
 }
 
@@ -736,7 +747,7 @@ describe('who may move a token', () => {
     await calibrate(t, game.code, game.dmCode, sceneId)
     const ana = await makeSeat(t, game.code, 'Ana')
     const ben = await makeSeat(t, game.code, 'Ben')
-    const thorin = await makeCharacter(t, game.code, 'Thorin')
+    const thorin = await makeCharacter(t, game, 'Thorin')
     await t.mutation(api.characters.claim, { code: game.code, playerId: ana, characterId: thorin })
     const tokenId = await addToken(t, game.code, game.dmCode, sceneId, {
       name: 'Thorin',
@@ -788,7 +799,7 @@ describe('who may move a token', () => {
     const sceneId = await makeScene(t, game.code, game.dmCode)
     await calibrate(t, game.code, game.dmCode, sceneId)
     const ana = await makeSeat(t, game.code, 'Ana')
-    const thorin = await makeCharacter(t, game.code, 'Thorin')
+    const thorin = await makeCharacter(t, game, 'Thorin')
     await t.mutation(api.characters.claim, { code: game.code, playerId: ana, characterId: thorin })
     const tokenId = await addToken(t, game.code, game.dmCode, sceneId, {
       name: 'Thorin',
@@ -856,7 +867,7 @@ describe('who may move a token', () => {
     await calibrate(t, game.code, game.dmCode, sceneId)
     const ana = await makeSeat(t, game.code, 'Ana')
     const ben = await makeSeat(t, game.code, 'Ben')
-    const thorin = await makeCharacter(t, game.code, 'Thorin')
+    const thorin = await makeCharacter(t, game, 'Thorin')
     await t.mutation(api.characters.claim, { code: game.code, playerId: ana, characterId: thorin })
     const tokenId = await addToken(t, game.code, game.dmCode, sceneId, {
       name: 'Thorin',
@@ -925,7 +936,7 @@ describe('who may move a token', () => {
     const sceneId = await makeScene(t, game.code, game.dmCode)
     await calibrate(t, game.code, game.dmCode, sceneId)
     const ana = await makeSeat(t, game.code, 'Ana')
-    const thorin = await makeCharacter(t, game.code, 'Thorin')
+    const thorin = await makeCharacter(t, game, 'Thorin')
     await t.mutation(api.characters.claim, { code: game.code, playerId: ana, characterId: thorin })
     const tokenId = await addToken(t, game.code, game.dmCode, sceneId, {
       name: 'Thorin',
@@ -1128,7 +1139,7 @@ describe('board.addToken', () => {
     const game = await makeGame(t)
     const sceneId = await makeScene(t, game.code, game.dmCode)
     const other = await makeGame(t, 'Other Table', 'Sam')
-    const theirs = await makeCharacter(t, other.code, 'Their Hero')
+    const theirs = await makeCharacter(t, other, 'Their Hero')
 
     await expectKind(
       addToken(t, game.code, game.dmCode, sceneId, { characterId: theirs }),
@@ -1461,6 +1472,440 @@ describe('games.start and games.returnToLobby', () => {
     expect(await placement(t, fixture.sceneId, fixture.openToken)).toEqual(before)
     expect((await t.query(api.games.getByCode, { code: fixture.code }))?.activeSceneId).toBe(
       fixture.sceneId,
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Milestone 7: controllers — who may move a token, and where the answer comes from
+// ---------------------------------------------------------------------------
+//
+// The payload now carries the control rule's **answer** as well as its **input**, so
+// the browser derives neither. That is the repair ADR 0005 predicted for `useBoard`'s
+// token → character → my-character walk, and it only pays off if the two fields really
+// are different facts — a `grantedPlayerIds` that had quietly become a copy of
+// `controllerIds` would let the DM's dialog untick the seat playing the character, and
+// nothing about the types would notice.
+//
+// So every test below asserts both arrays, and the interesting cases are the ones where
+// they differ.
+
+/** A board with one seat, one hero it holds, and a loose token attached to nothing. */
+async function controlFixture(t: Harness) {
+  const game = await makeGame(t)
+  const sceneId = await makeScene(t, game.code, game.dmCode)
+  await calibrate(t, game.code, game.dmCode, sceneId)
+
+  const ana = await makeSeat(t, game.code, 'Ana')
+  const ben = await makeSeat(t, game.code, 'Ben')
+  const thorin = await makeCharacter(t, game, 'Thorin')
+
+  const heroToken = await addToken(t, game.code, game.dmCode, sceneId, {
+    name: 'Thorin',
+    characterId: thorin,
+    x: 300,
+    y: 300,
+  })
+  const looseToken = await addToken(t, game.code, game.dmCode, sceneId, {
+    name: 'Loose Barrel',
+    x: 900,
+    y: 300,
+  })
+
+  return { ...game, sceneId, ana, ben, thorin, heroToken, looseToken }
+}
+
+type ControlFixture = Awaited<ReturnType<typeof controlFixture>>
+
+async function setControllers(
+  t: Harness,
+  fixture: { code: string; dmCode: string },
+  tokenId: Id<'tokens'>,
+  playerIds: Id<'players'>[],
+) {
+  await t.mutation(api.board.setControllers, {
+    code: fixture.code,
+    dmCode: fixture.dmCode,
+    tokenId,
+    playerIds,
+  })
+}
+
+/** One token off the real query, by id, as a player's client would receive it. */
+async function tokenPayload(t: Harness, fixture: ControlFixture, tokenId: Id<'tokens'>) {
+  const tokens = await t.query(api.board.tokens, { code: fixture.code })
+  const token = tokens.find((row) => row._id === tokenId)
+  if (!token) throw new Error(`token ${tokenId} is not in the player payload`)
+  return token
+}
+
+describe('board.tokens carries both halves of the control rule', () => {
+  /**
+   * ⚠️ **ZERO GRANTS AND NO CLAIM IS THE EMPTY ARRAY, WHICH MEANS THE DM ALONE.**
+   *
+   * This is the correction Milestone 2 shipped after the first real session, restated as
+   * a payload assertion. Control used to be *assumed* for a token with no character
+   * attached, on the reasoning that a creature nobody is playing should still be
+   * draggable — and since every NPC the DM adds has no character attached, the whole
+   * table could shove the monsters around. An unattached token is the DM's, and the DM is
+   * never a member of either array: being the DM is holding the DM code (invariant 7),
+   * and a seat id in a list is not that.
+   */
+  test('a token with no grant and no claim reports both arrays empty', async () => {
+    const t = harness()
+    const fixture = await controlFixture(t)
+
+    const loose = await tokenPayload(t, fixture, fixture.looseToken)
+    expect(loose.controllerIds).toEqual([])
+    expect(loose.grantedPlayerIds).toEqual([])
+
+    // Unclaimed but *attached* is the same answer: a hero nobody has picked up is the
+    // DM's, exactly as a barrel is.
+    const hero = await tokenPayload(t, fixture, fixture.heroToken)
+    expect(hero.controllerIds).toEqual([])
+    expect(hero.grantedPlayerIds).toEqual([])
+
+    // Nothing is stored, either — the derived default is derived rather than written.
+    expect((await tokenRow(t, fixture.looseToken))?.controllerIds).toBeUndefined()
+  })
+
+  /**
+   * ⚠️ **THE CASE WHERE THE TWO FIELDS DIFFER, WHICH IS THE WHOLE REASON THERE ARE TWO.**
+   *
+   * The seat playing the token's character is in `controllerIds` and absent from
+   * `grantedPlayerIds`, because a claim lives on the seat (ADR 0002, seat → character and
+   * never the reverse) and is composed into the effective set rather than written into
+   * the stored one. That difference *is* the derived half, and it is what lets the DM's
+   * dialog render "plays this character, always in control" as checked-and-disabled
+   * honestly instead of subtracting the holder back out in the browser.
+   */
+  test('a claim puts the holder in controllerIds and never in grantedPlayerIds', async () => {
+    const t = harness()
+    const fixture = await controlFixture(t)
+    const { code, ana, thorin } = fixture
+
+    await t.mutation(api.characters.claim, { code, playerId: ana, characterId: thorin })
+
+    const hero = await tokenPayload(t, fixture, fixture.heroToken)
+    expect(hero.controllerIds).toEqual([ana])
+    expect(hero.grantedPlayerIds).toEqual([])
+    // Nothing was written to the token to make that true.
+    expect((await tokenRow(t, fixture.heroToken))?.controllerIds).toBeUndefined()
+
+    // Releasing takes it away again, because the claim was the only thing holding it.
+    await t.mutation(api.characters.release, { code, playerId: ana })
+    expect((await tokenPayload(t, fixture, fixture.heroToken)).controllerIds).toEqual([])
+  })
+
+  /** A grant is stored verbatim, and appears in both arrays because it is in both. */
+  test('a grant appears in grantedPlayerIds and in controllerIds', async () => {
+    const t = harness()
+    const fixture = await controlFixture(t)
+
+    await setControllers(t, fixture, fixture.looseToken, [fixture.ben])
+
+    const loose = await tokenPayload(t, fixture, fixture.looseToken)
+    expect(loose.grantedPlayerIds).toEqual([fixture.ben])
+    expect(loose.controllerIds).toEqual([fixture.ben])
+    expect((await tokenRow(t, fixture.looseToken))?.controllerIds).toEqual([fixture.ben])
+  })
+
+  /**
+   * Holder and grant together, which is the state the DM's dialog actually renders: two
+   * seats in `controllerIds` and one of them in `grantedPlayerIds`.
+   *
+   * And the union really is a union. Granting the token to the very seat already playing
+   * its character is an ordinary thing to click, and a duplicate id would reach the
+   * dialog as one player with two checkboxes.
+   */
+  test('a holder and a grant compose, and granting the holder does not double them up', async () => {
+    const t = harness()
+    const fixture = await controlFixture(t)
+    const { code, ana, ben, thorin } = fixture
+    await t.mutation(api.characters.claim, { code, playerId: ana, characterId: thorin })
+
+    await setControllers(t, fixture, fixture.heroToken, [ben])
+    const both = await tokenPayload(t, fixture, fixture.heroToken)
+    expect([...both.controllerIds].sort()).toEqual([ana, ben].sort())
+    expect(both.grantedPlayerIds).toEqual([ben])
+
+    await setControllers(t, fixture, fixture.heroToken, [ana, ben, ana])
+    const deduped = await tokenPayload(t, fixture, fixture.heroToken)
+    expect([...deduped.controllerIds].sort()).toEqual([ana, ben].sort())
+    expect([...deduped.grantedPlayerIds].sort()).toEqual([ana, ben].sort())
+  })
+})
+
+describe('a grant is what lets a player move a token', () => {
+  /**
+   * The write path and the payload go through the one `effectiveControllersOf`, so what
+   * the browser drew as draggable and what the server accepts are one function rather
+   * than two that agreed when they were written. Asserted from both ends here: the
+   * payload says Ben may move it, and the mutation lets him.
+   */
+  test('the granted seat may move an unattached token and an ungranted one may not', async () => {
+    const t = harness()
+    const fixture = await controlFixture(t)
+    const { code, sceneId, ana, ben, looseToken } = fixture
+
+    await setControllers(t, fixture, looseToken, [ben])
+    expect((await tokenPayload(t, fixture, looseToken)).controllerIds).toEqual([ben])
+
+    await t.mutation(api.board.moveToken, {
+      code,
+      sceneId,
+      tokenId: looseToken,
+      x: 1200,
+      y: 300,
+      settle: true,
+      playerId: ben,
+    })
+    expect(await placement(t, sceneId, looseToken)).toMatchObject(
+      snapToGrid({ x: 1200, y: 300 }, GRID, 1),
+    )
+
+    // Ana was not granted it, and the refusal is the same `TokenNotYours` a
+    // player-layer token has always given — one message for every way of not
+    // controlling it.
+    const before = await placement(t, sceneId, looseToken)
+    await expectKind(
+      t.mutation(api.board.moveToken, {
+        code,
+        sceneId,
+        tokenId: looseToken,
+        x: 300,
+        y: 900,
+        settle: true,
+        playerId: ana,
+      }),
+      'TokenNotYours',
+    )
+    expect(await placement(t, sceneId, looseToken)).toMatchObject({ x: before!.x, y: before!.y })
+  })
+
+  /**
+   * ⚠️ **A grant on a DM-layer token buys nothing, and the refusal is `TokenNotFound`
+   * rather than `TokenNotYours`.**
+   *
+   * The layer filter runs first and keys off the DM code alone — `maySee` consults
+   * nothing else and must not — so a granted seat cannot even tell that the token
+   * exists. Telling the two refusals apart would be an existence oracle for the DM
+   * layer, which is the reasoning `TOKEN_NOT_FOUND` is one shared constant for, and the
+   * grant does not get to weaken it.
+   */
+  test('a grant on a DM-layer token still refuses, and refuses as unfindable', async () => {
+    const t = harness()
+    const fixture = await boardFixture(t)
+    const ana = await makeSeat(t, fixture.code, 'Ana')
+
+    await setControllers(t, fixture, fixture.secretToken, [ana])
+    expect((await tokenRow(t, fixture.secretToken))?.controllerIds).toEqual([ana])
+
+    // Absent from the payload entirely: the grant did not put the coin on their board.
+    const asPlayer = await t.query(api.board.tokens, { code: fixture.code })
+    expect(asPlayer.map((token) => token._id)).toEqual([fixture.openToken])
+
+    const refusal = await refusalOf(
+      t.mutation(api.board.moveToken, {
+        code: fixture.code,
+        sceneId: fixture.sceneId,
+        tokenId: fixture.secretToken,
+        x: 400,
+        y: 400,
+        settle: true,
+        playerId: ana,
+      }),
+    )
+    expect(refusal.kind).toBe('TokenNotFound')
+    // Identical, message included, to the refusal for a token that never existed.
+    expect(
+      await refusalOf(
+        t.mutation(api.board.moveToken, {
+          code: fixture.code,
+          sceneId: fixture.sceneId,
+          tokenId: await vanishedTokenId(t),
+          x: 400,
+          y: 400,
+          settle: true,
+          playerId: ana,
+        }),
+      ),
+    ).toEqual(refusal)
+  })
+})
+
+describe('board.setControllers is the DM’s alone', () => {
+  test('refuses a wrong, empty or foreign DM code and writes nothing', async () => {
+    const t = harness()
+    const fixture = await controlFixture(t)
+    const other = await makeGame(t, 'Other Table', 'Sam')
+
+    for (const dmCode of [twiddle(fixture.dmCode), '', '   ', other.dmCode]) {
+      await expectKind(
+        t.mutation(api.board.setControllers, {
+          code: fixture.code,
+          dmCode,
+          tokenId: fixture.looseToken,
+          playerIds: [fixture.ben],
+        }),
+        'NotDm',
+      )
+    }
+
+    expect((await tokenRow(t, fixture.looseToken))?.controllerIds).toBeUndefined()
+    expect((await tokenPayload(t, fixture, fixture.looseToken)).controllerIds).toEqual([])
+  })
+
+  /**
+   * ⚠️ **Every seat is checked against *this* game before any of it is written.**
+   *
+   * A stray seat id from another table would be a grant nothing in this game can render,
+   * name or revoke: the dialog builds its rows from `players.list`, so the id would show
+   * as a checkbox with no label, and `players.leave` sweeps by game, so it would never be
+   * cleaned up either. Asserted with a valid seat beside the foreign one, so the check is
+   * shown to reject the *request* rather than to have written the good half.
+   */
+  test('refuses a seat from another game, and writes neither id', async () => {
+    const t = harness()
+    const fixture = await controlFixture(t)
+    const other = await makeGame(t, 'Other Table', 'Sam')
+    const outsider = await makeSeat(t, other.code, 'Sam')
+
+    await expectKind(
+      t.mutation(api.board.setControllers, {
+        code: fixture.code,
+        dmCode: fixture.dmCode,
+        tokenId: fixture.looseToken,
+        playerIds: [fixture.ben, outsider],
+      }),
+      'PlayerNotFound',
+    )
+    expect((await tokenRow(t, fixture.looseToken))?.controllerIds).toBeUndefined()
+
+    // A fabricated seat that belongs to nobody is the same answer.
+    const vanished = await t.run(async (ctx) => {
+      const gameId = (await ctx.db.query('games').first())!._id
+      const playerId = await ctx.db.insert('players', {
+        gameId,
+        displayName: 'Ghost',
+        nameKey: 'ghost',
+        isDm: false,
+      })
+      await ctx.db.delete('players', playerId)
+      return playerId
+    })
+    await expectKind(
+      t.mutation(api.board.setControllers, {
+        code: fixture.code,
+        dmCode: fixture.dmCode,
+        tokenId: fixture.looseToken,
+        playerIds: [vanished],
+      }),
+      'PlayerNotFound',
+    )
+
+    // The control: the same call with only this game's seats lands.
+    await setControllers(t, fixture, fixture.looseToken, [fixture.ana, fixture.ben])
+    expect([...((await tokenRow(t, fixture.looseToken))?.controllerIds ?? [])].sort()).toEqual(
+      [fixture.ana, fixture.ben].sort(),
+    )
+  })
+
+  /** A token from another game is refused as unfindable, like every other board write. */
+  test('refuses a token from another game', async () => {
+    const t = harness()
+    const fixture = await controlFixture(t)
+    const other = await makeGame(t, 'Other Table', 'Sam')
+    const otherScene = await makeScene(t, other.code, other.dmCode, 'Their Map')
+    const theirToken = await addToken(t, other.code, other.dmCode, otherScene, { name: 'Theirs' })
+
+    await expectKind(
+      t.mutation(api.board.setControllers, {
+        code: fixture.code,
+        dmCode: fixture.dmCode,
+        tokenId: theirToken,
+        playerIds: [fixture.ben],
+      }),
+      'TokenNotFound',
+    )
+    expect((await tokenRow(t, theirToken))?.controllerIds).toBeUndefined()
+  })
+})
+
+describe('players.leave takes the seat’s grants with it', () => {
+  /**
+   * The same class of repair `detachCharacterFromTokens` performs when a character is
+   * deleted, and it is worth a test for the same reason: skipping it is quiet rather
+   * than loud. Seat ids are never reused — `players.join` inserts a fresh document (ADR
+   * 0003) — so a stale grant authorises nobody and simply accumulates, and the DM's
+   * dialog would render it as a row it cannot name.
+   *
+   * Two tokens and two seats, because the sweep is by game rather than by seat: the
+   * assertion that matters is that it took exactly one id off exactly the tokens that
+   * had it.
+   */
+  test('leaving strips that seat from every token and leaves the others alone', async () => {
+    const t = harness()
+    const fixture = await controlFixture(t)
+    const { code, ana, ben, heroToken, looseToken } = fixture
+
+    await setControllers(t, fixture, heroToken, [ana, ben])
+    await setControllers(t, fixture, looseToken, [ben])
+
+    await t.mutation(api.players.leave, { code, playerId: ben })
+
+    expect((await tokenRow(t, heroToken))?.controllerIds).toEqual([ana])
+    expect((await tokenRow(t, looseToken))?.controllerIds).toEqual([])
+    // And through the query, which is what the DM's dialog is actually reading.
+    expect((await tokenPayload(t, fixture, heroToken)).grantedPlayerIds).toEqual([ana])
+    expect((await tokenPayload(t, fixture, looseToken)).controllerIds).toEqual([])
+
+    // Ana is untouched and can still move what she was granted.
+    await t.mutation(api.board.moveToken, {
+      code,
+      sceneId: fixture.sceneId,
+      tokenId: heroToken,
+      x: 1120,
+      y: 560,
+      settle: true,
+      playerId: ana,
+    })
+    expect(await placement(t, fixture.sceneId, heroToken)).toMatchObject(
+      snapToGrid({ x: 1120, y: 560 }, GRID, 1),
+    )
+  })
+
+  /**
+   * Rejoining under the same name is a **new seat** (ADR 0003), so the grant does not
+   * come back — which is the honest consequence of ids not being reused, and worth
+   * pinning so nobody later "fixes" the sweep by keying grants on a display name.
+   *
+   * Contrast a *claim*, which does come back, because it is keyed on the character the
+   * seat picks up rather than on the seat id: the test two sections up asserts exactly
+   * that. The two behaviours differ for a reason and both are correct.
+   */
+  test('rejoining under the same name does not restore the grant', async () => {
+    const t = harness()
+    const fixture = await controlFixture(t)
+    const { code, ben, looseToken } = fixture
+
+    await setControllers(t, fixture, looseToken, [ben])
+    await t.mutation(api.players.leave, { code, playerId: ben })
+
+    const benAgain = await makeSeat(t, code, 'Ben')
+    expect(benAgain).not.toBe(ben)
+    expect((await tokenPayload(t, fixture, looseToken)).controllerIds).toEqual([])
+    await expectKind(
+      t.mutation(api.board.moveToken, {
+        code,
+        sceneId: fixture.sceneId,
+        tokenId: looseToken,
+        x: 300,
+        y: 900,
+        settle: true,
+        playerId: benAgain,
+      }),
+      'TokenNotYours',
     )
   })
 })

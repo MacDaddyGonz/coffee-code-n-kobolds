@@ -8,16 +8,16 @@ import { cn } from '@/lib/utils'
  * **Promoted out of `ui/sheet.tsx`, which opens with a warning against exactly the
  * import that used to be here.** `CharacterSheetEditor` reached for `SheetFooter` —
  * a *drawer* part, in a file whose first paragraph is about the two senses of the
- * word "sheet" — because the drawer was the only place the editor was ever mounted.
- * It now has two hosts: the Character tab in the shell's right-hand panel, and
- * `CharacterSheetDrawer`, which `DmCharacterSheet` still opens from a row of the DM's
- * lists. A layout part borrowed from one of two hosts is a part that describes the
- * host rather than the thing being laid out.
+ * word "sheet" — because a slide-out drawer was the only place the editor was ever
+ * mounted. That drawer has since gone: the editor's hosts are the tabs of the shell's
+ * right-hand panel, which are fixed-height columns already. A layout part borrowed from
+ * a host is a part that describes the host rather than the thing being laid out, and
+ * the borrowed one has now outlived the host it was borrowed from — which is the
+ * argument, demonstrated.
  *
  * So they are named for what the editor needs — a body and a footer — and the classes
- * are unchanged, which is what makes the drawer look identical after the move.
- * `ui/sheet.tsx` keeps its own `SheetFooter` for the drawer's use; this is not a
- * rename of that one.
+ * are unchanged. `ui/sheet.tsx` keeps its own `SheetFooter`; this is not a rename of
+ * that one.
  */
 
 /**

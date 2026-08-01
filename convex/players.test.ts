@@ -37,8 +37,20 @@ async function join(t: Harness, code: string, displayName: string) {
   return await t.mutation(api.players.join, { code, displayName })
 }
 
-async function addCharacter(t: Harness, code: string, name: string) {
-  const { characterId } = await t.mutation(api.characters.create, { code, name })
+/**
+ * Takes the whole game rather than its join code, because **creating a character is
+ * the DM's on every path now** and the fixture therefore needs both codes.
+ *
+ * Every call site already had the object in hand, so this is the cheap way to thread
+ * the DM code through. This suite is about seats; the gate itself is asserted in
+ * `characters.test.ts`.
+ */
+async function addCharacter(t: Harness, game: { code: string; dmCode: string }, name: string) {
+  const { characterId } = await t.mutation(api.characters.create, {
+    code: game.code,
+    dmCode: game.dmCode,
+    name,
+  })
   return characterId
 }
 
@@ -128,7 +140,7 @@ describe('players.join is idempotent on the normalised display name', () => {
     const t = harness()
     const game = await createGame(t)
     const sam = await join(t, game.code, 'Sam')
-    const grog = await addCharacter(t, game.code, 'Grog')
+    const grog = await addCharacter(t, game, 'Grog')
     await claim(t, game.code, sam.playerId, grog)
 
     const ada = await join(t, game.code, 'Ada')
@@ -223,8 +235,8 @@ describe('ADR 0002 — characters outlive every seat', () => {
 
     const mike = await join(t, game.code, 'Mike')
     const sam = await join(t, game.code, 'Sam')
-    const grog = await addCharacter(t, game.code, 'Grog')
-    const nessa = await addCharacter(t, game.code, 'Nessa')
+    const grog = await addCharacter(t, game, 'Grog')
+    const nessa = await addCharacter(t, game, 'Nessa')
     await claim(t, game.code, mike.playerId, grog)
     await claim(t, game.code, sam.playerId, nessa)
 
@@ -256,7 +268,7 @@ describe('ADR 0002 — characters outlive every seat', () => {
     const t = harness()
     const game = await createGame(t)
     const sam = await join(t, game.code, 'Sam')
-    const grog = await addCharacter(t, game.code, 'Grog')
+    const grog = await addCharacter(t, game, 'Grog')
     await claim(t, game.code, sam.playerId, grog)
 
     const ada = await join(t, game.code, 'Ada')
@@ -305,7 +317,7 @@ describe('players.list', () => {
     const game = await createGame(t)
     const sam = await join(t, game.code, 'Sam')
     await join(t, game.code, 'Ada')
-    const grog = await addCharacter(t, game.code, 'Grog')
+    const grog = await addCharacter(t, game, 'Grog')
     await claim(t, game.code, sam.playerId, grog)
 
     const roster = await t.query(api.players.list, { code: game.code })
@@ -346,7 +358,7 @@ describe('players.list', () => {
     const t = harness()
     const game = await createGame(t)
     const sam = await join(t, game.code, 'Sam')
-    const grog = await addCharacter(t, game.code, 'Grog')
+    const grog = await addCharacter(t, game, 'Grog')
     await claim(t, game.code, sam.playerId, grog)
 
     await t.mutation(api.characters.remove, {
@@ -378,7 +390,7 @@ describe('players.listNames', () => {
     const game = await createGame(t, 'Mike')
     const sam = await join(t, game.code, 'Sam')
     await join(t, game.code, 'Ada')
-    await claim(t, game.code, sam.playerId, await addCharacter(t, game.code, 'Grog'))
+    await claim(t, game.code, sam.playerId, await addCharacter(t, game, 'Grog'))
 
     const names = await t.query(api.players.listNames, { code: game.code })
     expect(names).toEqual([
@@ -394,7 +406,7 @@ describe('players.rename', () => {
     const t = harness()
     const game = await createGame(t)
     const sam = await join(t, game.code, 'Sam')
-    const grog = await addCharacter(t, game.code, 'Grog')
+    const grog = await addCharacter(t, game, 'Grog')
     await claim(t, game.code, sam.playerId, grog)
 
     const renamed = await t.mutation(api.players.rename, {
@@ -432,7 +444,7 @@ describe('players.rename', () => {
     const t = harness()
     const game = await createGame(t)
     const sam = await join(t, game.code, 'Sam')
-    const grog = await addCharacter(t, game.code, 'Grog')
+    const grog = await addCharacter(t, game, 'Grog')
     await claim(t, game.code, sam.playerId, grog)
     await t.mutation(api.players.rename, {
       code: game.code,
@@ -638,8 +650,8 @@ describe('players.leave', () => {
     const game = await createGame(t)
     const sam = await join(t, game.code, 'Sam')
     const ada = await join(t, game.code, 'Ada')
-    const grog = await addCharacter(t, game.code, 'Grog')
-    const nessa = await addCharacter(t, game.code, 'Nessa')
+    const grog = await addCharacter(t, game, 'Grog')
+    const nessa = await addCharacter(t, game, 'Nessa')
     await claim(t, game.code, sam.playerId, grog)
     await claim(t, game.code, ada.playerId, nessa)
 
@@ -726,8 +738,8 @@ describe('cross-game isolation', () => {
     expect(seatTwo.rejoined).toBe(false)
     expect(seatTwo.playerId).not.toBe(seatOne.playerId)
 
-    const grogOne = await addCharacter(t, one.code, 'Grog')
-    const grogTwo = await addCharacter(t, two.code, 'Grog')
+    const grogOne = await addCharacter(t, one, 'Grog')
+    const grogTwo = await addCharacter(t, two, 'Grog')
     await claim(t, one.code, seatOne.playerId, grogOne)
 
     expect(

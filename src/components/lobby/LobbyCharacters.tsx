@@ -6,12 +6,9 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import type { Dm } from '@/hooks/useDm'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
@@ -29,31 +26,33 @@ type LobbyCharactersProps = {
   dm: Dm
 }
 
-/** The characters in this game, in creation order, and who is playing each. */
+/**
+ * The characters in this game, in creation order, and who is playing each.
+ *
+ * **This card no longer creates one, and that is a rule rather than a tidy-up.**
+ * `characters.create` takes the DM code on every path, so the footer form that any seat
+ * could type into would now only ever be refused — a control that cannot succeed is worse
+ * than no control, because the refusal arrives from the network with nothing on screen
+ * explaining it. Creating is the DM's, from the Sheets tab; what happens here is a player
+ * picking up one of the characters the DM has made.
+ *
+ * The DM's per-row rename and delete stay. They are gated by the code in the same way and
+ * they are the two things worth being able to do from the lobby, before anybody has opened
+ * the board.
+ */
 export function LobbyCharacters({ code, playerId, characters, dm }: LobbyCharactersProps) {
-  const createCharacter = useMutation(api.characters.create)
   const renameCharacter = useMutation(api.characters.rename)
   const claimCharacter = useMutation(api.characters.claim)
   const releaseCharacter = useMutation(api.characters.release)
   const removeCharacter = useMutation(api.characters.remove)
   const action = useLobbyAction()
 
-  const [newName, setNewName] = useState('')
   const [renamingId, setRenamingId] = useState<Id<'characters'> | null>(null)
 
   const busy = action.pending !== null
   // Narrowed once here, so the row callbacks close over the code itself rather
   // than handing it to a presentational component to hand straight back.
   const dmCode = dm.dmCode
-
-  const add = () =>
-    void action
-      .run('create', 'Could not add that character.', () =>
-        createCharacter({ code, name: newName }),
-      )
-      .then((done) => {
-        if (done) setNewName('')
-      })
 
   const claim = (character: LobbyCharacter) =>
     action.run(`claim:${character._id}`, `Could not pick up ${character.name}.`, () =>
@@ -80,7 +79,8 @@ export function LobbyCharacters({ code, playerId, characters, dm }: LobbyCharact
       <CardHeader>
         <CardTitle>Characters</CardTitle>
         <CardDescription>
-          Anyone can add one. Characters belong to the game, so they are still here next session.
+          The DM makes these; pick one up to play as it. Characters belong to the game, so they
+          are still here next session.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -88,7 +88,8 @@ export function LobbyCharacters({ code, playerId, characters, dm }: LobbyCharact
           <LobbyRowSkeletons rows={2} />
         ) : characters.length === 0 ? (
           <p className="text-muted-foreground">
-            No characters yet. Add one below and anybody at the table can pick it up.
+            No characters yet. The DM makes them, and they turn up here for anybody at the table
+            to pick up.
           </p>
         ) : (
           <LobbyRows>
@@ -172,31 +173,6 @@ export function LobbyCharacters({ code, playerId, characters, dm }: LobbyCharact
           </LobbyRows>
         )}
       </CardContent>
-      <CardFooter>
-        <form
-          className="flex w-full flex-wrap items-center gap-2"
-          onSubmit={(event) => {
-            event.preventDefault()
-            add()
-          }}
-        >
-          <Label htmlFor="new-character" className="sr-only">
-            Character name
-          </Label>
-          <Input
-            id="new-character"
-            value={newName}
-            onChange={(event) => setNewName(event.target.value)}
-            maxLength={MAX_CHARACTER_NAME_LENGTH}
-            autoComplete="off"
-            placeholder="Add a character…"
-            className="h-7 max-w-64"
-          />
-          <Button type="submit" size="sm" disabled={busy || newName.trim() === ''}>
-            Add character
-          </Button>
-        </form>
-      </CardFooter>
     </Card>
   )
 }
