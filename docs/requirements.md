@@ -212,6 +212,45 @@ on the sheet, which they may do for as long as it is unlocked. Nothing about who
 changed, `characters.create` still demands the DM code on every path, and no ADR was superseded to
 make this work — the permission to choose a race and a class on an unlocked sheet was already there.
 
+#### Rolls, the feed and the dice — 2026-08-02 — [ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md)
+
+**One amendment, and it is to the *Included* list rather than the Excluded one** — which makes it the
+first entry in this section that narrows what the application does with a rule the spec asked for,
+rather than lifting one it had ruled out. Everything else the dice work touched needed no amendment,
+and the reason is worth stating: nothing new is adjudicated. A roll is evaluated and announced; no
+result is compared to an Armour Class or a save DC, no damage is applied, and nothing decides whether
+an attack hit. That is the same discipline the last three entries here record, for the fourth time.
+
+**"Turns consist only of 1 action, 1 bonus action and 1 reaction" — the rule is played and the app
+does not enforce it.** The *DnD Lite rule set* list above includes the turn structure, and it is the
+one inclusion this application deliberately declines to adjudicate. Nothing stores whose turn it is,
+nothing counts what a character has spent, and clicking two things in a round is refused by nobody.
+The table keeps the turn, exactly as it keeps who is standing where before a map is loaded.
+
+Stated here rather than left as an absence, because an absence reads as an oversight and this is a
+decision: enforcing an action economy means knowing whose turn it is, which means an initiative
+tracker that owns the round, which means the app adjudicating the one thing D&D Lite exists to leave
+to the people at the table. The same reasoning covers **concentration**, which the lists never named
+— no spell records it and nothing drops it.
+
+⚠️ **Four neighbouring gaps were closed the same way and needed no amendment, because the lists never
+promised them.** There are no **spell slots** anywhere — clicking a spell rolls its dice and says so,
+and the level printed beside it is a label rather than a resource. A hero has no **spell save DC**; a
+creature has one because the bestiary wrote one, and nothing in this application compares a roll to
+either. **Limited-use abilities** stay as coarse as they were: the app remembers whether a per-long-rest
+trait has been spent, which is the part a table forgets, and counts nothing else. And **initiative**
+turned out to need nothing new at all — a hero's bonus comes from Dexterity and a creature's is stored,
+through one accessor that already existed.
+
+**Two smaller notes on the *screen*, neither a rule.** *"When a clicked sheet item involves a dice
+roll, that character's token appears on screen for everyone and a 3D dice roll plays"* is met as
+written — the announcement over the map carries the character's token art where the viewer can see
+that token, and a deterministic tinted disc otherwise, because a roll can come from a creature with no
+token or one this viewer may not see, and an announcement must never be the thing that reveals a coin
+exists. And **"a red warning alarm"** on a critical failure is rendered as a red pulse and a screen
+shake with no sound: audio would be the first asset this application serves itself, and it needs a
+mute control and the browser autoplay dance to go with it.
+
 ## Accounts and games
 
 - Users create an account by providing an email address.
