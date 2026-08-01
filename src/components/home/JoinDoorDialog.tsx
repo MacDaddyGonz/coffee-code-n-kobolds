@@ -13,7 +13,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { type Door, type StepKind, currentStep, nextStep } from '@/lib/joinDoor'
-import { rememberDisplayName, rememberDmCode } from '@/lib/session'
+import { getLastGameCode, rememberDisplayName, rememberDmCode } from '@/lib/session'
+import { normaliseJoinCode } from '@convex/lib/codes'
 import { DmCodeStep } from './DmCodeStep'
 import type { GameListing } from './GameListRow'
 import { JoinCodeStep } from './JoinCodeStep'
@@ -27,13 +28,32 @@ export type JoinDoorDialogProps = {
    * click names both at once, so a `door` of its own would need a value invented for
    * every frame in which nothing is open — and `door` is the field that decides which
    * credential gets asked for. It is also exactly the object the caller already holds.
+   *
+   * ⚠️ **`game` is nullable and `opening` is nullable, and they mean two different
+   * things.** `opening === null` is *no door is open*. `opening.game === null` is *a
+   * door is open with no row behind it* — the `Join with a code` card, where somebody
+   * typed a code for a game that is not in the list, or is not on it any more. The
+   * consequence runs all the way through this dialog: with no row there is no expected
+   * game for the code to be checked against (`verdictOf` takes `null` and says why that
+   * is a legitimate state rather than a bypass), and there is nothing to name in the
+   * header until the code has resolved.
    */
-  opening: { game: GameListing; door: Door } | null
+  opening: { game: GameListing | null; door: Door } | null
   onClose: () => void
 }
 
 /**
- * The conversation between clicking a door on a game row and arriving at the table.
+ * The conversation between clicking a door on the landing page and arriving at the
+ * table.
+ *
+ * **Two callers, and the second one is the same conversation with its first
+ * identifying step removed.** `GameList` opens it from a row, which names the game
+ * before a word is typed; `JoinGamePanel` opens it with no row at all, for a game that
+ * has fallen off the end of a list capped at thirty. Nothing forks in the step machine
+ * for that — the player door's questions are `gameCode` then `seat` either way, which
+ * is the entire reason that card stopped owning a code lookup, a verdict line and a
+ * name field of its own. What does fork is the header, because with no row there is
+ * nothing to name until the code has resolved. See `promptFor`.
  *
  * **Two or three states in one dialog, and no route for any of them.** `/` stays the
  * only pre-game location. A step is not worth a URL: none of them is a place you
@@ -96,9 +116,37 @@ export function JoinDoorDialog({ opening, onClose }: JoinDoorDialogProps) {
    * own — see there.
    */
   const [storedStep, setStoredStep] = useState<StepKind>('gameCode')
-  const [typedGameCode, setTypedGameCode] = useState('')
+  /**
+   * What is in the join code field, or `null` for *nothing has been typed into it yet*
+   * — which is not the same state as an empty field and is the one the prefill applies
+   * in.
+   *
+   * ⚠️ **The two spellings of "no code" are load-bearing here rather than the sloppiness
+   * CLAUDE.md invariant 9 warns about.** A code-only join opens with the field prefilled
+   * from `getLastGameCode()`, and clearing that field has to leave it cleared — if `''`
+   * and "untouched" were one state the prefill would come straight back on the next
+   * render and the field could not be emptied. So `null` means untouched and `''` means
+   * emptied, and only the first of them prefills.
+   *
+   * Derived at the render below rather than written in through an effect on `opening`,
+   * because the prefill depends on a prop this component cannot observe changing: the
+   * dialog is mounted for the whole life of its card and only its content comes and
+   * goes, so a `useState` initialiser runs once — long before any door is open — and an
+   * effect would be a second source of truth for a field somebody is typing into.
+   */
+  const [typedGameCode, setTypedGameCode] = useState<string | null>(null)
   const [typedDmCode, setTypedDmCode] = useState('')
-  const [resolvedCode, setResolvedCode] = useState<string | null>(null)
+  /**
+   * The game the join code opened: the server's spelling of the code, and the name it
+   * has for it.
+   *
+   * One piece of state rather than a code beside a name, for the reason `opening` is one
+   * prop rather than two — the two facts are never separately known, since both arrive
+   * from the one step that resolved them. The name is here at all because with no row
+   * the header has nothing else to name the game with, and `null` is *the first question
+   * has not been answered yet*, which is what `currentStep` reads as `hasCode: false`.
+   */
+  const [resolvedGame, setResolvedGame] = useState<{ code: string; name: string } | null>(null)
   /**
    * A one-way latch, set when the navigation is handed off and never cleared — the
    * reset on close is what clears it. There is nothing asynchronous to wait for here
@@ -126,8 +174,26 @@ export function JoinDoorDialog({ opening, onClose }: JoinDoorDialogProps) {
       : currentStep({
           door: opening.door,
           stored: storedStep,
-          hasCode: resolvedCode !== null,
+          hasCode: resolvedGame !== null,
         })
+
+  /**
+   * What goes in the join code field.
+   *
+   * ⚠️ **Prefilled from `getLastGameCode()` only when there is no row**, and the
+   * asymmetry is the whole point. With a row, *this* game is named on screen and last
+   * game's code is the one answer that is certainly wrong — prefilling it would open the
+   * dialog already complaining. With no row there is nothing on screen saying which game
+   * this is about, and last game's code is very often exactly the one being retyped: that
+   * prefill is behaviour the card this dialog replaced already had, and a returning
+   * visitor relies on it.
+   *
+   * The `??` short-circuits, so storage is read only while the field is untouched rather
+   * than on every keystroke.
+   */
+  const gameCode =
+    typedGameCode ??
+    (opening !== null && opening.game === null ? normaliseJoinCode(getLastGameCode()) : '')
 
   /** Nothing typed into this dialog outlives it. See `ElevateDialog.forgetInput`. */
   function reset() {
@@ -137,12 +203,13 @@ export function JoinDoorDialog({ opening, onClose }: JoinDoorDialogProps) {
     // stored value at all while no code has resolved, which is always true right after
     // a reset.
     setStoredStep('gameCode')
-    // Not prefilled from `getLastGameCode()`, unlike the panel below the list: a row
-    // names *this* game, so last game's code is the one answer that is certainly
-    // wrong, and prefilling it would open the dialog already complaining.
-    setTypedGameCode('')
+    // Back to *untouched* rather than to an empty string, which is what lets the next
+    // open of a code-only door prefill itself again. Whether it does is decided at the
+    // render — see `gameCode` above — because the answer depends on the next `opening`
+    // and this runs against the one being closed.
+    setTypedGameCode(null)
     setTypedDmCode('')
-    setResolvedCode(null)
+    setResolvedGame(null)
     setLeaving(false)
   }
 
@@ -150,7 +217,7 @@ export function JoinDoorDialog({ opening, onClose }: JoinDoorDialogProps) {
    * The one way out, and every route to it comes through here: Cancel on each step,
    * Escape, the overlay and the corner cross. The reset has to live at this junction
    * rather than in `onOpenChange` alone, because Radix only reports the closes *it*
-   * causes — a Cancel button calling `onClose` directly would flip `game` to null and
+   * causes — a Cancel button calling `onClose` directly would flip `opening` to null and
    * never tell Radix anything, so a reset written only in that handler would run for
    * three of the four ways out.
    *
@@ -196,18 +263,18 @@ export function JoinDoorDialog({ opening, onClose }: JoinDoorDialogProps) {
    * `normaliseDisplayName`, which is the same function `players.join` keys on.
    */
   function takeSeat(displayName: string) {
-    if (leaving || resolvedCode === null) return
+    if (leaving || resolvedGame === null) return
     // The answer is about the *per-game* key alone, which is the one this sentence
     // describes: it is what `useSeat` reads at mount, so losing it is the seat question
     // being asked again. `rememberDisplayName` also writes two prefills and deliberately
     // says nothing about them — folding them in made this warning fire for a browser
     // that had remembered the seat perfectly.
-    if (!rememberDisplayName(resolvedCode, displayName)) {
+    if (!rememberDisplayName(resolvedGame.code, displayName)) {
       toast.warning(
         'This browser has storage turned off, so you will be asked which seat you are again when you arrive.',
       )
     }
-    advance('seat', resolvedCode)
+    advance('seat', resolvedGame.code)
   }
 
   /**
@@ -225,17 +292,27 @@ export function JoinDoorDialog({ opening, onClose }: JoinDoorDialogProps) {
    * effect reads the key back rather than being handed the code.
    */
   function keepDmCode() {
-    if (leaving || resolvedCode === null) return
-    if (!rememberDmCode(resolvedCode, typedDmCode)) {
+    if (leaving || resolvedGame === null) return
+    if (!rememberDmCode(resolvedGame.code, typedDmCode)) {
       toast.warning(
         'This browser has storage turned off, so you will need to enter your DM code from Settings once you are in.',
       )
     }
-    advance('dmCode', resolvedCode)
+    advance('dmCode', resolvedGame.code)
   }
 
   const prompt =
-    opening === null || step === null ? null : promptFor(opening.door, step, opening.game.name)
+    opening === null || step === null
+      ? null
+      : promptFor(opening.door, step, {
+          // Two names and not one coalesced value, because which of them the header has
+          // is *what* it is allowed to say — see `promptFor`. `row` is null for a
+          // code-only join and `opened` is null until the first step answers, so the two
+          // are null together on exactly one screen: the code field of a code-only join,
+          // which is the one place nothing can be named.
+          row: opening.game?.name ?? null,
+          opened: resolvedGame?.name ?? null,
+        })
 
   return (
     <Dialog
@@ -250,7 +327,9 @@ export function JoinDoorDialog({ opening, onClose }: JoinDoorDialogProps) {
           All three tests say the same thing — `step` and `prompt` are non-null exactly
           when `opening` is — and all three are here because TypeScript cannot narrow one
           local from the *value* of another. Naming them is what lets the branches below
-          take a `StepKind` and a `GameListing` rather than working around a maybe. */}
+          take a `StepKind` and a `Prompt` rather than working around a maybe. Note that
+          `opening.game` is *not* one of the maybes being cleared up: it is legitimately
+          null for a code-only join and stays that way all the way down. */}
       {opening !== null && step !== null && prompt !== null ? (
         // Wider on the seat step, and only there. `DialogContent`'s default
         // `sm:max-w-sm` is right for a single code field and too narrow for the seat
@@ -271,20 +350,23 @@ export function JoinDoorDialog({ opening, onClose }: JoinDoorDialogProps) {
 
           {/*
             The second half of this test is redundant with `step`, which is already
-            `'gameCode'` whenever there is no resolved code. It is here because
-            TypeScript cannot narrow `resolvedCode` from the *value* of another
+            `'gameCode'` whenever there is no resolved game. It is here because
+            TypeScript cannot narrow `resolvedGame` from the *value* of another
             variable, and the narrowing is what lets the two branches below take a
             plain `string` — no `?? ''` standing in for a code, and therefore no
             subscription opened for a game that does not exist.
           */}
-          {step === 'gameCode' || resolvedCode === null ? (
+          {step === 'gameCode' || resolvedGame === null ? (
             <JoinCodeStep
+              // Null for a code-only join, which is the whole of what this step does
+              // differently: with no row there is no `_id` for the typed code to be
+              // checked against, and any game it opens is the right one.
               game={opening.game}
-              typed={typedGameCode}
+              typed={gameCode}
               onTyped={setTypedGameCode}
-              onResolved={(code) => {
-                setResolvedCode(code)
-                advance('gameCode', code)
+              onResolved={(resolved) => {
+                setResolvedGame(resolved)
+                advance('gameCode', resolved.code)
               }}
               onCancel={close}
             />
@@ -292,7 +374,7 @@ export function JoinDoorDialog({ opening, onClose }: JoinDoorDialogProps) {
             <DmCodeStep
               // The server's spelling, never what was typed — `verdictOf` hands back
               // `resolved.code` for exactly this reason.
-              code={resolvedCode}
+              code={resolvedGame.code}
               typed={typedDmCode}
               onTyped={setTypedDmCode}
               onVerified={keepDmCode}
@@ -301,7 +383,7 @@ export function JoinDoorDialog({ opening, onClose }: JoinDoorDialogProps) {
             />
           ) : (
             <SeatPicker
-              code={resolvedCode}
+              code={resolvedGame.code}
               busy={leaving}
               // No join happens at this door, so there is no join failure to put
               // under the field. The one thing that can go wrong is the storage
@@ -327,6 +409,24 @@ export function JoinDoorDialog({ opening, onClose }: JoinDoorDialogProps) {
 type Prompt = { title: string; description: string }
 
 /**
+ * Which name the header is in a position to print, and where it came from.
+ *
+ * ⚠️ **Two fields rather than one coalesced name, because they are not interchangeable
+ * facts about the same string.** `row` is a name the person has *already seen and
+ * clicked*; `opened` is a name the server handed back for a code they typed, and printing
+ * it is a piece of information — *this is the game that code opens* — delivered at the
+ * last moment before they commit to walking into it. Collapsing the two into
+ * `row ?? opened` would lose which of those two sentences the header is entitled to say,
+ * and the copy for the row's doors would silently change the day the fallback fired.
+ */
+type Naming = {
+  /** The clicked row's name, or null for a code-only join. */
+  row: string | null
+  /** The resolved game's name, or null until the code step has answered. */
+  opened: string | null
+}
+
+/**
  * What the first step's header says, per door.
  *
  * ⚠️ **A `Record` keyed on `Door` rather than `door === 'dm' ? … : …`**, for the reason
@@ -337,32 +437,57 @@ type Prompt = { title: string; description: string }
  * somebody mid-sequence which door they walked through. A `Record` fails to compile
  * until the new door has been given words of its own.
  *
- * Only this step forks. The two later ones are asked by one door each, so their headings
- * are the same sentence whoever is reading them.
+ * **Each door now spells its heading twice, because this is the one step that can run
+ * with nothing named.** A code-only join has no row above it and no resolved game yet,
+ * so there is no game to put in a title — and *Join* against *Run* still has to be the
+ * thing the title says, which is why the code-less spelling is per door and not one
+ * shared sentence. ⚠️ The DM half of that is unreachable today: nothing opens this
+ * dialog with `{ game: null, door: 'dm' }`, and `JoinGamePanel` says why no card
+ * offers to. It is written anyway for the same reason the `Record` is a `Record` — the
+ * moment somebody adds that card, the words have already been chosen by somebody who
+ * was thinking about them.
+ *
+ * Only this step forks by door. The two later ones are asked by one door each.
  */
-const GAME_CODE_PROMPTS: Record<Door, (gameName: string) => Prompt> = {
+const GAME_CODE_PROMPTS: Record<Door, (gameName: string | null) => Prompt> = {
   dm: (gameName) => ({
-    title: `Run ${gameName}`,
+    title: gameName === null ? 'Run a game by code' : `Run ${gameName}`,
     description: 'Two codes: the join code for the game, then the DM code for it.',
   }),
   player: (gameName) => ({
-    title: `Join ${gameName}`,
-    // Says why a list that already names the game still asks for a code.
-    description: 'The code from whoever is running it — the one thing the list cannot tell you.',
+    title: gameName === null ? 'Join with a code' : `Join ${gameName}`,
+    description:
+      gameName === null
+        ? // Says what a code buys somebody whose game is not on the list: the code is
+          // both the credential and the only thing identifying the game.
+          'The code from whoever is running it — for a game that is not in the list.'
+        : // Says why a list that already names the game still asks for a code.
+          'The code from whoever is running it — the one thing the list cannot tell you.',
   }),
 }
 
 /**
  * What the header says, per door and per step.
  *
- * Here rather than inline so the four headings can be read together — they are the
- * only thing telling somebody mid-sequence which of the two doors they walked
- * through, and the pair that must not read alike is *Join* against *Run*.
+ * Here rather than inline so the headings can be read together — they are the only thing
+ * telling somebody mid-sequence which of the two doors they walked through, and the pair
+ * that must not read alike is *Join* against *Run*.
+ *
+ * ⚠️ **The seat step names the game only when nothing has named it yet**, which is the
+ * one place a `Naming` with two fields earns its keep. Arriving here from a row, the game
+ * was named on the row and again in the title of the step before, so a third mention is
+ * noise — and that path's copy is byte-identical to what it has always been. Arriving
+ * here from a typed code, *nothing on screen has ever said which game this is*: the old
+ * card said it in a line under the code field, and saying it here instead says it later
+ * and better, immediately before the seat is committed to. It falls back to the row's
+ * sentence if both names are somehow absent, which is unreachable — this step does not
+ * render until a code has resolved — and is the right way round anyway: a heading with a
+ * hole where a name should be is worse than a heading that says one thing less.
  */
-function promptFor(door: Door, step: StepKind, gameName: string): Prompt {
+function promptFor(door: Door, step: StepKind, naming: Naming): Prompt {
   switch (step) {
     case 'gameCode':
-      return GAME_CODE_PROMPTS[door](gameName)
+      return GAME_CODE_PROMPTS[door](naming.row)
     case 'dmCode':
       return {
         title: 'Your DM code',
@@ -371,7 +496,10 @@ function promptFor(door: Door, step: StepKind, gameName: string): Prompt {
     case 'seat':
       return {
         title: 'Which seat is yours?',
-        description: 'Use the same name as last time and your character comes back with you.',
+        description:
+          naming.row === null && naming.opened !== null
+            ? `Joining ${naming.opened}. Use the same name as last time and your character comes back with you.`
+            : 'Use the same name as last time and your character comes back with you.',
       }
   }
 }

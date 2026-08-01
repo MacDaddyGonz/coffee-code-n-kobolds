@@ -20,6 +20,12 @@ const TYPEABLE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
  * has changed. `normaliseJoinCode` already drops exactly these characters as they are
  * typed, so the field and its hint now come from one source.
  *
+ * > **Amended later.** That panel no longer has a code field at all — it opens the join
+ * > dialog, which owns the one join code field on the landing page — so this constant is
+ * > down to a single reader. It stays derived regardless: the argument was never about
+ * > how many copies exist today, it was that a hand-read of a constant outlives the
+ * > constant, and the two copies were identical when they were written too.
+ *
  * A third, longer variant of the same fact lives in `Game.tsx`'s "no such game"
  * screen; it reads differently on purpose, being a sentence of advice rather than a
  * field hint, and is left alone.

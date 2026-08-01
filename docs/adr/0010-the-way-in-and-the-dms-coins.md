@@ -167,6 +167,26 @@ creature-and-reserved filter has to keep applying rather than two.
 stopping a monster's name appearing beside a seat in the roster. It is now also the thing stopping a
 monster's name appearing on **the front page of the site**.
 
+> **Amended shortly after, and it is this record's own sentence being finished rather than a new
+> decision.** "Joining was retyping a name from memory" was written about *this* landing page, and
+> the seat list removed it from the two doors on the list — while leaving it in place on the *Join
+> with a code* card beside them, which still asked for a code and a display name together and then
+> navigated. So the one path that had the original problem was the one the paragraph above never
+> mentioned. That card now opens the same dialog with the same player-door sequence, `gameCode` then
+> `seat`, and holds no lookup, no verdict line and no name field of its own.
+>
+> The only thing that had to change to allow it is that `verdictOf`'s `expectedGameId` became
+> nullable. The comparison it guards is a *contradiction* between a row and a code — a row plus a
+> code is a claim that can be wrong, and a code alone cannot be — so `null` means "nothing was
+> claimed" and the wrong-game arm still applies in full wherever a row exists. Both sides of that
+> switch are asserted, because a nullable written as an early `ok` would turn a mistyped code into a
+> navigation to a game that does not exist.
+>
+> One thing deliberately *not* done: there is no DM-by-code door. `JoinCodeStep` no longer needs a
+> row, so it is a button away — and a returning DM whose game has fallen off a list of thirty comes
+> in as a player and elevates from Settings, which is exactly the second door this record kept. Who
+> the front page invites to try a DM code is a decision, and it would want a record of its own.
+
 ### A player claims a character and then builds on it
 
 There were two readings of "a new player provides their name and selects their race and class", and

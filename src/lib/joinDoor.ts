@@ -48,7 +48,8 @@ export type CodeVerdict =
   | { kind: 'ok'; code: string }
 
 /**
- * Does the code typed at the door open the game whose row was clicked?
+ * Does the code typed at the door open the game whose row was clicked — if a row was
+ * clicked at all?
  *
  * ⚠️ **It compares `_id`, and must never compare the name.** Nothing stops two
  * games sharing a title — `games.create` has no uniqueness check on the name and
@@ -58,6 +59,18 @@ export type CodeVerdict =
  * a name comparison would wave it through and drop somebody into a stranger's game
  * that looked exactly like the one they meant. `joinDoor.test.ts` pins that case
  * specifically, because it is the one an innocent-looking simplification breaks.
+ *
+ * ⚠️ **`expectedGameId` may be `null`, and that is a distinct legitimate case rather
+ * than a hole in the paragraph above.** The comparison exists because a row plus a
+ * code is a *claim* — the row says which game this is and the code says which game it
+ * opens, and those two can contradict each other. A code typed with no row makes no
+ * such claim: nothing has said which game this is meant to be, so there is nothing
+ * for the resolved game to contradict, and **any game the code opens is by definition
+ * the right one.** That is the whole of the *Join with a code* card, which has no row
+ * to offer and used to hand-roll a three-armed copy of this ladder rather than admit
+ * it. `null` is therefore "no claim was made" and never "skip the check": whenever
+ * there *is* a row the comparison happens exactly as it always did, and the test
+ * asserts both sides of that switch rather than only the forgiving one.
  *
  * ⚠️ **`ok` carries `resolved.code`, never `typed`.** They can differ:
  * `CodeInput` normalises on every keystroke through `normaliseJoinCode`, which
@@ -73,7 +86,8 @@ export type CodeVerdict =
  */
 export function verdictOf(args: {
   typed: string
-  expectedGameId: Id<'games'>
+  /** The clicked row's game, or `null` when a code was typed with no row behind it. */
+  expectedGameId: Id<'games'> | null
   /** `undefined` = in flight, `null` = no such game. Structural so the test needs no Convex. */
   resolved: { _id: Id<'games'>; code: string } | null | undefined
 }): CodeVerdict {
@@ -87,7 +101,14 @@ export function verdictOf(args: {
 
   if (resolved === undefined) return { kind: 'checking' }
   if (resolved === null) return { kind: 'noSuchGame' }
-  if (resolved._id !== expectedGameId) return { kind: 'wrongGame' }
+
+  // Note that the two nulls in this function are unrelated facts and both are asked
+  // about above: `resolved === null` is *the server found no game*, which is a refusal
+  // either way, and `expectedGameId === null` is *nobody claimed which game this is*,
+  // which is the only one that makes the comparison inapplicable. Ordering them this
+  // way round is what keeps a bad code answering `noSuchGame` for a code-only join
+  // rather than falling straight through to `ok`.
+  if (expectedGameId !== null && resolved._id !== expectedGameId) return { kind: 'wrongGame' }
 
   return { kind: 'ok', code: resolved.code }
 }
