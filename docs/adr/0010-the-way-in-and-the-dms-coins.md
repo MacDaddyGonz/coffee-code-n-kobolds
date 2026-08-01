@@ -187,6 +187,26 @@ monster's name appearing on **the front page of the site**.
 > in as a player and elevates from Settings, which is exactly the second door this record kept. Who
 > the front page invites to try a DM code is a decision, and it would want a record of its own.
 
+> **Amended again, and this one is the cap being taken seriously.** "A game that falls off the end is
+> still joinable by its code" was written above as the reason truncation costs nothing. It is true and
+> it is not the whole cost, because the same sentence read the other way says that **a game you hold a
+> code for may not be on the page at all** — and a page of rows for other people's games, each with a
+> door that asks for a code, is then actively misleading. A DM whose own game had aged off the list
+> did the reasonable thing: clicked the one row whose creator they recognised, pasted their perfectly
+> good code, and was told *that code is not for this game*. The refusal was correct — the comparison
+> is on `_id` and the code genuinely opened a different game — and it was a dead end that reads as
+> *your code is wrong*, which was the one thing it did not mean.
+>
+> The escape hatch is still the code-only panel, unchanged, and the fix is to stop the refusal
+> pointing away from it. The wrong-game verdict now carries the game the code opened, so the message
+> names it — *that code opens ⟨name⟩, not this game* — and there is an action beside the message
+> offering to go there instead, which simply drops the row's claim and continues with the code, i.e.
+> the code-only path arrived at sideways. Nothing about the check softened: the comparison is the same
+> two ids, a name is carried out of it and never into it, and two games sharing a title still produce
+> a refusal. What changed is that the component stopped withholding the one fact it had already
+> fetched. The general lesson is worth more than the screen: a refusal that is correct is not
+> finished, and the thing that makes it a dead end is usually sitting in a variable one line above it.
+
 ### A player claims a character and then builds on it
 
 There were two readings of "a new player provides their name and selects their race and class", and

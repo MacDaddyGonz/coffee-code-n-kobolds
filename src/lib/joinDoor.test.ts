@@ -29,6 +29,19 @@ const ANOTHER_GAME = game('another-game')
 const CODE = 'ABC234'
 const OTHER_CODE = 'XYZ789'
 
+/**
+ * Names for the two games, and they are the two from the dead end that put the payload
+ * on the `wrongGame` arm: a DM whose own game was not on the capped list clicked the one
+ * row whose creator they recognised and pasted a perfectly good code into it.
+ *
+ * ⚠️ **`verdictOf` reads a name now, and every test below is arranged so that no
+ * assertion can pass because of one.** The name goes in and comes back out on the
+ * refusing arm; what must never happen is a name deciding anything, and the same-name
+ * case is what pins that.
+ */
+const THIS_NAME = 'Gonz Game'
+const ANOTHER_NAME = 'Test game'
+
 describe('verdictOf', () => {
   test('a half-typed code is incomplete, not a lookup in flight', () => {
     // The caller skips the query until the code is complete, so `resolved` is
@@ -59,9 +72,47 @@ describe('verdictOf', () => {
       verdictOf({
         typed: OTHER_CODE,
         expectedGameId: THIS_GAME,
-        resolved: { _id: ANOTHER_GAME, code: OTHER_CODE },
+        resolved: { _id: ANOTHER_GAME, code: OTHER_CODE, name: ANOTHER_NAME },
       }),
-    ).toEqual({ kind: 'wrongGame' })
+    ).toEqual({ kind: 'wrongGame', opened: { code: OTHER_CODE, name: ANOTHER_NAME } })
+  })
+
+  /**
+   * The payload on the refusal, which is the whole of what this arm gained: the refusal
+   * was always correct and was a dead end anyway, because the one fact that resolves the
+   * confusion — *which game does this code open, then?* — had already been fetched and was
+   * being discarded.
+   *
+   * Both fields are asserted rather than only the name. The name is what the message
+   * prints; the **code** is what the caller navigates with when somebody takes the escape
+   * hatch, and it must be the server's spelling for the same reason `ok`'s is — so the
+   * typed casing below is deliberately wrong and must not survive into the payload.
+   */
+  test('wrongGame carries the game the code actually opened, in the server’s spelling', () => {
+    const verdict = verdictOf({
+      typed: 'xyz789',
+      expectedGameId: THIS_GAME,
+      resolved: { _id: ANOTHER_GAME, code: 'XYZ789', name: ANOTHER_NAME },
+    })
+
+    expect(verdict).toEqual({ kind: 'wrongGame', opened: { code: 'XYZ789', name: ANOTHER_NAME } })
+    // Stated separately, because `toEqual` on the whole verdict would pass just as well if
+    // the arm handed back `typed` and the two happened to be equal.
+    expect(verdict.kind === 'wrongGame' && verdict.opened.code).toBe('XYZ789')
+  })
+
+  // The payload names the game the **code** opened and never the row it was refused
+  // against — the two are always different games here, so a payload built from the wrong
+  // one would be the single most confusing thing this screen could say.
+  test('the name carried is the resolved game’s, not the row’s', () => {
+    const verdict = verdictOf({
+      typed: OTHER_CODE,
+      expectedGameId: THIS_GAME,
+      resolved: { _id: ANOTHER_GAME, code: OTHER_CODE, name: ANOTHER_NAME },
+    })
+
+    expect(verdict.kind === 'wrongGame' && verdict.opened.name).toBe(ANOTHER_NAME)
+    expect(verdict.kind === 'wrongGame' && verdict.opened.name).not.toBe(THIS_NAME)
   })
 
   // ⚠️ The test that justifies comparing `_id` rather than the name. Nothing stops
@@ -69,27 +120,37 @@ describe('verdictOf', () => {
   // valid code, different game — somebody landing in a stranger's table that looked
   // exactly like the one they clicked.
   //
-  // Both documents below are called *Tomb of the Coffee Lich*, and the name appears
-  // nowhere in this test because it appears nowhere in `verdictOf`'s arguments: the
-  // mistake is unavailable rather than merely untaken. What this pins is that the
-  // *only* thing separating the refusal from the acceptance is the id — the codes,
-  // the shapes and the imagined names are otherwise interchangeable.
+  // ⚠️ **This test used to argue that the mistake was unavailable because no name reached
+  // `verdictOf` at all. That is no longer true, and the case matters more for it.** The
+  // refusal carries a name now, so a name *is* an argument — it is simply never read by
+  // the comparison. Both documents below are called *Tomb of the Coffee Lich*, on both
+  // sides of every assertion, so every name in play is the identical string: the *only*
+  // thing separating the refusal from the acceptance is the id. A comparison that reached
+  // for the name it is now handed would fail the first assertion here, and this is the
+  // one place in the suite where that reach is even possible.
   test('a code opening a different game with the SAME name is still refused', () => {
+    const SHARED_NAME = 'Tomb of the Coffee Lich'
+
+    // Refused, and the message it produces names *Tomb of the Coffee Lich* — the game the
+    // code opens, which is a different game from the identically titled one on the row.
+    // This is exactly the case where naming the game cannot help the reader, and it is
+    // still the honest thing to print: the string is the string.
     expect(
       verdictOf({
         typed: OTHER_CODE,
         expectedGameId: THIS_GAME,
-        resolved: { _id: ANOTHER_GAME, code: OTHER_CODE },
+        resolved: { _id: ANOTHER_GAME, code: OTHER_CODE, name: SHARED_NAME },
       }),
-    ).toEqual({ kind: 'wrongGame' })
+    ).toEqual({ kind: 'wrongGame', opened: { code: OTHER_CODE, name: SHARED_NAME } })
 
     // The positive control, so the refusal above cannot be passing because
-    // *everything* is refused.
+    // *everything* is refused. Same code, same name, same resolved document — one id
+    // changed.
     expect(
       verdictOf({
         typed: OTHER_CODE,
         expectedGameId: ANOTHER_GAME,
-        resolved: { _id: ANOTHER_GAME, code: OTHER_CODE },
+        resolved: { _id: ANOTHER_GAME, code: OTHER_CODE, name: SHARED_NAME },
       }),
     ).toEqual({ kind: 'ok', code: OTHER_CODE })
 
@@ -103,9 +164,18 @@ describe('verdictOf', () => {
       verdictOf({
         typed: OTHER_CODE,
         expectedGameId: null,
-        resolved: { _id: ANOTHER_GAME, code: OTHER_CODE },
+        resolved: { _id: ANOTHER_GAME, code: OTHER_CODE, name: SHARED_NAME },
       }),
     ).toEqual({ kind: 'ok', code: OTHER_CODE })
+
+    // And the sentence, in the case where a name-based message could mislead: it names the
+    // game the *code* opens. There is no way to tell from the words that this is not the
+    // row's own game — which is the cost of two games sharing a title, paid by the
+    // refusal being an `_id` comparison so that nobody is ever *admitted* on the strength
+    // of a shared name.
+    expect(
+      verdictMessage({ kind: 'wrongGame', opened: { code: OTHER_CODE, name: SHARED_NAME } }),
+    ).toBe('That code opens Tomb of the Coffee Lich, not this game.')
   })
 
   test('the right code for the right game is ok', () => {
@@ -113,7 +183,7 @@ describe('verdictOf', () => {
       verdictOf({
         typed: CODE,
         expectedGameId: THIS_GAME,
-        resolved: { _id: THIS_GAME, code: CODE },
+        resolved: { _id: THIS_GAME, code: CODE, name: THIS_NAME },
       }),
     ).toEqual({ kind: 'ok', code: CODE })
   })
@@ -122,12 +192,17 @@ describe('verdictOf', () => {
   // differ — `CodeInput` uppercases as you go, but the value that reaches storage
   // and the URL should be the server's, and this is what makes the typed one
   // unreachable from the result.
+  //
+  // The accepting arm carries **no name**, and the asymmetry with `wrongGame` is
+  // deliberate rather than an omission: the caller that accepts already has the resolved
+  // document in hand and reads the name off it directly, whereas the refusing arm is the
+  // one whose whole point is that the caller was about to throw that document away.
   test('ok carries the server’s code, not the typed one', () => {
     expect(
       verdictOf({
         typed: 'abc234',
         expectedGameId: THIS_GAME,
-        resolved: { _id: THIS_GAME, code: 'ABC234' },
+        resolved: { _id: THIS_GAME, code: 'ABC234', name: THIS_NAME },
       }),
     ).toEqual({ kind: 'ok', code: 'ABC234' })
   })
@@ -149,7 +224,7 @@ describe('verdictOf', () => {
         verdictOf({
           typed: OTHER_CODE,
           expectedGameId: null,
-          resolved: { _id: ANOTHER_GAME, code: OTHER_CODE },
+          resolved: { _id: ANOTHER_GAME, code: OTHER_CODE, name: ANOTHER_NAME },
         }),
       ).toEqual({ kind: 'ok', code: OTHER_CODE })
 
@@ -159,7 +234,7 @@ describe('verdictOf', () => {
         verdictOf({
           typed: 'abc234',
           expectedGameId: null,
-          resolved: { _id: THIS_GAME, code: 'ABC234' },
+          resolved: { _id: THIS_GAME, code: 'ABC234', name: THIS_NAME },
         }),
       ).toEqual({ kind: 'ok', code: 'ABC234' })
     })
@@ -182,12 +257,17 @@ describe('verdictOf', () => {
     // The arm that cannot be reached without a row, stated as an absence: there is no
     // combination of arguments that produces it, because the only thing that can
     // contradict a resolved game is a row saying it should have been a different one.
+    //
+    // This is also what pins the escape hatch as *not a new flow*. Taking it continues
+    // with the code and no row, which is this state — so the path somebody lands on after
+    // being refused is the same path the *Join with a code* card has always used, and it
+    // has no wrong-game arm to be refused by a second time.
     test('never answers wrongGame', () => {
       const resolvedShapes = [
         undefined,
         null,
-        { _id: THIS_GAME, code: CODE },
-        { _id: ANOTHER_GAME, code: OTHER_CODE },
+        { _id: THIS_GAME, code: CODE, name: THIS_NAME },
+        { _id: ANOTHER_GAME, code: OTHER_CODE, name: ANOTHER_NAME },
       ]
 
       for (const resolved of resolvedShapes) {
@@ -210,7 +290,29 @@ describe('verdictMessage', () => {
     expect(verdictMessage({ kind: 'noSuchGame' })).toBe('No game with that code.')
     // The one a reader would otherwise assume said "no game with that code", which
     // is why the wording is asserted rather than left to the JSX.
-    expect(verdictMessage({ kind: 'wrongGame' })).toBe('That code is not for this game.')
+    expect(
+      verdictMessage({ kind: 'wrongGame', opened: { code: OTHER_CODE, name: ANOTHER_NAME } }),
+    ).toBe('That code opens Test game, not this game.')
+  })
+
+  /**
+   * ⚠️ **The wrong-game sentence names the game, and this is where that wording is
+   * pinned.** What it replaced — *That code is not for this game* — was a correct refusal
+   * and a dead end: it stated the one thing that was not true and nothing that was, while
+   * the name of the game the code opens was already in the component's hands. The
+   * assertion is on the whole sentence rather than on a substring, because "contains the
+   * name" would pass for a sentence that named it and still said nothing useful.
+   */
+  test('the wrong-game sentence names the game the code opens', () => {
+    expect(
+      verdictMessage({ kind: 'wrongGame', opened: { code: OTHER_CODE, name: ANOTHER_NAME } }),
+    ).toBe('That code opens Test game, not this game.')
+
+    // A different game gives a different sentence, so the name is genuinely read from the
+    // payload rather than being a constant that happens to match one fixture.
+    expect(verdictMessage({ kind: 'wrongGame', opened: { code: CODE, name: THIS_NAME } })).toBe(
+      'That code opens Gonz Game, not this game.',
+    )
   })
 })
 
