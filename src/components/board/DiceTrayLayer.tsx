@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { DiceTray } from '@/lib/dice/diceBox'
 import { createDiceTray } from '@/lib/dice/diceBox'
 import type { ShownDie } from '@/lib/dice/notation'
+import { SETTINGS_DEBOUNCE_MS, debounce } from '@/lib/throttle'
 
 /**
  * The shortest the total is allowed to be withheld, in milliseconds.
@@ -32,11 +33,10 @@ const MAXIMUM_WAIT_MS = 2600
  * How many frames to wait for the container to be laid out before giving up.
  *
  * `createDiceTray` reads `clientWidth`/`clientHeight` to build the physics world's walls
- * and **refuses a container with no size**, permanently — its only resize path is a
- * `window` listener, which a container growing inside a stable window never fires. So
- * asking too early does not produce a small tray, it produces no tray for the rest of the
- * session. About a second of frames, which is far more than the one or two a flex layout
- * settling actually needs.
+ * and **refuses a container with no size**. So asking too early does not produce a small
+ * tray, it produces no tray at all, for the rest of the session — the observer below
+ * re-dimensions a tray that exists and cannot conjure one that was never built. About a
+ * second of frames, which is far more than the one or two a flex layout settling needs.
  */
 const LAYOUT_FRAME_BUDGET = 60
 
@@ -220,6 +220,41 @@ export function DiceTrayLayer({ dice, nonce, onSettled }: DiceTrayLayerProps) {
       window.clearTimeout(beatTimer)
     }
   }, [nonce, dice, tray, onSettled])
+
+  /**
+   * ⚠️ **The tray has to be told when the pane changes width, because nothing else will
+   * tell it.** The engine resizes itself on a `window` resize and on nothing else, and the
+   * divider between the map and the right-hand panel changes this container's width without
+   * the window changing at all — so without this, one drag leaves the canvas and the physics
+   * walls at the width they were built at for the rest of the session. `DiceTray.resize`
+   * carries the full account of what that looks like; it was found by dragging the divider
+   * in a browser and never by a test.
+   *
+   * **Debounced rather than live, and the debounce is doing real work.** `PaneResizer`
+   * commits a width on every pointer move, and `setDimensions` rebuilds the physics world
+   * box and calls `renderer.setSize` — sixty of those a second through a drag is a lot of
+   * work for intermediate widths nobody is throwing dice at. `SETTINGS_DEBOUNCE_MS` is the
+   * constant this codebase already uses for "when the dragging stops", which is exactly the
+   * moment that matters here.
+   *
+   * A `ResizeObserver` rather than reading the pane width from a prop: the width lives in
+   * `GameShell`'s state, and threading it down to here would put a number that changes sixty
+   * times a second through `MapPane`'s memo — the one thing that file's own ⚠️ forbids.
+   * Observing the box this component already owns costs nothing and crosses no boundary.
+   */
+  useEffect(() => {
+    const container = containerRef.current
+    if (!tray || !container) return
+
+    const settled = debounce(() => tray.resize(), SETTINGS_DEBOUNCE_MS)
+    const observer = new ResizeObserver(settled)
+    observer.observe(container)
+
+    return () => {
+      observer.disconnect()
+      settled.cancel()
+    }
+  }, [tray])
 
   useEffect(() => {
     // The dice leave when the announcement does. `TableEffects` drops the nonce back to

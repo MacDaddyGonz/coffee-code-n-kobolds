@@ -37,6 +37,30 @@ import { diceNotation, type ShownDie } from './notation'
 export type DiceTray = {
   show(dice: readonly ShownDie[]): Promise<void>
   clear(): void
+  /**
+   * Re-measure the container and rebuild the physics world to match it.
+   *
+   * ⚠️ **The engine only ever resizes itself on a `window` resize, and the pane this sits
+   * in resizes without one.** `resizeWorld` registers exactly one listener on `window`, so
+   * dragging the divider — which changes this container's width sixty times a second inside
+   * a window that never changes at all — leaves the canvas and the physics walls at
+   * whatever size they were built at. Found in a browser, and the symptom is the reason it
+   * is worth a method: widen the map after narrowing it and the dice can only ever land in
+   * the left half, narrow it after widening and half the throwing area is outside the pane
+   * and clipped away. Either reads as *"the dice have stopped working"*, with nothing on
+   * screen to explain it, and a reload silently fixes it.
+   *
+   * **Calling the engine's own `setDimensions` rather than tearing the tray down and
+   * building another.** A rebuild is a WebGL context, a texture load and a physics world
+   * for a change of width, it drops any dice mid-throw, and it would have to settle the
+   * `show` promise the announcement is sequenced against — three problems in place of the
+   * one being solved. This is the same call the engine's own listener makes, with the same
+   * arguments, reached by a different route.
+   *
+   * Inert after `dispose`, which neutralises `setDimensions` for its own reasons — so a
+   * late observer callback costs nothing.
+   */
+  resize(): void
   dispose(): void
 }
 
@@ -104,9 +128,10 @@ let trayCount = 0
  * `clientHeight` in its constructor and builds the physics world's walls from them, so
  * a container with no size yields a degenerate box the dice fall out of. That is refused
  * here — with a console error naming the cause, since a silently empty tray is the
- * failure this whole module is arranged to avoid — rather than papered over with a
- * default size the engine would never correct: its only resize path is a `window`
- * listener, which a container growing inside a stable window never fires.
+ * failure this whole module is arranged to avoid — rather than papered over with a default
+ * size. `resize` on the returned tray corrects one that exists; nothing can correct one
+ * that was never built, and the engine's own resize path is a `window` listener that a
+ * container growing inside a stable window never fires.
  *
  * Everything that can fail is caught and answered as `null`: WebGL unavailable, the
  * chunk failing to load, the texture 404ing under a wrong base path. None of them is a
@@ -162,7 +187,7 @@ export async function createDiceTray(container: HTMLElement): Promise<DiceTray |
       canvas.style.display = 'block'
     }
 
-    return makeTray(box)
+    return makeTray(box, container)
   } catch (error) {
     // Deliberately swallowed down to a console line. See the ordering note at the top:
     // the roll has already happened on the server and is already in the feed, so
@@ -188,7 +213,7 @@ type DiceBoxEngine = InstanceType<(typeof import('@3d-dice/dice-box-threejs'))['
  * counter and the disposed flag — has one obvious scope, and so the `try` above covers
  * only the things that can actually fail.
  */
-function makeTray(box: DiceBoxEngine): DiceTray {
+function makeTray(box: DiceBoxEngine, container: HTMLElement): DiceTray {
   /**
    * ⚠️ **A generation counter, not a promise queue.** Rolls arrive from a subscription
    * and can overlap: somebody rolls initiative while the last attack is still tumbling.
@@ -254,6 +279,25 @@ function makeTray(box: DiceBoxEngine): DiceTray {
         // Same ordering as `createDiceTray`: the number is already in the feed.
         console.error('Dice tray: a roll failed to render.', error)
       }
+    },
+
+    resize() {
+      if (disposed) return
+
+      const width = container.clientWidth
+      const height = container.clientHeight
+      // A pane collapsed to nothing is not a size to rebuild a world at, and it is what a
+      // container measures while it is being unmounted. Left alone until it has one again.
+      if (width === 0 || height === 0) return
+
+      // The engine's own listener compares the canvas to the container before doing any
+      // work, and so does this: a `ResizeObserver` fires for a change of one sub-pixel and
+      // for a change that has already been applied, and rebuilding the world box and
+      // calling `renderer.setSize` is not free.
+      const canvas = box.renderer?.domElement
+      if (canvas && canvas.width === width && canvas.height === height) return
+
+      box.setDimensions({ x: width, y: height })
     },
 
     clear() {

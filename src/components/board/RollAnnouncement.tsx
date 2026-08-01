@@ -106,7 +106,28 @@ export const RollAnnouncement = memo(function RollAnnouncement({
   revealed,
   leaving,
 }: RollAnnouncementProps): ReactElement {
-  const crit = roll?.crit ?? null
+  /**
+   * ⚠️ **Gated on `revealed`, so the glow arrives *with* the number and never before it.**
+   *
+   * This was measured in a browser rather than reasoned about, and the measurement is the
+   * whole argument. The halo used to be tinted from `roll.crit` as soon as the line
+   * appeared — and the gap between the line and the total is not the `MINIMUM_BEAT_MS`
+   * floor it looks like from here, it is however long the dice take to settle: **2.4 to 2.6
+   * seconds**, every time. In that window the pill glowed green or red while the die was
+   * still tumbling on faces that were not the answer, which is long enough to read the
+   * colour, register it and say it out loud before the number lands.
+   *
+   * That inverts what the sequence is for. The one thing a table cares about on a d20 is
+   * *did it come up 20*, so a coloured halo answers the interesting question and leaves the
+   * arithmetic as the punchline — a tell dressed as a tease. `CritEffect` was already
+   * sequenced against the reveal for exactly this reason; this is the same rule applied to
+   * the glow that sits inside the announcement, so the wash, the sparks, the word and the
+   * halo now all arrive on the same frame as the total.
+   *
+   * The cost is a plainer two and a half seconds, which is the correct amount of nothing:
+   * the sentence's job in that window is to say *who did what*, and it still does.
+   */
+  const crit = revealed ? (roll?.crit ?? null) : null
   const note = roll ? rollModeNote(roll) : null
 
   return (
@@ -146,8 +167,10 @@ export const RollAnnouncement = memo(function RollAnnouncement({
             // both themes over anything.
             className="bg-background/85 flex max-w-[36rem] items-center gap-2.5 rounded-full py-1.5 pr-5 pl-1.5 shadow-2xl ring-1 ring-white/15 backdrop-blur-sm"
             style={
-              // Only a crit tints the glow. A plain roll gets `shadow-2xl` and nothing
-              // else, so the coloured halo means something when it appears.
+              // Only a crit tints the glow, and only once the total is on screen beside it —
+              // `crit` above is gated on `revealed` and says at length why. A plain roll
+              // gets `shadow-2xl` and nothing else, so the coloured halo means something
+              // both when it appears and when it does not.
               crit === null ? undefined : { boxShadow: `0 0 34px -4px ${CRIT_COLOUR[crit]}` }
             }
           >

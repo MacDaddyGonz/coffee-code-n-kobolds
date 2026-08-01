@@ -75,7 +75,7 @@ export type RollButtonProps = {
   look?: 'number' | 'word'
   /** What it shows: the modifier, the bonus, or the part's label. */
   children: ReactNode
-  /** The caller's own reason to be inert — a saving sheet. `pending` is added here. */
+  /** The caller's own reason to be inert — a saving sheet. Nothing is added to it here. */
   disabled?: boolean
   className?: string
 }
@@ -100,7 +100,7 @@ export function RollButton({
   className,
 }: RollButtonProps) {
   const characterId = useRollTarget()
-  const { mode, roll, pending } = useRollControls()
+  const { mode, roll } = useRollControls()
 
   if (characterId === null) {
     // See the ⚠️ on `look`. A number is a fact and stays; a button is an affordance and
@@ -172,9 +172,18 @@ export function RollButton({
           // so it gets `outline`: the same weight the creature sheet's own chips use.
           variant={look === 'number' ? 'ghost' : 'outline'}
           className={look === 'number' ? cn('px-1.5', FIGURE, className) : className}
-          // Both halves wanted: `pending` is a roll already in flight, and `disabled` is
-          // the caller's own reason — a sheet mid-save.
-          disabled={disabled || pending}
+          // ⚠️ **The caller's own reason only, and deliberately never `rolls.pending`.**
+          // That flag is the panel's count of *every* roll in flight, so reading it here
+          // greys out every control on the sheet for the length of a round trip — and a
+          // weapon is two clicks in a second, which `TableEffects` names as the ordinary
+          // case rather than a corner one. The second click would land on a disabled
+          // button and be silently dropped, which is the exact failure the initiative die
+          // in `CharacterRows` records as its own correction, in the same words. There is
+          // nothing to protect against either: a second roll is a second feed line and
+          // both are wanted, the mutation is one transaction per click, and the tray and
+          // the announcement are both newest-wins by construction. `disabled` stays,
+          // because a sheet mid-save is a real reason.
+          disabled={disabled}
           // Always, and not only when the control is icon-only. `+3` is not a name, and
           // `To hit` does not say which of a hero's four weapons it belongs to.
           aria-label={name}
