@@ -24,6 +24,7 @@
 // of lib/library/types.ts.
 
 import {
+  bestiaryCategoryOf,
   bestiaryEntry,
   type BestiaryAbility,
   type BestiaryAttack,
@@ -45,6 +46,7 @@ import { race, type Race } from './races'
 import type {
   AbilityScores,
   BestiarySheet,
+  CharacterGroup,
   CharacterKind,
   CharacterSheet,
   ContentEntry,
@@ -130,6 +132,62 @@ export function resolveSheet(doc: { sheet?: StoredSheet }): CharacterSheet {
  */
 export function kindOf(doc: { sheet?: StoredSheet }): CharacterKind {
   return isMonsterSheet(doc.sheet) ? 'npc' : 'pc'
+}
+
+/**
+ * Which of the DM's three headings this character sits under: Characters, NPCs, Monsters.
+ *
+ * The schema has four stored *kinds* and they do not map onto three groups — `pc` and
+ * `preset` are both characters, and `npc` and `bestiary` are each either of the other two
+ * — so the mapping is this function and is asked nowhere else. The client never computes
+ * it; `publicCharacterValidator` carries the resolved answer.
+ *
+ * **A linked creature derives its group and a hand-built one stores it**, which is the
+ * same split every other number on these sheets already makes. A bestiary entry declares
+ * its category on the *file* it lives in rather than on the entry (see
+ * lib/bestiary/types.ts), so `social` is an NPC and `monster` or `enemy` is a monster; a
+ * hand-typed sheet has no corpus to ask, so the dialog asks instead and the answer is
+ * stored in `NpcSheet.group`.
+ *
+ * ⚠️ **This is a display discriminator and `kindOf` above is a security one, and the
+ * difference is what makes the defaults here safe.** Both of the values this can return
+ * for a creature are DM-only — a player receives neither, because `maySeeCharacter`
+ * refused the whole row before anybody asked which heading it went under — so a wrong
+ * answer misfiles a row and can never publish one. That is why an unanswered hand-built
+ * sheet may simply default, and why a retired entry key may fall back to `'monster'`
+ * rather than refusing. Compare `isMonsterSheet`, whose default is fail-closed because
+ * getting *that* wrong publishes a dragon. Do not merge the two questions, and do not
+ * copy this function's tolerance across to that one.
+ *
+ * Exhaustive, with a `never` arm, for the reason `kindOf` gives: a fifth stored kind
+ * should fail `npm run lint` here rather than pick a heading by accident.
+ */
+export function groupOf(doc: { sheet?: StoredSheet }): CharacterGroup {
+  const stored = doc.sheet
+  if (stored === undefined) return 'character'
+
+  switch (stored.kind) {
+    case 'pc':
+    case 'preset':
+      return 'character'
+    case 'npc':
+      // Absent means nobody was asked — every creature typed in before this field
+      // existed, and `defaultNpcSheet`, which deliberately omits it. See that function.
+      return stored.group ?? 'npc'
+    case 'bestiary': {
+      // A retired key resolves to a monster rather than throwing, exactly as
+      // `resolveBestiary` keeps a retired creature readable: this runs inside
+      // `characters.list`, and a throw here would blank the DM's whole panel over one
+      // creature nobody can look up.
+      const category = bestiaryCategoryOf(stored.entryKey)
+      return category === 'social' ? 'npc' : 'monster'
+    }
+    default: {
+      const unknownKind: never = stored
+      void unknownKind
+      return 'monster'
+    }
+  }
 }
 
 /** The stored selections, or null for a character that is not built from the library. */

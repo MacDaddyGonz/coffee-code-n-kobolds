@@ -40,6 +40,35 @@ export const publicTokenValidator = v.object({
   artUrl: v.union(v.string(), v.null()),
   tint: v.string(),
   characterId: v.union(v.id('characters'), v.null()),
+  /**
+   * WHO MAY MOVE THIS TOKEN — the **effective** set, computed by
+   * `effectiveControllersOf` below. What the client's `canMove` reads, and the one
+   * fact it is allowed to read for that question.
+   *
+   * The DM is not in it and never will be: the DM is authorised by holding the DM
+   * code (invariant 7), not by appearing in a list a payload carries.
+   */
+  controllerIds: v.array(v.id('players')),
+  /**
+   * EXACTLY WHAT IS STORED — the grants the DM has written down, and nothing
+   * derived. What the DM's grant dialog edits.
+   *
+   * **Two fields rather than one, deliberately, and the second is not redundant
+   * with the first.** One is state and one is a rule computed from it, so a dialog
+   * given only the effective set would have to subtract the claim holder back out
+   * to know which boxes it may untick — which is the control rule, re-implemented
+   * in the browser, in a second language, where nothing checks it against the
+   * server's. ADR 0005 recorded that exact failure in `useBoard`'s token → character
+   * → my-character walk and said to stop doing it: when the server already knows the
+   * answer, the server sends the answer. Sending both facts costs an array of ids per
+   * token and removes the browser's licence to derive either.
+   *
+   * Which is also why the dialog can render "plays this character, always in
+   * control" as checked-and-disabled honestly: that seat is in `controllerIds` and
+   * absent from `grantedPlayerIds`, and the difference between the two arrays *is*
+   * the derived half.
+   */
+  grantedPlayerIds: v.array(v.id('players')),
 })
 export type PublicToken = Infer<typeof publicTokenValidator>
 
@@ -86,6 +115,62 @@ function maySee(token: Doc<'tokens'>, isDm: boolean): boolean {
 }
 
 /**
+ * The seats the DM has explicitly granted this token to. The one accessor for the
+ * stored field, and the only place the default is spelled.
+ *
+ * Optional in the schema because `tokens` has held rows since Milestone 2 and a
+ * required field cannot be added to a populated table in one push — the fifth time
+ * this project has met that, and the fifth time the answer is one accessor with a
+ * documented default rather than a `?? []` at each reader. Absent means the DM has
+ * granted this token to nobody, which is not the same statement as "nobody may move
+ * it": see `effectiveControllersOf` below for the other half.
+ */
+export function grantedControllersOf(token: Doc<'tokens'>): Id<'players'>[] {
+  return token.controllerIds ?? []
+}
+
+/**
+ * THE CONTROL RULE, in one expression, in one place: the DM's explicit grants, plus
+ * the seat playing the token's character if there is one.
+ *
+ * Every consumer of "who may move this?" resolves through here — `requireMovableToken`
+ * with the one holder it looked up, `publicTokens` with a holder off the map it built,
+ * `controlledCharacterIds` with the same map — so the browser's `canMove`, the refusal
+ * on the write path and the sheets a granted player is sent cannot come to disagree
+ * about what control is. There is exactly one rule and three callers, rather than three
+ * comparisons that were identical when they were written.
+ *
+ * The claim holder is composed in here rather than written into `controllerIds` because
+ * a claim already lives on the seat (ADR 0002, seat → character and never the reverse).
+ * Storing it a second time would make two documents authoritative for one relation, and
+ * the bug that follows is a hero reassigned to a new player whose old token still lists
+ * the seat that left — the same denormalisation ADR 0004 refused for `layer`.
+ *
+ * **Zero grants and no claim gives the empty array, which means the DM alone**, and
+ * this is the one place that is stated. It is the correction Milestone 2 shipped after
+ * the first real session: control used to be *assumed* for a token with no character
+ * attached, on the reasoning that a creature nobody is playing should still be
+ * draggable — and since every NPC the DM adds has no character attached, the whole
+ * table could shove the monsters around. An unattached token is the DM's. It is
+ * draggable by a player only when the DM says so, which is now a thing the DM can
+ * actually say.
+ *
+ * The DM is never a member. Being the DM is holding the DM code (invariant 7), checked
+ * on the request, and a seat id in an array is not that.
+ */
+export function effectiveControllersOf(
+  token: Doc<'tokens'>,
+  holder: Doc<'players'> | null,
+): Id<'players'>[] {
+  const granted = grantedControllersOf(token)
+  // The DM granting a token to the very seat already playing its character is an
+  // ordinary thing to click, so the union has to be a union — a duplicate id would
+  // otherwise reach the dialog as one seat with two entries.
+  if (holder === null || granted.includes(holder._id)) return granted
+  return [...granted, holder._id]
+}
+
+/**
  * Filtered token documents for this caller. THE choke point.
  *
  * Private deliberately: a caller outside this module holding raw `Doc<'tokens'>`
@@ -115,28 +200,53 @@ async function visibleTokens(
  * a hidden token — even to throw the object away a line later — would mean the
  * secret had already been minted into a form that could be logged, cached or
  * accidentally spread. Projection only ever runs over rows the caller may see.
+ *
+ * The seats are passed in rather than read here, exactly as `publicCharacters` takes
+ * them next door: this module stays confined to its own two tables and the caller
+ * keeps its one bounded roster read. `board.tokens` therefore re-subscribes when the
+ * roster changes, which is *correct* for a claim — a claim is control, so the
+ * effective set genuinely moved — and merely cheap for a rename. It is affordable
+ * only because this is the low-churn half of the board; see the warning on
+ * `visiblePositions`, where the same read would not be.
  */
 export async function publicTokens(
   ctx: QueryCtx,
   gameId: Id<'games'>,
   isDm: boolean,
+  seats: Doc<'players'>[],
 ): Promise<PublicToken[]> {
   const tokens = await visibleTokens(ctx, gameId, isDm)
 
+  // Built once from the seats we were handed rather than a claim lookup per token,
+  // which is the same idiom `publicCharacters` uses and matters more here: a board
+  // holds up to MAX_TOKENS_PER_GAME rows, so the per-token form would be two hundred
+  // index reads on a subscription every client in the game holds open.
+  const holderByCharacter = new Map(
+    seats.filter((seat) => seat.characterId).map((seat) => [seat.characterId!, seat]),
+  )
+
   return await Promise.all(
-    tokens.map(async (token) => ({
-      _id: token._id,
-      name: token.name,
-      layer: token.layer,
-      sizeSquares: token.sizeSquares,
-      // Null rather than undefined: `undefined` is not a Convex value, so an
-      // optional field has to become something on the way out. A getUrl of a blob
-      // that has been deleted underneath us is null too, and the board draws a
-      // tinted coin for both cases.
-      artUrl: token.imageId ? await ctx.storage.getUrl(token.imageId) : null,
-      tint: token.tint,
-      characterId: token.characterId ?? null,
-    })),
+    tokens.map(async (token) => {
+      const holder = token.characterId ? holderByCharacter.get(token.characterId) ?? null : null
+      return {
+        _id: token._id,
+        name: token.name,
+        layer: token.layer,
+        sizeSquares: token.sizeSquares,
+        // Null rather than undefined: `undefined` is not a Convex value, so an
+        // optional field has to become something on the way out. A getUrl of a blob
+        // that has been deleted underneath us is null too, and the board draws a
+        // tinted coin for both cases.
+        artUrl: token.imageId ? await ctx.storage.getUrl(token.imageId) : null,
+        tint: token.tint,
+        characterId: token.characterId ?? null,
+        // Both halves of control, computed here and derived nowhere else — see the
+        // note on the validator for why the browser gets the rule's answer and its
+        // input rather than just the input.
+        controllerIds: effectiveControllersOf(token, holder),
+        grantedPlayerIds: grantedControllersOf(token),
+      }
+    }),
   )
 }
 
@@ -171,6 +281,59 @@ export async function visibleCharacterIds(
 }
 
 /**
+ * The characters standing on tokens **this seat controls**. The second narrow
+ * crossing out of this module, beside `visibleCharacterIds` above.
+ *
+ * Same discipline as its neighbour and for the same reason: a set of ids leaves,
+ * never a `Doc<'tokens'>`, so `lib/characters.ts` can widen what a granted player is
+ * allowed to see without either choke point reading the other's tables. What
+ * `visibleCharacterIds` answers is *whose health bar may this caller be shown*; this
+ * answers *whose sheet is this caller allowed to open, and whose hit points may they
+ * change*. They are composed, never substituted: control is added to sight, and the
+ * sight rule in `maySeeCharacter` still runs first.
+ *
+ * ⚠️ **This is built from `visibleTokens`, and that composition is what the whole
+ * feature rests on.** A grant written on a DM-layer token contributes nothing to a
+ * player's set, because the token was filtered out one line above — so "sight follows
+ * the token" is true structurally rather than by anybody remembering to check the
+ * layer here. The DM moves the token to the player layer and the sheet arrives with
+ * it; the DM moves it back and the sheet goes. There is deliberately no second layer
+ * test in this function, and adding one would be the signal that the composition had
+ * been broken somewhere above.
+ *
+ * ⚠️ **`playerId === undefined` gives the empty set. Fail closed.** A caller with no
+ * seat is an anonymous client, not a caller who controls everything, and this is the
+ * argument that widens access to a secret — so its absent case is the refusing one.
+ * Note that this is not identity: a `playerId` is routing (ADR 0003), so this widens
+ * what *that seat* may read to anybody who passes that seat's id. That residual is
+ * accepted deliberately and is written out in full on `requireMovableToken` below.
+ */
+export async function controlledCharacterIds(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+  isDm: boolean,
+  seats: Doc<'players'>[],
+  playerId?: Id<'players'>,
+): Promise<Set<Id<'characters'>>> {
+  if (playerId === undefined) return new Set()
+
+  const tokens = await visibleTokens(ctx, gameId, isDm)
+
+  const holderByCharacter = new Map(
+    seats.filter((seat) => seat.characterId).map((seat) => [seat.characterId!, seat]),
+  )
+
+  const ids = new Set<Id<'characters'>>()
+  for (const token of tokens) {
+    const characterId = token.characterId
+    if (!characterId) continue
+    const holder = holderByCharacter.get(characterId) ?? null
+    if (effectiveControllersOf(token, holder).includes(playerId)) ids.add(characterId)
+  }
+  return ids
+}
+
+/**
  * Positions on one scene, filtered to tokens this caller may see. For `board.positions`.
  *
  * Each position row is hydrated back to its token so the same `maySee` decides it.
@@ -186,6 +349,16 @@ export async function visibleCharacterIds(
  * invariant 2's table split: token documents are written when the DM adds, renames
  * or re-layers a token, which is rare, while the churn of a drag lands on
  * `tokenPositions` alone.
+ *
+ * ⚠️ **This deliberately does not take the seats, and the signature must stay that
+ * way.** `publicPositionValidator` is a token id and two coordinates — there is no
+ * controller field on it and so nothing here to compose. Passing the roster in "for
+ * symmetry" with `publicTokens` would add a `players` range read to the highest-churn
+ * subscription in the app, which is exactly the read `publicTokens` can afford and
+ * this one cannot: every join, rename, claim and release would re-execute the
+ * position query for every client at the table, on top of the ten writes a second a
+ * drag already makes. Who may move a token is decided on the write path and rendered
+ * from `board.tokens`; where it stands is a different question with a different cost.
  */
 export async function visiblePositions(
   ctx: QueryCtx,
@@ -217,8 +390,8 @@ export async function visiblePositions(
  * The token this caller is allowed to move, or a throw. Throws the SAME
  * TokenNotFound error for "no such token", "token in another game" and
  * "DM-layer token without the DM code" — telling those apart is an existence
- * oracle for the DM layer. Throws TokenNotYours for a player-layer token whose
- * character another seat has claimed (advisory only; see ADR 0004).
+ * oracle for the DM layer. Throws TokenNotYours for a player-layer token this seat
+ * neither plays nor has been granted (advisory only; see ADR 0004).
  */
 export async function requireMovableToken(
   ctx: QueryCtx,
@@ -235,41 +408,50 @@ export async function requireMovableToken(
   if (isDm) return token
 
   // Be honest about the ceiling. `playerId` is a routing argument, so anyone can pass
-  // another seat's id and walk straight past the checks below; they stop a misclick
+  // another seat's id and walk straight past the check below; it stops a misclick
   // and a misunderstanding, not somebody with the network tab open. Closing that needs
   // real identity, which means accounts, and ADR 0002 declined those deliberately —
   // ADR 0004 records why that is the right trade at this table rather than a gap
-  // waiting to be filled. It is acceptable because nothing behind this check is a
-  // secret: a player-layer token is already drawn on every screen in the game, so the
-  // worst outcome is a rude move everybody watched happen. The refusal above, which
-  // does guard a secret, gets no such latitude and keys off the DM code alone.
-  // Control is granted, never assumed. This used to let anyone move a token that no
-  // character was attached to, on the reasoning that a creature nobody is playing
-  // should still be draggable. A first real session found that immediately: every
-  // NPC the DM adds has no character attached, so the whole table could shove the
-  // monsters around. An unattached token is the DM's.
-  if (playerId === undefined || !token.characterId) {
-    throw new ConvexError({
-      kind: 'TokenNotYours',
-      message: 'Only the DM can move that token.',
-    })
+  // waiting to be filled. It is acceptable *here* because nothing behind this check is
+  // a secret: a player-layer token is already drawn on every screen in the game, so
+  // the worst outcome is a rude move everybody watched happen.
+  //
+  // ⚠️ **The clause that used to follow — that the refusal above, which does guard a
+  // secret, keys off the DM code alone and nothing else — is no longer true, and the
+  // change is deliberate rather than a slip.** The layer filter itself still keys off
+  // the DM code alone: `maySee` consults nothing else and must not. But a grant is now
+  // a **second door**, opened by the DM on purpose, and it opens onto a secret: control
+  // of a token carries that creature's sheet and its exact hit points to the granted
+  // seat, through `controlledCharacterIds` above. So the residual reaches further than
+  // it did. A player passing another seat's id now reads whatever the DM has granted
+  // *that* seat — a monster's stat block, not only a rude shove of a hero everyone can
+  // already see. That is the sanctioned position, not an oversight: the door is one the
+  // DM chose to open, the audience is the same trusted group, and the alternative is
+  // still accounts. What has changed is the size of the residual, so it is written down
+  // rather than left for the next reader to discover.
+  //
+  // Note also the read below, and what it is not. One indexed `findClaimHolder`, never
+  // a roster range read: this handler runs ten times a second during a drag, and a
+  // `listSeats` here would put the whole `players` range into that transaction's read
+  // set, turning every concurrent join, rename or claim into an OCC conflict against an
+  // in-flight drag — on the one write path invariant 2 exists for. `publicTokens` may
+  // build the map because it is a query on the low-churn half; this may not.
+  if (playerId !== undefined) {
+    const holder = token.characterId ? await findClaimHolder(ctx, token.characterId) : null
+    // The same rule the payload was projected through, so what the browser drew as
+    // draggable and what the server accepts are one function rather than two that
+    // agreed when they were written.
+    if (effectiveControllersOf(token, holder).includes(playerId)) return token
   }
 
-  const holder = await findClaimHolder(ctx, token.characterId)
-  if (!holder) {
-    throw new ConvexError({
-      kind: 'TokenNotYours',
-      message: 'Nobody is playing that character yet, so only the DM can move it.',
-    })
-  }
-  if (holder._id !== playerId) {
-    throw new ConvexError({
-      kind: 'TokenNotYours',
-      message: `${holder.displayName} is playing that token.`,
-    })
-  }
-
-  return token
+  // One message for every way of not controlling it — no claim, somebody else's claim,
+  // no grant, no seat at all. The three it replaced named the holder and distinguished
+  // the cases, which is a courtesy on a player-layer token and pointless precision now
+  // that a grant can produce any combination of them. The tests assert the `kind`.
+  throw new ConvexError({
+    kind: 'TokenNotYours',
+    message: 'That token is not yours to move. Ask the DM to hand it to you.',
+  })
 }
 
 /**
@@ -350,9 +532,10 @@ export async function freeCellNear(
  * table.
  *
  * The consequences of skipping it are quiet rather than loud, which is why it is
- * worth doing: `requireMovableToken` would find no claim holder and fall back to
- * "only the DM can move that", and the health bar would simply never appear — a
- * hero's token that has become undraggable with no visible reason why.
+ * worth doing: `requireMovableToken` would find no claim holder, so the effective
+ * controllers would collapse to whatever the DM had granted — nothing, usually — and
+ * the health bar would simply never appear. A hero's token that has become
+ * undraggable with no visible reason why.
  *
  * Bounded by the by_characterId index rather than a scan of the game's tokens.
  */
@@ -367,6 +550,73 @@ export async function detachCharacterFromTokens(
 
   for (const token of tokens) {
     await ctx.db.patch('tokens', token._id, { characterId: undefined })
+  }
+}
+
+/**
+ * Write the DM's grants for one token. The only writer of `controllerIds`.
+ *
+ * Deduped here rather than trusted from the caller, because the array is what the
+ * dialog sends and a double-click is the ordinary way to produce a repeat. A seat
+ * listed twice would reach `effectiveControllersOf` unchanged, come back on the
+ * payload twice, and render as one player with two checkboxes.
+ *
+ * It does **not** check that these seats exist or belong to this game: that is
+ * `board.setControllers`'s job, because it holds the game and the DM code and this
+ * module holds neither. The split is the same one `deleteCharacter` keeps — the
+ * writer writes, and the gate is where the code was verified.
+ *
+ * An empty list is stored as an empty array rather than patched away to `undefined`.
+ * Both read identically through `grantedControllersOf`, and one shape of write is one
+ * fewer thing for the smoke script's field-by-field comparison to call "present on one
+ * side only".
+ */
+export async function setTokenControllers(
+  ctx: MutationCtx,
+  tokenId: Id<'tokens'>,
+  playerIds: Id<'players'>[],
+): Promise<void> {
+  await ctx.db.patch('tokens', tokenId, { controllerIds: [...new Set(playerIds)] })
+}
+
+/**
+ * Take a departing seat off every token it had been granted.
+ *
+ * The same class of repair `detachCharacterFromTokens` above performs for a deleted
+ * character, and it lives here for the same reason: the pointer runs token → seat, so
+ * the token is what has to be mended, and this is the only module that may write that
+ * table.
+ *
+ * Skipping it would be quiet rather than loud, which is why it is worth doing. Seat
+ * ids are not reused — `players.join` inserts a fresh document (ADR 0003) — so a stale
+ * grant authorises nobody and simply accumulates, and the DM's dialog would render it
+ * as a row it cannot name. Left long enough, the honest reading of the array stops
+ * being "the seats the DM chose" and becomes "the seats the DM chose, minus the ones
+ * who have since left", which nothing in the UI knows how to say.
+ *
+ * Swept by `by_gameId` and bounded by MAX_TOKENS_PER_GAME rather than indexed by seat,
+ * because there is no index on an array member and a per-game sweep of at most two
+ * hundred rows on the rare occasion somebody leaves is the cheaper thing to have than
+ * a second table to maintain. Tokens without the id are skipped rather than patched
+ * with an identical array: a no-op patch is still a write, and it would invalidate
+ * `board.tokens` for every client at the table.
+ */
+export async function revokeControlForSeat(
+  ctx: MutationCtx,
+  gameId: Id<'games'>,
+  playerId: Id<'players'>,
+): Promise<void> {
+  const tokens = await ctx.db
+    .query('tokens')
+    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  for (const token of tokens) {
+    const granted = grantedControllersOf(token)
+    if (!granted.includes(playerId)) continue
+    await ctx.db.patch('tokens', token._id, {
+      controllerIds: granted.filter((id) => id !== playerId),
+    })
   }
 }
 

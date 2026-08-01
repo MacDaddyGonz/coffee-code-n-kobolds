@@ -16,6 +16,14 @@ export type MapPaneProps = {
   playerId: Id<'players'>
   /** The character this seat is playing, which decides which token it may drag. */
   characterId: Id<'characters'> | null
+  /**
+   * The shell's selection, threaded through to the board. ⚠️ **Two primitives and
+   * stable callbacks, never a selection object** — see the memo note below and the
+   * one in `GameShell`.
+   */
+  selectedTokenId: Id<'tokens'> | null
+  onSelectToken: (tokenId: Id<'tokens'>) => void
+  onClearSelection: () => void
 }
 
 /**
@@ -49,6 +57,13 @@ export type MapPaneProps = {
  * subscription, the rest from the route), so the memo actually holds rather than
  * being defeated by a fresh object. The board's own `ResizeObserver` is what makes
  * the canvas follow the divider, and it needs no render of this component to do it.
+ *
+ * ⚠️ **Selection is the second piece of `GameShell` state and must not defeat that
+ * memo.** It arrives as a token id and two callbacks built with `useCallback([])`,
+ * so the id changes only when the selection genuinely does and the callbacks never
+ * change at all. A `{ tokenId, characterId }` object would be a new prop on every
+ * frame of a divider drag, and the symptom — the whole board tree reconciling sixty
+ * times a second — would read as a performance regression with no obvious cause.
  */
 export const MapPane = memo(function MapPane({
   code,
@@ -56,6 +71,9 @@ export const MapPane = memo(function MapPane({
   dm,
   playerId,
   characterId,
+  selectedTokenId,
+  onSelectToken,
+  onClearSelection,
 }: MapPaneProps): ReactElement {
   const playing = game.status === 'playing' && game.activeSceneId !== null
 
@@ -70,6 +88,9 @@ export const MapPane = memo(function MapPane({
           dm={dm}
           playerId={playerId}
           myCharacterId={characterId}
+          selectedTokenId={selectedTokenId}
+          onSelectToken={onSelectToken}
+          onClearSelection={onClearSelection}
           className="min-h-0 flex-1"
         />
       ) : (

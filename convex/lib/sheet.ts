@@ -500,6 +500,21 @@ export const pcSheetValidator = v.object({
 export type PcSheet = Infer<typeof pcSheetValidator>
 
 /**
+ * The two groups a DM's creature can sit in. An innkeeper is an `npc`; an owlbear is a
+ * `monster`.
+ *
+ * **This says nothing about secrecy.** Both are refused to a player wholesale by
+ * `maySeeCharacter`, which asks `isMonsterSheet` and not this — the schema has four sheet
+ * *kinds* and they do not map onto the DM's three headings, which is the whole reason
+ * this union exists. Keeping the two questions apart is deliberate: one decides who may
+ * read a document and the other decides which list it is printed in.
+ */
+export const CREATURE_GROUPS = ['npc', 'monster'] as const
+export type CreatureGroup = (typeof CREATURE_GROUPS)[number]
+
+export const creatureGroupValidator = v.union(v.literal('npc'), v.literal('monster'))
+
+/**
  * The reduced NPC sheet. A monster gets AC, hit points, an initiative bonus and a
  * list of things it does, and nothing else.
  *
@@ -555,6 +570,21 @@ export const npcSheetValidator = v.object({
   attackBonus: v.optional(v.number()),
   saveDc: v.optional(v.number()),
   skills: v.optional(creatureSkillsValidator),
+  // Which heading this creature sits under in the DM's sheet selector: the innkeeper is
+  // an NPC and the owlbear is a monster. **A hand-built creature stores it because it has
+  // nothing to derive it from** — a bestiary-linked one is grouped by the corpus category
+  // of the entry it points at, in `groupOf`, which is the same split every other number
+  // on these two sheet kinds already makes.
+  //
+  // Sixth optional field on this validator and the same reason as the five above.
+  // Read through `groupOf` in lib/resolve.ts and nowhere else; absent means `'npc'`.
+  //
+  // ⚠️ **This is a display discriminator and not a security one**, which is what makes a
+  // default safe here at all. Both values are DM-only — a player receives neither an
+  // `npc` nor a `monster` row — so getting it wrong misfiles a row and never publishes
+  // one. Compare `isMonsterSheet` below, whose default is fail-closed because getting
+  // *that* wrong publishes a dragon. Do not merge the two questions.
+  group: v.optional(creatureGroupValidator),
 })
 export type NpcSheet = Infer<typeof npcSheetValidator>
 
@@ -574,6 +604,29 @@ export type CharacterSheet = Infer<typeof sheetValidator>
 export type CharacterKind = CharacterSheet['kind']
 
 export const characterKindValidator = v.union(v.literal('pc'), v.literal('npc'))
+
+/**
+ * The three headings the DM's sheet selector has, resolved: Characters, NPCs, Monsters.
+ *
+ * `CreatureGroup` widened by the one group a creature can never be in. The schema's four
+ * stored kinds do not map onto these — `pc` and `preset` are both characters, `npc` and
+ * `bestiary` are each either of the other two — so the mapping is a function,
+ * `groupOf` in lib/resolve.ts, and it is asked in one place.
+ *
+ * ⚠️ **`kind` and `group` are two fields on one payload and they answer different
+ * questions.** `kind` (`pc` | `npc`) is the secrecy discriminator: it decides whether a
+ * caller may know the character exists at all. `group` decides which heading it is
+ * printed under, and only the DM ever receives one that is not `'character'`. A reader
+ * who collapses them will either publish a monster or lose a heading.
+ */
+export const CHARACTER_GROUPS = ['character', 'npc', 'monster'] as const
+export type CharacterGroup = (typeof CHARACTER_GROUPS)[number]
+
+export const characterGroupValidator = v.union(
+  v.literal('character'),
+  v.literal('npc'),
+  v.literal('monster'),
+)
 
 /**
  * What the DM has typed over the top of a premade sheet.
@@ -1085,6 +1138,16 @@ export function defaultPcSheet(): PcSheet {
   }
 }
 
+/**
+ * `group` is deliberately **omitted** rather than defaulted to `'npc'` here.
+ *
+ * This is the second field-by-field rebuild of an `NpcSheet` and the question it has to
+ * answer is not "which group" but "has anybody said". Writing `group: 'npc'` would make
+ * every creature built from this default carry an answer nobody gave, which is
+ * indistinguishable on the wire from a DM who chose NPC — and the dialogs that *do* ask
+ * spread their answer over the top of this. Absent means unanswered, and `groupOf` reads
+ * unanswered as `'npc'` in one place.
+ */
 export function defaultNpcSheet(): NpcSheet {
   return {
     kind: 'npc',
@@ -1472,6 +1535,10 @@ export function normaliseSheet(sheet: CharacterSheet): CharacterSheet {
       ...(sheet.attackBonus === undefined ? {} : { attackBonus: Math.round(sheet.attackBonus) }),
       ...(sheet.saveDc === undefined ? {} : { saveDc: Math.round(sheet.saveDc) }),
       ...(sheet.skills === undefined ? {} : { skills: normaliseCreatureSkills(sheet.skills) }),
+      // **Sixth, and the trap's fifth outing.** Same conditional spread as the five
+      // above, for the same reason: absent has to stay absent, because `groupOf`'s
+      // default is what files every creature typed in before this field existed.
+      ...(sheet.group === undefined ? {} : { group: sheet.group }),
     }
   }
 

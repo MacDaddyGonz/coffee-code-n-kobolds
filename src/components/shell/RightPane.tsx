@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react'
-import { memo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
+import { useQuery } from 'convex/react'
 
 import { TabPane } from '@/components/shell/TabPane'
 import { DmToolsTab } from '@/components/shell/tabs/DmToolsTab'
@@ -8,8 +9,11 @@ import { SettingsTab } from '@/components/shell/tabs/SettingsTab'
 import { SheetTab } from '@/components/shell/tabs/SheetTab'
 import { TableTab } from '@/components/shell/tabs/TableTab'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { tokensArgs } from '@/hooks/useBoard'
 import type { Dm } from '@/hooks/useDm'
 import type { PublicGame } from '@/hooks/useSeat'
+import { sheetFocusOf } from '@/lib/sheetFocus'
+import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 
 type TabValue = 'feed' | 'sheet' | 'table' | 'dm' | 'settings'
@@ -19,7 +23,19 @@ export type RightPaneProps = {
   game: PublicGame
   dm: Dm
   playerId: Id<'players'>
+  /** The character this seat is playing, or null. Not necessarily the one on screen. */
   characterId: Id<'characters'> | null
+  /**
+   * The shell's selection and the three ways to change it. ⚠️ **Primitives and
+   * stable callbacks, never a selection object** — this component is memoised
+   * against a pane width that changes sixty times a second; see the memo note below
+   * and the longer one in `GameShell`.
+   */
+  selectedTokenId: Id<'tokens'> | null
+  selectedCharacterId: Id<'characters'> | null
+  onSelectToken: (tokenId: Id<'tokens'>) => void
+  onSelectCharacter: (characterId: Id<'characters'>, tokenId: Id<'tokens'> | null) => void
+  onClearSelection: () => void
   onRenameSeat: (displayName: string) => Promise<void>
   onLeaveSeat: () => Promise<void>
 }
@@ -69,6 +85,15 @@ export type RightPaneProps = {
  * with both of its entry lists and every row in them — to produce exactly what was
  * there before. Nothing in here reads the width. Every prop is stable across the
  * parent's re-renders, so the memo holds.
+ *
+ * ⚠️ **Selection is the second piece of `GameShell` state and arrives as primitives
+ * for exactly that reason.** Two ids and three `useCallback([])` handlers: the ids
+ * change only when the selection genuinely does, and the handlers never change. A
+ * single `{ tokenId, characterId }` prop would be a new object on every frame of a
+ * divider drag and would defeat this memo entirely — and the symptom, a panel
+ * reconciling sixty times a second, points at nothing in particular in a profiler.
+ * The `SheetFocus` built below is an object and is deliberately built *inside* the
+ * boundary, where a fresh identity per render costs nothing.
  */
 export const RightPane = memo(function RightPane({
   code,
@@ -76,12 +101,45 @@ export const RightPane = memo(function RightPane({
   dm,
   playerId,
   characterId,
+  selectedTokenId,
+  selectedCharacterId,
   onRenameSeat,
   onLeaveSeat,
 }: RightPaneProps): ReactElement {
   // The sheet rather than the feed, because the feed is empty until the dice land and
   // opening a game on an empty panel reads as a broken app.
   const [tab, setTab] = useState<TabValue>('sheet')
+
+  /**
+   * The board's tokens, for the one question this pane has to ask of them: what is
+   * the selected token bound to?
+   *
+   * ⚠️ **`tokensArgs` rather than a literal, and that is not tidiness.** `useQuery`
+   * keys its memo on `JSON.stringify(convexToJson(args))`, so an argument object of
+   * the same *shape* as `useBoard`'s is genuinely the same subscription — one cache
+   * entry, one socket, one server-side execution — while `{ code, dmCode: undefined }`
+   * beside `{ code }` would be a second. `Roster.tsx:37-42` documents the same
+   * arrangement for `players.list` and is the precedent.
+   *
+   * `board.tokens` is the low-churn half of the board deliberately (invariant 2):
+   * positions live in their own query, so nobody's drag re-renders this panel.
+   */
+  const tokens = useQuery(api.board.tokens, tokensArgs(code, dm.dmCode))
+
+  const selectedTokenCharacterId = useMemo(
+    () => tokens?.find((token) => token._id === selectedTokenId)?.characterId ?? null,
+    [tokens, selectedTokenId],
+  )
+
+  // The one place the "whose sheet is on screen" question is asked. `sheetFocusOf`
+  // carries the five rules and the reason the player's fallback and the DM's differ.
+  const focus = sheetFocusOf({
+    selectedCharacterId,
+    selectedTokenId,
+    selectedTokenCharacterId,
+    myCharacterId: characterId,
+    isDm: dm.dmCode !== null,
+  })
 
   // A DM standing down takes their own tab off the strip underneath them, and a
   // controlled `Tabs` pointed at a value with no trigger and no content shows an
@@ -125,11 +183,32 @@ export const RightPane = memo(function RightPane({
         className="min-h-0 data-[state=inactive]:hidden"
       >
         <TabPane>
+          {/*
+            TODO(packages F and G): this tab still takes a single `characterId`,
+            which is the shape from before selection existed. The player's Character
+            tab and the DM's Sheets tab are owned elsewhere and are what will take
+            the `SheetFocus` itself, along with `onSelectToken`, `onSelectCharacter`
+            and `onClearSelection` — all three are on `RightPaneProps` already and
+            are deliberately left undestructured until there is something here to
+            hand them to, because an unread binding does not compile under
+            `noUnusedParameters`.
+
+            Until then the focus is collapsed onto the one prop that exists, which
+            is enough to make selection visible today: a player selecting a token
+            they control sees that creature's sheet, and deselecting puts them back
+            on their own, because `sheetFocusOf` answers with `myCharacterId`.
+
+            ⚠️ The fallback to `characterId` is a shim over the two cases the prop
+            cannot say. `tokenWithoutSheet` has no character to name — package G
+            renders the "this token carries no sheet" copy — and a DM's `none` would
+            otherwise blank a sheet the DM can still legitimately be holding, so it
+            keeps today's behaviour rather than inventing a third one on the way past.
+          */}
           <SheetTab
             code={code}
             playerId={playerId}
             dmCode={dm.dmCode}
-            characterId={characterId}
+            characterId={focus.kind === 'character' ? focus.characterId : characterId}
             onGoToTable={() => setTab('table')}
           />
         </TabPane>

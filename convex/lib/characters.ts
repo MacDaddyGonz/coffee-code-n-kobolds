@@ -38,10 +38,19 @@ import type { BestiarySheet, CharacterSheet, StoredSheet } from './sheet'
 // `CharacterSheet` and still gets one; whether it was typed in by hand or assembled
 // from the library, a race and the DM's overrides is settled before it arrives.
 import type { CreatureExtras } from './resolve'
-import { bestiaryOf, creatureExtras, kindOf, presetExtras, presetOf, resolveSheet } from './resolve'
+import {
+  bestiaryOf,
+  creatureExtras,
+  groupOf,
+  kindOf,
+  presetExtras,
+  presetOf,
+  resolveSheet,
+} from './resolve'
 import {
   bestiaryOverridesValidator,
   bestiarySheetValidator,
+  characterGroupValidator,
   characterKindValidator,
   clampHitDice,
   clampHp,
@@ -89,28 +98,106 @@ function characterNotFound(): ConvexError<typeof CHARACTER_NOT_FOUND> {
  * from the party, and an NPC the DM handed to somebody would have its stat block
  * published to the table. The kind is stated in the document, so it is read from
  * the document.
+ *
+ * ⚠️ **There is now a second door, and the sentence that used to say this refusal
+ * keys off the DM code alone is no longer true.** A DM who hands the party a pet has
+ * decided that those players may read its sheet, so `controlled` opens the row for
+ * exactly the seats named — and nothing else about it changes. The honest statement
+ * is that the refusal keys off the DM code *and off a grant the DM made deliberately*,
+ * which is a widening with an author rather than a hole. `convex/characters.ts` and
+ * `lib/board.ts` carry the same amendment beside their own advisory-ceiling notes.
+ *
+ * **The set is composed with `visibleCharacterIds` and never substituted for it.**
+ * It arrives from `controlledCharacterIds` in lib/board.ts, which builds it from the
+ * *visible* token set — so a grant written onto a DM-layer token contributes nothing
+ * for a player, because the token was already filtered out one module over. Sight of
+ * the coin is still the precondition for sight of the sheet; a grant only decides what
+ * a player may read about a creature they can already see standing there.
+ *
+ * **Optional, and absent means no grants.** That is fail-closed by construction rather
+ * than by convention: the call sites with no seat to hand it — `claim`, `assign` and
+ * `rename` — get the pre-grant rule by writing nothing, so a grant can never make a
+ * monster a playable hero or widen a write that was never meant to widen. A caller who
+ * genuinely has a set has one because it went and read the board for it.
  */
-export function maySeeCharacter(character: Doc<'characters'>, isDm: boolean): boolean {
+export function maySeeCharacter(
+  character: Doc<'characters'>,
+  isDm: boolean,
+  controlled?: ReadonlySet<Id<'characters'>>,
+): boolean {
+  if (isDm) return true
   // `kindOf`, not `resolveSheet(...).kind`. The answer is one stored field, and a
   // predicate that guards a secret should not be reaching through the whole premade
   // library to find it — a content bug in any of 72 sheets would otherwise be able
   // to take this down, and with it `characters.list` for the entire table. See the
   // note on `kindOf`.
-  return isDm || kindOf(character) === 'pc'
+  if (kindOf(character) === 'pc') return true
+  return controlled?.has(character._id) ?? false
+}
+
+/**
+ * Whether the DM has set this character aside for somebody who is not at the table yet.
+ *
+ * One accessor over one optional field, defaulting to false, for the reason every
+ * optional field on this schema is read through one: adding a required field to a
+ * populated table fails the push, so every character written before this existed has
+ * no answer and "not reserved" is what an absent answer means.
+ *
+ * ⚠️ **This is a second predicate, composed at the call site, and both of the places it
+ * was not folded into were considered and refused.**
+ *
+ * **Not into `isMonsterSheet`.** That is an allow-list answering exactly one question —
+ * which stored *kinds* may be published — and CLAUDE.md invariant 9 exists because the
+ * formulation it replaced kept compiling, kept passing and answered `false` the moment a
+ * member was added to the union. Reserving is not a kind of sheet; it is a fact about one
+ * document, and a second question asked inside that discriminator is how the
+ * discriminator stops being one question and starts being the place a leak hides.
+ *
+ * **Not into `maySeeCharacter`.** `characters.assign` and `characters.claim` both call
+ * `requireVisibleCharacter(…, false)` with `isDm` hard-coded false, deliberately, so that
+ * neither the DM code nor a grant can make a monster a playable hero. A reserved
+ * character invisible *through that function* would therefore be one **the DM cannot
+ * assign** — and being assignable to the player it was built for is the one thing
+ * reserving it was for. So the two predicates meet at the call sites that have both
+ * questions in view: `&&`-ed where the character list is built, and read on its own where
+ * `claim` refuses.
+ */
+export function isReservedCharacter(character: Doc<'characters'>): boolean {
+  return character.reserved === true
 }
 
 // ---------------------------------------------------------------------------
 // Public shapes
 // ---------------------------------------------------------------------------
 
-/** One row of the character list: who exists, and which seat is playing them. */
+/**
+ * One row of the character list: who exists, which seat is playing them, and which
+ * heading the row is printed under.
+ *
+ * ⚠️ **`kind` and `group` are two fields answering two different questions, and a
+ * reader who collapses them will either publish a monster or lose a heading.**
+ *
+ * - `kind` is **secrecy**: it decides whether this caller may know the character exists
+ *   at all. It comes from `kindOf`, which asks `isMonsterSheet`, whose default is
+ *   fail-closed because getting it wrong publishes a dragon (invariant 9).
+ * - `group` is **display**: it decides whether the row sits under Characters, NPCs or
+ *   Monsters in the DM's selector. It comes from `groupOf`, which is allowed a safe
+ *   default precisely because **only the DM ever receives a `group` that is not
+ *   `'character'`** — a player's payload has already had every creature filtered out of
+ *   it, so a wrong answer here misfiles a row and can never leak one.
+ *
+ * Four stored kinds do not map onto three groups (`pc` and `preset` are both characters;
+ * `npc` and `bestiary` are each either of the other two), which is why one field cannot
+ * do both jobs even before the secrecy argument is made.
+ */
 export const publicCharacterValidator = v.object({
   _id: v.id('characters'),
   name: v.string(),
-  // The union spelled once, in lib/sheet.ts, rather than re-typed here. It is the
-  // field that decides what a caller is allowed to know a character even is, and
-  // two copies of it is one place for a third member to be added to only one.
+  // Both unions spelled once, in lib/sheet.ts, rather than re-typed here. `kind` is the
+  // field that decides what a caller is allowed to know a character even is, and two
+  // copies of it is one place for a third member to be added to only one.
   kind: characterKindValidator,
+  group: characterGroupValidator,
   claimedByPlayerId: v.union(v.id('players'), v.null()),
   claimedByName: v.union(v.string(), v.null()),
   createdAt: v.number(),
@@ -406,6 +493,19 @@ async function allCharacters(ctx: QueryCtx, gameId: Id<'games'>): Promise<Doc<'c
  *
  * The seats are passed in rather than read here, so this module stays confined to
  * its own two tables and the caller keeps its one roster read.
+ *
+ * **No controlled set, and that is a decision rather than an omission.** A granted
+ * creature deliberately stays absent from this list: `characters.list` is one per-game
+ * subscription shared by every client, and giving it a `playerId` would split it into a
+ * cache entry per seat on the query the whole shell re-renders from. A grant is answered
+ * where a grant is used — the board, and `characters.sheet` — and the selector this list
+ * feeds is the DM's anyway. Whoever adds the argument here should be able to say what
+ * screen needed it.
+ *
+ * **Two predicates, `&&`-ed here and merged nowhere.** `maySeeCharacter` withholds a
+ * creature because it is a secret; `isReservedCharacter` withholds a hero because the DM
+ * has set it aside for somebody who has not arrived. Reserved means *absent* rather than
+ * greyed out, because a disabled row still publishes a name and the name is the spoiler.
  */
 export async function publicCharacters(
   ctx: QueryCtx,
@@ -422,13 +522,20 @@ export async function publicCharacters(
 
   // Characters arrive oldest-first: Convex appends _creationTime to every index.
   return characters
-    .filter((character) => maySeeCharacter(character, isDm))
+    .filter(
+      (character) =>
+        maySeeCharacter(character, isDm) && (isDm || !isReservedCharacter(character)),
+    )
     .map((character) => {
       const holder = holderByCharacter.get(character._id) ?? null
       return {
         _id: character._id,
         name: character.name,
         kind: kindOf(character),
+        // The heading, resolved on the server. The client never computes it — the
+        // mapping from four stored kinds onto three groups reads the bestiary to place
+        // a linked creature, and the bestiary is not in the bundle (invariant 8).
+        group: groupOf(character),
         claimedByPlayerId: holder?._id ?? null,
         claimedByName: holder?.displayName ?? null,
         createdAt: character._creationTime,
@@ -451,6 +558,21 @@ export async function publicCharacters(
  * a roster that could name one would be a spoiler leaking through a query nobody
  * thinks of as privileged. Two refusals and a filter is not redundancy here; it is
  * the filter being where the payload is built.
+ *
+ * ⚠️ **This is the second place a reserved character's name would ship, and the
+ * reserved filter below is not redundant with `publicCharacters`.** That function
+ * builds the character list; this one builds the roster, which `players.list` prints as
+ * `characterName` in the lobby and in the strip over the board. Withholding a row from
+ * one payload and naming it in the other publishes exactly the thing reserving it was
+ * meant to withhold — `Seraphine the Unarrived`, visible to the whole table, attached to
+ * a seat nobody is sitting in. `convex/players.ts` anticipated this by name: its
+ * projection nulls the id together with the name rather than beside it, so a filtered
+ * character leaves neither half behind.
+ *
+ * Unreachable through the supported routes — `claim` refuses a reserved character and
+ * `assign` clears the flag as it hands it over — which is the same standing the NPC
+ * filter above has always had, and the same reason it is written anyway. The filter
+ * belongs where the payload is built, not where the writes happen to be careful.
  */
 export async function playerCharacterNames(
   ctx: QueryCtx,
@@ -460,7 +582,7 @@ export async function playerCharacterNames(
 
   const nameById = new Map<Id<'characters'>, string>()
   for (const character of held) {
-    if (character && kindOf(character) === 'pc') {
+    if (character && kindOf(character) === 'pc' && !isReservedCharacter(character)) {
       nameById.set(character._id, character.name)
     }
   }
@@ -491,30 +613,42 @@ export async function getCharacterInGame(
  * exactly as `findSceneInGame` is paired with `getSceneInGame`, and for the same
  * reason: a mutation has nothing to render, so a bad id there should fail loudly
  * rather than write somewhere else.
+ *
+ * `controlled` is passed straight through to `maySeeCharacter` and is optional there for
+ * the reason given on it: a caller with no seat in hand writes nothing and gets the
+ * pre-grant rule, which is the fail-closed answer.
  */
 export async function findVisibleCharacter(
   ctx: QueryCtx,
   gameId: Id<'games'>,
   characterId: Id<'characters'>,
   isDm: boolean,
+  controlled?: ReadonlySet<Id<'characters'>>,
 ): Promise<Doc<'characters'> | null> {
   const character = await ctx.db.get('characters', characterId)
   if (!character || character.gameId !== gameId) return null
-  return maySeeCharacter(character, isDm) ? character : null
+  return maySeeCharacter(character, isDm, controlled) ? character : null
 }
 
 /**
  * The same, refusing anything this caller may not see — with the identical error,
  * so "that NPC exists but is not yours" and "no such character" are one answer.
+ *
+ * ⚠️ **The call sites that pass nothing do so deliberately.** `claim` and `assign` call
+ * this with `isDm` hard-coded false so that neither the DM code nor a grant can make a
+ * monster a playable hero, and `rename` is a write that was never meant to widen with a
+ * grant. Omitting the argument is how each of those says so; adding it "for consistency"
+ * would change what all three of them mean.
  */
 export async function requireVisibleCharacter(
   ctx: QueryCtx,
   gameId: Id<'games'>,
   characterId: Id<'characters'>,
   isDm: boolean,
+  controlled?: ReadonlySet<Id<'characters'>>,
 ): Promise<Doc<'characters'>> {
   const character = await getCharacterInGame(ctx, gameId, characterId)
-  if (!maySeeCharacter(character, isDm)) throw characterNotFound()
+  if (!maySeeCharacter(character, isDm, controlled)) throw characterNotFound()
   return character
 }
 
@@ -592,12 +726,26 @@ export function currentHpOf(
  * from `visibleCharacterIds` in lib/board.ts, so the question "may I see this
  * creature at all?" is still answered by the token choke point rather than
  * re-decided here.
+ *
+ * ⚠️ **`controlled` is a deliberate, narrow widening of this milestone's headline
+ * secret, and it is bounded by `visibleCharacterIds` in the same breath.** A player the
+ * DM has granted a creature receives its **exact** hit points rather than a band. That
+ * is not a softening of the rule but the other half of what a grant means: `HpControls`
+ * renders its `−`/`+` only on the `exact` variant, on the stated grounds that a caller
+ * who may edit hit points is always sent them, so a granted player with a band would get
+ * the party's wolf with no way to take damage on it — a feature that looks broken rather
+ * than restricted. The bound is that `controlled` is built from the same visible-token
+ * set the paragraph above describes, so it can only ever widen a creature the caller can
+ * already see standing on their board; it opens nothing new, it upgrades what a grant
+ * already opened. Everything ungranted is untouched, which is what the payload-scan test
+ * and its positive control exist to prove rather than assert.
  */
 export async function visibleVitals(
   ctx: QueryCtx,
   gameId: Id<'games'>,
   isDm: boolean,
   visibleNpcIds: Set<Id<'characters'>>,
+  controlled: ReadonlySet<Id<'characters'>>,
 ): Promise<PublicVitals[]> {
   // Concurrent, because neither read depends on the other. This is the health-bar
   // subscription and it re-runs on every point of damage, for each distinct
@@ -645,7 +793,13 @@ export async function visibleVitals(
     // numbers are never even assembled on the losing side of it: the band is
     // computed from values that stay in this scope, so there is no object holding
     // `current` that a later edit could accidentally spread into the payload.
-    if (isNpc && !isDm) {
+    //
+    // The grant is a third term on the *existing* condition rather than a second
+    // branch, and keeping it that way is the point: one expression decides, and the
+    // losing side still assembles no number. A creature the caller controls falls
+    // through to the same `exact` payload a hero does, because a granted pet's hit
+    // points are the granted player's business — see the ⚠️ on this function.
+    if (isNpc && !isDm && !controlled.has(character._id)) {
       out.push({
         kind: 'band',
         characterId: character._id,
@@ -882,6 +1036,33 @@ export async function renameCharacter(
   name: string,
 ): Promise<void> {
   await ctx.db.patch('characters', characterId, { name })
+}
+
+/**
+ * Set a character aside for somebody who is not at the table yet, or hand it back.
+ * **The one writer of the flag**, paired with `isReservedCharacter` as the one reader.
+ *
+ * Top-level rather than inside `sheet`, which is what makes this a two-line function
+ * instead of a rebuild: reserving is not a property of the sheet, so `updateSheet`
+ * cannot move it and `normaliseStoredSheet` has nothing to carry. Note that `false` is
+ * *stored* rather than the field being removed, which a patch could also do: absent and
+ * `false` are one answer through `isReservedCharacter`, so unreserving does not need to
+ * reproduce the exact shape of a document that was never reserved. Compare the fields
+ * that are spread in rather than named — those are optional on the *insert* path, where
+ * `undefined` is not a Convex value and naming a field is a different write from
+ * omitting it. Here the value is always a boolean the caller supplied.
+ *
+ * Two callers, and the second one is the interesting one: the DM's toggle, and
+ * `characters.assign`, which clears the reservation as it hands the character over.
+ * Unreserving and assigning are the two routes out of this state that the design names,
+ * and assigning is one of them.
+ */
+export async function setReserved(
+  ctx: MutationCtx,
+  characterId: Id<'characters'>,
+  reserved: boolean,
+): Promise<void> {
+  await ctx.db.patch('characters', characterId, { reserved })
 }
 
 /**

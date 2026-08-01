@@ -20,6 +20,10 @@ export type BoardToken = PublicToken & {
    * permission is not a permission (CLAUDE.md invariant 1, ADR 0004) — this only
    * decides whether the cursor changes and the token follows the mouse, so that
    * a player does not discover what they may move by being refused.
+   *
+   * It is now *read* rather than derived: `controllerIds` on the payload is the
+   * server's own answer, so the affordance and the refusal cannot come apart. See
+   * the rule below for why that mattered enough to change.
    */
   canMove: boolean
   /**
@@ -39,6 +43,10 @@ export type BoardToken = PublicToken & {
    * `convex/characters.ts` re-decides it server-side on every write and it is that
    * check which counts. This only chooses whether a control is drawn, so that a
    * player is not handed buttons that answer with a refusal.
+   *
+   * Wider than `canMove`'s question in one direction and narrower in another, and
+   * the rule below says why: hit points follow the character, not the layer its
+   * token happens to be drawn on.
    */
   canEditHp: boolean
 }
@@ -96,12 +104,14 @@ export function positionsArgs(code: string, sceneId: Id<'scenes'>, dmCode: strin
  * that took the tokens from one hook and the numbers from another would render the
  * two out of step for a frame every time a token appeared.
  *
- * `playerId` is in the argument shape but deliberately absent from the rule
- * below. A seat id is routing, not proof of identity (invariant 7), so it cannot
- * decide anything here; it is `useTokenMove` that sends it, as the advisory
- * "whose token is this" hint ADR 0004 describes. Taking it here too means a
- * caller hands the whole seat to one place instead of remembering which hook
- * wants which half.
+ * `playerId` now appears in the rule below, where it used not to, and the reason
+ * it may is worth stating rather than assuming. A seat id is routing and not proof
+ * of identity (invariant 7), so it can never *authorise* anything — but neither can
+ * anything in this file, because nothing here is a permission. It is used exactly
+ * as `useTokenMove` uses it when it sends it: as the advisory "which seat is this
+ * browser sitting in" hint ADR 0004 describes, here answering "should this token
+ * look draggable to me". The server is told the same thing on the write and
+ * re-decides from scratch.
  */
 export function useBoard(args: {
   code: string
@@ -109,7 +119,7 @@ export function useBoard(args: {
   playerId: Id<'players'> | null
   myCharacterId: Id<'characters'> | null
 }): Board {
-  const { code, dmCode, myCharacterId } = args
+  const { code, dmCode, playerId, myCharacterId } = args
 
   const scene = useQuery(api.scenes.active, { code })
   const tokens = useQuery(api.board.tokens, tokensArgs(code, dmCode))
@@ -137,39 +147,74 @@ export function useBoard(args: {
       position: at.get(token._id) ?? null,
       // The DM moves anything on their own board, including a claimed hero:
       // dragging the party through a door is a normal thing for them to do. A
-      // player moves the token of the character they are playing, and nothing else
-      // — an unattached token belongs to the DM, so every NPC on the board stays
-      // out of the party's hands.
+      // player moves a token their seat controls — the character they are playing,
+      // plus whatever the DM has handed them — and nothing else. Zero controllers
+      // means the DM alone, so every NPC on the board stays out of the party's hands
+      // until the DM says otherwise.
       //
       // This mirrors `requireMovableToken` deliberately, and has to keep mirroring
       // it. It is not the check that matters — the server refuses regardless — but
       // a token the UI lets you pick up and the server then rejects is a worse
       // experience than one that never moved, so the two rules are written to agree.
-      canMove:
-        isDm ||
-        (token.layer === 'player' &&
-          myCharacterId !== null &&
-          token.characterId === myCharacterId),
+      //
+      // **It now agrees by reading rather than by re-deriving**, which is the whole
+      // change. `controllerIds` is `effectiveControllersOf`'s output — the DM's
+      // explicit grants unioned with the seat playing the character — so this is the
+      // same fact the write path refuses on rather than a second implementation of
+      // it, and it cannot drift. The walk it replaces (token → character → my
+      // character) was not merely at risk of going stale: ADR 0005 predicted this
+      // change and named the shape that breaks it, a pet the party shares, which has
+      // no claimed character for such a walk to land on at all. The DM is never a
+      // member of that array and does not need to be — being the DM is holding the
+      // DM code (invariant 7), which is exactly what `isDm` says here.
+      //
+      // ⚠️ The `token.layer === 'player'` clause is gone and nothing replaced it,
+      // which looks like a dropped check and is not. It could only ever be reached
+      // by a caller `isDm` had already failed, and such a caller never holds a
+      // DM-layer token to test: `maySee` in convex/lib/board.ts filters them out of
+      // the payload, and the controller sets are computed over that visible half
+      // only. Restoring it would guard nothing and cost the case it appears to
+      // protect — the DM's own view, where a hero parked on the DM layer must stay
+      // draggable, is already answered by `isDm` above.
+      canMove: isDm || (playerId !== null && token.controllerIds.includes(playerId)),
       vitals: vitalsOf(token.characterId),
       // `requireEditableCharacter` restated, exactly as `canMove` restates
       // `requireMovableToken`: the DM may change anybody's hit points, a player may
-      // change only the character their seat has claimed, and a token with no
-      // character behind it has no hit points for anyone to change. There is
-      // deliberately no `layer` clause — hit points belong to the character, not to
-      // the token drawn for it, and the server's rule does not mention one either.
+      // change the character their seat has claimed, a seat the DM has granted
+      // control of the token may change that creature's too — the shared pet is the
+      // case that needs it — and a token with no character behind it has no hit
+      // points for anyone to change.
       //
-      // The two rules have to keep agreeing. Offering a `+` that the server then
-      // refuses is a worse experience than not offering it, and the refusal a player
-      // would get for somebody else's hero is worded for the case where they had to
-      // have gone looking for it.
+      // **Three clauses because there are two server rules, not one.** The claim
+      // test mirrors `requireEditableCharacter`, which keys off the claim holder and
+      // knows nothing about tokens; the controller test mirrors the token control
+      // `canMove` reads. They overlap today by construction — the claim holder is
+      // always in `controllerIds` — so keeping the claim clause costs nothing, and it
+      // is what stops this quietly becoming wrong if the two server rules ever say
+      // different things, which they may: a hero standing on no token at all still
+      // has a sheet their player edits, and control is attached to a token.
+      //
+      // ⚠️ Still no `layer` clause, deliberately. Hit points belong to the
+      // character, not to the token drawn for it, and the server's rule does not
+      // mention one either. Adding one is not hypothetical damage — removing it is
+      // what fixed a live bug, a hero whose token the DM had moved to the DM layer
+      // being unable to reach their own hit points.
+      //
+      // The rules have to keep agreeing. Offering a `+` that the server then refuses
+      // is a worse experience than not offering it, and the refusal a player would
+      // get for somebody else's hero is worded for the case where they had to have
+      // gone looking for it.
       canEditHp:
-        token.characterId !== null && (isDm || token.characterId === myCharacterId),
+        token.characterId !== null &&
+        (isDm ||
+          token.characterId === myCharacterId ||
+          (playerId !== null && token.controllerIds.includes(playerId))),
     }))
     // `vitalsOf` is stable until the vitals themselves change, at which point every
     // token object here is rebuilt and every coin reconciles. That is the trade, and
     // it is the right way round: damage lands a few times a round, whereas a pan
     // lands sixty times a second and touches none of these dependencies at all.
-  }, [tokens, positions, isDm, myCharacterId, vitalsOf])
+  }, [tokens, positions, isDm, playerId, myCharacterId, vitalsOf])
 
   return {
     scene: scene ?? null,

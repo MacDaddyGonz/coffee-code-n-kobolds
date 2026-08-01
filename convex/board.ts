@@ -10,12 +10,20 @@ import {
   publicTokenValidator,
   publicTokens,
   requireMovableToken,
+  setTokenControllers,
   tokenLayerValidator,
   visiblePositions,
 } from './lib/board'
 import { getCharacterInGame } from './lib/characters'
 import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
-import { MAX_TOKENS_PER_GAME, findGameByCode, requireDm, resolveDmAccess } from './lib/games'
+import {
+  MAX_SEATS_PER_GAME,
+  MAX_TOKENS_PER_GAME,
+  findGameByCode,
+  requireDm,
+  resolveDmAccess,
+} from './lib/games'
+import { getSeatInGame, listSeats } from './lib/players'
 import type { Point } from './lib/grid'
 import { isUsableTokenSize, snapToGrid } from './lib/grid'
 import { MAX_TOKEN_BYTES } from './lib/limits'
@@ -64,6 +72,12 @@ function requireFinite(point: Point) {
  * answering form — rather than `requireDm`. `dmCode` is optional because a
  * player's client has none to send, and its absence is an ordinary player, not an
  * error.
+ *
+ * It also carries who may move each token, which is why the roster is read here. That
+ * makes this query re-execute on a join, a rename, a claim or a release: correct for a
+ * claim, because a claim *is* control and the answer genuinely moved, and merely cheap
+ * for the rest. `positions` below deliberately does not do this — see the warning on
+ * `visiblePositions`.
  */
 export const tokens = query({
   args: { code: v.string(), dmCode: v.optional(v.string()) },
@@ -77,8 +91,14 @@ export const tokens = query({
     const game = await findGameByCode(ctx, args.code)
     if (!game) return []
 
-    const { isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
-    return await publicTokens(ctx, game._id, isDm)
+    // Concurrent: whether this caller holds the DM code and who is sitting at the
+    // table are independent questions, and this query re-runs whenever either the
+    // roster or the token list changes. The same arrangement `characters.list` has.
+    const [{ isDm }, seats] = await Promise.all([
+      resolveDmAccess(ctx, args.code, args.dmCode),
+      listSeats(ctx, game._id),
+    ])
+    return await publicTokens(ctx, game._id, isDm, seats)
   },
 })
 
@@ -282,6 +302,71 @@ export const moveToken = mutation({
     // token from another board joins this one: the row's existence is the
     // placement.
     await placeToken(ctx, scene._id, token._id, point)
+    return null
+  },
+})
+
+/**
+ * Hand a token to some seats, or take it back. DM-gated, because deciding who may
+ * move what is the DM's job and nobody else's.
+ *
+ * The list is absolute rather than a pair of add/remove calls: the dialog holds a
+ * checkbox per seat and sends the state of all of them, so two DM browsers racing on
+ * the same token end with one of the two intentions rather than an interleaving of
+ * both. It is also what makes revoking everything expressible — an empty array.
+ *
+ * ⚠️ **A grant is a second door onto a secret, and it is opened here.** Control
+ * carries the creature's sheet and its exact hit points to the granted seat, through
+ * `controlledCharacterIds`. That is the intended behaviour — handing a player the
+ * party's wolf and not its statistics would be handing them nothing usable — but it is
+ * why this mutation is `requireDm` and not `resolveDmAccess`, and why every id below
+ * is checked against this game before it is written.
+ *
+ * Note what a grant on a **DM-layer** token does: nothing. The token is absent from
+ * that player's payload, so the sheet does not travel either. Refusing the write would
+ * be wrong — preparing an ambush and granting it before revealing it is a reasonable
+ * order to work in — so the write succeeds and the DM's panel is where that gets said.
+ */
+export const setControllers = mutation({
+  args: {
+    code: v.string(),
+    dmCode: v.string(),
+    tokenId: v.id('tokens'),
+    playerIds: v.array(v.id('players')),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const game = await requireDm(ctx, args.code, args.dmCode)
+
+    // Bounded before the loop below, so a caller cannot buy an unbounded run of reads
+    // with one argument. A token cannot be granted to more seats than the game can
+    // hold, so MAX_SEATS_PER_GAME is the right ceiling rather than a fresh number —
+    // and duplicates are squeezed out by the writer, after this, which is the
+    // conservative order.
+    if (args.playerIds.length > MAX_SEATS_PER_GAME) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message: `A token cannot be handed to more than ${MAX_SEATS_PER_GAME} seats.`,
+      })
+    }
+
+    // Through the same lookup `removeToken` uses, with the literal `true` discharged by
+    // the `requireDm` above — it is not a locally computed `isDm` of the kind invariant
+    // 7 forbids, and it is only true while those lines stay in that order. The shared
+    // TOKEN_NOT_FOUND refusal is kept even though the DM already holds the code and so
+    // there is no existence oracle to worry about here: the parity is the constant's
+    // whole value, and one call site quietly opting out of it is how a shared refusal
+    // becomes three literals again.
+    const token = await requireMovableToken(ctx, game, args.tokenId, true)
+
+    // Every id checked against this game before any of it is written. A stray seat from
+    // another game would be a grant nothing in this game can render, name or revoke —
+    // `players.leave` sweeps by game, so it would never be cleaned up either.
+    for (const playerId of args.playerIds) {
+      await getSeatInGame(ctx, game._id, playerId)
+    }
+
+    await setTokenControllers(ctx, token._id, args.playerIds)
     return null
   },
 })

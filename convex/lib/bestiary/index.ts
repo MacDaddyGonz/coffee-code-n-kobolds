@@ -19,7 +19,7 @@ import { MONSTERS_HIGH } from './monstersHigh'
 import { MONSTERS_LOW } from './monstersLow'
 import { MONSTERS_MID } from './monstersMid'
 import { SOCIAL } from './social'
-import type { BestiaryEntry, BestiaryFile } from './types'
+import type { BestiaryCategory, BestiaryEntry, BestiaryFile } from './types'
 
 export type {
   BestiaryAbility,
@@ -87,12 +87,32 @@ export function bestiaryEntry(key: string): BestiaryEntry | undefined {
   return BY_KEY.get(key)
 }
 
-// A per-key category lookup and a category → entries index both lived here and neither had
-// a production caller. `BESTIARY_SUMMARIES` in convex/bestiary.ts walks `BESTIARY_FILES` and
-// takes the category off the file, and its doc comment argues at length for doing exactly
-// that rather than looking one up per row — so the lookups existed for the test that was
-// reading them. A grouping is one `filter` over `BESTIARY_FILES`, which is what that test
-// does now: `BestiaryFile.category` is where a category is declared, and one place is enough.
+/**
+ * Which content file a key came out of, and therefore which of the DM's three headings the
+ * creature belongs under.
+ *
+ * **This lookup existed once, was deleted for having no production caller, and now has
+ * one**: `groupOf` in ../resolve.ts maps a bestiary-linked character onto Characters / NPCs
+ * / Monsters, and a `social` innkeeper has to land somewhere different from a `monster`
+ * owlbear. That is a per-key question asked once per character, so it wants a map rather
+ * than a scan of five files.
+ *
+ * It does **not** displace the argument that deleted it. `BESTIARY_SUMMARIES` in
+ * convex/bestiary.ts still walks `BESTIARY_FILES` and takes the category off the file it is
+ * already holding, because a hundred and twenty-nine rows built in one pass should not do a
+ * hundred and twenty-nine lookups to learn something the loop already knows. Two callers,
+ * two right answers.
+ *
+ * Undefined for a retired key, like `bestiaryEntry`, and tolerated for the same reason —
+ * `groupOf` is the caller and it runs inside `characters.list`.
+ */
+const CATEGORY_BY_KEY: ReadonlyMap<string, BestiaryCategory> = new Map(
+  BESTIARY_FILES.flatMap((file) => file.entries.map((entry) => [entry.key, file.category] as const)),
+)
+
+export function bestiaryCategoryOf(key: string): BestiaryCategory | undefined {
+  return CATEGORY_BY_KEY.get(key)
+}
 
 /**
  * How many distinct keys the corpus actually has. **Exported so a test can catch a
