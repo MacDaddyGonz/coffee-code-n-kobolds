@@ -33,6 +33,31 @@ export const MAX_TOKENS_PER_GAME = 200
 export const MAX_PLACEMENTS_PER_SCENE = 200
 
 /**
+ * The two bounds on a sweep of the `games` table itself — the only read bounds in
+ * this file that are not per-game, and the only ones that can genuinely truncate.
+ *
+ * Everything above bounds a list one table holds a handful of, so none of them is
+ * ever reached in practice. These bound the *deployment*, which grows by one game
+ * every time `npm run test:smoke` runs and had reached seventy-one before anything
+ * could delete one. Truncation here is therefore a real state rather than a
+ * theoretical one, and `admin.listByPrefix` reports it as a flag rather than
+ * quietly showing a short list: a purge tool that under-reports looks finished
+ * when it is not.
+ *
+ * Two numbers rather than one, because the two reads cost wildly different things.
+ * `MAX_GAMES_SWEPT` bounds a scan of small documents. `MAX_GAMES_LISTED` bounds how
+ * many of the *matches* are counted, and a count is four bounded reads over four
+ * tables — up to four hundred and seventy-five rows for one game. Fifty of those is
+ * already the largest read anything in this application performs, and five hundred
+ * of them would exceed what a single Convex query may read.
+ *
+ * ⚠️ **Maintenance only.** Nothing a player or a DM calls reads more than one game;
+ * see the header of `convex/admin.ts` for why that stays true.
+ */
+export const MAX_GAMES_SWEPT = 500
+export const MAX_GAMES_LISTED = 50
+
+/**
  * Whether the group is still gathering or already on the board, spelled once.
  *
  * The schema, the public projection and `gameStatus` below all need this union, and

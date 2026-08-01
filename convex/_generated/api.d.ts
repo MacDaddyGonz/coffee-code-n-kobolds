@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as admin from "../admin.js";
 import type * as bestiary from "../bestiary.js";
 import type * as board from "../board.js";
 import type * as characters from "../characters.js";
@@ -58,6 +59,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  admin: typeof admin;
   bestiary: typeof bestiary;
   board: typeof board;
   characters: typeof characters;

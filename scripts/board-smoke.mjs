@@ -3201,9 +3201,19 @@ async function main() {
     // Best effort, and each step is guarded on its own rather than the batch: an
     // assertion that fails halfway leaves the rest to be cleaned up, and a run that
     // abandoned two forty-entry sheets every time it failed would be a slow leak
-    // into the same budget the upload limits exist to protect. There is no API for
-    // deleting a game — that is the game editor's admin view — so the scene, its blob,
-    // the tokens and the characters are what can go.
+    // into the same budget the upload limits exist to protect. The scene, its blob,
+    // the tokens and the characters are what can go from here.
+    //
+    // ⚠️ **The game document is still left behind, and that is now a decision rather
+    // than a missing API.** `convex/admin.ts` can delete one — but it is an
+    // `internalMutation`, deliberately, so that it did not have to answer "who may
+    // delete a game" ahead of the milestone that owns the question. Reaching it means
+    // holding the deployment's admin credentials and shelling out to the Convex CLI,
+    // and this script needs neither: it authenticates with a game code and a DM code
+    // like any other client, over `ConvexHttpClient`. Wiring it up here would make the
+    // *cleanup* path of a test depend on deploy credentials it does not otherwise use,
+    // to save a call to `npm run prune-games` that sweeps every run at once. So the
+    // litter is swept by the broom rather than by each run, and the line below says so.
     if (code && dmCode) {
       // Grants and reservations first, and on their own rather than left to disappear with
       // the token or the character they hang off. Both are state *about somebody else's
@@ -3242,7 +3252,7 @@ async function main() {
       console.log(
         `\n  cleaned up the scene, ${created.length} tokens, ${createdCharacters.length} characters and ${seats.length} seats`,
       )
-      console.log(`  the game itself remains: ${code} (no delete API until the game editor)`)
+      console.log(`  the game itself remains: ${code} — \`npm run prune-games\` sweeps these up`)
     } else {
       console.log('\n  nothing to clean up: the game was never created')
     }

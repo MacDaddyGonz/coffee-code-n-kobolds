@@ -11,7 +11,8 @@
     "lint": "tsc --noEmit && tsc -p convex --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:smoke": "node scripts/board-smoke.mjs"
+    "test:smoke": "node scripts/board-smoke.mjs",
+    "prune-games": "node scripts/prune-games.mjs"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",

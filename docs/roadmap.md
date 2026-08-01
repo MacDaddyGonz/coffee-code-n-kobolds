@@ -1255,12 +1255,18 @@ removing. Read `controllerIds` and `grantedPlayerIds` off the payload, as the gr
 - **The name at the top of the Sheets and Character panels is body text and should be a title.**
   It is the answer to "whose sheet am I looking at", which is the question the whole panel exists to
   answer, and it currently reads at the same weight as the fields under it.
-- **Nothing deletes a game.** The dev deployment has seventy-one, thirty-five of them left by
-  `npm run test:smoke`, which creates one per run and can only clean up the scene and tokens it made.
-  Deleting a game is on the game-editor and admin milestone and stays there — but the smoke script
-  leaving one behind every run is this project's own litter, and a `games.remove` gated on the DM
-  code would let the script clean up after itself. Worth doing here **only if** the authorisation
-  question is genuinely one line; if it turns into "who may delete a game", it belongs downstream.
+- ~~**Nothing deletes a game.**~~ **Done, and done as a tool rather than as the feature this bullet
+  imagined.** The dev deployment had seventy-one games, thirty-five of them left by
+  `npm run test:smoke`. The condition above — worth doing here only if the authorisation question is
+  genuinely one line — turned out to be answerable by *not asking it*: `convex/admin.ts` holds an
+  `internalQuery` and an `internalMutation`, which are absent from the generated public API and
+  reachable only by a caller already holding deploy credentials, so there is no "who may delete a
+  game" to answer. `npm run prune-games` is the whole of the interface, dry-run by default, filtered
+  to a name prefix, with no `--all`. **The admin view that deletes a game a person chose is still
+  Milestone 12** and this took nothing from it — there is deliberately no public mutation, because
+  that is where the authorisation question comes back and it wants an ADR. The smoke script was left
+  calling `ConvexHttpClient` only: wiring the purge into its cleanup would make a test depend on
+  deploy credentials it does not otherwise need, so it prints a pointer at the broom instead.
 
 **Deliberately not done here:**
 
