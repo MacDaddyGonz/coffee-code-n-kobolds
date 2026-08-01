@@ -16,12 +16,27 @@ import { errorMessage } from '@/lib/errors'
  * shows up as a health bar that flicks to the new number and then back again a
  * tenth of a second later.
  *
- * `dmCode` is omitted rather than passed as `undefined` when there is none, because
- * `undefined` is not a Convex value: the two spellings are the same request on the
- * wire but not necessarily the same object here.
+ * ⚠️ **`playerId` is part of the key now, and leaving it off is not a shortcut — it
+ * is a different answer.** `characters.vitals` sends *exact* hit points for a
+ * creature this seat has been granted control of and a *band* for one it has not,
+ * and it cannot know which seat is asking unless it is told. A subscription built
+ * without the id gets bands for the party's pet, and `HpControls` draws no `−`/`+`
+ * on a band — so the granted player is handed a sheet they may write to and no
+ * control to write with. The id authorises nothing (invariant 7); the server
+ * re-derives the grant from the token table either way.
+ *
+ * Both optional arguments are **omitted rather than passed as `undefined`** when
+ * absent, because `undefined` is not a Convex value: the two spellings are the same
+ * request on the wire but not necessarily the same object here. And the key order is
+ * fixed by this one builder, which is the other half of why it exists — `useQuery`
+ * memoises on `JSON.stringify`, which is order-sensitive.
  */
-export function vitalsArgs(code: string, dmCode: string | null) {
-  return dmCode === null ? { code } : { code, dmCode }
+export function vitalsArgs(code: string, dmCode: string | null, playerId: Id<'players'> | null) {
+  return {
+    code,
+    ...(playerId === null ? {} : { playerId }),
+    ...(dmCode === null ? {} : { dmCode }),
+  }
 }
 
 export type Vitals = PublicVitals
@@ -45,9 +60,18 @@ export type VitalsByCharacter = {
  * round while signed art URLs change almost never, so a shared query would
  * re-resolve every piece of token art each time somebody took damage — the same
  * reasoning that split positions off the token document (CLAUDE.md invariant 2).
+ *
+ * `playerId` is which seat is asking, and `null` means *ask as nobody in
+ * particular* — which is the right answer for the DM's own list, where the DM code
+ * is what opens every row anyway. Anywhere a seat is reading its own screen, pass
+ * the seat: see `vitalsArgs` for what the omission actually costs.
  */
-export function useVitals(code: string, dmCode: string | null): VitalsByCharacter {
-  const rows = useQuery(api.characters.vitals, vitalsArgs(code, dmCode))
+export function useVitals(
+  code: string,
+  dmCode: string | null,
+  playerId: Id<'players'> | null,
+): VitalsByCharacter {
+  const rows = useQuery(api.characters.vitals, vitalsArgs(code, dmCode, playerId))
 
   const byCharacter = useMemo(() => {
     const map = new Map<Id<'characters'>, Vitals>()
@@ -126,7 +150,11 @@ export function useHpActions(args: {
   const adjustHp = useMemo(
     () =>
       rawAdjustHp.withOptimisticUpdate((store, mutationArgs) => {
-        const key = vitalsArgs(code, dmCode)
+        // ⚠️ The same three arguments the reading component passed, or this patches
+        // an entry nobody is watching. `playerId` joining the key is exactly the
+        // kind of change that breaks this silently — the bar simply stops moving
+        // until the server answers — which is why there is one builder.
+        const key = vitalsArgs(code, dmCode, playerId)
         const current = store.getQuery(api.characters.vitals, key)
         if (!current) return
 
@@ -146,7 +174,7 @@ export function useHpActions(args: {
           }),
         )
       }),
-    [rawAdjustHp, code, dmCode],
+    [rawAdjustHp, code, dmCode, playerId],
   )
 
   const adjustHitDiceMutation = useMutation(api.characters.adjustHitDice)

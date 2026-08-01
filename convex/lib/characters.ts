@@ -198,6 +198,22 @@ export const publicCharacterValidator = v.object({
   // copies of it is one place for a third member to be added to only one.
   kind: characterKindValidator,
   group: characterGroupValidator,
+  /**
+   * Whether the DM has hidden this character from the table.
+   *
+   * **Always `false` in a player's payload, and that is the point rather than a
+   * weakness.** A reserved row is dropped from a player's list entirely by
+   * `publicCharacters` — reserved means *absent*, not greyed out, because a disabled row
+   * still publishes a name and the name is the spoiler. So the only caller that can ever
+   * receive `true` is the DM, and this field carries no information a player did not
+   * already have from the row's presence.
+   *
+   * It travels because the DM's control has to be a **state and not a command**. Without
+   * it the hide button could only say what pressing it would do, never what is currently
+   * true — which for a flag whose whole purpose is "somebody must not see this" is the
+   * one thing a DM needs to be able to read off the screen.
+   */
+  reserved: v.boolean(),
   claimedByPlayerId: v.union(v.id('players'), v.null()),
   claimedByName: v.union(v.string(), v.null()),
   createdAt: v.number(),
@@ -536,6 +552,10 @@ export async function publicCharacters(
         // mapping from four stored kinds onto three groups reads the bestiary to place
         // a linked creature, and the bestiary is not in the bundle (invariant 8).
         group: groupOf(character),
+        // Only ever `true` for the DM — the filter above has already dropped every
+        // reserved row from a player's list, so this says nothing a player could not
+        // already infer from the row being there at all. See the validator.
+        reserved: isReservedCharacter(character),
         claimedByPlayerId: holder?._id ?? null,
         claimedByName: holder?.displayName ?? null,
         createdAt: character._creationTime,

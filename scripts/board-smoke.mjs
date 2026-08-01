@@ -2753,6 +2753,20 @@ async function main() {
         dmListAfterReserve.some((row) => row._id === goliath.characterId),
       `player ${listAfterReserve.length} rows, DM ${dmListAfterReserve.length} — positive control included`,
     )
+    // The projected flag, which is what lets the DM's control show what is *true* rather
+    // than only what pressing it would do. It is `false` in every player row by
+    // construction — a reserved row is dropped before anything can project it — so the
+    // second half here is not a restatement of the filter above: it is the claim that
+    // makes shipping the field at all harmless, and a `true` reaching a player is exactly
+    // what it would catch.
+    check(
+      'the DM’s row carries reserved: true, and every player row carries false',
+      dmListAfterReserve.find((row) => row._id === goliath.characterId)?.reserved === true &&
+        listAfterReserve.every((row) => row.reserved === false),
+      `DM ${JSON.stringify(
+        dmListAfterReserve.find((row) => row._id === goliath.characterId)?.reserved,
+      )}, player ${JSON.stringify([...new Set(listAfterReserve.map((row) => row.reserved))])}`,
+    )
     // ⚠️ **The roster half of this is asserted at the only point it is reachable, and that
     // is worth saying rather than faking.** `playerCharacterNames` withholds a reserved
     // character's name from `players.list`, so a seat holding one would show a blank label

@@ -131,7 +131,13 @@ export function useBoard(args: {
   )
   // Not skipped on a board with no scene: the character sheets want the same
   // numbers, and a game whose DM has not uploaded a map yet still has a party.
-  const { of: vitalsOf } = useVitals(code, dmCode)
+  //
+  // The seat is passed for the same advisory reason it appears in the rule below,
+  // and it changes what comes back: a creature the DM has granted this seat arrives
+  // with *exact* hit points rather than a band, which is what makes `canEditHp`
+  // above a control the player can actually use instead of a bar with no buttons.
+  // See `vitalsArgs`.
+  const { of: vitalsOf } = useVitals(code, dmCode, playerId)
 
   const isDm = dmCode !== null
 

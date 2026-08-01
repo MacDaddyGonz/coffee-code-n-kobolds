@@ -6239,6 +6239,29 @@ describe('characters.setReserved and what reserved means', () => {
   })
 
   /**
+   * The projected flag, which is what makes the DM's control a *state* rather than a
+   * command that cannot say what is currently true.
+   *
+   * The player half is not a second way of asserting the filter above — it pins the claim
+   * the field's presence rests on. `reserved` is `false` in every player payload **by
+   * construction**, because a reserved row was dropped before anything could project it,
+   * so the field publishes nothing. A `true` reaching a player would mean the filter had
+   * gone and this assertion is what would say so.
+   */
+  test('the DM’s rows carry `reserved`, and a player’s are all false', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await reservedFixture(t)
+
+    const dmRows = await t.query(api.characters.list, { code, dmCode })
+    expect(
+      Object.fromEntries(dmRows.map((row) => [row.name, row.reserved])),
+    ).toEqual({ [RESERVED_NAME]: true, Thorin: false })
+
+    const playerRows = await t.query(api.characters.list, { code })
+    expect(playerRows.map((row) => row.reserved)).toEqual([false])
+  })
+
+  /**
    * The refusal is `CHARACTER_NOT_FOUND`, indistinguishable from a fabricated id, and
    * compared whole rather than by kind: a player told "that one is spoken for" has been
    * told it exists and roughly who it is waiting for, which is most of the spoiler.

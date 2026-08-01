@@ -7,6 +7,7 @@ import { DmToolsTab } from '@/components/shell/tabs/DmToolsTab'
 import { FeedTab } from '@/components/shell/tabs/FeedTab'
 import { SettingsTab } from '@/components/shell/tabs/SettingsTab'
 import { SheetTab } from '@/components/shell/tabs/SheetTab'
+import { SheetsTab } from '@/components/shell/tabs/SheetsTab'
 import { TableTab } from '@/components/shell/tabs/TableTab'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { tokensArgs } from '@/hooks/useBoard'
@@ -51,7 +52,21 @@ export type RightPaneProps = {
  * same from the other direction. Radix would happily hold this state; the point is
  * that something else needs to be able to set it.
  *
- * ⚠️ **The Character tab is force-mounted and nothing else is, and that asymmetry is
+ * ⚠️ **The second tab is split by role, and it is *instead of* rather than *as well
+ * as*.** A player gets **Character** — their own sheet, and whatever they have been
+ * granted. The DM gets **Sheets** — every creature in the game, with the selector and
+ * the three creation routes. The DM does not play a character (`docs/roadmap.md`'s
+ * vocabulary table is explicit), so a Character tab on their strip is a tab offering
+ * something they cannot have, which is exactly where the old *Pick a character* button
+ * in the DM's sheet panel came from.
+ *
+ * **Both keep the tab value `sheet`**, deliberately, and only the trigger's label and
+ * the mounted component differ. The force-mount arrangement below is written against
+ * that one value; two values would be two panels to force-mount, two `data-state`
+ * selectors and a stored tab that means different things to different people. The
+ * split is a branch in one place rather than a second tab.
+ *
+ * ⚠️ **The sheet tab is force-mounted and nothing else is, and that asymmetry is
  * the whole of the thinking here.** Radix unmounts an inactive tab, which is right for
  * every other one: the DM tools tab holds a drawer per character row and the bestiary
  * picker, and those genuinely should go away with the tab. But
@@ -103,6 +118,15 @@ export const RightPane = memo(function RightPane({
   characterId,
   selectedTokenId,
   selectedCharacterId,
+  // ⚠️ `onSelectToken` is on the props type above and is deliberately *not*
+  // destructured. Every selection this pane makes names a creature — the DM's
+  // selector calls `onSelectCharacter` with the token that creature happens to have
+  // — and picking a bare token is the map's gesture, not a panel's. It stays on the
+  // type because `GameShell` hands both panes the same three handlers and taking it
+  // off would make that call site an error; an unread binding here would be one too,
+  // under `noUnusedLocals`.
+  onSelectCharacter,
+  onClearSelection,
   onRenameSeat,
   onLeaveSeat,
 }: RightPaneProps): ReactElement {
@@ -126,8 +150,11 @@ export const RightPane = memo(function RightPane({
    */
   const tokens = useQuery(api.board.tokens, tokensArgs(code, dm.dmCode))
 
-  const selectedTokenCharacterId = useMemo(
-    () => tokens?.find((token) => token._id === selectedTokenId)?.characterId ?? null,
+  // Two facts about the selected token, from one pass. What it is bound to decides
+  // the focus below; its name is what the player's tab prints when it is bound to
+  // nothing, and neither is worth a second `find` over the same array.
+  const selectedToken = useMemo(
+    () => tokens?.find((token) => token._id === selectedTokenId) ?? null,
     [tokens, selectedTokenId],
   )
 
@@ -136,7 +163,7 @@ export const RightPane = memo(function RightPane({
   const focus = sheetFocusOf({
     selectedCharacterId,
     selectedTokenId,
-    selectedTokenCharacterId,
+    selectedTokenCharacterId: selectedToken?.characterId ?? null,
     myCharacterId: characterId,
     isDm: dm.dmCode !== null,
   })
@@ -161,7 +188,10 @@ export const RightPane = memo(function RightPane({
           that gave up height to a long tab body would be the first thing to vanish. */}
       <TabsList className="w-full shrink-0 rounded-none border-b">
         <TabsTrigger value="feed">Feed</TabsTrigger>
-        <TabsTrigger value="sheet">Character</TabsTrigger>
+        {/* One trigger, two names. See the ⚠️ above: the value is shared so that the
+            force-mounted body below stays one panel, and the label is the only thing
+            that says which of the two people at this table is reading it. */}
+        <TabsTrigger value="sheet">{dm.dmCode !== null ? 'Sheets' : 'Character'}</TabsTrigger>
         <TabsTrigger value="table">Table</TabsTrigger>
         {dm.dmCode !== null ? <TabsTrigger value="dm">DM tools</TabsTrigger> : null}
         <TabsTrigger value="settings">Settings</TabsTrigger>
@@ -183,34 +213,40 @@ export const RightPane = memo(function RightPane({
         className="min-h-0 data-[state=inactive]:hidden"
       >
         <TabPane>
-          {/*
-            TODO(packages F and G): this tab still takes a single `characterId`,
-            which is the shape from before selection existed. The player's Character
-            tab and the DM's Sheets tab are owned elsewhere and are what will take
-            the `SheetFocus` itself, along with `onSelectToken`, `onSelectCharacter`
-            and `onClearSelection` — all three are on `RightPaneProps` already and
-            are deliberately left undestructured until there is something here to
-            hand them to, because an unread binding does not compile under
-            `noUnusedParameters`.
+          {/* The role split, and the only branch it costs. `SheetFocus` is computed
+              once above and handed to whichever of the two is mounted, so the two
+              panels cannot come to disagree about whose sheet is on screen — which
+              is the whole reason `sheetFocusOf` is a function rather than three
+              expressions (see its ⚠️ on the four readers).
 
-            Until then the focus is collapsed onto the one prop that exists, which
-            is enough to make selection visible today: a player selecting a token
-            they control sees that creature's sheet, and deselecting puts them back
-            on their own, because `sheetFocusOf` answers with `myCharacterId`.
-
-            ⚠️ The fallback to `characterId` is a shim over the two cases the prop
-            cannot say. `tokenWithoutSheet` has no character to name — package G
-            renders the "this token carries no sheet" copy — and a DM's `none` would
-            otherwise blank a sheet the DM can still legitimately be holding, so it
-            keeps today's behaviour rather than inventing a third one on the way past.
-          */}
-          <SheetTab
-            code={code}
-            playerId={playerId}
-            dmCode={dm.dmCode}
-            characterId={focus.kind === 'character' ? focus.characterId : characterId}
-            onGoToTable={() => setTab('table')}
-          />
+              Narrowed on the code rather than on a boolean so the DM's panel takes
+              the value its queries need. Rendering it is a display decision and not
+              a permission: every call inside re-verifies the code server-side
+              (invariant 7). */}
+          {dm.dmCode !== null ? (
+            <SheetsTab
+              code={code}
+              dmCode={dm.dmCode}
+              focus={focus}
+              tokens={tokens}
+              selectedTokenId={selectedTokenId}
+              onSelectCharacter={onSelectCharacter}
+              onClearSelection={onClearSelection}
+            />
+          ) : (
+            <SheetTab
+              code={code}
+              playerId={playerId}
+              focus={focus}
+              // The seat's *own* character, which is not necessarily the one on
+              // screen: `focus` may be pointing at a creature the DM has granted
+              // them. This is only for the empty state's copy — "you are not
+              // playing a character yet" — and for nothing else.
+              characterId={characterId}
+              selectedTokenName={selectedToken?.name ?? null}
+              onGoToTable={() => setTab('table')}
+            />
+          )}
         </TabPane>
       </TabsContent>
 
