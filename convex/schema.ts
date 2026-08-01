@@ -23,8 +23,8 @@ export default defineSchema({
     dmRecoverySalt: v.string(),
     dmRecoveryHash: v.string(),
     // The board everyone is looking at. Optional because a game has no scene until
-    // the DM uploads a map. Scene *switching* for the whole group is Milestone 7;
-    // this field is the data it will drive.
+    // the DM uploads a map. Scene *switching* for the whole group is the DM-tooling
+    // milestone; this field is the data it will drive.
     activeSceneId: v.optional(v.id('scenes')),
     // 'lobby' until the DM presses Start, then 'playing' and every client flips to
     // the board. Optional only because adding a required field to a table that
@@ -182,13 +182,13 @@ export default defineSchema({
   // Position lives in `tokenPositions`, per CLAUDE.md invariant 2.
   //
   // Scoped to the game rather than to one scene, so a recurring villain can stand
-  // on several boards. Milestone 7 grows this into the token library.
+  // on several boards. The game-editor milestone grows this into the token library.
   tokens: defineTable({
     gameId: v.id('games'),
     name: v.string(),
     // Two members, not the three layers in requirements.md: the background layer is
-    // the scene image itself, and no token ever lives on it. Images on layers are
-    // Milestone 7.
+    // the scene image itself, and no token ever lives on it. Images on layers are the
+    // DM-tooling milestone.
     //
     // THE SECRET IS HERE. A 'dm' token must never reach a player client, and it has
     // the same shape as a 'player' one — so a `returns:` validator cannot catch a

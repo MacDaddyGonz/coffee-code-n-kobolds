@@ -34,7 +34,7 @@
 // NEITHER that must come back with neither key present. Absence is a storable state on a
 // real deployment or it is not, and only a real deployment can say.
 //
-// Milestone 7 adds three more optional stored fields — `NpcSheet.group`,
+// Seats, sheets and control add three more optional stored fields — `NpcSheet.group`,
 // `characters.reserved` and `tokens.controllerIds` — and one of them, `group`, goes
 // through the same field-by-field rebuild the two above did. So sections 23 to 28 are
 // written in the same pairs, and the last three of them are about a second thing only a
@@ -926,7 +926,7 @@ async function main() {
     // 6. Milestone 3's sheets. A nested discriminated union in an optional field,
     // through the real value validation, with real prose in it.
     //
-    // ⚠️ **The DM code on this call is Milestone 7's change and not a tidy-up.** Creating
+    // ⚠️ **The DM code on this call is a deliberate change and not a tidy-up.** Creating
     // a hero used to be ungated — the ternary in `characters.create` sent a `pc` straight
     // to `getGameByCode` — and there is now no un-gated branch at all: a hero, a
     // hand-built creature and one off the bestiary shelf arrive through one gate. Every
@@ -1808,7 +1808,7 @@ async function main() {
     // one of the eight never reaches a handler. The rest are `storedSheetProblem`'s,
     // and every one of them is a value convex-test would store without a word.
     //
-    // ⚠️ **Every one of them sends the DM code**, which is Milestone 7's gate rather than
+    // ⚠️ **Every one of them sends the DM code**, which is the creation gate rather than
     // decoration. `storedSheetProblem` runs *after* `requireDm`, so an archetype refusal
     // written without a code would be refused as `NotDm` — passing the `refuses` check
     // while asserting nothing at all about archetypes. The two argument-validator cases
@@ -3202,7 +3202,7 @@ async function main() {
     // assertion that fails halfway leaves the rest to be cleaned up, and a run that
     // abandoned two forty-entry sheets every time it failed would be a slow leak
     // into the same budget the upload limits exist to protect. There is no API for
-    // deleting a game — that is Milestone 7's admin view — so the scene, its blob,
+    // deleting a game — that is the game editor's admin view — so the scene, its blob,
     // the tokens and the characters are what can go.
     if (code && dmCode) {
       // Grants and reservations first, and on their own rather than left to disappear with
@@ -3242,7 +3242,7 @@ async function main() {
       console.log(
         `\n  cleaned up the scene, ${created.length} tokens, ${createdCharacters.length} characters and ${seats.length} seats`,
       )
-      console.log(`  the game itself remains: ${code} (no delete API before Milestone 7)`)
+      console.log(`  the game itself remains: ${code} (no delete API until the game editor)`)
     } else {
       console.log('\n  nothing to clean up: the game was never created')
     }

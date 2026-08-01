@@ -65,8 +65,14 @@ export const list = query({
       // straight to `characters.sheet`, which is the one query that would refuse it,
       // rather than to a screen that renders it. Unreachable today, because `claim`
       // and `assign` both refuse an NPC; the projection filtering as one decision
-      // rather than two is what keeps it unreachable if Milestone 7 changes who may
-      // hold what.
+      // rather than two is what keeps it unreachable if a later milestone changes who
+      // may hold what.
+      //
+      // ⚠️ **This filter now withholds a second thing and the sentence above is only
+      // half of it**: `playerCharacterNames` also drops a *reserved* character, which
+      // is a hero and which a seat therefore could hold. That state is unreachable too
+      // — `setReserved` refuses a held character and `assign` clears the flag — but it
+      // is unreachable by a different argument, so both are worth having.
       const name = seat.characterId ? nameById.get(seat.characterId) ?? null : null
       return {
         _id: seat._id,

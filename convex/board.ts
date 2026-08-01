@@ -394,7 +394,7 @@ export const removeToken = mutation({
     // share of the 1 GB the free tier allows (CLAUDE.md invariant 6).
     //
     // Unconditional because in Milestone 2 an upload makes exactly one token, so
-    // this `imageId` has no other owner. Milestone 7's token library breaks that
+    // this `imageId` has no other owner. The game editor's token library breaks that
     // assumption — reusing one piece of art across several tokens is the point of
     // it — and then deleting one goblin would strip the art from its twin. Whatever
     // makes art shareable has to make this conditional at the same time:

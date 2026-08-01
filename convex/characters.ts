@@ -1102,9 +1102,16 @@ export const adjustHp = mutation({
  * **No UI reaches this yet**, and that is worth saying rather than leaving a reader
  * to search for the caller: every control on screen is `−`, an amount and `+`, which
  * `adjustHp` serves and serves better, because two people clicking at once compose
- * instead of clobbering. This is here for the case a delta cannot express — a DM
- * typing a monster's hit points straight in, which Milestone 7's DM panel will want —
- * and it is exercised by the suite and by `npm run test:smoke` in the meantime.
+ * instead of clobbering. This is here for the case a delta cannot express — a DM typing
+ * a monster's hit points straight in — and it is exercised by the suite and by
+ * `npm run test:smoke` in the meantime.
+ *
+ * ⚠️ **That justification named a milestone, and the milestone has been and gone without
+ * wanting it.** The DM's sheet selector shipped with `HpControls` on every row, which is
+ * `adjustHp` again, so the panel this was waiting for turned out to want the delta too.
+ * Kept rather than deleted, because the case is still real and the mutation is still
+ * tested — but the next reader should treat "some future panel will want it" as a claim
+ * that has already failed once, not as a reason.
  */
 export const setHp = mutation({
   args: {
