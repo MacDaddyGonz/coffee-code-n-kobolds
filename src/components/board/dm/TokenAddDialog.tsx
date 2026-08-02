@@ -1,10 +1,11 @@
+import type { ReactNode } from 'react'
 import { useId, useState } from 'react'
 import { useMutation, useQuery } from 'convex/react'
 import { toast } from 'sonner'
 
 import { DialogFormFooter } from '@/components/DialogFormFooter'
 import { FieldError } from '@/components/FieldError'
-import { ImagePicker } from '@/components/ImagePicker'
+import { UploadPicker } from '@/components/UploadPicker'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -20,11 +21,14 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
-import { useImageUpload } from '@/hooks/useImageUpload'
+import { useBoardLayers } from '@/hooks/useBoardLayers'
+import { useUpload } from '@/hooks/useUpload'
 import { parseNumber } from '@/lib/utils'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import { MAX_CHARACTER_NAME_LENGTH } from '@convex/lib/codes'
+import type { TokenLayer } from '@convex/lib/layers'
+import { maySeeLayer } from '@convex/lib/layers'
 import type { PublicScene } from '@convex/lib/scenes'
 import { crLabel } from '@convex/lib/creatures'
 import type { CreatureChoice } from './BestiaryPicker'
@@ -35,8 +39,7 @@ import {
   creatureStatsProblem,
   defaultCreatureStats,
 } from './CreatureSheetFields'
-import type { Layer } from './LayerChoice'
-import { DM_LAYER_ALERT_TITLE, LayerChoice } from './LayerChoice'
+import { LAYER_ALERT_TITLES, LayerChoice } from './LayerChoice'
 import type { TokenAppearanceDraft } from './TokenAppearanceFields'
 import { TokenAppearanceFields, isUsableAppearance } from './TokenAppearanceFields'
 
@@ -73,14 +76,57 @@ const NEW_CREATURE = '__new-creature'
 const FROM_BESTIARY = '__from-bestiary'
 
 /**
+ * What each layer means, **in this screen's words**, under the picker. Exhaustive by
+ * construction — see CLAUDE.md invariant 9.
+ *
+ * ⚠️ **Per screen on purpose, and keyed by the union all the same.** The titles are one
+ * fact and live beside the union in `LayerChoice`; these bodies are sentences about *this*
+ * control — every one of them is about a mistake to catch **before saving**, where the
+ * editor's are about a press that can be undone — which is the carve-out convex/lib/sheet.ts
+ * already makes for a per-screen sentence. Centralising them would produce copy that fits
+ * neither screen.
+ */
+const LAYER_NOTES: Record<TokenLayer, ReactNode> = {
+  background: (
+    <Alert>
+      <AlertTitle>{LAYER_ALERT_TITLES.background}</AlertTitle>
+      <AlertDescription>
+        Scenery — a barricade, a brazier, a bloodstain. It is drawn on every screen at the
+        table, and you are the only person who can drag it. So a creature put here by mistake
+        is one the party can see and its own player cannot move, which reads as the app being
+        broken rather than as a rule.
+      </AlertDescription>
+    </Alert>
+  ),
+  player: (
+    <p className="text-muted-foreground text-xs">
+      Drawn on every screen at the table, and movable by whoever is playing the character it is
+      bound to.
+    </p>
+  ),
+  gm: (
+    <Alert variant="destructive">
+      <AlertTitle>{LAYER_ALERT_TITLES.gm}</AlertTitle>
+      <AlertDescription>
+        A GM-layer token is absent from every player's data, not merely undrawn — so an
+        ambush survives a player who reads the network tab. The cost of the same setting
+        chosen by mistake is a character nobody at the table can see or move, so check it
+        before you save.
+      </AlertDescription>
+    </Alert>
+  ),
+}
+
+/**
  * Put a creature on the board.
  *
  * The layer is the only field here that decides anything about secrecy, so it is
  * the only one given a whole paragraph and a colour: everything else is cosmetic
- * and can be fixed later, whereas a hero accidentally created on the DM layer is
- * invisible to the person playing it, and an ambush created on the player layer is
- * spoiled the instant it exists. Both mistakes are one click apart, so the two
- * choices say what happens rather than naming a layer.
+ * and can be fixed later, whereas a hero accidentally created on the GM layer is
+ * invisible to the person playing it, an ambush created on the player layer is
+ * spoiled the instant it exists, and a creature left on Background is one the party
+ * can see and its own player cannot drag. Each of those is one click from the right
+ * answer, so the choices say what happens rather than naming a layer.
  *
  * Art is optional. A token with none is drawn as a coloured coin with the name's
  * initials, which is enough to play with and saves an upload per goblin.
@@ -105,16 +151,23 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
   // answers with the player characters alone — a creature's *existence* is the spoiler,
   // which is why the filtering is the query's job and not a `.filter()` here.
   const characters = useQuery(api.characters.list, { code, dmCode })
-  const upload = useImageUpload({ code, dmCode, kind: 'token' })
+  const upload = useUpload({ code, dmCode, kind: 'token' })
   const action = useLobbyAction()
   const fieldId = useId()
+
+  // ⚠️ **The layer is a tool the DM sets, not a field of this form**, which is why it is
+  // the one control here that comes from a hook rather than from local state. A DM laying
+  // out a room places a dozen pieces of scenery in a row, and a dialog that reset to the
+  // player layer on every close would make each of them a two-press job with a spoiled
+  // ambush waiting for the press that is forgotten. It is shared with the picker in the
+  // panel behind this dialog and remembered per game — see `useBoardLayers`.
+  const { active: layer, setActive: setLayer } = useBoardLayers(code)
 
   const [open, setOpen] = useState(false)
   // One piece of state for the three cosmetic fields, because `TokenAppearanceFields` is
   // absolute over all three — and because a name, a size and a colour are one appearance,
   // which is the shape `board.updateToken` writes them in too.
   const [appearance, setAppearance] = useState<TokenAppearanceDraft>(EMPTY_APPEARANCE)
-  const [layer, setLayer] = useState<Layer>('player')
   const [characterId, setCharacterId] = useState('')
   const [creatureName, setCreatureName] = useState('')
   const [creatureStats, setCreatureStats] = useState(defaultCreatureStats)
@@ -124,7 +177,8 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
     setOpen(next)
     if (!next) {
       setAppearance(EMPTY_APPEARANCE)
-      setLayer('player')
+      // The layer is deliberately absent from this reset — see the note on `useBoardLayers`
+      // above. Everything else here is a fact about one coin and goes back to nothing.
       setCharacterId('')
       setCreatureName('')
       setCreatureStats(defaultCreatureStats())
@@ -228,10 +282,14 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
     if (!done) return
 
     changeOpen(false)
+    // The shared predicate again rather than a layer literal: what makes the second sentence
+    // worth saying is that the coin was withheld, and that is the question `maySeeLayer`
+    // answers. Scenery lands with the ordinary wording, which is true of it — everybody can
+    // see it, and only the DM can move it, which the picker has just said in as many words.
     toast.success(
-      layer === 'dm'
-        ? `${name.trim()} is on your layer. Nobody else can see it.`
-        : `${name.trim()} is on the map.`,
+      maySeeLayer(layer)
+        ? `${name.trim()} is on the map.`
+        : `${name.trim()} is on your layer. Nobody else can see it.`,
     )
   }
 
@@ -265,29 +323,13 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
             <div className="flex flex-col gap-2">
               <Label>Who can see it</Label>
               <LayerChoice layer={layer} onChange={setLayer} disabled={busy} />
-              {/* The title is shared and the body is not: this one is about a mistake to
-                  catch *before* saving, where the editor's is about a press that puts
-                  everything back. See the ⚠️ on `DM_LAYER_ALERT_TITLE`. */}
-              {layer === 'dm' ? (
-                <Alert variant="destructive">
-                  <AlertTitle>{DM_LAYER_ALERT_TITLE}</AlertTitle>
-                  <AlertDescription>
-                    A DM-layer token is absent from every player's data, not merely undrawn — so
-                    an ambush survives a player who reads the network tab. The cost of the same
-                    setting chosen by mistake is a character nobody at the table can see or move,
-                    so check it before you save.
-                  </AlertDescription>
-                </Alert>
-              ) : (
-                <p className="text-muted-foreground text-xs">
-                  Drawn on every screen at the table, and movable by whoever is playing the
-                  character it is bound to.
-                </p>
-              )}
+              {/* The titles are shared and these bodies are not — see the ⚠️ on
+                  `LAYER_NOTES` and the one on `LAYER_ALERT_TITLES` next door. */}
+              {LAYER_NOTES[layer]}
             </div>
           </TokenAppearanceFields>
 
-          <ImagePicker
+          <UploadPicker
             id={`${fieldId}-art`}
             label="Art (optional)"
             upload={upload}

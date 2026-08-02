@@ -140,6 +140,14 @@ function describeCounts(counts) {
     // short: nothing caps the feed, so a number equal to MAX_FEED_ROWS_SWEPT means the
     // sweep filled its window and left rows nothing can reach. See that constant.
     count(counts.feed, 'feed line'),
+    // The two upload-backed axes, and the reason they are worth a line each rather than
+    // being folded into a total: this receipt is the only place a person sees how much of
+    // the 1 GB storage ceiling a game was holding, and a handout and a track differ by
+    // roughly a factor of five in bytes. `?? 0` because `purgeGame` on a deployment that
+    // has not been pushed since these tables existed returns counts without them, and a
+    // receipt reading `undefined handout(s)` is worse than one reading none.
+    count(counts.modalImages ?? 0, 'handout'),
+    count(counts.tracks ?? 0, 'track'),
   ].join(', ')
 }
 

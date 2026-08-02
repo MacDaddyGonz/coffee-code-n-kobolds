@@ -56,13 +56,9 @@ export type SheetsTabProps = {
  * from `CHARACTER_GROUP_LABELS` beside the union, which is the one copy of those three
  * words.
  *
- * ⚠️ **Still a `Record` over the union rather than three sections written out in JSX**,
- * which is the formulation CLAUDE.md invariant 9 settled on for `SheetEntry.category` and
- * for the same reason: three hand-written sections is the arrangement where a fourth group
- * leaves a character stored, counted and with no heading to find it under. This fails to
- * compile for a fourth member instead, which is the whole of the guard — nothing here
- * guards a secret, because every group but `character` is DM-only anyway and a player is
- * sent none of them.
+ * Exhaustive by construction — see CLAUDE.md invariant 9. Note that nothing here guards a
+ * secret, because every group but `character` is DM-only anyway and a player is sent none
+ * of them.
  *
  * The split between this and the shared record is between *the name of a thing* and *copy
  * about this screen*. A heading is one fact the DM's selector and the token editor's rebind

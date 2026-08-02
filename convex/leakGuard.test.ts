@@ -151,6 +151,26 @@ for (const guard of GUARDS) {
       expect(paths, 'convex/bestiary.ts is not being swept for table reads').toContain(
         './bestiary.ts',
       )
+      /**
+       * ⚠️ **`convex/lib/fog.ts` is named here for exactly `bestiary.ts`'s reason, and
+       * deliberately gets no `GUARDS` entry of its own.** The argument is written out at
+       * length in that file's header: every `fogRects` row goes to every client verbatim,
+       * because a blacked-out corridor *is* the feature, so those rows have no non-secret
+       * twin to be confused with and there is no predicate for a choke point to be the home
+       * of. An entry below would assert a confinement protecting nothing — it would pass,
+       * which is precisely why omitting it has to be argued rather than left implicit, and
+       * this project does not keep guards that cannot fail.
+       *
+       * What *is* guarded sits one step downstream. Turning a rectangle into a set of
+       * withheld token ids needs `tokenPositions`, and `foggedTokenIds` therefore lives in
+       * `lib/board.ts` under the first entry above, with no edit to it at all. So the one
+       * thing worth asserting is that this module is in the glob: until per-player fog,
+       * reveal-as-you-walk or line of sight flips the argument, it is still swept against
+       * every table it must not read.
+       */
+      expect(paths, 'convex/lib/fog.ts is not being swept for table reads').toContain(
+        './lib/fog.ts',
+      )
       for (const [path, text] of scanned) {
         expect(typeof text, `${path} did not load as text`).toBe('string')
         expect(text.length, `${path} loaded empty`).toBeGreaterThan(0)

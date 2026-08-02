@@ -32,10 +32,17 @@ import { ConvexError, v } from 'convex/values'
 import { internalMutation, internalQuery } from './_generated/server'
 import type { QueryCtx } from './_generated/server'
 import type { Id } from './_generated/dataModel'
-import { countTokensInGame, deleteTokensInGame } from './lib/board'
+import {
+  countLegacyLayers,
+  countTokensInGame,
+  deleteTokensInGame,
+  relabelGmLayer,
+} from './lib/board'
 import { countCharactersInGame, deleteCharactersInGame } from './lib/characters'
 import { countFeedInGame, deleteFeedInGame } from './lib/feed'
 import { MAX_GAMES_LISTED, MAX_GAMES_SWEPT, publicGameValidator } from './lib/games'
+import { deleteModalImagesInGame, listModalImages } from './lib/modalImages'
+import { deleteTracksInGame, listTracks } from './lib/music'
 import { deleteSeatsInGame, listSeats } from './lib/players'
 import { deleteScenesInGame, listScenes } from './lib/scenes'
 
@@ -53,7 +60,18 @@ const purgeCountsValidator = v.object({
   tokens: v.number(),
   characters: v.number(),
   seats: v.number(),
-  // ⚠️ **The only one of the five that is not bounded by a limit the application
+  // ⚠️ **Counted rather than folded into `scenes`, because a handout is a thing a person
+  // recognises.** A placement is bookkeeping and goes unmentioned; `2 handouts` is a line
+  // an operator can read against what they remember uploading, which is the whole job of
+  // this receipt. It is also the second number here that stands for deleted *blobs*, and
+  // twenty-five of them is 50 MB — a number worth seeing before the confirmation.
+  modalImages: v.number(),
+  // ⚠️ **The number on this receipt that stands for the most bytes**, which is the reason
+  // it is counted separately rather than left implied. Ten tracks at `MAX_MUSIC_BYTES` is
+  // 100 MB going in one transaction — the largest single thing a purge destroys — and
+  // audio is the one blob in this schema the browser never shrank on the way in.
+  tracks: v.number(),
+  // ⚠️ **The only one of the seven that is not bounded by a limit the application
   // enforces**, which is what makes it the one number here that can be large and the one
   // sweep that can come up short. `MAX_FEED_ROWS_SWEPT` carries that argument, and
   // `countFeedInGame` carries what it costs this query.
@@ -81,16 +99,16 @@ const purgeCandidateValidator = publicGameValidator
   .extend({ counts: purgeCountsValidator })
 
 /**
- * Five bounded reads over five tables, and the largest read anything in this
+ * Seven bounded reads over seven tables, and the largest read anything in this
  * application performs. `MAX_GAMES_LISTED` is what stops it running fifty times over.
  *
  * Every count comes from the module that owns the table — three of them because
- * `leakGuard.test.ts` insists, and the other two because a purge is exactly the sort
+ * `leakGuard.test.ts` insists, and the rest because a purge is exactly the sort
  * of code that grows a private copy of a table read when there is nowhere obvious to
  * put one.
  *
  * ⚠️ **The feed is the term that could break this, and it is bounded rather than
- * excluded.** The other four count tables the application itself caps, so each is a few
+ * excluded.** The other six count tables the application itself caps, so each is a few
  * hundred rows at worst; nothing caps the feed. `countFeedInGame` is where the cost, and
  * the reason the mitigation is the prefix rather than a smaller bound, is written down.
  */
@@ -100,6 +118,11 @@ async function countsFor(ctx: QueryCtx, gameId: Id<'games'>) {
     tokens: await countTokensInGame(ctx, gameId),
     characters: await countCharactersInGame(ctx, gameId),
     seats: (await listSeats(ctx, gameId)).length,
+    // Listed rather than counted, because `MAX_MODAL_IMAGES_PER_GAME` is twenty-five and
+    // a count helper for a read that small would be a second function saying `.length`.
+    modalImages: (await listModalImages(ctx, gameId)).length,
+    // Listed rather than counted for the reason above, and more so: the bound is ten.
+    tracks: (await listTracks(ctx, gameId)).length,
     feed: await countFeedInGame(ctx, gameId),
   }
 }
@@ -175,9 +198,18 @@ export const listByPrefix = internalQuery({
  *  4. **Characters and their vitals.** Nothing points at a character any more.
  *  5. **Scenes and their placements.** Their placements went with the tokens; the
  *     sweep is kept for the pathological row whose token had already vanished.
- *  6. **The game document**, which the scenes pointed at and which points at one of
- *     them through `activeSceneId`. That mutual pointer is why it is last and why
- *     nothing bothers clearing `activeSceneId` on the way through.
+ *  6. **Handouts.** Nothing points at one except the game document, through
+ *     `openImageId`, so this could sit anywhere before the last step — it is here
+ *     because it is the same shape of thing as a scene: a row, its image, and a pointer
+ *     on the game that goes away with the game.
+ *  7. **Tracks.** The same shape again — a row, its blob, and a pointer on the game
+ *     through `activeTrackId` — so it sits beside the handouts for the same reason. Its
+ *     blobs are the largest, which affects nothing about the order and is worth knowing
+ *     if this ever has to be split across transactions.
+ *  8. **The game document**, which the scenes, handouts and tracks pointed at and which
+ *     points back at one of each through `activeSceneId`, `openImageId` and
+ *     `activeTrackId`. Those mutual pointers are why it is last and why nothing bothers
+ *     clearing any of them on the way through.
  *
  * Inside one transaction none of this is observable, which is precisely why it is
  * written down: the reason to get the order right is the next reader, and the day
@@ -210,6 +242,8 @@ export const purgeGame = internalMutation({
     const feed = await deleteFeedInGame(ctx, game._id)
     const characters = await deleteCharactersInGame(ctx, game._id)
     const scenes = await deleteScenesInGame(ctx, game._id)
+    const modalImages = await deleteModalImagesInGame(ctx, game._id)
+    const tracks = await deleteTracksInGame(ctx, game._id)
     await ctx.db.delete('games', game._id)
 
     // The name and the code are read off the document before it goes, so the receipt
@@ -219,7 +253,136 @@ export const purgeGame = internalMutation({
     return {
       name: game.name,
       code: game.code,
-      counts: { scenes, tokens, characters, seats, feed },
+      counts: { scenes, tokens, characters, seats, modalImages, tracks, feed },
+    }
+  },
+})
+
+// ---------------------------------------------------------------------------
+// TRANSITION ONLY — the `dm` → `gm` layer rename
+// ---------------------------------------------------------------------------
+//
+// ⚠️ **Both functions below are scaffolding and are deleted once the sweep has run against
+// every deployment**, together with the fourth member of the layer union in
+// `convex/schema.ts`, `relabelGmLayer` and `countLegacyLayers` in `convex/lib/board.ts`, and
+// `scripts/relabel-layers.mjs`. They are the middle step of widen–migrate–narrow: the schema
+// already accepts both spellings and nothing can create the old one, so what is left is to
+// rewrite the rows that predate the rename and then take the widening back out. The query
+// exists to prove the narrowing is safe — it has to read zero on every deployment before that
+// commit lands — and the mutation exists to make it so.
+//
+// ⚠️ **Neither may ever become a public mutation**, for the reason in this file's header, and
+// with one extra edge to it: `relabelDmLayer` takes a `gameId` and no code of any kind, so a
+// public version would be an unauthenticated write to any game in the deployment. It is safe
+// only because internal functions are absent from the generated API and reachable only by a
+// caller who already holds deploy credentials.
+//
+// The `tokens` reads live in `convex/lib/board.ts` where the choke point is, not here — a
+// migration is not an exemption from invariant 8, and `leakGuard.test.ts` sweeps this module
+// like every other. What stays on this side is the `internalQuery`/`internalMutation`
+// wrapper, which is the same split `purgeGame` above makes.
+
+/**
+ * Every game still holding a token on the legacy `dm` layer, with how many.
+ *
+ * Games with none are omitted, so a clean deployment prints an empty list and the operator
+ * is looking at the answer rather than at five hundred zeroes.
+ *
+ * ⚠️ **One pass covers every game it can see, and the contrast with `listByPrefix` above is
+ * a real difference rather than an inconsistency.** There, matching is cheap and *counting*
+ * is expensive, so it matches five hundred games and counts the first fifty — a page, and a
+ * re-run after the deletions makes progress because the deleted games have left the window.
+ * Here the expensive read **is** the predicate: whether a game needs relabelling cannot be
+ * known without reading its tokens. A fixed window of fifty would therefore show the same
+ * fifty games for ever, relabelled or not, and a game at position fifty-one could never be
+ * reached at all — a migration tool that cannot finish.
+ *
+ * So the cost is stated instead of hidden. The scan is bounded by `MAX_GAMES_SWEPT` and each
+ * count by `MAX_TOKENS_PER_GAME`, and the product of those two is above the number of
+ * documents one Convex query may read. A deployment large enough to hit that gets a **failed
+ * query rather than a short list**, which is the right failure for a tool whose entire job is
+ * to prove a number is zero: an under-report here would retire the widening while rows still
+ * carried the old spelling, and those rows would then fail validation on read. The dev and
+ * production deployments hold tens of games of a handful of tokens each; the deployment where
+ * this stops being true wants a cursor-driven migration, not a bigger number here.
+ *
+ * `truncated` is `listByPrefix`'s flag for `listByPrefix`'s reason — a tool that
+ * under-reports looks finished when it is not — with only one of its two terms, because every
+ * game that was swept is also counted and there is no second window to overflow.
+ */
+export const gamesWithLegacyLayers = internalQuery({
+  args: {},
+  returns: v.object({
+    truncated: v.boolean(),
+    games: v.array(
+      v.object({
+        _id: v.id('games'),
+        name: v.string(),
+        code: v.string(),
+        legacy: v.number(),
+      }),
+    ),
+  }),
+  handler: async (ctx) => {
+    const swept = await ctx.db.query('games').take(MAX_GAMES_SWEPT)
+
+    const counted = await Promise.all(
+      swept.map(async (game) => ({
+        _id: game._id,
+        name: game.name,
+        // The code is printed so the operator can open the game and look at the board
+        // afterwards, which is the only way to confirm by eye that a relabelled token is
+        // still where it was and still hidden.
+        code: game.code,
+        legacy: await countLegacyLayers(ctx, game._id),
+      })),
+    )
+
+    return {
+      truncated: swept.length === MAX_GAMES_SWEPT,
+      games: counted.filter((game) => game.legacy > 0),
+    }
+  },
+})
+
+/**
+ * Rewrite one game's `dm` layers to `gm`.
+ *
+ * One game per call, which makes the transaction a game: a run over thirty of them is thirty
+ * transactions, so a game that refuses does not roll back the twenty-nine that worked and the
+ * script can name the one that failed. `prune-games.mjs` makes the same choice for the same
+ * reason, and `relabelGmLayer` carries the argument for why two hundred rows does not need
+ * `@convex-dev/migrations` behind it.
+ *
+ * Takes a `gameId` rather than a code, like `purgeGame`: the CLI reads the id off the listing
+ * above, so the game being rewritten is the game that was printed, with no second lookup in
+ * between that could resolve to a different row.
+ *
+ * **Idempotent, and that is worth relying on.** `relabelGmLayer` patches only the rows that
+ * still carry the old spelling, so a second run over a game that has already been swept writes
+ * nothing at all and reports zero — which is what makes re-running the script after a partial
+ * failure the obvious thing to do rather than a risk.
+ */
+export const relabelDmLayer = internalMutation({
+  args: { gameId: v.id('games') },
+  returns: v.object({
+    name: v.string(),
+    code: v.string(),
+    relabelled: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const game = await ctx.db.get('games', args.gameId)
+    if (!game) {
+      // Thrown rather than shrugged off, for `purgeGame`'s reason: the id came off a listing
+      // taken moments earlier, so its absence means the listing and this call disagree about
+      // the deployment, and a tool doing a one-way rewrite is the wrong place to guess.
+      throw new ConvexError({ kind: 'GameNotFound', message: 'No game with that id.' })
+    }
+
+    return {
+      name: game.name,
+      code: game.code,
+      relabelled: await relabelGmLayer(ctx, game._id),
     }
   },
 })

@@ -228,18 +228,32 @@ export function TableEffects({
     if (newest === null || newest.createdAt <= seenUpToRef.current) return
 
     // ⚠️ **A row can arrive late because the *audience* widened rather than because somebody
-    // rolled, and this announces it anyway.** The DM rolls a hidden creature's attack, and
-    // minutes later moves its coin to the player layer: `mayHearOf` now admits those lines, so
-    // they reach the player as new rows, and the newest of them beats the mark below and plays
-    // over the map. Seen in a browser, and it is the rule working rather than failing — the
-    // player genuinely has not been told about that roll before.
+    // rolled.** The DM rolls a hidden creature's attack and minutes later moves its coin to
+    // the player layer: `mayHearOf` now admits those lines, so they reach the player as new
+    // rows and the newest of them beats the mark above. Fog makes that the ordinary case
+    // rather than a curiosity, so the whole encounter's dice used to land on the map at once
+    // when a corridor was erased.
     //
-    // Not corrected by an age test, which is the obvious fix and a worse one: `createdAt` is
-    // the *server's* clock and the comparison would be against the *client's*, so a browser a
-    // minute out of step would announce nothing at all for the rest of the session — a silent
-    // failure of the whole flourish, traded for a slightly stale one in an edge case. If this
-    // ever wants fixing it wants a signal from the server about *why* a row became visible,
-    // which is a field on the payload and a decision, not a heuristic here.
+    // **The operand that decides it is the server's, and that is the point.** This comment
+    // used to record the obvious fix and why it was refused, and the reasoning still holds
+    // exactly: an age test here compares the *server's* `createdAt` against the *client's*
+    // clock, so a browser a minute out of step would announce nothing at all for the rest of
+    // the session — a silent failure of the whole flourish, traded for a slightly stale one
+    // in an edge case. What changed is that the second operand now comes from the same clock
+    // as the first. `games.revealedAt` is stamped by every mutation that widens an audience,
+    // where `Date.now()` is legal, and `feed.list` does the subtraction before the row is
+    // sent. So there is no heuristic in this file and no clock read either — just a flag.
+    //
+    // **Monotone by construction, which is why testing the newest row alone is enough.** Any
+    // `createdAt` below `newest`'s is also below `revealedAt`, so a batch that is all
+    // history has a historical newest, and one containing a genuinely fresh roll has a fresh
+    // newest. Advancing the mark before returning is the load-bearing half: skip it and the
+    // same historical rows are re-examined on every subsequent payload, and the first real
+    // roll afterwards plays with a stale baseline behind it.
+    if (newest.predatesReveal) {
+      seenUpToRef.current = newest.createdAt
+      return
+    }
 
     // Newest wins — see the note on this component. A subscription update can carry several
     // new rows at once (the DM rolling initiative down a list of goblins, or the socket

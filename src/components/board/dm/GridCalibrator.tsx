@@ -1,13 +1,10 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { useMutation } from 'convex/react'
 
 import { FieldError } from '@/components/FieldError'
-import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { SETTINGS_DEBOUNCE_MS, debounce } from '@/lib/throttle'
+import { useGridWrite } from '@/hooks/useGridWrite'
 import { parseNumber } from '@/lib/utils'
-import { api } from '@convex/_generated/api'
 import {
   MAX_GRID_SIZE,
   MIN_GRID_SIZE,
@@ -15,6 +12,7 @@ import {
   isUsableGrid,
   squaresDown,
 } from '@convex/lib/grid'
+import type { Grid } from '@convex/lib/grid'
 import type { PublicScene } from '@convex/lib/scenes'
 
 export type GridCalibratorProps = {
@@ -108,105 +106,122 @@ function NudgeField({ id, label, value, min, onChange }: NudgeFieldProps) {
  * close enough to look right at this zoom.
  *
  * Mounted with `key={scene._id}` by <MapSetupPanel>, so switching scenes remounts
- * this with that scene's stored values rather than needing an effect to resync.
+ * this with that scene's stored values. That was once the whole of the resync story; the
+ * effect below is the other half of it, and its docblock says why the key is not enough.
+ *
+ * The numbers here are no longer the only way to calibrate a grid — the DM can drag a box
+ * on the map instead (`GridHandlesLayer`) — and both go out through `useGridWrite`, so
+ * there is one write path at three rates rather than two implementations of one.
  */
 export function GridCalibrator({ code, dmCode, scene }: GridCalibratorProps) {
-  const updateGrid = useMutation(api.scenes.updateGrid)
-  const action = useLobbyAction()
   const fieldId = useId()
+  const write = useGridWrite({ code, dmCode, sceneId: scene._id })
 
   const [across, setAcross] = useState(() => trim(scene.imageWidth / scene.gridSize))
   const [offsetX, setOffsetX] = useState(() => trim(scene.gridOffsetX))
   const [offsetY, setOffsetY] = useState(() => trim(scene.gridOffsetY))
   const [gridVisible, setGridVisible] = useState(scene.gridVisible)
 
-  const grid = {
-    gridSize: gridSizeFor(scene.imageWidth, parseNumber(across)),
-    gridOffsetX: parseNumber(offsetX),
-    gridOffsetY: parseNumber(offsetY),
-  }
+  /** The three fields as a grid. Arguments, so a handler can pass what it was just handed. */
+  const gridOf = (acrossText: string, xText: string, yText: string): Grid => ({
+    gridSize: gridSizeFor(scene.imageWidth, parseNumber(acrossText)),
+    gridOffsetX: parseNumber(xText),
+    gridOffsetY: parseNumber(yText),
+  })
+
+  const grid = gridOf(across, offsetX, offsetY)
   const usable = isUsableGrid(grid)
   const down = squaresDown(scene.imageHeight, grid.gridSize)
-  const busy = action.pending !== null
+  const busy = write.pending
 
-  // Set the field, then ask for a write. `apply` reads the newest values off a ref, so
-  // it does not matter that this runs before React has re-rendered with them.
-  const change = (set: (value: string) => void) => (value: string) => {
-    set(value)
-    apply()
-  }
+  /**
+   * ⚠️ **The one place the two ways of calibrating genuinely collide, and it was a bug.**
+   *
+   * These four are `useState` initialisers and this component is keyed on `scene._id`, so
+   * before the handles existed nothing could change the stored grid that had not been typed
+   * into one of these fields — the key covered the only other case, a different map. A
+   * dragged box breaks that: the fields go on showing the numbers from before the drag, and
+   * the DM's next keystroke in one of them submits a grid built from two of the *old* three
+   * numbers, silently undoing the calibration they had just dragged.
+   *
+   * Resynced on the stored triple changing, and **only while nothing inside the form has
+   * focus**. Bumping the `key` would have done the resync in one line and stolen focus in
+   * the middle of typing, which is the same class of bug facing the other way. The focus
+   * test also makes this a no-op for the calibrator's own writes: whoever typed them still
+   * has the caret, and a DM who has clicked away is looking at numbers they are not editing.
+   */
+  const formRef = useRef<HTMLFormElement>(null)
+  useEffect(() => {
+    if (formRef.current?.contains(document.activeElement)) return
+    setAcross(trim(scene.imageWidth / scene.gridSize))
+    setOffsetX(trim(scene.gridOffsetX))
+    setOffsetY(trim(scene.gridOffsetY))
+    setGridVisible(scene.gridVisible)
+  }, [
+    scene.imageWidth,
+    scene.gridSize,
+    scene.gridOffsetX,
+    scene.gridOffsetY,
+    scene.gridVisible,
+  ])
 
-  // Not disabled while a write is in flight, unlike the old Save button. A field that
-  // goes dead for the length of a round trip drops the next keystroke, and with a
-  // write on every change that would happen constantly.
+  /**
+   * Applied as it is typed rather than behind a Save button. Calibrating is a loop of
+   * nudge-and-look, so a button in the middle of it means either saving twenty times or —
+   * worse, and what actually happened in the first session — nudging, looking at an overlay
+   * that has not changed, and concluding the app is broken.
+   *
+   * Debounced, which is `useGridWrite.apply`, and `src/lib/throttle.ts` argues it at length:
+   * the first keystroke of "16" is a valid calibration for a one-square map, so a leading
+   * write would redraw the grid to something absurd en route to the answer.
+   *
+   * ⚠️ **Each handler passes the value it was just handed** rather than letting the write
+   * read state that has not re-rendered yet — see `useGridWrite`'s docblock.
+   *
+   * Not disabled while a write is in flight, unlike the old Save button. A field that goes
+   * dead for the length of a round trip drops the next keystroke, and with a write on every
+   * change that would happen constantly.
+   */
   const fields: NudgeFieldProps[] = [
     {
       id: `${fieldId}-across`,
       label: 'Squares across',
       value: across,
       min: 1,
-      onChange: change(setAcross),
+      onChange: (next) => {
+        setAcross(next)
+        write.apply(gridOf(next, offsetX, offsetY), gridVisible)
+      },
     },
     {
       id: `${fieldId}-x`,
       label: 'Offset X',
       value: offsetX,
-      onChange: change(setOffsetX),
+      onChange: (next) => {
+        setOffsetX(next)
+        write.apply(gridOf(across, next, offsetY), gridVisible)
+      },
     },
     {
       id: `${fieldId}-y`,
       label: 'Offset Y',
       value: offsetY,
-      onChange: change(setOffsetY),
+      onChange: (next) => {
+        setOffsetY(next)
+        write.apply(gridOf(across, offsetX, next), gridVisible)
+      },
     },
   ]
 
-  // Applied as it is typed rather than behind a Save button. Calibrating is a loop of
-  // nudge-and-look, so a button in the middle of it means either saving twenty times
-  // or — worse, and what actually happened in the first session — nudging, looking at
-  // an overlay that has not changed, and concluding the app is broken.
-  //
-  // Debounced rather than throttled, and `src/lib/throttle.ts` explains why at length:
-  // the first keystroke of "16" is a valid calibration for a one-square map, so a
-  // leading write would redraw the grid to something absurd en route to the answer.
-  //
-  // Held in a ref because the identity has to survive re-renders — every keystroke is
-  // one — or each character would start its own timer and none would ever be replaced.
-  const latest = useRef({ grid, gridVisible, usable })
-  latest.current = { grid, gridVisible, usable }
-
-  // The override exists for the one caller that flushes synchronously. `latest` is
-  // written during render, so a handler that sets state and flushes in the same tick
-  // would send the value it just replaced — React has not re-rendered yet. A typed
-  // field never hits this, because 350ms is many renders away.
-  const apply = useRef(
-    debounce((override?: { gridVisible: boolean }) => {
-      const { grid: g, gridVisible: visible, usable: ok } = latest.current
-      // A half-typed field parses to NaN, which `isUsableGrid` rejects. Skipping is
-      // the right response rather than erroring: the DM is mid-keystroke, not wrong.
-      if (!ok) return
-      void action.run('grid', 'Could not save the grid.', () =>
-        updateGrid({
-          code,
-          dmCode,
-          sceneId: scene._id,
-          ...g,
-          gridVisible: override?.gridVisible ?? visible,
-        }),
-      )
-    }, SETTINGS_DEBOUNCE_MS),
-  ).current
-
-  useEffect(() => apply.cancel, [apply])
-
   return (
     <form
+      ref={formRef}
       className="flex flex-col gap-3"
       onSubmit={(event) => {
         // Enter applies immediately, for a DM who types a number and wants it now
         // rather than in a third of a second.
         event.preventDefault()
-        apply.flush()
+        write.settle(grid, gridVisible)
       }}
     >
       <div className="flex flex-wrap items-end gap-3">
@@ -244,11 +259,11 @@ export function GridCalibrator({ code, dmCode, scene }: GridCalibratorProps) {
           onChange={(event) => {
             const next = event.target.checked
             setGridVisible(next)
-            // Flushed rather than debounced: a checkbox is one decision, not a run of
+            // Settled rather than debounced: a checkbox is one decision, not a run of
             // input to wait out, and a third of a second before the grid vanishes reads
-            // as lag. Passed explicitly because the flush beats the re-render.
-            apply({ gridVisible: next })
-            apply.flush()
+            // as lag. `next` goes in as an argument because the write happens before React
+            // has re-rendered with the value it just set.
+            write.settle(grid, next)
           }}
           className="accent-foreground mt-0.5 size-4"
         />

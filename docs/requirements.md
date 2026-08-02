@@ -251,6 +251,56 @@ exists. And **"a red warning alarm"** on a critical failure is rendered as a red
 shake with no sound: audio would be the first asset this application serves itself, and it needs a
 mute control and the browser autoplay dance to go with it.
 
+#### DM tooling, layers and fog of war — 2026-08-02 — [ADR 0012](adr/0012-three-layers-and-a-fog-that-is-honest-about-itself.md)
+
+**The first amendment in this section that *adds* a feature rather than lifting an exclusion**, and
+that inversion is the reason it is here at all. Every entry above records a rule the build stopped
+following. This one records a thing the build does that the specification never asked for, which is
+the same hazard pointing the other way: a feature nobody wrote down is a feature nobody agreed to.
+
+**Fog of war — added, and it appears nowhere above.** The DM blacks out rectangles of the map, and
+what that hides is deliberately partial:
+
+- **Real for tokens.** A creature standing inside a fogged rectangle is filtered out *server-side*,
+  so a player is not sent its position, not sent its health band, and not sent the feed line saying
+  what it just rolled. It is absent from their payload rather than hidden in their client, exactly as
+  the GM layer already is.
+- **Polite for the map.** The background image stays fully downloaded, so somebody reading devtools
+  can recover the unfogged floor plan. Hiding that too means tiling or masking the map server-side,
+  which multiplies storage against the 1 GB ceiling
+  [ADR 0001](adr/0001-platform-and-hosting.md) accepts and complicates both zoom and calibration.
+  The monsters were the secret, not the floor plan.
+- **And it does not hide that a coin exists.** A player's token payload still carries a fogged
+  creature's name and art; what fog takes is *where it is, how hurt it is and what it did*. That is a
+  cost decision rather than an oversight, and it is why **the GM layer remains the tool for "must not
+  be known about"** — that one is absolute, and fog is not.
+
+⚠️ **This is the first guard this project has knowingly shipped incomplete**, so it is recorded in the
+register the threat model in [CLAUDE.md](../CLAUDE.md) uses rather than described as finished. A
+partial guard described as a whole one is worse than no guard, because somebody plans around it.
+
+**The map layers are now built as written — with one word changed.** The *Map layers* section above
+asks for Background, Player and DM, and until now only two of them existed; the third layer is built,
+and a token on Background is seen by every player and movable by none of them. The stored value for
+the third is `gm` rather than `dm`, Roll20's name for the same thing, because "DM" is the name of a
+*person holding a code* everywhere else in this codebase and a layer sharing that word reads as one
+only the DM may **see** rather than one only the DM may **touch**. Both are true of it; only one is
+what the field decides. Nothing about the layer's behaviour differs from the section above.
+
+**Two DM-mode bullets are now met and needed no amendment**, noted here only because their absence
+from this entry would look like an omission: *"toggle an image from the game library into the modal
+image pop-up… and close it for everyone"* and *"Background music — select from the game music
+library"* are both in the specification already. The *libraries* they name are still the game-editor
+milestone's, so an upload goes straight to use — which is what maps and token art have done since the
+board existed. **The music selector broadcasts which track and nothing else:** no play, no pause, no
+position, and nothing that records whether anybody is listening. Shared play state is a later
+milestone, and a browser will not start audio without a gesture in any case.
+
+**Nothing was lifted from the Excluded list, and nothing was added to the Included one.** Four
+milestones in a row now. A layer is a permission, a rectangle is a region, a handout is a picture and
+a track is a file — none of them is a rule, none is adjudicated, and nothing here changes a number a
+player rolls against.
+
 ## Accounts and games
 
 - Users create an account by providing an email address.

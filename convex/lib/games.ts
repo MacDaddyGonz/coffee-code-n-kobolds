@@ -1,6 +1,6 @@
 import { ConvexError, v, type Infer } from 'convex/values'
 
-import type { Doc } from '../_generated/dataModel'
+import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import { normaliseDmCode, normaliseJoinCode, normaliseRecoveryPhrase } from './codes'
 
@@ -31,6 +31,34 @@ export const MAX_TOKENS_PER_GAME = 200
  * MAX_TOKENS_PER_GAME has to raise this with it to keep that true.
  */
 export const MAX_PLACEMENTS_PER_SCENE = 200
+
+/**
+ * How many fog rectangles one scene may hold.
+ *
+ * ⚠️ **The first per-scene bound in this file that is both a read bound and a write
+ * check, and the contrast with `MAX_PLACEMENTS_PER_SCENE` above is exactly the point.**
+ * That one cannot fire: a token holds at most one placement per scene and the token count
+ * is already capped, so the bound is structural and a write check would imply a risk that
+ * is not there. Nothing structurally caps rectangles — a DM blacking out a corridor with
+ * a small brush produces one row per gesture, all evening — so `fog.draw` enforces this
+ * the way `board.addToken` enforces MAX_TOKENS_PER_GAME.
+ *
+ * Two hundred is generous for the intended use, which is a handful of rooms. The refusal
+ * points at the answer rather than just refusing: one bigger rectangle, or clear the scene
+ * and start again.
+ */
+export const MAX_FOG_RECTS_PER_SCENE = 200
+
+/**
+ * How many handouts and how many tracks one game may hold.
+ *
+ * Both are write checks like MAX_TOKENS_PER_GAME, because both are things a DM adds one at
+ * a time with nothing structural to stop them, and both back a byte ceiling in lib/limits.ts
+ * that only means something multiplied by a count — the storage arithmetic there is
+ * `count × ceiling`, and a ceiling with no count is not a bound on anything.
+ */
+export const MAX_MODAL_IMAGES_PER_GAME = 25
+export const MAX_MUSIC_TRACKS_PER_GAME = 10
 
 /**
  * The two maintenance bounds on a sweep of the `games` table itself — bounds on the
@@ -254,6 +282,62 @@ export function publicGameListing(game: Doc<'games'>) {
  */
 export function gameStatus(game: Doc<'games'>): GameStatus {
   return game.status ?? 'lobby'
+}
+
+/**
+ * The board everyone is looking at, or null. The one place the absent case is spelled.
+ *
+ * `gameStatus` above centralises a *default*; this centralises a *nullability*, which is a
+ * weaker kind of accessor and would not have been worth a function while the field was only
+ * ever used to decide what to draw. Fog of war changed that: the fogged-token set is a
+ * question about one named scene, so this value now feeds four secrecy-bearing call sites
+ * across three modules, and `?? null` written at each of them is four places for one of
+ * them to be `?? undefined` instead and quietly answer "no scene, so nothing is fogged".
+ */
+export function activeSceneId(game: Doc<'games'>): Id<'scenes'> | null {
+  return game.activeSceneId ?? null
+}
+
+/**
+ * When this game's audience last widened, or 0 for never.
+ *
+ * Zero rather than null so the comparison in `visibleFeed` is arithmetic with no branch:
+ * every row's creation time is greater than 0, so a game in which nothing has ever been
+ * revealed marks nothing as predating a reveal. **Fail-open, and correctly so** — the only
+ * thing downstream of this value is whether a flourish plays over the map. The row itself
+ * was filtered by `mayHearOf` long before anybody asked how old it was, so getting this
+ * wrong shows an animation that should not have played, never a line that should not have
+ * been sent. Compare `maySeeLayer`, which fails closed because what is downstream of *it*
+ * is a dragon.
+ */
+export function gameRevealedAt(game: Doc<'games'>): number {
+  return game.revealedAt ?? 0
+}
+
+/**
+ * Mark this game as having just let somebody in on something. **The only writer of
+ * `revealedAt`.**
+ *
+ * Called from the mutations that widen an audience — a coin off the GM layer, a character
+ * bound to a player-layer token, a reserved hero released, a fog rectangle erased — and
+ * from nowhere else, because a stamp on a *narrowing* write would suppress announcements
+ * for rolls nobody had been shown yet.
+ *
+ * `Date.now()` is legal here and illegal in every query in this codebase: a query's result
+ * is cached and re-derived on invalidation, so a wall-clock read makes it stale by
+ * construction and destroys cache reuse besides — see the vendored Convex guidelines. That
+ * asymmetry is the entire reason this value is stored rather than computed. The comparison
+ * needs two timestamps from one clock, and the only clock a query may read is the one
+ * already written into a document.
+ *
+ * ⚠️ **Coverage here is discipline, not construction, and that is the design's one soft
+ * spot.** Nothing makes a future widening path call this, and one that forgets restores the
+ * replay bug silently. The mitigation is in `feed.test.ts`, which asserts `predatesReveal`
+ * per widening mutation — so a new path without a stamp fails a test that already exists
+ * rather than being noticed at a table.
+ */
+export async function stampReveal(ctx: MutationCtx, gameId: Id<'games'>): Promise<void> {
+  await ctx.db.patch('games', gameId, { revealedAt: Date.now() })
 }
 
 /** Returns null for an unknown code — for queries that render "no such game". */

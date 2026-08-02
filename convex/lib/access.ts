@@ -165,6 +165,24 @@ async function resolveEditableCharacter(
     const controlled = await controlledCharacterIds(
       ctx,
       game._id,
+      // ⚠️ **No scene, so fog is not consulted on this path — and the first draft passed one.**
+      //
+      // The reasoning for passing it was that control carries a creature's sheet and its
+      // exact hit points, so a grant on something the party cannot see would be a door onto
+      // a secret fog had just closed. That reasoning also contained its own refutation:
+      // `fogVeil` never veils a token with an effective controller, so a *granted* creature
+      // is never fogged and the argument provably changes no answer.
+      //
+      // What it cost was not nothing. This runs inside **five hit-point mutations and
+      // `feed.roll`**, so a real `sceneId` puts a `tokenPositions` range read into a *write*
+      // transaction's read set — the table committed ten times a second — and every granted
+      // seat's hit-point write would then OCC-conflict against any drag on that scene.
+      // `requireMovableToken` refuses exactly this trade one module over, on the same table,
+      // for the same reason. Paying it for an inert argument was the wrong side of it.
+      //
+      // If the controller exclusion is ever narrowed, this is the call site to revisit —
+      // named here rather than pre-paid.
+      null,
       false,
       await listSeats(ctx, game._id),
       playerId,

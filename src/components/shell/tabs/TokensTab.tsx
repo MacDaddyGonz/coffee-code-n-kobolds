@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { ReactElement } from 'react'
 
 import { useCharactersByGroup } from '@/components/board/dm/CharacterRows'
@@ -6,9 +7,40 @@ import { TokenSwatch } from '@/components/board/dm/TokenSwatch'
 import { Badge } from '@/components/ui/badge'
 import { PickerRow } from '@/components/ui/picker-row'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useHiddenFromParty } from '@/hooks/useFog'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicToken } from '@convex/lib/board'
 import type { PublicCharacter } from '@convex/lib/characters'
+import type { TokenLayer } from '@convex/lib/layers'
+
+/**
+ * The badge on a coin's row, or `null` for the layer that needs none. Exhaustive by
+ * construction — see CLAUDE.md invariant 9.
+ *
+ * ⚠️ **Worth the `Record` here specifically**, because of what a DM uses this list for:
+ * they scan it asking *what have I left somewhere odd*, and the `layer === 'dm'` test this
+ * replaced drew a Background coin with no badge at all — indistinguishable from an ordinary
+ * one, in the only list in the application that shows every coin in the game. What a fourth
+ * layer would have inherited was not "no badge yet", it was "silently filed as normal".
+ *
+ * Two words rather than the layer's full label from `TOKEN_LAYER_LABELS`: those are
+ * sentences chosen to make a *choice* unambiguous at the moment it is made, and this is a
+ * pill at the end of a row that already carries a name, a binding and a size.
+ */
+const LAYER_BADGES: Record<
+  TokenLayer,
+  { label: string; variant: 'destructive' | 'secondary' } | null
+> = {
+  background: { label: 'Scenery', variant: 'secondary' },
+  player: null,
+  gm: { label: 'GM layer', variant: 'destructive' },
+}
+
+/**
+ * Held still, so the two states with no coins in them are one dependency rather than a fresh
+ * literal per render — which is what `useHiddenFromParty` needs of it below.
+ */
+const NO_TOKENS: PublicToken[] = []
 
 /**
  * What this tab has been handed about the board's coins: three states, not an array and a
@@ -162,6 +194,34 @@ export function TokensTab({
   const roster = useCharactersByGroup(code, dmCode)
 
   /**
+   * Which of these coins the party has lost sight of, for the badge on the row.
+   *
+   * ⚠️ **The ⚠️ above says this tab is not told where a coin stands, and this does not
+   * undo that.** No placement joins the coin list — a row still cannot say which map it
+   * is on — and the hook answers about the **active scene only**, which is the honest
+   * scope: fog is per map, so a coin parked on last week's dungeon is not standing in the
+   * dark, it is standing somewhere else. What it does cost is a `board.positions`
+   * subscription while the map has fog on it, and only then; the hook's own docblock
+   * carries that trade and the gate that keeps a game which never fogs anything paying
+   * nothing at all.
+   *
+   * A cue and never a filter: every coin in the game is in this list either way, which is
+   * the whole reason the list exists.
+   *
+   * ⚠️ **A set of ids, and the coins go *in* — so the hook is handed this tab's array rather
+   * than handing back a predicate over its own.** Its docblock carries the argument; the part
+   * that matters here is that the identity of what comes back changes only when a creature
+   * crosses a rectangle's edge, which is what lets `TokenRow` below be memoised at all. The
+   * empty array is a module constant for the same reason: a fresh literal in the not-ready
+   * branch would be a changed dependency on every render of a tab that has nothing to show.
+   */
+  const hidden = useHiddenFromParty(
+    code,
+    dmCode,
+    tokenList.kind === 'ready' ? tokenList.tokens : NO_TOKENS,
+  )
+
+  /**
    * Which creature a coin stands for. **The one place this tab answers that**, for a row
    * and for the selected coin alike.
    *
@@ -242,8 +302,12 @@ export function TokensTab({
                 token={token}
                 character={boundTo(token)}
                 charactersLoading={roster.loading}
+                hidden={hidden.has(token._id)}
                 selected={token._id === selectedToken?._id}
-                onSelect={() => onSelectToken(token._id)}
+                // The prop straight through rather than an arrow per row: the id comes back
+                // out of the row, which is `TokenLayers`' arrangement and is what the memo
+                // on `TokenRow` needs to skip anything at all.
+                onSelect={onSelectToken}
               />
             ))}
           </ul>
@@ -313,11 +377,21 @@ export function TokensTab({
  * The caption is the one join this tab performs. `publicTokenValidator` carries a
  * `characterId` and never a name — see the ⚠️ on the tab — so the name arrives from
  * `characters.list` and is looked up by the caller, which already holds the map.
+ *
+ * **Memoised, for `TokenCoin`'s reason on a list of the same length.** There can be two
+ * hundred of these, and the tab around them re-renders ten times a second for as long as
+ * anybody at the table is dragging a coin — the fog cue holds a `board.positions`
+ * subscription, and its own docblock calls that the honest price of a cue that is never
+ * stale. The price was being paid twice: once for the subscription, and once more for two
+ * hundred rows rebuilding a name, a binding and two badges that had not changed. Every prop
+ * is a primitive or an identity the caller holds still, `hidden` included, which is what
+ * makes the memo more than decoration.
  */
-function TokenRow({
+const TokenRow = memo(function TokenRow({
   token,
   character,
   charactersLoading,
+  hidden,
   selected,
   onSelect,
 }: {
@@ -326,8 +400,14 @@ function TokenRow({
   character: PublicCharacter | null
   /** True until `characters.list` has arrived, so *waiting* is not printed as *nothing*. */
   charactersLoading: boolean
+  /**
+   * Whether the DM's fog has taken this coin off the party's board — answered by the
+   * caller, from the same predicate the map's mark uses and the server's filter ran.
+   */
+  hidden: boolean
   selected: boolean
-  onSelect: () => void
+  /** The id comes back out, so the caller passes one function for the whole list. */
+  onSelect: (tokenId: Id<'tokens'>) => void
 }) {
   const squares = `${token.sizeSquares} ${token.sizeSquares === 1 ? 'square' : 'squares'}`
 
@@ -343,9 +423,11 @@ function TokenRow({
         ? '…'
         : (character?.name ?? MISSING_SHEET)
 
+  const badge = LAYER_BADGES[token.layer]
+
   return (
     <li>
-      <PickerRow className="w-full" selected={selected} onClick={onSelect}>
+      <PickerRow className="w-full" selected={selected} onClick={() => onSelect(token._id)}>
         <span className="flex w-full items-center gap-2">
           <TokenSwatch name={token.name} tint={token.tint} artUrl={token.artUrl} />
           <span className="flex min-w-0 flex-col">
@@ -354,16 +436,24 @@ function TokenRow({
               {binding} · {squares}
             </span>
           </span>
-          {/* Read straight off the payload, and the only badge on the row: it is the one
-              field about a coin whose being wrong spoils something, and a DM scanning this
-              list for "what have I left hidden" is scanning for exactly this. */}
-          {token.layer === 'dm' ? (
-            <Badge variant="destructive" className="ml-auto">
-              DM layer
-            </Badge>
-          ) : null}
+          {/* Both badges answer the same question a DM scans this list with — *what have
+              I left somewhere odd* — so they share one right-aligned group rather than
+              each claiming `ml-auto`, which would have put the second one wherever the
+              first happened to end.
+
+              The layer is read straight off the payload and is the one *field* about a
+              coin whose being wrong spoils something or strands it; see the ⚠️ on
+              `LAYER_BADGES`. Fog is not a field at all — it is a rectangle crossed with a
+              position — and it is the DM's only warning that a creature has gone from the
+              party's board, or that a rectangle drawn over a corridor also covered
+              somebody standing in it. `outline` rather than `destructive`: fog is
+              normally something the DM meant. */}
+          <span className="ml-auto flex shrink-0 items-center gap-1">
+            {hidden ? <Badge variant="outline">Hidden from party</Badge> : null}
+            {badge === null ? null : <Badge variant={badge.variant}>{badge.label}</Badge>}
+          </span>
         </span>
       </PickerRow>
     </li>
   )
-}
+})

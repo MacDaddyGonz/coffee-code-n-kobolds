@@ -262,7 +262,7 @@ async function makeScene(
 
 type AddTokenOptions = {
   name?: string
-  layer?: 'player' | 'dm'
+  layer?: 'background' | 'player' | 'gm'
   characterId?: Id<'characters'>
   x?: number
   y?: number
@@ -897,7 +897,7 @@ describe('a player cannot count the DM’s prepared monsters', () => {
     )
     await addToken(t, fixture.code, fixture.dmCode, fixture.sceneId, {
       name: 'Lurker',
-      layer: 'dm',
+      layer: 'gm',
       characterId: hidden,
       x: 1500,
       y: 1000,
@@ -948,7 +948,7 @@ describe('a player cannot count the DM’s prepared monsters', () => {
       if (i % 2 === 0) {
         await addToken(t, fixture.code, fixture.dmCode, fixture.sceneId, {
           name: `Ambusher ${i}`,
-          layer: 'dm',
+          layer: 'gm',
           characterId: monster,
           x: 200 + i * 60,
           y: 1400,
@@ -1883,7 +1883,7 @@ describe('a player inspecting network traffic sees nothing off the DM’s shelf'
       if (i % 2 === 0) {
         await addToken(t, fixture.code, fixture.dmCode, fixture.sceneId, {
           name: `Ambusher ${i}`,
-          layer: 'dm',
+          layer: 'gm',
           characterId,
           x: 200 + i * 60,
           y: 1400,
@@ -2074,7 +2074,7 @@ describe('a granted seat is sent exact hit points, and only that seat', () => {
     const hidden = await makeNpc(t, code, dmCode, 'Something Waiting', npcSheet())
     const hiddenToken = await addToken(t, code, dmCode, sceneId, {
       name: 'Not On Their Board',
-      layer: 'dm',
+      layer: 'gm',
       characterId: hidden,
     })
     await setControllers(t, fixture, hiddenToken, [ana])
@@ -2184,5 +2184,146 @@ describe('a granted seat is sent exact hit points, and only that seat', () => {
         JSON.stringify(who),
       ).toMatchObject({ kind: 'exact', current: PC_CURRENT_HP, max: PC_MAX_HP })
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (k) Milestone 10: a creature standing in the dark has no health bar at all
+// ---------------------------------------------------------------------------
+//
+// ⚠️ **THE THIRD CONSEQUENCE OF ONE `continue`, AND THE ONE THIS SUITE OWNS.** Fog is
+// decided in `foggedTokenIds` and applied in exactly two places: `visiblePositions`, and the
+// loop in `boardCharacterAccess`. That second one is a single `continue` above both `visible`
+// and `controlled`, so a fogged creature loses its **placement**, its **health band** and its
+// **feed lines** together, by the subset property that was already there. The placement is
+// `fog.test.ts`'s and the lines are `feed.test.ts`'s; the band is here.
+//
+// Note what the withholding looks like, because it is not a narrower band: the creature has
+// **no row at all**. That is `visible`'s existing count-leak refusal doing the work — a
+// player reading twelve entries knows the DM has twelve monsters prepared, so a hidden
+// creature must contribute nothing, not a row, not a band, not a number in a length. Fog
+// reaches that rule through the same door the GM layer does, which is why it needed no new
+// machinery here.
+
+describe('fog takes a creature’s health bar with it', () => {
+  /** Where a coin is actually standing — snapping and displacement both move it. */
+  async function placementOf(t: Harness, sceneId: Id<'scenes'>, tokenId: Id<'tokens'>) {
+    const row = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query('tokenPositions')
+          .withIndex('by_sceneId_and_tokenId', (q) =>
+            q.eq('sceneId', sceneId).eq('tokenId', tokenId),
+          )
+          .unique(),
+    )
+    if (!row) throw new Error('that token has no placement on that scene')
+    return { x: row.x, y: row.y }
+  }
+
+  /** A rectangle centred on one coin and reaching no other. */
+  async function fogOver(
+    t: Harness,
+    fixture: { code: string; dmCode: string; sceneId: Id<'scenes'> },
+    tokenId: Id<'tokens'>,
+  ) {
+    const at = await placementOf(t, fixture.sceneId, tokenId)
+    const { fogId } = await t.mutation(api.fog.draw, {
+      code: fixture.code,
+      dmCode: fixture.dmCode,
+      sceneId: fixture.sceneId,
+      x: at.x - 40,
+      y: at.y - 40,
+      width: 80,
+      height: 80,
+    })
+    return fogId
+  }
+
+  /**
+   * Both directions, because a one-way assertion passes on a fixture that never had a row.
+   * The hero is asserted in the same breath as the control: the same query, the same
+   * rectangle's scene, and numbers that did not move.
+   */
+  test('the band goes when the corridor goes dark and comes back when it is erased', async () => {
+    const t = harness()
+    const fixture = await vitalsFixture(t)
+    const { code, npc, npcToken, pc } = fixture
+
+    const before = await t.query(api.characters.vitals, { code })
+    expect(rowFor(before, npc)?.kind).toBe('band')
+
+    const fogId = await fogOver(t, fixture, npcToken)
+
+    const fogged = await t.query(api.characters.vitals, { code })
+    // No row at all rather than a narrower band — see the note above this describe.
+    expect(rowFor(fogged, npc)).toBeUndefined()
+    const serialised = JSON.stringify(fogged) ?? ''
+    expect(serialised, 'the fogged creature’s id travelled anyway').not.toContain(npc)
+    expect(containsNumber(serialised, NPC_MAX_HP)).toBe(false)
+    expect(containsNumber(serialised, NPC_CURRENT_HP)).toBe(false)
+
+    // The hero standing in the lit half of the map is untouched, which is what makes the
+    // absence above about the rectangle rather than about the query having emptied.
+    expect(rowFor(fogged, pc)).toMatchObject({ kind: 'exact', current: PC_CURRENT_HP })
+
+    await t.mutation(api.fog.erase, { code, dmCode: fixture.dmCode, fogId })
+    expect(await t.query(api.characters.vitals, { code })).toEqual(before)
+  })
+
+  /**
+   * ⚠️ **A COIN SOMEBODY CONTROLS IS NEVER FOGGED, AND THAT REACHES THE NUMBERS TOO.**
+   *
+   * `foggedTokenIds` excludes any token with an effective controller, so the DM cannot
+   * accidentally black out the party's own wolf — and since a granted seat is sent `exact`
+   * rather than a band, getting this wrong would take the `−`/`+` controls off a creature
+   * the player is supposed to be spending hit points on, with no way to select it back.
+   *
+   * The revoke at the end is the live disjunct: the identical rectangle over the identical
+   * coin, with the grant gone, does hide it. Without that half this test would pass on a
+   * rectangle that had missed.
+   */
+  test('a granted creature keeps its exact numbers through the fog until the grant goes', async () => {
+    const t = harness()
+    const fixture = await vitalsFixture(t)
+    const { code, seat: ana, npc, npcToken } = fixture
+
+    await setControllers(t, fixture, npcToken, [ana])
+    await fogOver(t, fixture, npcToken)
+
+    expect(rowFor(await t.query(api.characters.vitals, { code, playerId: ana }), npc)).toMatchObject(
+      { kind: 'exact', current: NPC_CURRENT_HP, max: NPC_MAX_HP },
+    )
+    // And for a seat that was granted nothing it is still on the board, still a band — the
+    // exclusion is about the *token* having a controller, not about who is asking.
+    expect(rowFor(await t.query(api.characters.vitals, { code }), npc)?.kind).toBe('band')
+
+    await setControllers(t, fixture, npcToken, [])
+    expect(rowFor(await t.query(api.characters.vitals, { code, playerId: ana }), npc)).toBeUndefined()
+  })
+
+  /** The DM reads no rectangles at all, so their own health bars are never affected. */
+  test('the DM keeps every row through a rectangle over the whole map', async () => {
+    const t = harness()
+    const fixture = await vitalsFixture(t)
+    const { code, dmCode, sceneId, npc } = fixture
+    const before = await t.query(api.characters.vitals, { code, dmCode })
+
+    await t.mutation(api.fog.draw, {
+      code,
+      dmCode,
+      sceneId,
+      x: -MAP_WIDTH,
+      y: -MAP_HEIGHT,
+      width: MAP_WIDTH * 3,
+      height: MAP_HEIGHT * 3,
+    })
+
+    expect(await t.query(api.characters.vitals, { code, dmCode })).toEqual(before)
+    expect(rowFor(await t.query(api.characters.vitals, { code, dmCode }), npc)?.kind).toBe('exact')
+    // A wrong DM code is an ordinary player rather than a partial DM.
+    expect(
+      rowFor(await t.query(api.characters.vitals, { code, dmCode: twiddle(dmCode) }), npc),
+    ).toBeUndefined()
   })
 })

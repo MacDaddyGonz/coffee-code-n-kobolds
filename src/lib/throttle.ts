@@ -29,6 +29,27 @@ export const MOVE_THROTTLE_MS = 100
 export const SETTINGS_DEBOUNCE_MS = 350
 
 /**
+ * How still a gesture has to be before what it landed on is written to local
+ * storage — the camera's pan and zoom, the divider's width, the volume slider.
+ *
+ * `localStorage.setItem` is *synchronous* and disk-backed, and that — not the size
+ * of the payload — is why the write cannot live where the value lands. A pan, a
+ * wheel spin, a held arrow key and a slider drag all land a value up to sixty times
+ * a second, so writing on arrival means sixty blocking round trips to disk a second
+ * in the middle of the one loop that has 16 ms to finish in. A trailing timer
+ * collapses a whole gesture into one write instead.
+ *
+ * Trailing rather than leading because nothing reads any of these until the next
+ * visit, so there is no value in an early write; the "drags and immediately closes
+ * the tab" case is covered by each reader's own flushes rather than by paying for it
+ * on every frame.
+ *
+ * ⚠️ `useMusic` still declares its own copy of this number. Folding it in is the one
+ * edit left, and it was left because that file was being changed elsewhere.
+ */
+export const PERSIST_DELAY_MS = 250
+
+/**
  * Trailing only — the opposite end of `throttle` below, and a deliberately separate
  * function rather than a flag on it.
  *

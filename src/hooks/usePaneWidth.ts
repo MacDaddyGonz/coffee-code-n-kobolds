@@ -2,7 +2,7 @@ import type { RefObject } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { getPaneWidth, rememberPaneWidth } from '@/lib/session'
-import { debounce } from '@/lib/throttle'
+import { PERSIST_DELAY_MS, debounce } from '@/lib/throttle'
 
 /**
  * The narrowest the right-hand panel is allowed to get.
@@ -25,27 +25,6 @@ export const MIN_MAP_PANE = 480
  * the smaller half of a 1440-pixel window.
  */
 const DEFAULT_RIGHT_PANE = 640
-
-/**
- * How still the divider has to be before the width is written to local storage.
- *
- * A drag lands a width up to sixty times a second and `localStorage.setItem` is
- * synchronous and disk-backed, so a trailing timer collapses a whole gesture into
- * one write. `useBoardCamera`'s own `PERSIST_DELAY_MS` carries the long version of
- * this argument, and the flushes below are that hook's three.
- *
- * Restated here rather than imported from the board on purpose. The shell reaching
- * into the board for a constant is the wrong direction — the board is a thing the
- * shell arranges, not something it depends on — and a shared timing constant is
- * worth extracting on the third instance rather than the second.
- *
- * ⚠️ Note that the *mechanism* is not restated: that is `debounce` in lib/throttle,
- * which has been there since the board landed and is tested for the three properties
- * this depends on. `useBoardCamera` still hand-rolls its own copy, which predates
- * this hook and is left alone here rather than refactored on the way past — but it is
- * the obvious follow-up, and this comment is the note saying so.
- */
-const PERSIST_DELAY_MS = 250
 
 export type PaneWidth = {
   /** What to render the panel at: the remembered width, made to fit the window. */
@@ -127,6 +106,9 @@ export function usePaneWidth({
   // closure" discipline this needs — a flush firing after the browser has moved to
   // another game still writes this game's width under this game's key, because the
   // code travelled with the call rather than being looked up at flush time.
+  //
+  // ⚠️ `useBoardCamera` still hand-rolls its own timer instead, which predates this
+  // hook. That is the obvious follow-up, and this is the note saying so.
   //
   // Held in a ref so the identity survives a re-render: `debounce` returns a fresh
   // function each call, and a new one per render would be a new timer per render with

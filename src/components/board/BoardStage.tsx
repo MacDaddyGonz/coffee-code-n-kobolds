@@ -7,6 +7,7 @@ import { GridOverlay } from './GridOverlay'
 import { SceneImage } from './SceneImage'
 import type { BoardCamera } from '@/hooks/useBoardCamera'
 import { cn } from '@/lib/utils'
+import type { Grid } from '@convex/lib/grid'
 import type { PublicScene } from '@convex/lib/scenes'
 
 export type BoardStageProps = {
@@ -14,7 +15,17 @@ export type BoardStageProps = {
   camera: BoardCamera
   /** A click on the map itself, hitting no token — the gesture that deselects. */
   onBackgroundClick: () => void
-  /** The interactive layers — `TokenLayer`. See the note on the layer order below. */
+  /**
+   * A calibration the DM is dragging but the server has not confirmed. Threaded straight
+   * through to `GridOverlay`, which carries the argument for why it exists at all — this
+   * component is only the pipe, because the grid layer is built here and the draft is
+   * owned three components up by whoever is holding the handles.
+   */
+  grid?: Grid
+  /**
+   * The interactive layers — `TokenLayers`, and the DM's calibration handles when they are
+   * out. See the note on the layer order below.
+   */
   children?: ReactNode
   className?: string
 }
@@ -35,12 +46,22 @@ function stageOf(event: Konva.KonvaEventObject<unknown>): Konva.Stage | null {
  * The canvas: the map, the grid, and whatever interactive layers it is given, under
  * one camera.
  *
- * The layer order is requirements.md's, bottom-up — background, then player, then
- * DM — and the first two are `listening={false}`, which is doing more work than it
- * looks. It takes them out of hit-testing altogether, so a left-drag on empty map
- * finds no node at all and Konva walks up to the draggable Stage and pans instead of
- * picking up the map image. It is also what makes "did the pointer hit a token?"
- * answerable by comparing the event target to the stage.
+ * The two layers built here — the map image and the grid over it — are
+ * `listening={false}`, which is doing more work than it looks. It takes them out of
+ * hit-testing altogether, so a left-drag on empty map finds no node at all and Konva walks
+ * up to the draggable Stage and pans instead of picking up the map image. It is also what
+ * makes "did the pointer hit a token?" answerable by comparing the event target to the
+ * stage. `TokenLayers` applies the same trick to the Background *token* layer for a player,
+ * which is why scenery pans the board instead of fighting them.
+ *
+ * Above them come the token layers, in requirements.md's order — Background, then the
+ * player layer, then the DM's. That order is `TOKEN_LAYERS`' and is not restated here: the
+ * children arrive already stacked.
+ *
+ * **Anything a caller puts after those layers is topmost and wins the pointer, with no
+ * `zIndex` and no `moveToTop` anywhere** — which is how `GridHandlesLayer` gets to be the
+ * only hit-testable thing over the map while the DM is calibrating. It is the same
+ * property the two `listening={false}` layers above rely on, read from the other end.
  *
  * The token layers arrive as children rather than being built here so that this
  * component stays about pan, zoom and layer order, and knows nothing about tokens,
@@ -50,6 +71,7 @@ export function BoardStage({
   scene,
   camera,
   onBackgroundClick,
+  grid,
   children,
   className,
 }: BoardStageProps) {
@@ -183,10 +205,10 @@ export function BoardStage({
 
         {/* The grid, its own layer so a recalibration redraws nothing else. */}
         <Layer listening={false}>
-          <GridOverlay scene={scene} scale={view.scale} />
+          <GridOverlay scene={scene} scale={view.scale} grid={grid} />
         </Layer>
 
-        {/* The player layer, and the DM layer if this viewer was sent one. */}
+        {/* The token layers this viewer was sent and is looking at — see `TokenLayers`. */}
         {children}
       </Stage>
     </div>

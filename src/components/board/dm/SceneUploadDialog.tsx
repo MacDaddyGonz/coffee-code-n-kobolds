@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 
 import { DialogFormFooter } from '@/components/DialogFormFooter'
 import { FieldError } from '@/components/FieldError'
-import { ImagePicker } from '@/components/ImagePicker'
+import { UploadPicker } from '@/components/UploadPicker'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { Button } from '@/components/ui/button'
 import {
@@ -17,9 +17,10 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useImageUpload } from '@/hooks/useImageUpload'
+import { useUpload } from '@/hooks/useUpload'
+import { nameFromFile } from '@/lib/images'
 import { api } from '@convex/_generated/api'
-import { MAX_SCENE_NAME_LENGTH, truncateCodePoints } from '@convex/lib/codes'
+import { MAX_SCENE_NAME_LENGTH } from '@convex/lib/codes'
 
 export type SceneUploadDialogProps = {
   code: string
@@ -27,25 +28,11 @@ export type SceneUploadDialogProps = {
 }
 
 /**
- * Filenames carry the useful part of a map's name — `Admittance [Gridded 16x12].jpg`.
- *
- * Cut by code point, not by `slice`. A filename with an emoji straddling code unit
- * 60 would otherwise yield a lone surrogate that `requireSceneName` accepts — it is
- * neither blank nor over-length — and that a real deployment then refuses with a raw
- * `Invalid arguments provided`. That is the Milestone 1 display-name bug exactly,
- * one milestone later and in a different file; `npm run test:smoke` found it,
- * because convex-test cannot.
- */
-function nameFromFile(fileName: string): string {
-  return truncateCodePoints(fileName.replace(/\.[^./\\]+$/, ''), MAX_SCENE_NAME_LENGTH)
-}
-
-/**
  * Turn an image on the DM's disk into a board.
  *
  * Three steps, in this order and no other: shrink, store, then ask the server to
  * accept the stored blob as a scene. The last step can refuse — a full game, or
- * a blob still over the limit — and `useImageUpload.commit` discards the file
+ * a blob still over the limit — and `useUpload.commit` discards the file
  * when it does.
  *
  * The refusal is reported in the form rather than as a toast, because this dialog
@@ -56,7 +43,7 @@ function nameFromFile(fileName: string): string {
  */
 export function SceneUploadDialog({ code, dmCode }: SceneUploadDialogProps) {
   const createScene = useMutation(api.scenes.create)
-  const upload = useImageUpload({ code, dmCode, kind: 'map' })
+  const upload = useUpload({ code, dmCode, kind: 'map' })
   const action = useLobbyAction()
   const fieldId = useId()
 
@@ -122,7 +109,7 @@ export function SceneUploadDialog({ code, dmCode }: SceneUploadDialogProps) {
         </DialogHeader>
 
         <form className="flex flex-col gap-3" onSubmit={(event) => void submit(event)}>
-          <ImagePicker
+          <UploadPicker
             id={`${fieldId}-file`}
             label="Map image"
             upload={upload}

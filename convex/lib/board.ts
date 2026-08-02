@@ -15,39 +15,33 @@ import { ConvexError, v, type Infer } from 'convex/values'
 
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
-import { MAX_PLACEMENTS_PER_SCENE, MAX_SCENES_PER_GAME, MAX_TOKENS_PER_GAME } from './games'
-import { findClaimHolder, holderByCharacter } from './players'
-import type { Grid, Point } from './grid'
-import { cellOf, centreOfCell, snapToGrid } from './grid'
+import { sceneFog } from './fog'
+import {
+  MAX_PLACEMENTS_PER_SCENE,
+  MAX_SCENES_PER_GAME,
+  MAX_TOKENS_PER_GAME,
+} from './games'
+import { findClaimHolder, holderByCharacter, listSeats } from './players'
+import type { Grid, Point, Rect } from './grid'
+import { anyRectCovers, cellOf, centreOfCell, snapToGrid } from './grid'
+import {
+  layerOf,
+  maySeeLayer,
+  mayPlayersMove,
+  tokenLayerValidator,
+  type TokenLayer,
+} from './layers'
 
-/**
- * The two layers a token can be on, spelled once.
- *
- * Used by the schema, by the public projection and by `board.addToken`'s argument
- * validator, because this union is the field the DM layer's whole secrecy turns on
- * (invariant 8) and three copies of it are three places for a fourth member to be
- * added to two of them. The client derives its own type from `PublicToken['layer']`
- * rather than re-spelling it either.
- */
-export const tokenLayerValidator = v.union(v.literal('player'), v.literal('dm'))
-
-/**
- * The same union as a TypeScript type, for `setTokenLayer` below.
- *
- * Inferred from the validator rather than written out, for the reason the validator
- * itself is written once: a fourth spelling of `'player' | 'dm'` is a fourth place a
- * third member can be added to three of them.
- *
- * **Deliberately not exported**, unlike `PublicToken` beside it, and the asymmetry is
- * the point: `setTokenLayer` in this file is the only signature that wants it. The
- * browser derives its own from `PublicToken['layer']` — the same validator by a
- * different route — and `board.setLayer` validates its argument against
- * `tokenLayerValidator` itself, so an export would serve nobody while putting a second
- * `TokenLayer` in auto-import range beside the *component* of that name in
- * `src/components/board/TokenLayer.tsx`. An editor picking the wrong one of those is a
- * confusing failure rather than a loud one.
- */
-type TokenLayer = Infer<typeof tokenLayerValidator>
+// The layer union used to be declared in this file, and moving it to lib/layers.ts is not
+// a loosening of the choke point. What left is a function of a *string* — three literals,
+// two `switch`es and a label — which no caller can turn back into a row. What stayed is
+// every predicate that takes a `Doc<'tokens'>`, so "does this leak?" is still answered by
+// reading this file, which is the claim at the top.
+//
+// The move paid for itself on the client, where a `Record<TokenLayer, …>` is what makes a
+// fourth layer fail to compile in the two places the browser decides how to draw and label
+// one. Keying a record off `PublicToken['layer']` needs the type's *name*, and reaching for
+// it here would have meant value-importing the choke point into the bundle.
 
 /** The public shape of a token. artUrl is a signed storage URL, null when there is no art. */
 export const publicTokenValidator = v.object({
@@ -117,7 +111,34 @@ function tokenNotFound(): ConvexError<typeof TOKEN_NOT_FOUND> {
 }
 
 /**
- * The whole visibility rule, in one expression, in one place.
+ * A token on the Background layer, refused to a player who tried to drag it.
+ *
+ * ⚠️ **Deliberately distinguishable from `TOKEN_NOT_FOUND`, which inverts the rule that
+ * constant exists to enforce — so the inversion has to be argued rather than assumed.**
+ *
+ * That rule is about an *oracle*: telling "you may not move that" apart from "no such
+ * token" lets somebody enumerate the GM layer by guessing ids, and knowing an ambush exists
+ * spoils it whether or not you can see it. Every word of that still holds for a GM-layer
+ * token, which is why it still throws `TOKEN_NOT_FOUND`.
+ *
+ * It does not hold here, because a Background token **is in the player's payload** — it is
+ * drawn on their screen, they clicked on it, and they can see it did not move. There is no
+ * existence to confirm and nothing to enumerate. Answering "that token is not on this
+ * board" about a coin somebody is looking at is not discretion, it is a lie, and it reads as
+ * a bug in the application rather than as a rule of the game.
+ *
+ * A separate constant rather than reusing `TokenNotYours` because that message ends "ask the
+ * DM to hand it to you", and here that is not true: the DM cannot hand over a Background
+ * token without first moving it off Background. One constant so the tests can assert the
+ * `kind`, exactly as they do for the other two.
+ */
+export const TOKEN_NOT_MOVABLE = {
+  kind: 'TokenNotMovable',
+  message: 'That token is part of the scenery. Only the DM can move it.',
+}
+
+/**
+ * The whole visibility rule, in one place. **A `Doc<'tokens'>` goes in.**
  *
  * `isDm` arrives from `resolveDmAccess` in lib/games.ts, which means it is the
  * result of comparing a DM code supplied on *this* request against the one stored
@@ -127,9 +148,134 @@ function tokenNotFound(): ConvexError<typeof TOKEN_NOT_FOUND> {
  * argument, which says which seat to act on rather than who is calling (ADR 0003).
  * Either of those would amount to a player asking to be trusted, and would defeat
  * invariant 1 completely while looking like a working filter.
+ *
+ * ⚠️ **The `isDm` short-circuit is above the layer question rather than inside it, and the
+ * ordering is deliberate.** `maySeeLayer` is a `switch` over three literals with a `never`
+ * arm; folding the DM in would put `isDm ||` in every arm and force the `never` arm to
+ * decide what a DM sees — a second question inside a discriminator, which is the failure
+ * `isReservedCharacter` is written the way it is to avoid. So this function answers *who is
+ * asking* and lib/layers.ts answers *what this layer is*, and a fourth layer changes exactly
+ * one of those two files.
+ *
+ * ⚠️ **Fog is not here, and that is the other half of the same discipline.** A fogged token
+ * is withheld too, but that is a fact about a `(scene, position)` pair rather than about this
+ * row, so it is `&&`-ed at the call sites below — see `foggedTokenIds`. Folding it in would
+ * mean handing this function a set it cannot verify was built for the same caller and the
+ * same scene, which is precisely the hazard `readableCharacterIds` documents next door: two
+ * `ReadonlySet`s the compiler cannot tell apart, one of which publishes everything.
  */
 function maySee(token: Doc<'tokens'>, isDm: boolean): boolean {
-  return isDm || token.layer === 'player'
+  return isDm || maySeeLayer(layerOf(token.layer))
+}
+
+type FogVeil = {
+  rects: readonly Rect[]
+  holders: Map<Id<'characters'>, Doc<'players'>>
+}
+
+/**
+ * The fog on one scene, read once, or null when there is none to apply.
+ *
+ * Split from the test below because **the callers already hold most of what deciding needs**,
+ * and the first version did not take advantage of that: it range-read the placements a second
+ * time, point-got token documents its caller had just read, and fetched a roster it had been
+ * handed. Three redundant reads on the two hottest queries in the application, for an answer
+ * that was correct. So this reads only the part nobody else has — the rectangles — and
+ * `veiled` below is pure.
+ *
+ * The early returns are the cost model, and each is deliberate:
+ *
+ * - **The DM reads nothing at all.** Not an optimisation: a `fogRects` read in the DM's
+ *   transaction would put the scene's fog into the read set of every board query belonging to
+ *   the one client that is *drawing* the fog, so each rectangle would re-execute the lot. The
+ *   same reasoning `readableCharacterIds` uses to skip the board entirely for a DM.
+ * - **A scene with no rectangles returns before anything else.** ⚠️ Stated precisely, because
+ *   an earlier version of this comment claimed read sets *byte-identical* to before the feature
+ *   and that is not quite true — one empty range read on this scene's `fogRects` remains. What
+ *   is true is the half that matters: **nothing a `tokenPositions` write does can invalidate
+ *   it**, because an empty range is invalidated only by an insert into that range, which is
+ *   `fog.draw` and nothing else. So no subscription joins a drag's invalidation set until a
+ *   rectangle actually exists.
+ * - **`board.tokens` is not a caller.** Fog filters positions and the character crossing, never
+ *   the token projection, so signed storage URLs are not re-resolved on a drag — the cost
+ *   ADR 0004 split the two board queries to avoid.
+ *
+ * ⚠️ **`seats` is taken rather than read, and an empty roster is a real answer rather than a
+ * missing one.** `boardCharacterAccess` hands over the roster it already built;
+ * `visibleCharacterIds` passes the empty one deliberately, because putting a `players` range
+ * read into the feed's read set would re-push sixty rows on every join, rename and claim — a
+ * trade that function's docblock refuses in as many words, and which the first version of this
+ * one quietly made anyway by calling `listSeats` itself. The consequence is on `veiled`.
+ */
+async function fogVeil(
+  ctx: QueryCtx,
+  sceneId: Id<'scenes'> | null,
+  isDm: boolean,
+  seats: Doc<'players'>[],
+): Promise<FogVeil | null> {
+  if (isDm || sceneId === null) return null
+
+  const rects = await sceneFog(ctx, sceneId)
+  if (rects.length === 0) return null
+
+  return { rects, holders: holderByCharacter(seats) }
+}
+
+/**
+ * Is this token, standing here, hidden from the party? **Pure**, so a caller decides with the
+ * token and the placement it already has in hand.
+ *
+ * The centre point, not the footprint. `cellOf` carries a half-square parity offset — an
+ * even-sized token centres on a grid *intersection* — so a footprint test would need
+ * `sizeSquares` and `gridSize`, which means reading the scene *document*, and an uncalibrated
+ * grid would then produce a NaN half-extent that silently unfogs the whole map. The stored
+ * coordinate already *is* the centre, so no grid enters the question at all. It is also stable
+ * at the boundary, where a footprint test makes a 2x2 ogre one pixel over the line vanish
+ * entirely while most of it stands in the lit room.
+ *
+ * ⚠️ **A token anybody at the table controls is never veiled, and this is a correctness
+ * requirement rather than a courtesy.** `board.positions` takes no seat and must not — that is
+ * the per-seat cache split the feed deliberately walked away from — so fog is one answer for
+ * every non-DM. Without this clause a player who drags their own hero into a fogged corridor
+ * loses their own coin from their own screen, with no way to select it back and no way to undo,
+ * recoverable only by asking the DM. The exclusion also says what fog is *for*: it hides what
+ * the DM placed. A hero and a granted pet belong to the table.
+ *
+ * ⚠️ **With an empty roster that exclusion is inert, and that is an accepted consequence rather
+ * than a bug.** `visibleCharacterIds` passes no seats — see `fogVeil` — so on the feed's path a
+ * claimed hero and a granted pet both look uncontrolled here. For a **hero** that costs exactly
+ * nothing: `maySeeCharacter` admits a `pc` on its first line, so a hero is never in `visible`
+ * for a reason that matters and is never withheld from the feed whatever this answers. For a
+ * **granted pet** it means its lines are withheld while it stands in fog, even though its coin
+ * is still drawn for the seat holding it. Mildly inconsistent, and the alternative is a
+ * `players` range read on the highest-churn subscription in the application, which is the more
+ * expensive of the two by a wide margin.
+ */
+function veiled(veil: FogVeil | null, token: Doc<'tokens'>, at: Point): boolean {
+  if (veil === null) return false
+  if (!anyRectCovers(veil.rects, at)) return false
+
+  const holder = token.characterId ? veil.holders.get(token.characterId) ?? null : null
+  return effectiveControllersOf(token, holder).length === 0
+}
+
+/**
+ * Where every token on one scene is standing, keyed by token.
+ *
+ * The fourth spelling of this bounded read in this file, and the one that exists because
+ * `boardCharacterAccess` needs the crossing without being a position query. It is called only
+ * when a veil exists, so a game without fog does not perform it.
+ */
+async function placementsOn(
+  ctx: QueryCtx,
+  sceneId: Id<'scenes'>,
+): Promise<Map<Id<'tokens'>, Point>> {
+  const placements = await ctx.db
+    .query('tokenPositions')
+    .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
+    .take(MAX_PLACEMENTS_PER_SCENE)
+
+  return new Map(placements.map((placement) => [placement.tokenId, placement]))
 }
 
 /**
@@ -195,6 +341,26 @@ export function effectiveControllersOf(
  * rows is a projection waiting to be written somewhere else, and the point of the
  * choke point is that the filtering and the projecting live together. Everything
  * beyond this file gets `publicTokens` below instead.
+ *
+ * ⚠️ **Fog is deliberately NOT applied here, and this is the single most consequential
+ * placement decision in the feature.** This function feeds two very different consumers:
+ * `publicTokens`, which projects the token *rows* and resolves a signed storage URL per
+ * token, and `boardCharacterAccess`, which crosses the board into the character choke point.
+ * Fogging here would filter both.
+ *
+ * Filtering the rows is what it costs that is unaffordable. Fog is a fact about a
+ * *placement*, so any query that filters on it must read `tokenPositions` — the table
+ * written ten times a second during a drag. Put that read into `board.tokens` and every drag
+ * frame re-executes it, re-resolving up to two hundred signed URLs and re-pushing the whole
+ * token list to every client: precisely the cost ADR 0004 split the two board queries to
+ * avoid, spent to close a leak the layer model already answers properly.
+ *
+ * So the fog filter lives in `boardCharacterAccess` and in `visiblePositions`, and what a
+ * player is denied about a fogged creature is **where it is standing, how hurt it is, and
+ * what it just rolled** — never that a coin by that name exists somewhere in the game. That
+ * last residual is real and is the same one an unplaced player-layer token has had since the
+ * board existed. **The GM layer remains the tool for "may not know it exists"**, and it is
+ * absolute; fog is the tool for "cannot see into that corridor", and it is not.
  */
 async function visibleTokens(
   ctx: QueryCtx,
@@ -246,7 +412,12 @@ export async function publicTokens(
       return {
         _id: token._id,
         name: token.name,
-        layer: token.layer,
+        // Normalised on the way out, which is what keeps the rename of the GM layer
+        // invisible to the browser: `publicTokenValidator` carries the narrow three-member
+        // union, so a row still stored as the legacy `dm` is projected as `gm` and no
+        // client ever learns the transition happened. It is also why the relabel can run at
+        // any point after this deploy rather than during it.
+        layer: layerOf(token.layer),
         sizeSquares: token.sizeSquares,
         // Null rather than undefined: `undefined` is not a Convex value, so an
         // optional field has to become something on the way out. A getUrl of a blob
@@ -329,11 +500,20 @@ export async function publicTokens(
 export async function boardCharacterAccess(
   ctx: QueryCtx,
   gameId: Id<'games'>,
+  sceneId: Id<'scenes'> | null,
   isDm: boolean,
   seats: Doc<'players'>[],
   playerId?: Id<'players'>,
 ): Promise<{ visible: Set<Id<'characters'>>; controlled: Set<Id<'characters'>> }> {
-  const tokens = await visibleTokens(ctx, gameId, isDm)
+  const [tokens, veil] = await Promise.all([
+    visibleTokens(ctx, gameId, isDm),
+    fogVeil(ctx, sceneId, isDm, seats),
+  ])
+  // Read only when there is a veil to apply, and *after* it — which is why this is not in the
+  // `Promise.all` above. A game with no fog therefore performs no placement read here at all,
+  // which is the whole of what makes the cascade free until it is used. Sequential costs one
+  // round trip on the path that has already decided it is paying for fog.
+  const at = veil === null || sceneId === null ? null : await placementsOn(ctx, sceneId)
 
   const visible = new Set<Id<'characters'>>()
   const controlled = new Set<Id<'characters'>>()
@@ -350,6 +530,22 @@ export async function boardCharacterAccess(
   for (const token of tokens) {
     const characterId = token.characterId
     if (!characterId) continue
+    // ⚠️ **The fog cascade, and it is one line because the loop below already does the
+    // work.** A creature standing in the dark never enters `visible`, so it loses its health
+    // band in `visibleVitals` and its feed lines through `mayHearOf` — two consequences from
+    // one filter, by exactly the structural subset property the docblock above describes.
+    // It cannot enter `controlled` either, which needs no separate statement for the same
+    // reason a GM-layer grant is inert: the `continue` is above both.
+    //
+    // `&&`-ed here rather than folded into `maySee`, because a layer is a fact about this row
+    // and fog is a fact about where it is standing — two separately-statable reasons, which
+    // the DM's own screen has to be able to tell apart when it explains why the party cannot
+    // see something.
+    //
+    // A token with no placement on this scene is not standing anywhere on it, so it cannot be
+    // in the dark — which is also why a creature prepared on another map keeps its band.
+    const standing = at?.get(token._id)
+    if (standing !== undefined && veiled(veil, token, standing)) continue
     visible.add(characterId)
     if (control === null) continue
     // The same rule `publicTokens` projects through and `requireMovableToken` refuses
@@ -377,11 +573,12 @@ export async function boardCharacterAccess(
 export async function controlledCharacterIds(
   ctx: QueryCtx,
   gameId: Id<'games'>,
+  sceneId: Id<'scenes'> | null,
   isDm: boolean,
   seats: Doc<'players'>[],
   playerId?: Id<'players'>,
 ): Promise<Set<Id<'characters'>>> {
-  return (await boardCharacterAccess(ctx, gameId, isDm, seats, playerId)).controlled
+  return (await boardCharacterAccess(ctx, gameId, sceneId, isDm, seats, playerId)).controlled
 }
 
 /**
@@ -407,9 +604,10 @@ export async function controlledCharacterIds(
 export async function visibleCharacterIds(
   ctx: QueryCtx,
   gameId: Id<'games'>,
+  sceneId: Id<'scenes'> | null,
   isDm: boolean,
 ): Promise<Set<Id<'characters'>>> {
-  return (await boardCharacterAccess(ctx, gameId, isDm, [])).visible
+  return (await boardCharacterAccess(ctx, gameId, sceneId, isDm, [])).visible
 }
 
 /**
@@ -429,15 +627,30 @@ export async function visibleCharacterIds(
  * or re-layers a token, which is rare, while the churn of a drag lands on
  * `tokenPositions` alone.
  *
- * ⚠️ **This deliberately does not take the seats, and the signature must stay that
- * way.** `publicPositionValidator` is a token id and two coordinates — there is no
- * controller field on it and so nothing here to compose. Passing the roster in "for
- * symmetry" with `publicTokens` would add a `players` range read to the highest-churn
- * subscription in the app, which is exactly the read `publicTokens` can afford and
- * this one cannot: every join, rename, claim and release would re-execute the
- * position query for every client at the table, on top of the ten writes a second a
- * drag already makes. Who may move a token is decided on the write path and rendered
- * from `board.tokens`; where it stands is a different question with a different cost.
+ * ⚠️ **This used to say it takes no seats and that the signature must stay that way, and
+ * that sentence is now corrected rather than overridden — read both halves.** The cost it
+ * named is real and unchanged: a `players` range read here puts the whole roster into the
+ * read set of the highest-churn subscription in the app, so every join, rename, claim and
+ * release would re-execute the position query for every client, on top of the ten writes a
+ * second a drag already makes. It was right to refuse that read *unconditionally* while
+ * nothing needed it.
+ *
+ * Fog needs it, and only when fog exists — because a token somebody controls must never be
+ * veiled, or a player who walks their hero into the dark loses their own coin. So the roster
+ * read sits behind a rectangle existing on this scene, and the paragraph above still describes
+ * exactly what a game without fog costs. A game with fog pays it, and `players` is the
+ * lowest-churn table in a live session anyway: joins and claims happen in the lobby, before
+ * anybody has drawn a rectangle.
+ *
+ * The distinction that sentence was protecting still holds: this signature takes no seats, and
+ * nothing composes a controller field into a position row. The roster is read *inside the fog
+ * question*, conditionally, and nothing about who may move a token leaves through this payload.
+ *
+ * ⚠️ **The fog test adds no read of its own here, and that is why it is shaped as a pure
+ * function.** This query already range-reads the placements and already point-gets each token,
+ * so `veiled` decides from what the loop is holding. An earlier version called a helper that
+ * did both reads *again* — a duplicate 200-row scan and up to 200 duplicate point gets, ten
+ * times a second per client, on the query invariant 2 exists to protect.
  */
 export async function visiblePositions(
   ctx: QueryCtx,
@@ -445,10 +658,17 @@ export async function visiblePositions(
   sceneId: Id<'scenes'>,
   isDm: boolean,
 ): Promise<PublicPosition[]> {
-  const placements = await ctx.db
-    .query('tokenPositions')
-    .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
-    .take(MAX_PLACEMENTS_PER_SCENE)
+  const [placements, rects] = await Promise.all([
+    ctx.db
+      .query('tokenPositions')
+      .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
+      .take(MAX_PLACEMENTS_PER_SCENE),
+    isDm ? [] : sceneFog(ctx, sceneId),
+  ])
+  // The roster only once a rectangle exists — see the ⚠️ above. `fogVeil` is handed the seats
+  // rather than reading them, so the conditional lives here where the trade is being made.
+  const veil =
+    rects.length === 0 ? null : await fogVeil(ctx, sceneId, isDm, await listSeats(ctx, gameId))
 
   const rows = await Promise.all(
     placements.map(async (placement) => {
@@ -458,6 +678,12 @@ export async function visiblePositions(
       // not exist, and dropping it here means a stray row cannot become a coin
       // hovering on somebody else's map.
       if (!token || token.gameId !== gameId || !maySee(token, isDm)) return null
+      // The second reason, `&&`-ed rather than folded into `maySee`. This is the one the
+      // roadmap's acceptance names: a player whose view of a corridor is fogged has no
+      // position rows for what is standing in it. The coin is not drawn because the client
+      // renders the intersection of the two board subscriptions, so a token with no
+      // placement is simply not on this board.
+      if (veiled(veil, token, placement)) return null
       return { tokenId: placement.tokenId, x: placement.x, y: placement.y }
     }),
   )
@@ -468,9 +694,29 @@ export async function visiblePositions(
 /**
  * The token this caller is allowed to move, or a throw. Throws the SAME
  * TokenNotFound error for "no such token", "token in another game" and
- * "DM-layer token without the DM code" — telling those apart is an existence
- * oracle for the DM layer. Throws TokenNotYours for a player-layer token this seat
- * neither plays nor has been granted (advisory only; see ADR 0004).
+ * "GM-layer token without the DM code" — telling those apart is an existence
+ * oracle for the GM layer. Throws TokenNotMovable for a Background token, which is
+ * scenery everybody can see, and TokenNotYours for a player-layer token this seat
+ * neither plays nor has been granted (both advisory only; see ADR 0004).
+ *
+ * ⚠️ **Fog is deliberately not tested here, and the omission is argued rather than
+ * inherited.** Two reasons, and the second is decisive.
+ *
+ * The oracle argument does not apply. The only tokens a non-DM can reach past `maySee`,
+ * `mayPlayersMove` and `effectiveControllersOf` are ones whose existence they have already
+ * been told about — it was in their payload, or they hold a grant on it. There is no id to
+ * guess and nothing a refusal could confirm.
+ *
+ * And the read would land on the wrong path. This handler runs ten times a second during a
+ * drag; a `fogRects` range read here would put that range into the transaction's read set
+ * and turn every rectangle the DM draws into an OCC conflict against every in-flight drag —
+ * on the one write path invariant 2 exists for. `foggedTokenIds` can afford both of its
+ * reads because it runs in a *query* that Convex re-executes; this cannot.
+ *
+ * The consequence is that a token can be moved into or within fog and the move succeeds while
+ * other clients see nothing, which is the same asymmetry a GM-layer token already has. That
+ * is also correct on its own terms: a monster walking into the dark is what the DM is doing
+ * on purpose, and refusing the write would be enforcing a *view* on *board state*.
  */
 export async function requireMovableToken(
   ctx: QueryCtx,
@@ -482,9 +728,23 @@ export async function requireMovableToken(
   const token = await ctx.db.get('tokens', tokenId)
   if (!token || token.gameId !== game._id || !maySee(token, isDm)) throw tokenNotFound()
 
-  // The DM moves anything on their own board, including a claimed hero, because
-  // dragging the party through a door is a normal thing for them to do.
+  // The DM moves anything on their own board, including a claimed hero and their own
+  // scenery, because dragging the party through a door is a normal thing for them to do.
   if (isDm) return token
+
+  // ⚠️ **Scenery is refused here, above the claim and grant read, and the position in this
+  // function is the whole of what it means.**
+  //
+  // Above the read, so **a grant cannot open a layer.** A seat the DM has granted a
+  // Background token to is still refused, which makes the grant *inert* rather than
+  // dangerous — exactly what `board.setControllers` already says about the GM layer, now
+  // true of two layers by one line instead of two. Below the `isDm` return, because the
+  // acceptance is that scenery cannot be picked up *by them*; the DM rearranges it freely.
+  //
+  // It is also the cheaper order on a handler that runs ten times a second: a drag on
+  // scenery is refused with no index read at all, the same instinct as `requireFinite`
+  // running before any read in `moveToken`.
+  if (!mayPlayersMove(layerOf(token.layer))) throw new ConvexError(TOKEN_NOT_MOVABLE)
 
   // Be honest about the ceiling. `playerId` is a routing argument, so anyone can pass
   // another seat's id and walk straight past the check below; it stops a misclick
@@ -752,10 +1012,18 @@ export async function setTokenAppearance(
  * with one click (ADR 0009, and the note on `board.setControllers`).
  *
  * Checks nothing it cannot know, like its siblings, and here that is the whole of the
- * validation rather than a division of labour: `tokenLayerValidator` is the same union
- * the schema uses and the same one `board.setLayer` validates its argument against, so
- * there is no third member to reject and nowhere for one to appear in one copy and not
- * the other. That is the point of the union being spelled once.
+ * validation rather than a division of labour: `tokenLayerValidator` in lib/layers.ts is the
+ * union `board.setLayer` validates its argument against, so there is no fourth member to
+ * reject and nowhere for one to appear in one copy and not the other. That is the point of
+ * the union being spelled once.
+ *
+ * ⚠️ **The schema's union is one member wider than this one while the rename is in flight**,
+ * and the no-op guard reads across that gap correctly by accident and then on purpose: a
+ * token still stored as the legacy `dm` compares unequal to `'gm'`, so re-layering it writes
+ * the canonical spelling. Every token the DM touches migrates itself. That does not replace
+ * the sweep — a token nobody moves keeps the old value, which is what `relabelGmLayer` is
+ * for — but it does mean the two mechanisms cannot disagree, because both write the same
+ * canonical value through the same field.
  */
 export async function setTokenLayer(
   ctx: MutationCtx,
@@ -765,6 +1033,54 @@ export async function setTokenLayer(
   if (token.layer === layer) return
 
   await ctx.db.patch('tokens', token._id, { layer })
+}
+
+/**
+ * TRANSITION ONLY — rewrite every `dm` layer in one game to `gm`. Deleted with the rest of
+ * the rename scaffolding once the sweep has run against every deployment.
+ *
+ * Lives here rather than in `convex/admin.ts` because it reads and writes `tokens`, and
+ * `leakGuard.test.ts` sweeps `admin.ts` like every other module — a migration is not an
+ * exemption from the choke point. What `admin.ts` keeps is the `internalMutation` wrapper,
+ * where the authorisation question lives, which is the same split `purgeGame` already makes.
+ *
+ * One game per call, bounded by `MAX_TOKENS_PER_GAME`, so the natural transaction is a game
+ * and the script above it can be resumable and report per game. That bound is also the
+ * argument against adding `@convex-dev/migrations` for this: the component exists for
+ * cursor-driven batching across a table too large for one transaction, and two hundred rows
+ * is not that.
+ *
+ * Patches only the rows that need it, like `revokeControlForSeat` — a no-op patch is a write
+ * that invalidates every subscription reading the row for no change at all.
+ */
+export async function relabelGmLayer(ctx: MutationCtx, gameId: Id<'games'>): Promise<number> {
+  const tokens = await ctx.db
+    .query('tokens')
+    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  let relabelled = 0
+  for (const token of tokens) {
+    if (token.layer !== 'dm') continue
+    await ctx.db.patch('tokens', token._id, { layer: 'gm' })
+    relabelled += 1
+  }
+  return relabelled
+}
+
+/**
+ * TRANSITION ONLY — how many tokens in this game still carry the legacy spelling.
+ *
+ * The check that has to read zero across every deployment before the narrowing commit
+ * lands. Returns a count and never a row, like `countTokensInGame` beside it.
+ */
+export async function countLegacyLayers(ctx: QueryCtx, gameId: Id<'games'>): Promise<number> {
+  const tokens = await ctx.db
+    .query('tokens')
+    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  return tokens.filter((token) => token.layer === 'dm').length
 }
 
 /**

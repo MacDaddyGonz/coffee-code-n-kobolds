@@ -54,13 +54,20 @@ against this table:
 
 [ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md),
 [ADR 0009](adr/0009-who-plays-what-and-what-control-grants.md),
-[ADR 0010](adr/0010-the-way-in-and-the-dms-coins.md) and
-[ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md) have no rows, and that is the
-discipline working rather than an omission: not one of them names a milestone number anywhere, so the
-fourth and fifth renumberings cost them nothing. They say "the dice milestone" and "the DM-tooling
-milestone", which is the formulation that survives. **Four in a row is the convention holding** —
+[ADR 0010](adr/0010-the-way-in-and-the-dms-coins.md),
+[ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md) and
+[ADR 0012](adr/0012-three-layers-and-a-fog-that-is-honest-about-itself.md) have no rows, and that is
+the discipline working rather than an omission: not one of them names a milestone number anywhere, so
+the fourth and fifth renumberings cost them nothing. They say "the dice milestone" and "the DM-tooling
+milestone", which is the formulation that survives. **Five in a row is the convention holding** —
 which is now long enough that it is simply how an ADR is written here — and the table above stops
 growing on the day the last numbered ADR is superseded.
+
+⚠️ **ADR 0012 is the first one that had to name a *deployment* step rather than a milestone**, and it
+is worth knowing the difference. Renaming the GM layer's stored value is a widen–migrate–narrow across
+two deploys with a manual sweep between them, so the narrowing is a step somebody performs rather than
+a thing a milestone contains. It is recorded in the Done block of the milestone below, not in the ADR,
+because a runbook goes stale the moment it is followed and an ADR must not.
 
 **This file no longer contains a forward reference by number, and that is the fix rather than a
 tidy-up.** Three renumberings taught the lesson [ADR 0006](adr/0006-premade-character-library.md)
@@ -1595,7 +1602,79 @@ before building more** — a session will tell you what's genuinely missing fast
 
 ---
 
-## Milestone 10 — DM tooling
+## ✅ Milestone 10 — DM tooling
+
+**Done.** The decisions are recorded in
+[ADR 0012](adr/0012-three-layers-and-a-fog-that-is-honest-about-itself.md). Eight things it settled
+differently from the section below, or found out by building it, so read them together:
+
+- **The third layer was hard for a reason neither this file nor ADR 0004 named**, and both only said
+  *`maySee` is a two-way test and a third layer does not extend it*. The reason is that `isDm || layer
+  === 'player'` was doing **two jobs that merely coincided** — deciding what a client is *sent* and
+  what it may *move*. A player-layer token is both, a GM-layer token neither, and **Background is the
+  first row where those answers differ.** So it needed a *second* predicate rather than a wider first
+  one, and no amount of widening produces two. `maySeeLayer` and `mayPlayersMove` in the new
+  `convex/lib/layers.ts`, a `never` arm each; a fourth member now hits **five** compile-time refusals.
+- **Fog hides a placement, not a row, and that is narrower than "the monsters were the secret"
+  implies.** A fogged creature loses its position, its health band and its feed lines — but its coin's
+  *name and art stay in `board.tokens`*, because filtering that query means reading `tokenPositions`
+  and re-resolving up to two hundred signed URLs on every drag frame, which is exactly the cost
+  ADR 0004 split the two board queries to avoid. **The GM layer stays the tool for "may not be known
+  about"; fog is the tool for "cannot see into that corridor."**
+- **The cascade cost nothing to build.** One `continue` in `boardCharacterAccess`'s existing loop
+  takes the band and the feed line together, because ADR 0009 had already made `controlled ⊆ visible`
+  structural. No fourth predicate, and no `playerId` back on `feed.list`.
+- **Fog is pay-as-you-go, and one early return is the whole cost model.** A scene with no rectangles
+  returns before the positions read, so a game that never draws one has read sets byte-identical to
+  what they were before the feature existed.
+- **Fog must never hide a token the table controls**, or a player who walks their hero into the dark
+  loses their own coin with no way to select it back. That is a correctness requirement rather than a
+  courtesy, and it is also what states plainly that fog hides *what the DM placed*.
+- **The reveal replay was fixed by moving a timestamp, not by a heuristic.** `Date.now()` is
+  forbidden in a Convex query, so a *mutation* stamps `games.revealedAt` and each feed row carries
+  `predatesReveal`. ⚠️ **`characters.assign` was missing its stamp** — the second route by which a
+  reserved hero is released — so the whole backlog would have flown over the map. Found within the
+  milestone that wrote the warning about exactly that.
+- **Two mount points mattered more than the filters did, and both compiled.** The fog test first went
+  into `visibleTokens`, the one private helper everything funnels through, which silently applied it
+  to a consumer with a completely different cost profile. Then the veil first went *above* the player
+  token layer, which would have blacked out the hero the server had gone to trouble to keep sent.
+  Neither was a bug in a predicate.
+- **Non-square grid cells are declined, because the bullet asks for two incompatible things.** "Scale
+  it on X and Y" and "no schema change" cannot both hold — `sizeSquares` stops meaning anything once
+  cells are rectangular. A corner drag that stays square *is* the interface saying so.
+
+**One thing this milestone did that no previous one has: it migrated a stored value.** The GM layer
+is `gm` in the database, not `dm`, through widen → migrate → narrow. Convex refuses a schema push
+that narrows a union while a non-conforming row survives, which makes the sequence self-enforcing: a
+blocked pipeline rather than broken data.
+
+⚠️ **The narrowing commit is deliberately NOT on this branch, and that is the one outstanding step.**
+The widened schema and the relabel tooling are merged; the migration has been run against **dev**
+(6 tokens across 6 games, verified zero remaining). Production has not been migrated, and a push of
+the narrow union would be refused until it is. The sequence for `main`:
+
+1. Merge this work and deploy it. No `dm` value can be created from that deploy forward, and none
+   ever leaves the server — the public projection normalises through `layerOf` — so the browser never
+   sees the transition and the set of legacy rows only shrinks.
+2. `npm run relabel-layers` against production (dry run first; it is the default).
+3. `npx convex run admin:gamesWithLegacyLayers` must report zero.
+4. Then a `chore/` branch deleting `storedTokenLayerValidator`, `layerOf`, `relabelGmLayer`,
+   `countLegacyLayers`, the two `admin` functions and `scripts/relabel-layers.mjs`.
+
+**Acceptance, as met:** the DM switches scenes from a list of thumbnails and every client follows,
+each restoring its own camera rather than jumping. An NPC dragged from the GM layer to the Player
+layer appears for players at that moment and not before. A token placed on Background is visible to a
+player, cannot be picked up by them — `TokenNotMovable`, deliberately *distinguishable* from
+`TokenNotFound` because the coin is on their screen and there is no existence to oracle — and a grant
+on it is inert. A pet granted to the party can be moved by two different players; the monster beside
+it by neither. A player whose corridor is fogged has no position rows for what stands in it, no health
+band for it and no feed lines from it; erasing the fog returns all three and announces none of them.
+`npm test` passes **1399/1399** and `npm run test:smoke` passes against the real dev deployment,
+including the three-member union as both an argument and a projected field, four float64s per
+rectangle, and a negative extent coming back normalised.
+
+**The original plan follows.**
 
 The four bold items at the end were **requested after playing Milestone 2**. The rest was always
 here — except two bullets that moved forward, both for the same kind of reason. The **token-control**
@@ -1611,7 +1690,10 @@ milestone once the sheet selector made it the only thing in the game with no way
   into DM-tools tabs; the seats-and-sheets milestone took the sheets and the creatures back out of it
   into a tab of their own, leaving DM tools holding Map alone. So this is two more tabs inside a
   panel that exists, not a panel.
-- DM can click any sheet item to roll on a player's behalf.
+- ~~DM can click any sheet item to roll on a player's behalf.~~ — **already finished by the rolls
+  milestone**, which gave the DM's Sheets tab roll buttons on every ability, save, skill and entry of
+  whichever creature is selected. Ticked rather than re-planned: the bullet was written before that
+  tab existed and describes what it does.
 - Scene switching — changes the visible board for everyone in the game.
 - Modal image pop-up: DM opens an image for the whole group, and closes it for everyone.
 - DM can move any token on any layer, including player tokens. The mutation already allows this, the

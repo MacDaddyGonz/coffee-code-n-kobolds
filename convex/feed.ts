@@ -5,7 +5,7 @@ import { requireEditableCharacter } from './lib/access'
 import { readableCharacterIds } from './lib/characters'
 import { NO_MODIFIERS, cryptoDice, evaluateRoll, modifiersFor } from './lib/dice'
 import { publicFeedValidator, visibleFeed, writeFeedRow } from './lib/feed'
-import { findGameByCode, resolveDmAccess } from './lib/games'
+import { activeSceneId, findGameByCode, gameRevealedAt, resolveDmAccess } from './lib/games'
 import { getSeatInGame } from './lib/players'
 import { resolveSheet } from './lib/resolve'
 import { partsFor, rollModeValidator, rollRequestValidator } from './lib/roll'
@@ -336,8 +336,14 @@ export const list = query({
 
     const { isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
 
-    const readable = await readableCharacterIds(ctx, game._id, isDm)
-    return await visibleFeed(ctx, game._id, isDm, readable)
+    // The active scene, so a creature standing in a fogged corridor is not heard from. The
+    // third and last consequence of one filter in `boardCharacterAccess`; there is nothing
+    // fog-shaped in this file, which is the arrangement working.
+    const readable = await readableCharacterIds(ctx, game._id, activeSceneId(game), isDm)
+    // The reveal clock, off the game document this handler already holds. It costs no read
+    // and decides nothing about the array's contents — see `predatesReveal` on
+    // `publicFeedValidator` for why the operand has to be stored rather than sampled.
+    return await visibleFeed(ctx, game._id, isDm, readable, gameRevealedAt(game))
   },
 })
 
