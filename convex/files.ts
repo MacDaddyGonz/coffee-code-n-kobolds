@@ -3,6 +3,8 @@ import { ConvexError, v } from 'convex/values'
 import { mutation } from './_generated/server'
 import { tokenReferencesImage } from './lib/board'
 import { requireDm } from './lib/games'
+import { modalImageReferencesImage } from './lib/modalImages'
+import { trackReferencesFile } from './lib/music'
 import { sceneReferencesImage } from './lib/scenes'
 
 /**
@@ -50,17 +52,24 @@ export const generateUploadUrl = mutation({
  * and a second discard of the same blob should be a no-op rather than a second
  * error on top of the first.
  *
- * Refuses a blob anything still points at — a scene's background or a token's art —
- * so a wrongly-plumbed catch handler cannot blank the map out from under the table
- * or strip the art off a live token. Being DM-gated bounds *who* can call this, but
- * it does not make the call correct: the DM's own client is what invokes it, from an
+ * Refuses a blob anything still points at — a scene's background, a token's art, a handout
+ * or a music track — so a wrongly-plumbed catch handler cannot blank the map out from under
+ * the table, strip the art off a live token, delete the bytes of the image everybody is
+ * looking at, or cut the music off mid-session. Being DM-gated bounds *who* can call this,
+ * but it does not make the call correct: the DM's own client is what invokes it, from an
  * error path, with an id it may have mis-sequenced.
  *
- * The token half is asked as a question of `lib/board.ts` rather than answered here,
- * because every read of the token tables belongs in that module and the leak guard
- * greps these sources to prove it. Only a boolean crosses the boundary.
- * `scenes.remove` and `board.removeToken` remain the ways to delete a file that is
- * genuinely in use, because they delete the thing using it in the same transaction.
+ * ⚠️ **Every table holding a `v.id('_storage')` is asked, and that list is the thing to
+ * keep true.** The schema says the same thing from the other end, beside the tables
+ * that hold one: a new table with a blob in it means a new predicate here, and the
+ * failure mode of forgetting is silent until somebody's upload deletes somebody else's
+ * file. Each half is asked as a question of the module that owns the table rather than
+ * answered here — every read of the token tables belongs in `lib/board.ts` and the leak
+ * guard greps these sources to prove it — so only a boolean ever crosses the boundary.
+ *
+ * `scenes.remove`, `board.removeToken`, `modalImages.remove` and `music.remove` remain the
+ * ways to delete a file that is genuinely in use, because they delete the thing using it in
+ * the same transaction.
  */
 export const discard = mutation({
   args: { code: v.string(), dmCode: v.string(), imageId: v.id('_storage') },
@@ -83,6 +92,20 @@ export const discard = mutation({
       throw new ConvexError({
         kind: 'BadInput',
         message: 'That image is in use by a token. Remove the token instead.',
+      })
+    }
+    if (await modalImageReferencesImage(ctx, game._id, args.imageId)) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message: 'That image is in use by a handout. Delete the handout instead.',
+      })
+    }
+    // Not an image at all, which is why the predicate is named for a file — and why this
+    // is the one refusal here where the blob being discarded could be ten megabytes.
+    if (await trackReferencesFile(ctx, game._id, args.imageId)) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message: 'That file is in use by a music track. Delete the track instead.',
       })
     }
 

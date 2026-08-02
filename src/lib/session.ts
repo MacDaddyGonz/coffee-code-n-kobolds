@@ -48,6 +48,12 @@ const KEY = {
   // switching to the next room.
   layerViewFor: (code: string) => `ccnk.layerView.${code}`,
   activeLayerFor: (code: string) => `ccnk.activeLayer.${code}`,
+  // Per game, and per game for the layer tools' reason rather than the camera's: how loud
+  // you want the music is a *tool setting*, not where you were looking, so it survives
+  // changing scenes and follows the table it belongs to. One game you run with an ambient
+  // loop under everything and another you sit in with headphones on.
+  musicVolumeFor: (code: string) => `ccnk.musicVolume.${code}`,
+  musicMutedFor: (code: string) => `ccnk.musicMuted.${code}`,
 } as const
 
 function read(key: string): string | null {
@@ -257,4 +263,52 @@ export function getActiveLayer(code: string): TokenLayer | null {
 
 export function rememberActiveLayer(code: string, layer: TokenLayer) {
   write(KEY.activeLayerFor(code), layer)
+}
+
+/**
+ * How loud this browser plays the DM's music, and whether it is muted. Two facts, one
+ * argument, so they are documented together the way the two layer tools above are.
+ *
+ * Both belong here by the rule at the top of this file: losing either costs one drag of a
+ * slider. And both are *this browser's alone* — nothing about volume goes to Convex,
+ * because the DM turning their own music down while the table listens is the point of the
+ * control rather than drift to be synchronised away. Which track is on is shared state and
+ * lives in `games.activeTrackId`; how loud it is here is not.
+ *
+ * ⚠️ **`getPaneWidth`'s `> 0` test would be exactly wrong here, and the contrast is worth
+ * a sentence because the two functions otherwise look alike.** There, zero means a
+ * collapsed panel with the Save button inside it, so a key emptied by a half-finished
+ * storage clear — `Number('')` is **0** — has to read as "nothing remembered". Here zero is
+ * a *legitimate* value a person can choose: silence. So the blank is rejected explicitly
+ * and the range is checked at both ends instead, which is `getCamera`'s NaN-scale
+ * discipline rather than a bound.
+ */
+export function getMusicVolume(code: string): number | null {
+  const stored = read(KEY.musicVolumeFor(code))
+  if (stored === null || stored.trim() === '') return null
+  const volume = Number(stored)
+  // Both ends, and not merely finiteness: `HTMLMediaElement.volume` throws outside 0..1,
+  // so a hand-edited key would otherwise take the header down rather than sound wrong.
+  return Number.isFinite(volume) && volume >= 0 && volume <= 1 ? volume : null
+}
+
+export function rememberMusicVolume(code: string, volume: number) {
+  write(KEY.musicVolumeFor(code), String(volume))
+}
+
+/**
+ * Mute is a third state and not the volume being zero, which is why it is a second key.
+ * Somebody who mutes to take a phone call wants their volume back afterwards, and one
+ * number cannot remember both. Checked against the two spellings it is ever written as,
+ * for the reason the layer getters above check union membership.
+ */
+export function getMusicMuted(code: string): boolean | null {
+  const stored = read(KEY.musicMutedFor(code))
+  if (stored === 'true') return true
+  if (stored === 'false') return false
+  return null
+}
+
+export function rememberMusicMuted(code: string, muted: boolean) {
+  write(KEY.musicMutedFor(code), String(muted))
 }

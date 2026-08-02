@@ -165,8 +165,14 @@ export async function createDiceTray(container: HTMLElement): Promise<DiceTray |
       // Turning them on makes the engine fetch 79 mp3 files (~620 KB) whose exact names
       // depend on the surface *and* on the colourset's material, and `initialize`
       // rejects if any of them 404s — so it would need all of them committed, not a
-      // chosen few. Audio at the table is the DM-tooling milestone's music selector, which will
-      // decide where sound comes from; until then this is 620 KB of git history for a
+      // chosen few.
+      //
+      // This comment used to defer the question to the music selector, which has now
+      // shipped and answered it: sound at this table is the DM's track, played through one
+      // `<audio>` element in the header, with a volume and a mute this browser remembers
+      // (`useMusic`). That settles it *against* dice sounds rather than for them, and adds
+      // a second reason to the asset one — the dice would talk over the music with no
+      // volume of their own, so enabling them means a second control beside the first for a
       // flourish on a flourish.
       sounds: false,
       shadows: true,
