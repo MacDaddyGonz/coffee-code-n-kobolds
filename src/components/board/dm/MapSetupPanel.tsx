@@ -50,7 +50,8 @@ export function MapSetupPanel({ code, dmCode }: MapSetupPanelProps) {
       <CardHeader>
         <CardTitle>Map setup</CardTitle>
         <CardDescription>
-          Only you can see this panel, and only you can see the names of the maps in it.
+          Only you can see this panel, and only you can see the names and the pictures of the
+          maps in it.
         </CardDescription>
         <CardAction>
           <SceneUploadDialog code={code} dmCode={dmCode} />
