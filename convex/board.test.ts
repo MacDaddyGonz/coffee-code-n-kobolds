@@ -132,7 +132,7 @@ async function calibrate(t: Harness, code: string, dmCode: string, sceneId: Id<'
 
 type AddTokenOptions = {
   name?: string
-  layer?: 'player' | 'dm'
+  layer?: 'background' | 'player' | 'gm'
   sizeSquares?: number
   tint?: string
   imageId?: Id<'_storage'>
@@ -198,7 +198,7 @@ async function vanishedTokenId(t: Harness): Promise<Id<'tokens'>> {
     const tokenId = await ctx.db.insert('tokens', {
       gameId,
       name: 'Ghost',
-      layer: 'dm',
+      layer: 'gm',
       sizeSquares: 1,
       tint: TINT,
     })
@@ -234,7 +234,7 @@ async function boardFixture(t: Harness) {
   })
   const secretToken = await addToken(t, game.code, game.dmCode, sceneId, {
     name: 'Ambush Skeleton',
-    layer: 'dm',
+    layer: 'gm',
     imageId: secretArt,
     x: 900,
     y: 700,
@@ -305,6 +305,15 @@ describe('the DM layer never reaches a player', () => {
       expect(serialised).not.toContain(fixture.secretToken)
       expect(serialised).not.toContain('Ambush Skeleton')
       expect(serialised).not.toContain(fixture.secret.artUrl as string)
+      // The discriminator, swept for under **both** spellings on purpose. `"gm"` is the
+      // one a correctly migrated deployment emits. `"dm"` is the legacy stored value, and
+      // keeping it here is what catches a half-run migration: `publicTokens` normalises
+      // through `layerOf` on the way out, so a leak of an unmigrated row would arrive
+      // wearing the new word and the old needle alone would miss it — but a projection
+      // that ever stopped normalising would arrive wearing the old one and the new needle
+      // alone would miss *that*. Two needles, two failure modes, neither of them the one
+      // the other catches.
+      expect(serialised).not.toContain('"gm"')
       expect(serialised).not.toContain('"dm"')
     }
   })
@@ -1428,7 +1437,7 @@ async function setLayer(
   t: Harness,
   game: { code: string; dmCode: string },
   tokenId: Id<'tokens'>,
-  layer: 'player' | 'dm',
+  layer: 'background' | 'player' | 'gm',
 ) {
   await t.mutation(api.board.setLayer, { code: game.code, dmCode: game.dmCode, tokenId, layer })
 }
@@ -1602,8 +1611,8 @@ describe('board.setLayer', () => {
     const open = await dmTokenPayload(t, fixture, fixture.openToken)
     expect(typeof open.artUrl).toBe('string')
 
-    await setLayer(t, fixture, fixture.openToken, 'dm')
-    expect((await tokenRow(t, fixture.openToken))?.layer).toBe('dm')
+    await setLayer(t, fixture, fixture.openToken, 'gm')
+    expect((await tokenRow(t, fixture.openToken))?.layer).toBe('gm')
 
     for (const payload of [
       await t.query(api.board.tokens, { code: fixture.code }),
@@ -1640,7 +1649,7 @@ describe('board.setLayer', () => {
     const before = await placement(t, fixture.sceneId, fixture.openToken)
     const open = await dmTokenPayload(t, fixture, fixture.openToken)
 
-    await setLayer(t, fixture, fixture.openToken, 'dm')
+    await setLayer(t, fixture, fixture.openToken, 'gm')
     expect(await t.query(api.board.tokens, { code: fixture.code })).toEqual([])
 
     await setLayer(t, fixture, fixture.openToken, 'player')
@@ -1705,9 +1714,9 @@ describe('board.setLayer', () => {
     const theirToken = await addToken(t, other.code, other.dmCode, otherScene, { name: 'Theirs' })
     const ghost = await vanishedTokenId(t)
 
-    const vanished = await refusalOf(setLayer(t, fixture, ghost, 'dm'))
+    const vanished = await refusalOf(setLayer(t, fixture, ghost, 'gm'))
     expect(vanished.kind).toBe('TokenNotFound')
-    expect(await refusalOf(setLayer(t, fixture, theirToken, 'dm'))).toEqual(vanished)
+    expect(await refusalOf(setLayer(t, fixture, theirToken, 'gm'))).toEqual(vanished)
 
     // The other table's coin is still on the layer its own DM put it on — this game's DM
     // code does not reach it.
@@ -2079,7 +2088,7 @@ describe('files.discard refuses art that is still in use', () => {
     const game = await makeGame(t)
     const sceneId = await makeScene(t, game.code, game.dmCode)
     const imageId = await storeImage(t, 'secret-token-art')
-    await addToken(t, game.code, game.dmCode, sceneId, { layer: 'dm', imageId })
+    await addToken(t, game.code, game.dmCode, sceneId, { layer: 'gm', imageId })
 
     await expectKind(
       t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId }),
@@ -2177,7 +2186,7 @@ describe('DM gating', () => {
             code: fixture.code,
             dmCode,
             tokenId: fixture.openToken,
-            layer: 'dm',
+            layer: 'gm',
           }),
       },
       {

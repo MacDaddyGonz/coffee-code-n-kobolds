@@ -29,11 +29,14 @@ import {
   findGameByCode,
   requireDm,
   resolveDmAccess,
+  stampReveal,
 } from './lib/games'
 // The NARROW three-member union, which is the only one anything outside `convex/schema.ts`
 // uses. `addToken` and `setLayer` validate against it, so no `dm` row can be created from
-// this deploy forward however many are still stored.
-import { tokenLayerValidator } from './lib/layers'
+// this deploy forward however many are still stored. `layerOf` is the transition-only
+// reader beside it: a *stored* layer may still be the legacy `dm`, so every comparison
+// against `'gm'` in this file goes through it rather than against the raw field.
+import { layerOf, tokenLayerValidator } from './lib/layers'
 import { getSeatInGame, listSeats } from './lib/players'
 import type { Point } from './lib/grid'
 import { isUsableTokenSize, snapToGrid } from './lib/grid'
@@ -314,6 +317,14 @@ export const addToken = mutation({
       tokenId,
       await freeCellNear(ctx, scene._id, scene, args.sizeSquares, { x: args.x, y: args.y }),
     )
+    // A coin created straight onto the player layer with a creature already on it is a
+    // reveal like any other — the DM's usual way of putting a monster the party has been
+    // fighting elsewhere onto this board — and that creature's earlier lines become
+    // audible in this write. Both conditions are needed: an empty coin names nobody, and a
+    // GM-layer one is exactly the encounter being prepared rather than sprung.
+    if (args.layer === 'player' && args.characterId !== undefined) {
+      await stampReveal(ctx, game._id)
+    }
     return { tokenId }
   },
 })
@@ -439,7 +450,21 @@ export const setLayer = mutation({
     const game = await requireDm(ctx, args.code, args.dmCode)
     const token = await requireDmToken(ctx, game, args.tokenId)
 
+    // ⚠️ **A stamp, and only in the widening direction.** Everything this write publishes
+    // was rolled while the coin was hidden, so the lines arrive at the table as *new* rows
+    // minutes after the dice stopped — see `predatesReveal` on `publicFeedValidator`, which
+    // is what stops the map replaying all of them at once. Hiding a coin again must not
+    // stamp: that suppresses the flourish for rolls nobody has been shown yet.
+    //
+    // `layerOf` because the stored value may still be the legacy `dm`, and Background is
+    // deliberately not a source: it is already public, so nothing widens by leaving it.
+    // Coverage here is discipline rather than construction, as that note says at length —
+    // a new widening path that skips this line breaks the flourish and nothing else, with
+    // no type error and nothing failing until somebody writes a case beside it.
+    const widening = layerOf(token.layer) === 'gm' && args.layer === 'player'
+
     await setTokenLayer(ctx, token, args.layer)
+    if (widening) await stampReveal(ctx, game._id)
     return null
   },
 })
@@ -496,6 +521,14 @@ export const setCharacter = mutation({
     }
 
     await setTokenCharacter(ctx, token, args.characterId)
+    // The same stamp `setLayer` makes, for the same widening seen from the other side: the
+    // coin was already on the board and it is the *character* that has just become audible,
+    // so every line that creature rolled elsewhere reaches the table at once. Only on a
+    // bind, and only onto a coin the players can see — unbinding narrows, and binding onto
+    // a Background or GM-layer coin publishes nothing.
+    if (args.characterId !== null && layerOf(token.layer) === 'player') {
+      await stampReveal(ctx, game._id)
+    }
     return null
   },
 })

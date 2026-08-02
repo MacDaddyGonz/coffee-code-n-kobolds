@@ -117,7 +117,7 @@ async function populate(t: Harness, name: string) {
     dmCode,
     sceneId,
     name: 'Goblin',
-    layer: 'dm',
+    layer: 'gm',
     sizeSquares: 1,
     tint: '#34495e',
     characterId: npcId,

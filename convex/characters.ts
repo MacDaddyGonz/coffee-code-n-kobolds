@@ -48,6 +48,7 @@ import {
   getGameByCode,
   requireDm,
   resolveDmAccess,
+  stampReveal,
 } from './lib/games'
 import { requireCharacterName } from './lib/names'
 import {
@@ -1190,7 +1191,23 @@ export const assign = mutation({
     // Guarded rather than patched unconditionally: `characters` is rewritten whole on
     // every patch, and a write of `reserved: false` over `reserved: false` is a document
     // rewrite that invalidates every subscription reading the row, for no change.
-    if (isReservedCharacter(character)) await writeReserved(ctx, character._id, false)
+    //
+    // ⚠️ **The stamp belongs here too, and its absence was a live bug found within the
+    // milestone that introduced it.** This is the *second* route by which a reserved
+    // character is released — `characters.setReserved` is the obvious one — and releasing
+    // one publishes every line that hero has ever rolled, because `isWithheldAsReserved`
+    // was dropping all of them until this instant. Without the stamp the whole backlog
+    // arrives at the table as fresh announcements flying over the map.
+    //
+    // That is precisely the failure `stampReveal`'s own ⚠️ predicts: coverage of the stamp
+    // is discipline rather than construction, and nothing makes a widening path call it.
+    // Worth knowing that it was missed here first time round, by the person who wrote the
+    // warning, on a path whose one-line release is easy to read as bookkeeping rather than
+    // as publication.
+    if (isReservedCharacter(character)) {
+      await writeReserved(ctx, character._id, false)
+      await stampReveal(ctx, game._id)
+    }
     return null
   },
 })
@@ -1260,7 +1277,20 @@ export const setReserved = mutation({
       })
     }
 
+    // ⚠️ **The third widening path, and the one that does not touch the board at all.**
+    // Lifting a reservation publishes every line that hero has already rolled — the DM
+    // rolling initiative for an absent player's character is the ordinary way that
+    // happens — so the reveal clock moves here exactly as it does for a coin leaving the
+    // GM layer. See `predatesReveal` on `publicFeedValidator`.
+    //
+    // Guarded on the transition rather than on the argument, for the reason the identical
+    // guard in `assign` gives one screen up: `false` written over `false` is a document
+    // rewrite that changes nothing, and stamping on it would cancel the flourish for the
+    // whole table because somebody pressed a button twice.
+    const releasing = !args.reserved && isReservedCharacter(character)
+
     await writeReserved(ctx, character._id, args.reserved)
+    if (releasing) await stampReveal(ctx, game._id)
     return null
   },
 })

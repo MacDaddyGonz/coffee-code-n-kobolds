@@ -352,7 +352,7 @@ async function addToken(
   code: string,
   dmCode: string,
   sceneId: Id<'scenes'>,
-  options: { name?: string; layer?: 'player' | 'dm'; characterId?: Id<'characters'> } = {},
+  options: { name?: string; layer?: 'background' | 'player' | 'gm'; characterId?: Id<'characters'> } = {},
 ) {
   const { tokenId } = await t.mutation(api.board.addToken, {
     code,
@@ -3549,7 +3549,7 @@ describe('characters.remove — vitals and tokens', () => {
     const onRoof = await addToken(t, code, dmCode, roof, { name: 'Thorin', characterId: thorin })
     const hidden = await addToken(t, code, dmCode, cellar, {
       name: 'Thorin (illusion)',
-      layer: 'dm',
+      layer: 'gm',
       characterId: thorin,
     })
     const other = await addToken(t, code, dmCode, cellar, { name: 'Balin', characterId: balin })
@@ -5924,7 +5924,7 @@ function bearSheet(): NpcSheet {
  * Giving it a token of its own would be the change that quietly turns those tests into
  * tests of `addToken`.
  */
-async function grantFixture(t: Harness, layer: 'player' | 'dm' = 'player') {
+async function grantFixture(t: Harness, layer: 'background' | 'player' | 'gm' = 'player') {
   const game = await makeGame(t)
   const sceneId = await makeScene(t, game.code, game.dmCode)
   const ana = await makeSeat(t, game.code, 'Ana')
@@ -6277,11 +6277,11 @@ describe('a grant on a DM-layer token reveals nothing', () => {
    */
   test('the sheet is withheld on the dm layer and arrives on the player layer', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await grantFixture(t, 'dm')
+    const fixture = await grantFixture(t, 'gm')
     const { code, dmCode, ana, wolf, wolfToken } = fixture
 
     /** The one write under test, so the two flips below cannot drift apart. */
-    const setLayer = (layer: 'player' | 'dm') =>
+    const setLayer = (layer: 'background' | 'player' | 'gm') =>
       t.mutation(api.board.setLayer, { code, dmCode, tokenId: wolfToken, layer })
 
     await grant(t, fixture, wolfToken, [ana])
@@ -6305,7 +6305,7 @@ describe('a grant on a DM-layer token reveals nothing', () => {
     expect(arrived?._id).toBe(wolf)
     expect(arrived?.name).toBe(WOLF_NAME)
 
-    await setLayer('dm')
+    await setLayer('gm')
     expect(
       await t.query(api.characters.sheet, { code, characterId: wolf, playerId: ana }),
     ).toBeNull()

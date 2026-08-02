@@ -666,7 +666,7 @@ describe('scenes.remove', () => {
         dmCode: game.dmCode,
         sceneId: cellar.sceneId,
         name: 'Recurring Villain',
-        layer: 'dm',
+        layer: 'gm',
         sizeSquares: 1,
         tint: '#c0392b',
         x: 300,

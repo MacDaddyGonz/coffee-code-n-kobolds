@@ -919,7 +919,7 @@ const MAX_ROLL_DICE = 20
  * whole script exists to find**, and the only instrument that finds it is a list of names
  * written down somewhere the code under test cannot reach.
  */
-const FEED_ROW_KEYS = '_id,actorName,characterId,createdAt,dmOnly,roll,subject'
+const FEED_ROW_KEYS = '_id,actorName,characterId,createdAt,dmOnly,predatesReveal,roll,subject'
 const FEED_ROLL_KEYS = 'crit,dice,dropped,expression,mode,modifier,total'
 const FEED_DIE_KEYS = 'faces,value'
 const FEED_SUBJECT_KEYS = {
@@ -4324,7 +4324,7 @@ async function main() {
         ? Object.keys(damageRow.roll.dice[0]).sort().join(',')
         : 'no die'
     check(
-      'a feed row carries exactly seven keys, its roll seven of its own, and a die exactly two',
+      'a feed row carries exactly eight keys, its roll seven of its own, and a die exactly two',
       rowKeys === FEED_ROW_KEYS && rollKeys === FEED_ROLL_KEYS && dieKeys === FEED_DIE_KEYS,
       `row: ${rowKeys} · roll: ${rollKeys} · die: ${dieKeys}`,
     )
@@ -4340,6 +4340,12 @@ async function main() {
       characterId: roller.characterId,
       actorName: ROLL_HERO_NAME,
       dmOnly: false,
+      // Every widening this run performs — a coin off the GM layer, a character bound to a
+      // visible one, a reservation lifted — happens in an earlier section than this one, so
+      // a roll made here is newer than the game's reveal clock and says so. The other half
+      // of the claim is asserted at the reveal itself further down: the coin comes off the
+      // GM layer and the three lines it publishes all come back `true`.
+      predatesReveal: false,
       subject: {
         kind: 'entry',
         part: 'roll',
@@ -4509,7 +4515,7 @@ async function main() {
     // for `category`, `toHit` and `group`, and for the opposite reason: those three are
     // absent when they are empty and this one is present holding null, so the two families
     // of check are each other's control. `row.roll === null` is also true of a key that
-    // never arrived, which is why the seven-key set is re-asserted on both rows beside it.
+    // never arrived, which is why the eight-key set is re-asserted on both rows beside it.
     const useRow = lastRow(dmFeed, (row) => row.subject.kind === 'entry' && row.subject.part === 'use')
     const textRow = lastRow(dmFeed, (row) => row.subject.kind === 'entry' && row.subject.part === 'text')
     check(
@@ -4614,6 +4620,27 @@ async function main() {
       revealedRows.length === 3 &&
         feedNeedles.every((needle) => revealedSerialised.includes(needle)),
       `${revealedRows.length} lines: ${JSON.stringify(revealedRows.map((row) => (row.roll ? row.roll.expression : null)))}`,
+    )
+
+    // ⚠️ **AND THAT THEY ARRIVED MARKED AS HISTORY, WHICH IS THE ONE FIELD ONLY A REAL
+    // DEPLOYMENT CAN JUDGE.** `predatesReveal` is a comparison between two wall-clock
+    // readings taken minutes apart by the *server* — `_creationTime` when the dice were
+    // rolled, and `games.revealedAt` when `board:setLayer` stamped it — so it is exactly the
+    // shape of claim this script exists for and the local suite has to fake a clock to make.
+    // Without it `TableEffects` throws dice over the map for every roll a creature made
+    // while it was hidden, at the moment it stops being hidden.
+    //
+    // ⚠️ **The whole payload flips, hero's lines included, and that is the coarse clock
+    // working rather than a bug.** One stamp per game, not one per token: a roll made in the
+    // second before an unrelated reveal loses its flourish, which is a missing animation and
+    // never a wrong one. So the negative control cannot be a row in *this* payload — it is
+    // the whole-row diff further up, taken off `dmFeed` before any of this and pinning
+    // `predatesReveal: false` field for field. A flag stuck at either value fails one of the
+    // two.
+    check(
+      'every line the reveal published came back marked as predating it',
+      revealedRows.length === 3 && revealedRows.every((row) => row.predatesReveal === true),
+      `${revealedRows.length} lines marked ${JSON.stringify(revealedRows.map((row) => row.predatesReveal))}`,
     )
 
     // And back off again, which is the leg only a round trip settles: those lines have been

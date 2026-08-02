@@ -262,7 +262,7 @@ async function makeScene(
 
 type AddTokenOptions = {
   name?: string
-  layer?: 'player' | 'dm'
+  layer?: 'background' | 'player' | 'gm'
   characterId?: Id<'characters'>
   x?: number
   y?: number
@@ -897,7 +897,7 @@ describe('a player cannot count the DM’s prepared monsters', () => {
     )
     await addToken(t, fixture.code, fixture.dmCode, fixture.sceneId, {
       name: 'Lurker',
-      layer: 'dm',
+      layer: 'gm',
       characterId: hidden,
       x: 1500,
       y: 1000,
@@ -948,7 +948,7 @@ describe('a player cannot count the DM’s prepared monsters', () => {
       if (i % 2 === 0) {
         await addToken(t, fixture.code, fixture.dmCode, fixture.sceneId, {
           name: `Ambusher ${i}`,
-          layer: 'dm',
+          layer: 'gm',
           characterId: monster,
           x: 200 + i * 60,
           y: 1400,
@@ -1883,7 +1883,7 @@ describe('a player inspecting network traffic sees nothing off the DM’s shelf'
       if (i % 2 === 0) {
         await addToken(t, fixture.code, fixture.dmCode, fixture.sceneId, {
           name: `Ambusher ${i}`,
-          layer: 'dm',
+          layer: 'gm',
           characterId,
           x: 200 + i * 60,
           y: 1400,
@@ -2074,7 +2074,7 @@ describe('a granted seat is sent exact hit points, and only that seat', () => {
     const hidden = await makeNpc(t, code, dmCode, 'Something Waiting', npcSheet())
     const hiddenToken = await addToken(t, code, dmCode, sceneId, {
       name: 'Not On Their Board',
-      layer: 'dm',
+      layer: 'gm',
       characterId: hidden,
     })
     await setControllers(t, fixture, hiddenToken, [ana])

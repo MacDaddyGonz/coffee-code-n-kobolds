@@ -54,6 +54,46 @@ import type { FeedSubject, RollResult } from './roll'
  * line. Sending the id rather than making the browser match on `actorName` is the same
  * choice `publicTokenValidator` makes for control: when the server already knows the
  * answer, the server sends the answer.
+ *
+ * ⚠️ **`predatesReveal` is the only member here that is on no stored document, and it
+ * answers *why* the row has arrived rather than what it says.** A line can reach a client
+ * because the **audience widened** — a coin moved off the GM layer, a reserved hero
+ * released, a fog rectangle erased — rather than because somebody has just rolled. Without
+ * this, revealing a creature replays every roll it made while hidden over the map as though
+ * each were happening now, which fog turns from a curiosity into the ordinary case. `true`
+ * means the line was written before this game last let somebody in on something, so it is
+ * history to this caller however new it is to them: `TableEffects` files it and animates
+ * nothing.
+ *
+ * **Computed here because no browser can compute it honestly.** The obvious spelling is an
+ * age test on the client, and it compares the *server's* `createdAt` against the *client's*
+ * clock — so a browser a minute out of step silently announces nothing for the rest of the
+ * session, a total failure of the flourish traded for a stale one in an edge case. Both
+ * operands have to come from one clock, and a Convex query may not read the wall clock at
+ * all (there is not one `Date.now()` under `convex/`, and a cached query that read one would
+ * be stale by construction). So the second operand is one a *mutation* wrote down —
+ * `games.revealedAt`, read through `gameRevealedAt` and written only by `stampReveal`.
+ *
+ * **A boolean per row rather than the timestamp once beside the array**, which is the
+ * alternative and is worse for a reason that is about the payload's *shape* rather than its
+ * size. Sending `revealedAt` once means `feed.list` returns an object instead of an array,
+ * so `useFeed`, both of its components and the smoke script's row diffing are all rewritten
+ * — to have the client perform a subtraction the server has already performed. This way the
+ * one query that re-runs on every roll at the table keeps `v.array(publicFeedValidator)`,
+ * and the cost is one byte on a row that already carries an id, a timestamp and a sentence.
+ *
+ * ⚠️ **Coverage is discipline and not construction, which is this design's one soft spot.**
+ * Nothing makes a future widening mutation call `stampReveal`; one that forgets restores the
+ * replay silently, with no type error and no failing assertion unless somebody writes one
+ * beside it. Every stamp site names this note, and the honest summary is that the guarantee
+ * is only as good as the next reviewer.
+ *
+ * **The clock is game-wide rather than per token, and that was chosen rather than settled
+ * for.** A genuinely fresh roll made in the second before an unrelated reveal loses its
+ * flourish — a *missing* animation, never a wrong one, and the feed panel still has the line
+ * in full. Being exact wants a character-to-timestamp map crossing `lib/board.ts`'s module
+ * boundary, which is a great deal of machinery to protect a sentence that fades out after
+ * two seconds.
  */
 export const publicFeedValidator = v.object({
   _id: v.id('feed'),
@@ -63,6 +103,7 @@ export const publicFeedValidator = v.object({
   subject: feedSubjectValidator,
   roll: v.union(rollResultValidator, v.null()),
   dmOnly: v.boolean(),
+  predatesReveal: v.boolean(),
 })
 export type PublicFeedRow = Infer<typeof publicFeedValidator>
 
@@ -117,12 +158,20 @@ export type PublicFeedRow = Infer<typeof publicFeedValidator>
  * "the newest sixty" is a bounded read at all; a chat panel renders top to bottom, so the
  * order it wants is the other one, and deciding that here means no component has to
  * remember to flip an array it was handed.
+ *
+ * ⚠️ **`revealedAt` decides nothing about who gets a row and must not be made to.** It is
+ * the second operand of `predatesReveal` and its whole reach is whether an animation plays;
+ * a row this caller may not hear about was dropped by `readable` two lines above, long
+ * before anybody asked how old it was. Taken as a parameter rather than read from the game
+ * document here for the reason the `readable` set is: this module reads the `feed` table and
+ * nothing else, so what crosses into it is a decision somebody else has already made.
  */
 export async function visibleFeed(
   ctx: QueryCtx,
   gameId: Id<'games'>,
   isDm: boolean,
   readable: ReadonlySet<Id<'characters'>>,
+  revealedAt: number,
 ): Promise<PublicFeedRow[]> {
   const rows = await ctx.db
     .query('feed')
@@ -147,6 +196,10 @@ export async function visibleFeed(
       subject: row.subject,
       roll: row.roll,
       dmOnly: row.dmOnly,
+      // Two timestamps from one clock, which is the only reason this can be asked at all.
+      // `gameRevealedAt` answers 0 for a game in which nothing has ever been revealed, so
+      // the comparison needs no branch and marks nothing.
+      predatesReveal: row._creationTime < revealedAt,
     }))
 }
 
