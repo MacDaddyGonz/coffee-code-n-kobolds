@@ -83,6 +83,46 @@
 // a line naming a character leaves with that character, and a dice-tray line names a seat,
 // so it stays until `npm run prune-games` sweeps it.
 //
+// ⚠️ **The DM's tools are the widest set of things convex-test structurally cannot judge that
+// this script has been asked about at once, and sections 31 to 35 are them.** Five distinct
+// shapes, and none of them is logic the suite already covers:
+//
+//   - **A three-member union, as an argument validator *and* as a projected field.** The
+//     stored union is one member wider than the canonical one while the GM layer's rename
+//     from `dm` to `gm` is in flight, so `board:addToken`'s narrow `tokenLayerValidator` is
+//     the *only* thing stopping a legacy value being created from here forward. Whether
+//     `'background'` and `'gm'` round-trip as themselves, and whether `'dm'` is refused at
+//     the function boundary, are three facts about Convex's own value validation and nothing
+//     else — the local suite reaches the schema directly and so cannot be asked any of them.
+//   - **Four fresh float64s per fog rectangle, through a table that is new.** Floats through
+//     a real deployment are this script's oldest speciality, and the interesting ones here
+//     are **negative** extents: three quarters of all rubber-band drags produce one, and
+//     `normaliseFogRect` has to have converted it *before* the insert. A row stored
+//     unnormalised is fog that is drawn on every screen and hides nothing whatever, which is
+//     the worst failure this feature has and the one a DM would never think to check for.
+//   - **A new optional field on a *populated* table, twice over.** `games.openImageId` and
+//     `games.activeTrackId` are pointers on the one document every client in a game
+//     subscribes to, and "nothing is open" is spelled by the key's **absence** — a Convex
+//     patch of `undefined`. So both come in the pairs every trap in this file comes in: shown
+//     then hidden, selected then cleared, with `firstDifference` naming a `null` that should
+//     have been an absent key. `games.revealedAt` is the third, and it is readable only
+//     through `predatesReveal` on a feed row — section 30 owns the `board:setLayer` half of
+//     that claim, so section 32 asserts the **fog** half and the true/false pair in one
+//     payload rather than repeating it.
+//   - **Two new `v.id('_storage')` tables, and `files.discard`'s refusals over them.** Every
+//     table holding a storage id owes that mutation a predicate, and forgetting one is silent
+//     until somebody's upload deletes somebody else's file. `storageGuard.test.ts` pins that
+//     the predicate is *imported*; only a deployment can say that the refusal fires, that a
+//     real blob is really deleted afterwards, and that the bearer URL captured beforehand has
+//     stopped resolving.
+//   - **An audio blob, which is the first non-image upload this application has ever made.**
+//     There is no lossless-enough transcode a browser can do to audio, so the downscaler that
+//     makes an oversized map impossible in practice has no equivalent — `blob.size >
+//     MAX_MUSIC_BYTES` on the server is the *whole* of the enforcement, and convex-test's
+//     file storage is an in-memory stub that never had a byte count to check. So the
+//     over-limit refusal below POSTs ten megabytes and one byte of real bytes at a real
+//     upload URL, because that is the only way to find out that the check is there.
+//
 //   node scripts/board-smoke.mjs
 //
 // Plain .mjs on purpose: no tsx, no new dependency, nothing to install.
@@ -944,6 +984,133 @@ const SMOKE_DM_NAME = 'Smoke DM'
 const UNKNOWN_JOIN_CODE = 'ZZZZZZ'
 
 /**
+ * MILESTONE 10'S FIXTURES — the DM's tools.
+ *
+ * Three new tables, one widened union and three new optional fields on the game document.
+ * Every name below is deliberately unlike every other name in this file, for the reason
+ * sections 10, 20, 27 and 30 all give: a coin's name is public by design and a creature's is
+ * the spoiler, so a scan that reused one would be unable to tell a leak from the thing it is
+ * meant to allow.
+ */
+
+/**
+ * A coin on the Background layer, which is the layer that separates **sight** from
+ * **interaction** for the first time: everybody is sent it and nobody but the DM may move it.
+ * So this name is expected to appear in a player's payload, which makes section 31 the one
+ * secrecy check in this script that asserts *presence*.
+ */
+const SCENERY_COIN_NAME = 'Fallen Arch Stones'
+
+/**
+ * THE CREATURE THE FOG IS DRAWN OVER, and every number on it is a needle for the reason 271,
+ * 113 and 117 are: a hero's totals in this game top out in the thirties and a document id is
+ * redacted before the substring scan runs, so a `419` in a player's payload is this creature
+ * and nothing else.
+ *
+ * ⚠️ **Its coin goes on the *player* layer, which is the whole point of testing fog at all.**
+ * A GM-layer creature is already withheld by `maySee`, so fogging one would assert nothing
+ * new. What fog has to be able to do is take back a creature every client has *already been
+ * sent* — its placement, its health band and its feed lines — while leaving the coin's own row
+ * in `board:tokens` alone, because that scope is documented and deliberate.
+ */
+const FOG_CREATURE_NAME = 'Thing in the Culvert 🕯️'
+const FOG_CREATURE_COIN_NAME = 'Something Under the Water'
+const FOG_CREATURE_MAX_HP = 419
+const FOG_CREATURE_CURRENT_HP = 211
+const FOG_CREATURE_ENTRY_NAME = 'Drowning Grip'
+const FOG_CREATURE_DAMAGE = '3d10+167'
+const FOG_CREATURE_DAMAGE_BONUS = 167
+const FOG_CREATURE_NOTES = 'Comes up out of the culvert once they are halfway across the ford.'
+const FOG_CREATURE_SHEET = {
+  kind: 'npc',
+  armourClass: 15,
+  maxHp: FOG_CREATURE_MAX_HP,
+  initiativeBonus: 3,
+  actions: [
+    {
+      id: 'fog-grip',
+      name: FOG_CREATURE_ENTRY_NAME,
+      text: 'It takes an ankle and does not let go while it is still in the water.',
+      roll: FOG_CREATURE_DAMAGE,
+      level: null,
+      catalogueKey: null,
+      category: 'weapon',
+      toHit: '1d20+9',
+    },
+  ],
+  notes: FOG_CREATURE_NOTES,
+}
+
+/**
+ * The half-extent of every rectangle drawn below, in image-space pixels.
+ *
+ * Thirty against a `gridSize` of 140, so a rectangle centred on one token's stored placement
+ * cannot reach the centre of the coin in the next square along — `foggedTokenIds` tests the
+ * **centre point** rather than the footprint, so a sloppier box would fog its neighbours and
+ * turn every count below into a question about which coins happened to be nearby.
+ */
+const FOG_REACH = 30
+
+/**
+ * The key sets, hand-spelled out of `publicFogValidator`, `publicModalImageValidator` and
+ * `publicTrackValidator`.
+ *
+ * Copied by hand for the reason `FEED_ROW_KEYS` is, and the argument is the same one at its
+ * sharpest: a check that read a validator's own `fields` would agree with a field silently
+ * discarded on write exactly as readily as with a correct payload, because both sides would
+ * have moved together.
+ */
+const FOG_RECT_KEYS = '_id,height,width,x,y'
+const MODAL_IMAGE_KEYS = '_id,imageHeight,imageUrl,imageWidth,name'
+const TRACK_KEYS = '_id,name,url'
+
+/**
+ * THE HANDOUT. Named the way `modalImages.list`'s docblock names the risk, because the whole
+ * argument for that query being DM-only is that the *names* are the spoiler — so the name in
+ * this script is one a scan of a player's payload can find.
+ *
+ * The dimensions are odd numbers on purpose: 1920×1081 is not a ratio anything would produce
+ * by accident, so a deployment that helpfully rounded, swapped or defaulted either of them is
+ * named by `firstDifference` rather than agreed with.
+ */
+const HANDOUT_NAME = 'The Duke’s Real Face 🖼️'
+const HANDOUT_WIDTH = 1920
+const HANDOUT_HEIGHT = 1081
+
+/** The track, named for the same reason and asserted the same way. */
+const TRACK_NAME = 'Dragon’s Lair (loop) 🎵'
+
+/**
+ * `MAX_MUSIC_BYTES`, copied by hand out of `convex/lib/limits.ts`.
+ *
+ * Copied rather than imported for the reason every other number in this file is: this is plain
+ * .mjs on purpose and cannot import a .ts module, and a fixture derived from the code under
+ * test would agree with a mangled limit exactly as readily as with a correct one. It is also
+ * the one upload limit in this application that is genuinely the **only** defence — there is
+ * no browser-side downscaler for audio — so the refusal one byte over it is the whole of what
+ * stops a ten-megabyte-a-time leak against the 1 GB the free tier allows.
+ */
+const MAX_MUSIC_BYTES = 10 * 1024 * 1024
+
+/**
+ * A tiny audio file: an ID3v2 header declaring a zero-length tag, one MPEG-1 Layer III frame
+ * header, and enough zero bytes after it to look like a frame.
+ *
+ * ⚠️ **These bytes do not have to be playable, and saying so is the point rather than an
+ * apology.** Nothing server-side decodes them: `music.create` reads `blob.size` and
+ * `blob.contentType` off the stored file and nothing else, exactly as `scenes.create` reads
+ * only the size of a map. The reason it is a real MPEG frame header anyway is the reason
+ * `PNG_BASE64` above is a real PNG — posting real bytes of the real kind to the real upload
+ * endpoint is what this script is for, and the day something *does* sniff the file is the day
+ * a buffer of random noise would fail here for a reason nobody could read.
+ */
+const MP3_BYTES = Buffer.concat([
+  Buffer.from([0x49, 0x44, 0x33, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+  Buffer.from([0xff, 0xfb, 0x90, 0x64]),
+  Buffer.alloc(413),
+])
+
+/**
  * The eight numbers a rating shift moves, pulled off a resolved sheet in one shape so
  * `firstDifference` can name the one that drifted.
  *
@@ -1174,12 +1341,22 @@ function snapToGrid(point, grid, sizeSquares) {
   }
 }
 
-async function uploadPng(client, code, dmCode) {
+/**
+ * A real signed upload URL, a real POST, real bytes in real storage.
+ *
+ * ⚠️ **The content type is the caller's, and it is not decoration.** `music.create` refuses a
+ * blob whose stored `contentType` does not begin `audio/` — honestly labelled as the header
+ * the *browser* chose, because nothing reads a byte of the file — so the only way to reach
+ * that refusal, or to get past it, is for the POST this script makes to declare one. It is the
+ * one fact about an upload that travels with the blob rather than with the mutation, so it can
+ * only be set here.
+ */
+async function uploadBlob(client, code, dmCode, contentType, body) {
   const uploadUrl = await client.mutation('files:generateUploadUrl', { code, dmCode })
   const response = await fetch(uploadUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'image/png' },
-    body: Buffer.from(PNG_BASE64, 'base64'),
+    headers: { 'Content-Type': contentType },
+    body,
   })
   if (!response.ok) {
     throw new Error(`upload POST failed: ${response.status} ${await response.text()}`)
@@ -1187,6 +1364,10 @@ async function uploadPng(client, code, dmCode) {
   const { storageId } = await response.json()
   if (!storageId) throw new Error('upload POST returned no storageId')
   return storageId
+}
+
+async function uploadPng(client, code, dmCode) {
+  return await uploadBlob(client, code, dmCode, 'image/png', Buffer.from(PNG_BASE64, 'base64'))
 }
 
 async function main() {
@@ -1204,6 +1385,24 @@ async function main() {
   const grantedTokens = []
   const reservedCharacters = []
   const seats = []
+  // ⚠️ **Three more registries, and the two `_storage`-backed ones are the reason the sweep at
+  // the bottom of this file has an order at all.** A handout and a track each own a blob, and
+  // `files.discard` refuses any blob a live row still points at — so a run that fails between
+  // creating one and deleting it must delete the *row* before the upload list is swept, or the
+  // sweep reports a failed cleanup step for a blob that was doing its job. Both loops therefore
+  // sit above the `uploads` loop in `finally`, and the note there says so.
+  //
+  // Sections 33 and 34 empty these on the way past, exactly as section 25 empties
+  // `reservedCharacters`: the removal *is* one of the assertions, so leaving the id here would
+  // make a run that went perfectly report a failed cleanup step. What is left behind is the
+  // reason the registry exists — a run that failed halfway.
+  const createdHandouts = []
+  const createdTracks = []
+  // A second map, for the one fog check that needs a board nobody is looking at. Separate from
+  // `sceneId` rather than folded into it, because every other section in this file means *the
+  // active scene* by that name and a second one would silently change what forty checks are
+  // about.
+  const extraScenes = []
   // ⚠️ **Every blob this run POSTs, whether or not anything ever adopted it.** The four
   // registries above are all *rows*, and a row is reclaimed by the mutation that deletes the
   // thing it hangs off — `scenes:remove` takes the map's bytes with it and
@@ -4821,6 +5020,1040 @@ async function main() {
         ghostRefusal.kind === 'CharacterNotFound',
       `${JSON.stringify(ghostRefusal)} against ${JSON.stringify(hiddenRefusal)}`,
     )
+
+    // 31. THREE LAYERS: A UNION AS AN ARGUMENT VALIDATOR, AS A STORED VALUE AND AS A
+    // PROJECTED FIELD — AND THE ONE SECRECY CHECK IN THIS SCRIPT THAT ASSERTS PRESENCE.
+    //
+    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE.** The stored layer union is **one member
+    // wider than the canonical one**: `schema.ts` still admits the legacy `dm` spelling so a
+    // row written before the GM layer was renamed keeps validating, while `board:addToken`'s
+    // and `board:setLayer`'s arguments take the narrow three-member `tokenLayerValidator`. That
+    // arrangement is a widen-migrate-narrow, and the *only* thing holding its second half is
+    // Convex's own argument validation at the function boundary. The local suite writes through
+    // the schema, so it can be asked whether the wide union stores a `dm` — which it must — and
+    // structurally cannot be asked the question that matters here: whether a client can still
+    // *create* one. So the refusal below is not a duplicate of anything in `board.test.ts`; it
+    // is the half of the migration that has no other guard.
+    //
+    // The round trips beside it are the same point from the other end. `'background'` and
+    // `'gm'` are two literals of a union that has three, in a field this application both
+    // stores and projects, and a deployment that narrowed, re-tagged or defaulted either would
+    // be invisible to a suite whose fixtures and payloads move together.
+    //
+    // ⚠️ **And the assertions come in a pair that is the *opposite* way round from every other
+    // secrecy check in this file.** Background separates sight from interaction for the first
+    // time — everybody is sent it, nobody but the DM may move it — so what has to be asserted
+    // about the scenery coin is that it **is** in a player's payload, in both halves of it, the
+    // coin and its placement row. Beside it, the GM coin must be in neither. Either check alone
+    // means nothing: the presence half passes on a deployment that published everything, the
+    // absence half on one that sent nobody anything, and only the two together say the filter
+    // is a filter.
+    const scenery = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      // Public by design, and asserted to be public, which is why this one name in the script
+      // is *meant* to appear in a player's payload. Distinct from every character name for the
+      // usual reason: a needle that matches two things cannot fail usefully.
+      name: SCENERY_COIN_NAME,
+      layer: 'background',
+      sizeSquares: 2,
+      tint: '#7f8c8d',
+      x: 1600,
+      y: 700,
+    })
+    created.push(scenery.tokenId)
+
+    const layersForDm = await client.query('board:tokens', { code, dmCode })
+    const layersForPlayer = await client.query('board:tokens', { code })
+    const sceneryForDm = layersForDm.find((row) => row._id === scenery.tokenId) ?? null
+    const sceneryForPlayer = layersForPlayer.find((row) => row._id === scenery.tokenId) ?? null
+    const gmForDm = layersForDm.find((row) => row._id === secret.tokenId) ?? null
+    check(
+      'board:addToken stored background as `background` and gm as `gm`, and the DM got both back',
+      sceneryForDm &&
+        sceneryForDm.layer === 'background' &&
+        sceneryForDm.name === SCENERY_COIN_NAME &&
+        gmForDm &&
+        gmForDm.layer === 'gm',
+      sceneryForDm && gmForDm
+        ? `${JSON.stringify(sceneryForDm.layer)} beside ${JSON.stringify(gmForDm.layer)}, over ${layersForDm.length} coins`
+        : `scenery ${JSON.stringify(sceneryForDm)}, gm ${JSON.stringify(gmForDm)}`,
+    )
+    // THE PRESENCE HALF AND THE ABSENCE HALF, in one check because neither is worth having on
+    // its own. `every(layer !== 'gm')` rather than a substring scan for `"gm"`, deliberately:
+    // a signed storage URL is base64 and would match that needle every few runs, which is the
+    // flakiness `OPAQUE_KEYS` exists to avoid — and the decoded field is the exact question
+    // anyway.
+    check(
+      'a player got the Background coin, as background, and no gm coin at all',
+      sceneryForPlayer &&
+        sceneryForPlayer.layer === 'background' &&
+        sceneryForPlayer.name === SCENERY_COIN_NAME &&
+        !layersForPlayer.some((row) => row._id === secret.tokenId) &&
+        layersForPlayer.every((row) => row.layer !== 'gm') &&
+        // The positive control, and it is load-bearing in both directions: without it the
+        // absence half passes on a deployment that sent an empty board, and the presence half
+        // would be a claim about a payload nobody checked was smaller than the DM's.
+        layersForDm.some((row) => row.layer === 'gm') &&
+        layersForPlayer.length < layersForDm.length,
+      `${layersForPlayer.length} coins to a player against ${layersForDm.length} to the DM — positive control included`,
+    )
+    // The second half of a player's board, which is the half that would leak the useful part:
+    // a placement row says *something is standing there*, so scenery that arrived as a coin
+    // with no row would be drawn nowhere, and a GM coin with a row would be an outline of
+    // tonight's ambush.
+    const playerPlacements = await client.query('board:positions', { code, sceneId })
+    check(
+      'the Background coin is in both halves of a player’s board, and the gm coin in neither',
+      playerPlacements.some((row) => row.tokenId === scenery.tokenId) &&
+        !playerPlacements.some((row) => row.tokenId === secret.tokenId),
+      `${playerPlacements.length} placements, scenery among them and the ambush not`,
+    )
+
+    // ⚠️ **THE REFUSAL THAT IS DELIBERATELY *DISTINGUISHABLE*, WHICH INVERTS THIS CODEBASE'S
+    // USUAL RULE — so it is asserted as an inequality rather than as a parity.** Everywhere
+    // else, telling "you may not" from "no such thing" is an existence oracle: guess ids, read
+    // the errors back, and the ones that answer differently are the ones that exist. That
+    // argument holds for the GM coin and it still throws `TokenNotFound`. It does **not** hold
+    // for scenery, because the coin **is in the player's payload** — they can see it, they
+    // clicked it, and they can see it did not move. Answering "that token is not on this board"
+    // about a coin somebody is looking at is not discretion, it is a lie that reads as a bug in
+    // the application. `TOKEN_NOT_MOVABLE`'s docblock in `convex/lib/board.ts` argues this at
+    // length; what is asserted here is that both kinds survive a real wire *and differ*, so a
+    // future reader who "fixes" the asymmetry for consistency fails a check that says why.
+    const shoveScenery = () =>
+      client.mutation('board:moveToken', {
+        code,
+        sceneId,
+        tokenId: scenery.tokenId,
+        x: 240,
+        y: 240,
+        settle: true,
+        playerId: seatA.playerId,
+      })
+    const sceneryRefusal = await refusalOf(shoveScenery)
+    const gmRefusal = await refusalOf(() =>
+      client.mutation('board:moveToken', {
+        code,
+        sceneId,
+        tokenId: secret.tokenId,
+        x: 240,
+        y: 240,
+        settle: true,
+        playerId: seatA.playerId,
+      }),
+    )
+    check(
+      'a player’s shove of the scenery was refused as TokenNotMovable, and of the ambush as TokenNotFound — two answers, on purpose',
+      sceneryRefusal !== null &&
+        gmRefusal !== null &&
+        sceneryRefusal.kind === 'TokenNotMovable' &&
+        gmRefusal.kind === 'TokenNotFound' &&
+        sceneryRefusal.message !== gmRefusal.message,
+      `${JSON.stringify(sceneryRefusal)} against ${JSON.stringify(gmRefusal)}`,
+    )
+    // ⚠️ **AND A GRANT CANNOT OPEN A LAYER**, which is a fact about the *order* of two lines in
+    // `requireMovableToken` and therefore exactly the kind of thing that survives a refactor
+    // silently. The scenery refusal sits above the claim-and-grant read, so handing the party a
+    // Background coin is inert rather than dangerous — the same thing `board.setControllers`
+    // already promises about the GM layer, now true of two layers by one line instead of two.
+    await client.mutation('board:setControllers', {
+      code,
+      dmCode,
+      tokenId: scenery.tokenId,
+      playerIds: [seatA.playerId],
+    })
+    grantedTokens.push(scenery.tokenId)
+    const grantedSceneryRefusal = await refusalOf(shoveScenery)
+    const grantedScenery = await tokensOf(scenery.tokenId)
+    check(
+      'granting the scenery to a seat changed nothing — the same TokenNotMovable, with the grant really written',
+      grantedSceneryRefusal !== null &&
+        grantedSceneryRefusal.kind === 'TokenNotMovable' &&
+        // The positive control: without it this passes on a deployment that discarded the grant.
+        grantedScenery &&
+        grantedScenery.grantedPlayerIds.includes(seatA.playerId) &&
+        grantedScenery.controllerIds.includes(seatA.playerId),
+      grantedScenery
+        ? `granted ${JSON.stringify(grantedScenery.grantedPlayerIds)} and still ${grantedSceneryRefusal.kind}`
+        : 'no token row came back',
+    )
+
+    // AND THE DM'S IDENTICAL CALL LANDS, snapped server-side. The same mutation, the same
+    // token, the same scene — one argument different — because "the DM rearranges scenery
+    // freely" is half of what `mayPlayersMove` means and a refusal that applied to everybody
+    // would satisfy every check above.
+    //
+    // The target is fractional so the snap is arithmetic over real float64s rather than a
+    // rounding of two integers, and it is `snapToGrid` restated at the top of this file that
+    // says where the coin should land — a prediction, so a server that stored the point it was
+    // given fails here.
+    const sceneryTarget = { x: 1590.5, y: 690.25 }
+    const scenerySnapped = snapToGrid(sceneryTarget, GRID, 2)
+    await client.mutation('board:moveToken', {
+      code,
+      dmCode,
+      sceneId,
+      tokenId: scenery.tokenId,
+      ...sceneryTarget,
+      settle: true,
+    })
+    const sceneryRests = (await client.query('board:positions', { code, sceneId, dmCode })).find(
+      (row) => row.tokenId === scenery.tokenId,
+    ) ?? null
+    check(
+      'the DM’s identical move landed, and the server snapped it to the square this script predicted',
+      sceneryRests &&
+        sceneryRests.x === scenerySnapped.x &&
+        sceneryRests.y === scenerySnapped.y,
+      sceneryRests
+        ? `${sceneryRests.x} / ${sceneryRests.y} against a predicted ${scenerySnapped.x} / ${scenerySnapped.y}, from ${sceneryTarget.x} / ${sceneryTarget.y}`
+        : 'no placement came back',
+    )
+
+    // ⚠️ **THE NARROW VALIDATOR, WHICH IS THE HALF OF THE MIGRATION WITH NO OTHER GUARD.** A
+    // `dm` row must remain *readable* and must not be *creatable*, and only Convex's own
+    // argument validation enforces the second — nothing in either handler asks. Both writes are
+    // refused because both take the narrow union, which is what makes the wide one in
+    // `schema.ts` safe to keep until the relabel has run.
+    await refuses('board:addToken refused the legacy `dm` layer at the function boundary', () =>
+      client.mutation('board:addToken', {
+        code,
+        dmCode,
+        sceneId,
+        name: 'Coin From Before the Rename',
+        layer: 'dm',
+        sizeSquares: 1,
+        tint: '#2c3e50',
+        x: 400,
+        y: 400,
+      }),
+    )
+    await refuses('board:setLayer refused the legacy `dm` layer too', () =>
+      client.mutation('board:setLayer', {
+        code,
+        dmCode,
+        tokenId: scenery.tokenId,
+        layer: 'dm',
+      }),
+    )
+    await refuses('board:addToken refused a layer that has never existed', () =>
+      client.mutation('board:addToken', {
+        code,
+        dmCode,
+        sceneId,
+        name: 'Coin On No Layer At All',
+        layer: 'overlay',
+        sizeSquares: 1,
+        tint: '#2c3e50',
+        x: 400,
+        y: 400,
+      }),
+    )
+
+    // 32. FOG OF WAR: FOUR FRESH FLOAT64S A ROW, AND THE ONE THAT ARRIVES BACKWARDS.
+    //
+    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE, AND THE HIGHEST-VALUE CHECK IN THIS WHOLE
+    // FILE IS IN HERE.** `fogRects` is a new table of four float64s, and floats through real
+    // value validation are this script's oldest speciality. What makes these four different
+    // from the position table's two is that three quarters of all real gestures produce a
+    // **negative** extent: a rubber-band drag goes in one of four directions, and only one of
+    // them yields a positive width and height. `normaliseFogRect` has to have converted it
+    // *before* the insert, because a row stored with a negative width silently fails every
+    // containment test — `rectCovers` answers false for every point inside it, since the far
+    // edge is behind the near one — and the result is fog that is drawn on every screen, that
+    // the DM believes in, and that hides nothing at all. That is the worst failure this feature
+    // has and the one a DM would never think to check for.
+    //
+    // So the backwards rectangle below is asserted **twice, in two different ways**: the stored
+    // geometry is diffed field by field against the canonical box, and the creature standing in
+    // it has to leave a player's payload. A deployment or a writer that skipped normalisation
+    // fails both, and a normalisation that was subtly wrong — say, an absolute value without
+    // the corner shift — fails the second even if the first were somehow satisfied.
+    //
+    // ⚠️ **Every rectangle here is built around a placement read back off `tokenPositions`**
+    // rather than around the point `addToken` was given, and that is not fussiness: `addToken`
+    // both snaps *and* displaces through `freeCellNear`, so a box centred on the requested point
+    // is a flaky secrecy test — flaking in the direction where the monster is visible.
+    //
+    // The withholding itself is three separate queries' worth of consequence from one filter,
+    // which is why each is read rather than one standing in for the others: a placement row
+    // says something is standing there, a health band says how it is doing, and a feed line
+    // says its name out loud. The coin's own row in `board:tokens` deliberately stays, because
+    // that query resolves a signed URL per token and putting fog into it would re-resolve two
+    // hundred of them on every drag frame. Asserted, so the scope is a decision on the record
+    // rather than a gap.
+    const fogCreature = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: FOG_CREATURE_NAME,
+      sheet: FOG_CREATURE_SHEET,
+    })
+    createdCharacters.push(fogCreature.characterId)
+    await client.mutation('characters:setHp', {
+      code,
+      dmCode,
+      characterId: fogCreature.characterId,
+      currentHp: FOG_CREATURE_CURRENT_HP,
+    })
+    const fogToken = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      // Not the character's name, for the reason sections 10, 20, 27 and 30 all give.
+      name: FOG_CREATURE_COIN_NAME,
+      layer: 'player',
+      sizeSquares: 1,
+      tint: '#1abc9c',
+      characterId: fogCreature.characterId,
+      x: 500,
+      y: 700,
+    })
+    created.push(fogToken.tokenId)
+    // Two lines rolled while the map is still lit, so there is history for the fog to take
+    // back. Both through the DM's own path, because a player cannot roll a creature they have
+    // not been granted — section 30's refusal parity is what says so.
+    await rollRequest(fogCreature.characterId, { kind: 'initiative' })
+    await rollRequest(fogCreature.characterId, { kind: 'entry', entryId: 'fog-grip', part: 'roll' })
+
+    const placementOf = async (tokenId) =>
+      (await client.query('board:positions', { code, sceneId, dmCode })).find(
+        (row) => row.tokenId === tokenId,
+      ) ?? null
+    const fogSpot = await placementOf(fogToken.tokenId)
+    // Every reading taken the same way at each state, in one closure, for section 28's reason:
+    // a state read two different ways at two points is a comparison of two questions rather
+    // than of two answers.
+    const fogState = async () => {
+      const placements = await client.query('board:positions', { code, sceneId })
+      const vitals = await vitalsFor(seatA.playerId)
+      const lines = await client.query('feed:list', { code })
+      const coins = await client.query('board:tokens', { code })
+      const scannable = [placements, vitals, lines]
+      return {
+        placed: placements.some((row) => row.tokenId === fogToken.tokenId),
+        band: vitals.find((row) => row.characterId === fogCreature.characterId) ?? null,
+        lines: lines.filter((row) => row.characterId === fogCreature.characterId).length,
+        feed: lines,
+        coin: coins.some((row) => row._id === fogToken.tokenId),
+        // Scanned twice over, for the reason section 10 gives: the substring scan catches a
+        // secret that arrived as text, and `holdsNumber` walks every number at every depth and
+        // catches one that arrived as a number in a field nobody thought to look at.
+        leaked:
+          JSON.stringify(redactOpaque(scannable)).includes(FOG_CREATURE_NAME) ||
+          holdsNumber(scannable, FOG_CREATURE_MAX_HP) ||
+          holdsNumber(scannable, FOG_CREATURE_DAMAGE_BONUS),
+      }
+    }
+
+    const litUp = await fogState()
+    check(
+      'before any fog, the creature is placed, banded and heard from — and its coin is on the board',
+      litUp.placed &&
+        litUp.band &&
+        litUp.band.kind === 'band' &&
+        litUp.lines === 2 &&
+        litUp.coin &&
+        fogSpot !== null,
+      fogSpot
+        ? `positive control — without it every check below passes on a deployment that sent nobody anything; standing at ${fogSpot.x} / ${fogSpot.y} with ${litUp.lines} lines`
+        : 'no placement came back for the creature',
+    )
+
+    const overCreature = {
+      x: fogSpot ? fogSpot.x - FOG_REACH : 0,
+      y: fogSpot ? fogSpot.y - FOG_REACH : 0,
+      width: FOG_REACH * 2,
+      height: FOG_REACH * 2,
+    }
+    const drawn = await client.mutation('fog:draw', { code, dmCode, sceneId, ...overCreature })
+    const darkened = await fogState()
+    check(
+      'the rectangle took the placement, the band and both lines off the wire — and left the coin where it was',
+      !darkened.placed &&
+        darkened.band === null &&
+        darkened.lines === 0 &&
+        !darkened.leaked &&
+        // The documented scope, asserted rather than assumed: `board.tokens` is not a caller of
+        // `foggedTokenIds`, so the coin's name is still public and the GM layer is the tool for
+        // hiding that.
+        darkened.coin,
+      `${darkened.lines} lines, band ${JSON.stringify(darkened.band)}, coin still listed ${darkened.coin}`,
+    )
+    // AND THE RECTANGLE ITSELF, which is the one thing on this table that is **not** a secret:
+    // every row goes to every client verbatim, because a player who cannot see that the
+    // corridor is dark does not experience suspense, they wonder whether the app is broken.
+    // Diffed against a hand-written box rather than value-compared, so a deployment that
+    // rounded a float or dropped a key is named — and the key set is spelled out because a
+    // sixth field arriving here would be a field nothing in the application asked for.
+    const fogForPlayer = await client.query('fog:list', { code, sceneId })
+    const fogForDm = await client.query('fog:list', { code, sceneId, dmCode })
+    const drawnRow = fogForPlayer.find((row) => row._id === drawn.fogId) ?? null
+    const drawnDrift = drawnRow
+      ? firstDifference({ _id: drawn.fogId, ...overCreature }, drawnRow, 'fogRect')
+      : 'no rectangle came back to the player'
+    check(
+      'the rectangle came back verbatim to a caller holding no DM code, with exactly five keys',
+      drawnDrift === null &&
+        drawnRow &&
+        Object.keys(drawnRow).sort().join(',') === FOG_RECT_KEYS &&
+        fogForDm.some((row) => row._id === drawn.fogId),
+      drawnDrift ?? `keys: ${Object.keys(drawnRow).sort().join(',')} — reading fog is ungated by design`,
+    )
+
+    // (b) ERASING IT, AND THE REVEAL CLOCK.
+    //
+    // ⚠️ **`predatesReveal` is section 30's claim and this is deliberately not a second copy of
+    // it.** That section proves the flag over `board:setLayer`, with three lines that all come
+    // back `true`, and the `false` case is pinned by its whole-row diff. What is new here is the
+    // **fog** stamp — `fog.erase` calling `stampReveal` is discipline rather than construction,
+    // which `stampReveal`'s own ⚠️ admits is the design's soft spot — and the **pair inside one
+    // payload**: two lines written before the erase and one written after it, so a flag stuck at
+    // either value fails whichever half it is stuck against. Only a deployment can be asked at
+    // all, because both operands are wall-clock times the server wrote and a query may not
+    // sample its own.
+    await client.mutation('fog:erase', { code, dmCode, fogId: drawn.fogId })
+    await rollRequest(fogCreature.characterId, { kind: 'entry', entryId: 'fog-grip', part: 'toHit' })
+    const lifted = await fogState()
+    const liftedLines = lifted.feed.filter((row) => row.characterId === fogCreature.characterId)
+    check(
+      'erasing it brought the placement, the band and the lines back',
+      lifted.placed &&
+        lifted.band &&
+        lifted.band.kind === 'band' &&
+        lifted.lines === 3,
+      `${lifted.lines} lines, placed ${lifted.placed}, vitals row ${JSON.stringify(lifted.band && lifted.band.kind)}`,
+    )
+    check(
+      'fog:erase stamped the game: the two lines it published came back as history, the one rolled after it as news',
+      liftedLines.length === 3 &&
+        liftedLines[0].predatesReveal === true &&
+        liftedLines[1].predatesReveal === true &&
+        // The other half of the pair, and each half is the other's control: all-true passes on a
+        // deployment that hard-coded the flag, all-false on one that never stamped.
+        liftedLines[2].predatesReveal === false,
+      `${JSON.stringify(liftedLines.map((row) => row.predatesReveal))} over ${liftedLines.length} lines, oldest first`,
+    )
+
+    // (c) THE RECTANGLE DRAGGED THE OTHER WAY. **The highest-value check in this section.**
+    //
+    // Same corner-to-corner box as the one above, expressed as the drag a DM makes three times
+    // out of four: start at the bottom-right, finish at the top-left, and hand the server a
+    // negative width and a negative height. The canonical form is what has to come back, and
+    // the creature has to disappear — two independent failures, so a normalisation that was
+    // removed, inverted or written as a bare `Math.abs` without the corner shift is caught by
+    // at least one of them.
+    const dragged = await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId,
+      x: overCreature.x + overCreature.width,
+      y: overCreature.y + overCreature.height,
+      width: -overCreature.width,
+      height: -overCreature.height,
+    })
+    const draggedRow =
+      (await client.query('fog:list', { code, sceneId })).find((row) => row._id === dragged.fogId) ??
+      null
+    const draggedDrift = draggedRow
+      ? firstDifference({ _id: dragged.fogId, ...overCreature }, draggedRow, 'draggedRect')
+      : 'no rectangle came back'
+    const backwards = await fogState()
+    check(
+      'a rectangle dragged bottom-right to top-left was normalised before it was stored, and it hides what it covers',
+      draggedDrift === null &&
+        !backwards.placed &&
+        backwards.band === null &&
+        backwards.lines === 0 &&
+        !backwards.leaked,
+      draggedDrift ??
+        `stored ${draggedRow.x} / ${draggedRow.y} + ${draggedRow.width} × ${draggedRow.height} from a drag of −${overCreature.width} × −${overCreature.height}, and the creature left the wire`,
+    )
+    await client.mutation('fog:erase', { code, dmCode, fogId: dragged.fogId })
+
+    // (d) A RECTANGLE OVER A CLAIMED HERO HIDES NOTHING, and the two boxes are drawn **at once**
+    // so that one payload carries both answers.
+    //
+    // This is a correctness requirement rather than a courtesy. `board.positions` takes no seat
+    // and must not — that is the per-seat cache split the feed deliberately walked away from —
+    // so fog is one answer for every non-DM, and without the controller exclusion a player who
+    // drags their own hero into a dark corridor loses their own coin from their own screen, with
+    // nothing to select and no way to undo. Drawing both rectangles together is what makes the
+    // positive control free: the creature's row is the proof that a box of exactly this shape,
+    // on exactly this scene, does hide a coin.
+    const heroSpot = await placementOf(heroToken.tokenId)
+    const overHero = {
+      x: heroSpot ? heroSpot.x - FOG_REACH : 0,
+      y: heroSpot ? heroSpot.y - FOG_REACH : 0,
+      width: FOG_REACH * 2,
+      height: FOG_REACH * 2,
+    }
+    const overHeroRect = await client.mutation('fog:draw', { code, dmCode, sceneId, ...overHero })
+    const alsoOverCreature = await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId,
+      ...overCreature,
+    })
+    const bothDrawn = await client.query('board:positions', { code, sceneId })
+    check(
+      'fog over a claimed hero hid nothing, while the identical box over an unclaimed creature hid it',
+      heroSpot !== null &&
+        bothDrawn.some((row) => row.tokenId === heroToken.tokenId) &&
+        // The positive control, and it is the same gesture rather than an argument about one.
+        !bothDrawn.some((row) => row.tokenId === fogToken.tokenId),
+      heroSpot
+        ? `the hero stands at ${heroSpot.x} / ${heroSpot.y} under fog and is still on the wire; the creature under the same box is not`
+        : 'no placement came back for the hero',
+    )
+    await client.mutation('fog:erase', { code, dmCode, fogId: overHeroRect.fogId })
+    await client.mutation('fog:erase', { code, dmCode, fogId: alsoOverCreature.fogId })
+
+    // (e) WHAT `fog:draw` REFUSES, against real value validation.
+    const badRect = (fields) =>
+      client.mutation('fog:draw', {
+        code,
+        dmCode,
+        sceneId,
+        x: 200,
+        y: 200,
+        width: 300,
+        height: 200,
+        ...fields,
+      })
+    // A zero-area rectangle looks like a usability refusal and is a data one: it covers no
+    // point, so it hides nothing — and there is nothing on screen to click, so the DM cannot
+    // erase it either. It would sit on the scene for ever, counting against the bound, reachable
+    // only by clearing the whole map.
+    await refuses('fog:draw refused a rectangle with no width', () => badRect({ width: 0 }))
+    await refuses('fog:draw refused a rectangle with no height', () => badRect({ height: 0 }))
+    // ⚠️ **The non-finite half is the worse of the two, and it is exactly the class of value
+    // convex-test stores without comment.** NaN and Infinity are perfectly ordinary float64s
+    // that survive the argument boundary, and they arrive from a division by a grid size of zero
+    // rather than from anything anybody typed. `rectCovers` fails **open** on a NaN, so an
+    // unrefused row of this shape is fog drawn on every screen that hides nothing whatever —
+    // the same failure as an unnormalised rectangle, reached by a different route.
+    await refuses('fog:draw refused a NaN corner', () => badRect({ x: Number.NaN }))
+    await refuses('fog:draw refused an infinite extent', () =>
+      badRect({ width: Number.POSITIVE_INFINITY }),
+    )
+    await refuses('fog:draw refused a well-formed wrong DM code', () =>
+      badRect({ dmCode: 'not-the-dm-code' }),
+    )
+    await refuses('fog:erase refused a caller without the DM code', () =>
+      client.mutation('fog:erase', { code, dmCode: 'not-the-dm-code', fogId: drawn.fogId }),
+    )
+    await refuses('fog:erase refused a rectangle that has already gone', () =>
+      client.mutation('fog:erase', { code, dmCode, fogId: drawn.fogId }),
+    )
+
+    // (f) A BOARD NOBODY IS LOOKING AT.
+    //
+    // Fog is not a secret on the map in front of the table and **is** a room-by-room sketch of
+    // one the party has not reached, so a non-DM may only ask about the active scene. It costs
+    // nothing in practice — `scenes.list` is DM-only, so a player has no route to another
+    // scene's id — which is exactly why it needs asserting: a guard that never fires in normal
+    // use is one a refactor can delete without anybody noticing.
+    const otherMapArt = await uploadPng(client, code, dmCode)
+    uploads.push(otherMapArt)
+    const otherMap = await client.mutation('scenes:create', {
+      code,
+      dmCode,
+      name: 'A Map the Party Has Not Reached',
+      imageId: otherMapArt,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+    })
+    extraScenes.push(otherMap.sceneId)
+    const otherFog = await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId: otherMap.sceneId,
+      x: 200,
+      y: 200,
+      width: 400,
+      height: 300,
+    })
+    const otherForPlayer = await client.query('fog:list', { code, sceneId: otherMap.sceneId })
+    const otherForDm = await client.query('fog:list', { code, sceneId: otherMap.sceneId, dmCode })
+    check(
+      'a non-DM asking about a scene nobody is looking at got nothing, and the DM got the rectangle',
+      otherForPlayer.length === 0 &&
+        // Two positive controls, because one is not enough: the rectangle exists for the DM, and
+        // the same caller with the same absence of a DM code can still read the *active* scene's
+        // fog — so this is a scope check rather than `fog:list` being broken for players.
+        otherForDm.some((row) => row._id === otherFog.fogId) &&
+        fogForPlayer.length > 0,
+      `${otherForPlayer.length} rows to a player, ${otherForDm.length} to the DM, against ${fogForPlayer.length} readable on the active board`,
+    )
+    // The second map is not made active by `scenes.create` — only a *first* map is, because a
+    // game with no board is unplayable — so the check above is about the scope and not about
+    // which scene happens to be in front of the table.
+    const stillActive = await client.query('scenes:active', { code })
+    check(
+      'creating a second map did not move the table onto it',
+      stillActive && stillActive._id === sceneId,
+      stillActive ? `still on ${JSON.stringify(stillActive.name)}` : 'no active scene came back',
+    )
+
+    // One rectangle left standing on the active board on purpose, so section 35's `fog:clear`
+    // has something to count. Placed in a corner no coin's centre is in, because a rectangle
+    // that fogged something would make every check between here and there a question about
+    // which coins happened to be nearby.
+    await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId,
+      x: 2100,
+      y: 1600,
+      width: 100,
+      height: 60,
+    })
+
+    // 33. HANDOUTS: A NEW `v.id('_storage')` TABLE, AND AN OPTIONAL POINTER ON A POPULATED ONE.
+    //
+    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE.** Two things, and they are different in kind.
+    //
+    // The first is `games.openImageId`, which is a **new optional field on the one document
+    // every client in a game subscribes to** — the field-by-field trap that has shipped twice in
+    // this project and that this script is the only thing to have ever caught. "Nothing is open"
+    // is spelled by the key's *absence*, written by patching `undefined`, because `undefined` is
+    // not a Convex value and there is no member of the union that means none. So this comes in
+    // the pair every trap here comes in: shown, and then hidden, with the second read asserted
+    // to be `null` rather than a stale pointer or a row with an empty name. Either alone is
+    // meaningless — the first passes on a deployment that materialised a default, the second on
+    // one that discarded the write.
+    //
+    // The second is `files.discard`. Every table holding a `v.id('_storage')` owes it a
+    // predicate, and forgetting one is silent until somebody's error path deletes somebody
+    // else's file. `storageGuard.test.ts` greps the schema and asserts the predicate is
+    // *imported*, which is the strongest thing a local test can say; only a deployment can say
+    // that the refusal fires, that `modalImages.remove` really deleted the bytes, and that the
+    // bearer URL captured beforehand has stopped resolving. convex-test's file storage is an
+    // in-memory stub keyed on the content hash, so it never had two blobs to tell apart and has
+    // no URLs at all.
+    const handoutBlob = await uploadPng(client, code, dmCode)
+    uploads.push(handoutBlob)
+    const handout = await client.mutation('modalImages:create', {
+      code,
+      dmCode,
+      name: HANDOUT_NAME,
+      imageId: handoutBlob,
+      imageWidth: HANDOUT_WIDTH,
+      imageHeight: HANDOUT_HEIGHT,
+    })
+    createdHandouts.push(handout.modalImageId)
+
+    // ⚠️ **NOT OPENED ON UPLOAD, and the contrast with `scenes.create` is why this is asserted
+    // rather than assumed.** A first map goes straight onto the table because a game with no
+    // board is unplayable and there is only one thing the DM can have meant. A handout is held
+    // up at a moment of the DM's choosing, and preparing one mid-session is ordinary — putting
+    // it on everybody's screen the instant the upload finished would be the app choosing that
+    // moment for them. This is also the absent-key half of the pair: `openImageId` is not on the
+    // document at all.
+    const openBeforeShow = await client.query('modalImages:open', { code })
+    const handoutList = await client.query('modalImages:list', { code, dmCode })
+    const listedHandout = handoutList.find((row) => row._id === handout.modalImageId) ?? null
+    const handoutsBefore = handoutList.length
+    check(
+      'modalImages:create stored the handout and did not open it, and the DM’s list has it with exactly five keys',
+      openBeforeShow === null &&
+        listedHandout &&
+        listedHandout.name === HANDOUT_NAME &&
+        listedHandout.imageWidth === HANDOUT_WIDTH &&
+        listedHandout.imageHeight === HANDOUT_HEIGHT &&
+        Object.keys(listedHandout).sort().join(',') === MODAL_IMAGE_KEYS,
+      listedHandout
+        ? `open ${JSON.stringify(openBeforeShow)}, keys: ${Object.keys(listedHandout).sort().join(',')}`
+        : 'no handout came back to the DM',
+    )
+    // The list is DM-only on `scenes.list`'s argument: the *names* are the spoiler, and `The
+    // Duke's Real Face` sitting in a payload tells the table what the next two hours hold
+    // whether or not a client renders it. Both refusals are worth having and they fire in
+    // different places — the first at Convex's own argument validation, before the handler runs,
+    // and the second inside `requireDm`.
+    await refuses('modalImages:list refused a call with no dmCode argument at all', () =>
+      client.query('modalImages:list', { code }),
+    )
+    await refuses('modalImages:list refused a well-formed wrong DM code', () =>
+      client.query('modalImages:list', { code, dmCode: 'not-the-dm-code' }),
+    )
+    await refuses('modalImages:create refused a blank name', () =>
+      client.mutation('modalImages:create', {
+        code,
+        dmCode,
+        name: '   ',
+        imageId: handoutBlob,
+        imageWidth: HANDOUT_WIDTH,
+        imageHeight: HANDOUT_HEIGHT,
+      }),
+    )
+
+    // SHOWN. `modalImages:open` takes the join code and nothing else, which is the whole
+    // feature rather than a relaxation: the act of opening one *is* the authorisation, so a
+    // player's payload and the DM's are the same five fields and what differs is which rows each
+    // may ask for. Diffed field by field against a hand-written object, because only a diff can
+    // tell a dropped key from a null.
+    await client.mutation('modalImages:show', {
+      code,
+      dmCode,
+      modalImageId: handout.modalImageId,
+    })
+    const shown = await client.query('modalImages:open', { code })
+    const shownDrift = shown
+      ? firstDifference(
+          {
+            _id: handout.modalImageId,
+            name: HANDOUT_NAME,
+            imageWidth: HANDOUT_WIDTH,
+            imageHeight: HANDOUT_HEIGHT,
+            // The one field a script cannot predict, taken off the row for the reason
+            // `expectedRollOf` takes each die's face off the row: it is minted by the
+            // deployment. That it *resolves* is the claim below, and it is a real HTTP GET.
+            imageUrl: shown.imageUrl,
+          },
+          shown,
+          'handout',
+        )
+      : 'nothing was open'
+    const handoutFetch = shown && shown.imageUrl ? await fetch(shown.imageUrl) : null
+    check(
+      'a player with only the join code got the shown handout, field for field, behind a URL that resolves',
+      shownDrift === null && handoutFetch !== null && handoutFetch.ok,
+      shownDrift ??
+        `${handoutFetch.status} from the signed URL, ${HANDOUT_WIDTH}×${HANDOUT_HEIGHT}`,
+    )
+
+    // HIDDEN — the absence half. `hide` takes no image id and clears whatever is open, so the
+    // patch writes `undefined` and the key leaves the document. `null` coming back here rather
+    // than a stale pointer is the round trip; a present key holding null would be a second
+    // spelling of none on a field that already has one, which is the convention ADR 0008
+    // settled.
+    await client.mutation('modalImages:hide', { code, dmCode })
+    const openAfterHide = await client.query('modalImages:open', { code })
+    const listAfterHide = await client.query('modalImages:list', { code, dmCode })
+    check(
+      'hiding it took it off every screen and left the handout itself alone',
+      openAfterHide === null &&
+        // The positive control: without it this passes on a deployment where `hide` deleted the
+        // row, or where `show` had never written the pointer in the first place.
+        listAfterHide.some((row) => row._id === handout.modalImageId),
+      `open ${JSON.stringify(openAfterHide)}, and the handout is one of ${listAfterHide.length} still in the game — positive control included`,
+    )
+
+    // `files.discard` REFUSES A BLOB A LIVE HANDOUT POINTS AT. Being DM-gated bounds *who* can
+    // call this and does nothing to make the call correct: the DM's own client invokes it, from
+    // an error path, with an id it may have mis-sequenced. Without `modalImageReferencesImage`
+    // this deletes the bytes out from under an image the table is looking at, and the row
+    // survives pointing at nothing.
+    //
+    // Captured with `refusalOf` rather than asserted with `refuses`, because the interesting
+    // claim is a **pair**: this exact call refuses now and accepts once the row has gone. Either
+    // half alone is meaningless — a `discard` that refused unconditionally would satisfy the
+    // first, and one that never asked any table would satisfy the second.
+    const discardWhileLive = await refusalOf(() =>
+      client.mutation('files:discard', { code, dmCode, imageId: handoutBlob }),
+    )
+    check(
+      'files:discard refused the blob while the handout still pointed at it',
+      discardWhileLive !== null && discardWhileLive.kind === 'BadInput',
+      discardWhileLive ? discardWhileLive.message : 'the deployment deleted a live handout’s bytes',
+    )
+
+    // AND THE OTHER SIDE OF IT. Shown again first, so the delete also has to repair the pointer
+    // — `remove` clears `openImageId` *before* deleting the row, because every client at the
+    // table is resolving it and relying on `open`'s defensive null branch is how that branch
+    // stops being defensive.
+    await client.mutation('modalImages:show', {
+      code,
+      dmCode,
+      modalImageId: handout.modalImageId,
+    })
+    const handoutUrl = shown ? shown.imageUrl : null
+    await client.mutation('modalImages:remove', {
+      code,
+      dmCode,
+      modalImageId: handout.modalImageId,
+    })
+    // Removed as part of the assertions, so the registry entry would make a run that went
+    // perfectly report a failed cleanup step — section 25 empties `reservedCharacters` for the
+    // same reason. What the registry is for is a run that fails between the create and here.
+    createdHandouts.length = 0
+    const openAfterRemove = await client.query('modalImages:open', { code })
+    const listAfterRemove = await client.query('modalImages:list', { code, dmCode })
+    const deadHandoutFetch = handoutUrl ? await fetch(handoutUrl) : null
+    check(
+      'removing the open handout closed it for everybody and took its bytes with it',
+      openAfterRemove === null &&
+        !listAfterRemove.some((row) => row._id === handout.modalImageId) &&
+        // ⚠️ The claim nothing but a deployment can make: the URL captured while it was open is
+        // a bearer link, unguessable but not permission-checked, and the promise is that the
+        // bytes behind it are *gone* rather than merely unreferenced. A 404 is that promise kept.
+        deadHandoutFetch !== null &&
+        deadHandoutFetch.status === 404,
+      deadHandoutFetch
+        ? `${deadHandoutFetch.status} from the URL the table was looking at, ${listAfterRemove.length} handouts left`
+        : 'no URL to re-fetch',
+    )
+    // And the other half of the pair: the refusal is gone with the row. `remove` took the bytes,
+    // so `discard` now returns early on a blob that is not in storage — the idempotent no-op
+    // branch rather than a second delete, which is precisely the property that makes sweeping the
+    // whole upload list in `finally` safe rather than a list of guesses about which uploads
+    // survived a run that failed halfway.
+    const discardAfterRemove = await refusalOf(() =>
+      client.mutation('files:discard', { code, dmCode, imageId: handoutBlob }),
+    )
+    check(
+      'the same files:discard call accepted once the handout was gone',
+      discardAfterRemove === null &&
+        // The positive control, and it is the other half of this pair: the identical call threw a
+        // moment ago, so this is a predicate answering a question rather than a mutation that
+        // never refuses anything.
+        discardWhileLive !== null,
+      `refused as ${discardWhileLive ? discardWhileLive.kind : 'nothing'} while the row lived, accepted after it went`,
+    )
+
+    // 34. MUSIC: THE FIRST NON-IMAGE UPLOAD THIS APPLICATION HAS EVER MADE.
+    //
+    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE, AND THIS IS WHERE INVARIANT 6 GETS ITS
+    // SHARPEST TEST.** An image is checked three times: the browser downscales it, the browser
+    // measures the result, and the server measures the stored blob. There is no
+    // lossless-enough transcode a browser can do to audio, so **the first of those does not
+    // exist** — `blob.size > MAX_MUSIC_BYTES` on the server is the whole of the enforcement
+    // rather than the last of three, and convex-test's file storage is an in-memory stub that
+    // never had a byte count to check. So the refusal below POSTs ten megabytes and one byte of
+    // real bytes to a real upload URL, because there is no cheaper way to find out that the only
+    // guard this feature has is there at all.
+    //
+    // The content type is the other half, and it can *only* be tested from here: it travels with
+    // the blob rather than with the mutation, so the header this script sets on its POST is the
+    // exact thing `music.create` reads back. It is honestly labelled in that handler as the
+    // header the browser chose, catching a DM who picked a PDF out of their downloads folder and
+    // nothing else — but a check that fires on the wrong file is worth having, and it has no
+    // other place to be exercised.
+    //
+    // `games.activeTrackId` is the third optional pointer on the game document, and gets
+    // `openImageId`'s pair treatment for the same reason: `music.select(null)` clears it by
+    // patching `undefined`, so "no music" is an absent key and `current` returning `null` rather
+    // than a stale pointer is a round trip somebody has to make.
+    const trackBlob = await uploadBlob(client, code, dmCode, 'audio/mpeg', MP3_BYTES)
+    uploads.push(trackBlob)
+    const track = await client.mutation('music:create', {
+      code,
+      dmCode,
+      name: TRACK_NAME,
+      // `fileId`, not `imageId`: the blob is not an image, the stored field says so, and this is
+      // the one mutation in the application taking a storage id under a different name.
+      fileId: trackBlob,
+    })
+    createdTracks.push(track.trackId)
+
+    const currentBeforeSelect = await client.query('music:current', { code })
+    const trackList = await client.query('music:list', { code, dmCode })
+    const listedTrack = trackList.find((row) => row._id === track.trackId) ?? null
+    const tracksBefore = trackList.length
+    check(
+      'music:create stored the track and did not put it on, and the DM’s list has it with exactly three keys',
+      currentBeforeSelect === null &&
+        listedTrack &&
+        listedTrack.name === TRACK_NAME &&
+        Object.keys(listedTrack).sort().join(',') === TRACK_KEYS,
+      listedTrack
+        ? `current ${JSON.stringify(currentBeforeSelect)}, keys: ${Object.keys(listedTrack).sort().join(',')}`
+        : 'no track came back to the DM',
+    )
+    await refuses('music:list refused a call with no dmCode argument at all', () =>
+      client.query('music:list', { code }),
+    )
+    await refuses('music:list refused a well-formed wrong DM code', () =>
+      client.query('music:list', { code, dmCode: 'not-the-dm-code' }),
+    )
+
+    // ⚠️ **THE ONLY DEFENCE, EXERCISED.** Ten megabytes and one byte, POSTed for real, refused
+    // on the stored size — which is read off the blob rather than taken as an argument, because
+    // the byte count is the one fact about an upload the client cannot be trusted to report: it
+    // is the client being checked. The rejected blob stays in storage on purpose, because a
+    // mutation is a transaction and a `ctx.storage.delete` on the way out of a throwing handler
+    // is rolled back with the rest of it — so the upload registry at the bottom of this file is
+    // the only thing that can reclaim it, and this is a ten-megabyte instance of exactly the
+    // leak `files.discard` exists to close.
+    const oversizedBlob = await uploadBlob(
+      client,
+      code,
+      dmCode,
+      'audio/mpeg',
+      Buffer.alloc(MAX_MUSIC_BYTES + 1),
+    )
+    uploads.push(oversizedBlob)
+    await refuses(
+      `music:create refused ${MAX_MUSIC_BYTES + 1} bytes of audio, one byte over the only limit this feature has`,
+      () => client.mutation('music:create', { code, dmCode, name: 'Too Long a Loop', fileId: oversizedBlob }),
+    )
+    // And the wrong kind of file entirely, which is a refusal on the header the browser chose at
+    // upload time. Reachable from nowhere else: nothing in a Convex mutation can set a stored
+    // blob's content type, so the POST this script makes is the whole of the setup.
+    const notAudioBlob = await uploadPng(client, code, dmCode)
+    uploads.push(notAudioBlob)
+    await refuses('music:create refused a blob the browser labelled image/png', () =>
+      client.mutation('music:create', { code, dmCode, name: 'A Screenshot, By Mistake', fileId: notAudioBlob }),
+    )
+    await refuses('music:create refused a blank name', () =>
+      client.mutation('music:create', { code, dmCode, name: ' ', fileId: trackBlob }),
+    )
+
+    // ON THE TABLE. What `select` broadcasts is a **pointer and nothing else** — no playhead, no
+    // started-at, no listener count — because a browser will not begin audio without a gesture
+    // in that browser, so a field claiming a track was playing would be a lie on every screen
+    // where nobody had pressed anything. The three-key payload is that absence, asserted.
+    await client.mutation('music:select', { code, dmCode, trackId: track.trackId })
+    const playing = await client.query('music:current', { code })
+    const playingDrift = playing
+      ? firstDifference(
+          {
+            _id: track.trackId,
+            name: TRACK_NAME,
+            // Taken off the row for `imageUrl`'s reason above: the deployment mints it.
+            url: playing.url,
+          },
+          playing,
+          'track',
+        )
+      : 'nothing was playing'
+    const trackFetch = playing && playing.url ? await fetch(playing.url) : null
+    check(
+      'a player with only the join code got the selected track, field for field, behind a URL that resolves',
+      playingDrift === null && trackFetch !== null && trackFetch.ok,
+      playingDrift ?? `${trackFetch.status} from the signed URL over ${MP3_BYTES.length} bytes of audio`,
+    )
+
+    // TAKEN OFF — the absence half, and the reason the argument is a union rather than an
+    // optional id: a mutation that means "no music" should say so, where an absent argument means
+    // "unchanged" in every other mutation in this codebase.
+    await client.mutation('music:select', { code, dmCode, trackId: null })
+    const currentAfterClear = await client.query('music:current', { code })
+    const listAfterClear = await client.query('music:list', { code, dmCode })
+    check(
+      'music:select(null) took the music off and left the track in the game',
+      currentAfterClear === null &&
+        // The positive control: without it this passes on a deployment where `select(null)`
+        // deleted the row, or where `select` had never written the pointer at all.
+        listAfterClear.some((row) => row._id === track.trackId),
+      `current ${JSON.stringify(currentAfterClear)}, and the track is one of ${listAfterClear.length} still loaded — positive control included`,
+    )
+
+    // `files.discard` REFUSES A REFERENCED TRACK'S BLOB, and this is the one refusal there where
+    // the blob could be ten megabytes — which is the other half of why `discard` matters more to
+    // `music.create` than to the two mutations it copies.
+    await refuses('files:discard refused the audio while the track still pointed at it', () =>
+      client.mutation('files:discard', { code, dmCode, imageId: trackBlob }),
+    )
+
+    // AND THE DELETE, with the track put back on first so the pointer repair is exercised too.
+    // Cleared rather than moved on to another track, for `scenes.remove`'s reason about the
+    // board: choosing what the table hears next is the DM's decision, and every client would
+    // follow this one silently.
+    await client.mutation('music:select', { code, dmCode, trackId: track.trackId })
+    const trackUrl = playing ? playing.url : null
+    await client.mutation('music:remove', { code, dmCode, trackId: track.trackId })
+    // Emptied for the reason `createdHandouts` is: the removal is one of the assertions.
+    createdTracks.length = 0
+    const currentAfterRemove = await client.query('music:current', { code })
+    const tracksAfterRemove = await client.query('music:list', { code, dmCode })
+    const deadTrackFetch = trackUrl ? await fetch(trackUrl) : null
+    check(
+      'removing the playing track took the music off every screen and took its bytes with it',
+      currentAfterRemove === null &&
+        !tracksAfterRemove.some((row) => row._id === track.trackId) &&
+        deadTrackFetch !== null &&
+        deadTrackFetch.status === 404,
+      deadTrackFetch
+        ? `${deadTrackFetch.status} from the URL the table was listening to, ${tracksAfterRemove.length} tracks left`
+        : 'no URL to re-fetch',
+    )
+
+    // 35. THE RECEIPT: WHAT THE CLIENT-REACHABLE DELETES LEAVE BEHIND.
+    //
+    // ⚠️ **`admin.purgeGame` is deliberately not called here, and this section is what stands in
+    // for it.** That function is an `internalMutation` on purpose — it did not have to answer
+    // "who may delete a game" ahead of the milestone that owns the question — so reaching it
+    // means holding deploy credentials, and this script authenticates with a game code over
+    // `ConvexHttpClient` like any other client. Wiring it into a test's cleanup path would make
+    // that test depend on credentials it does not otherwise need, and inventing a public
+    // mutation to tidy up after a smoke run would put the authorisation question back on the
+    // table. See the note in section 30 and the one in `finally`.
+    //
+    // So what is asserted is the claim a client *can* make: that the three tools this milestone
+    // added leave **nothing** behind once the DM has deleted what they made. That is worth a
+    // deployment's opinion because each of the three deletes cascades differently — `fog.clear`
+    // sweeps a range and reports a count, `modalImages.remove` and `music.remove` each take a
+    // blob with them and repair a pointer on the game document — and the residue this run does
+    // knowingly leave is a short, named list rather than whatever happened to survive.
+    const fogBeforeClear = await client.query('fog:list', { code, sceneId, dmCode })
+    const cleared = await client.mutation('fog:clear', { code, dmCode, sceneId })
+    const fogAfterClear = await client.query('fog:list', { code, sceneId, dmCode })
+    check(
+      'fog:clear counted exactly what was standing and left the board lit',
+      fogBeforeClear.length > 0 &&
+        cleared.removed === fogBeforeClear.length &&
+        fogAfterClear.length === 0,
+      `${cleared.removed} removed against ${fogBeforeClear.length} standing — positive control included, and the receipt is a number the panel can print`,
+    )
+    // The creature that spent this section being fogged is back on every screen, which is the
+    // check that says `clear` lifted the fog rather than deleting the coins under it.
+    const afterClear = await fogState()
+    check(
+      'the creature under the last rectangle is placed, banded and heard from again',
+      afterClear.placed && afterClear.band && afterClear.lines === 3,
+      `${afterClear.lines} lines, placed ${afterClear.placed}, vitals row ${JSON.stringify(afterClear.band && afterClear.band.kind)} — clear lifted the fog rather than deleting what was under it`,
+    )
+    const handoutsLeft = await client.query('modalImages:list', { code, dmCode })
+    const tracksLeft = await client.query('music:list', { code, dmCode })
+    const stillOpen = await client.query('modalImages:open', { code })
+    const stillPlaying = await client.query('music:current', { code })
+    check(
+      'the handout and the track left no row, no blob and no pointer behind',
+      handoutsLeft.length === 0 &&
+        tracksLeft.length === 0 &&
+        stillOpen === null &&
+        stillPlaying === null &&
+        // The positive controls, and they are the whole of what makes four empty answers mean
+        // anything: each list held exactly one row before the delete, so these are not four
+        // queries that have always answered emptily.
+        handoutsBefore === 1 &&
+        tracksBefore === 1,
+      `${handoutsBefore} handout and ${tracksBefore} track created, ${handoutsLeft.length} and ${tracksLeft.length} left, both pointers null`,
+    )
+    // ⚠️ **What this run does leave behind, stated rather than implied**, because a receipt that
+    // claimed everything was gone would be the wrong kind of reassuring. The game document
+    // stays, and section 30's ad-hoc feed lines with it; `npm run prune-games` is the broom, and
+    // the console lines under the cleanup below say so. Everything else this script made — every
+    // scene, coin, character, seat, rectangle, handout, track and blob — is reclaimed by a
+    // mutation an ordinary client can call.
+    // ⚠️ **The one thing this section asserts *about* the purge, which is that it cannot be
+    // reached.** CLAUDE.md's instruction is emphatic — do not give `purgeGame` a public mutation,
+    // because that puts "who may erase a game" back on the table and that question wants an ADR
+    // — and the only mechanism enforcing it is that an `internalMutation` is absent from the
+    // generated public API. That is a property of a deployed backend and of nothing else: the
+    // local suite calls internal functions directly through `t.mutation`, by design, so it
+    // structurally cannot tell an internal function from a public one.
+    //
+    // The refusal is checked for what it is rather than merely that it happened. A missing public
+    // function is a transport error naming the function; an argument-validation error would name
+    // the *field* — so a `purgeGame` that had quietly become public and merely disliked this id
+    // fails here instead of passing.
+    const purgeRefusal = await refusalOf(() =>
+      client.mutation('admin:purgeGame', { gameId: 'not-a-game-id-at-all' }),
+    )
+    const purgeMessage = purgeRefusal ? String(purgeRefusal.message ?? '') : ''
+    check(
+      'admin:purgeGame is not on the public API at all, so no client can reach it',
+      purgeRefusal !== null &&
+        purgeRefusal.kind === null &&
+        purgeMessage.includes('purgeGame') &&
+        !purgeMessage.includes('gameId'),
+      purgeRefusal ? purgeMessage : 'the deployment accepted a call to an internal mutation',
+    )
   } catch (error) {
     const data = error && error.data ? ` ${JSON.stringify(error.data)}` : ''
     record('the run completed without an unexpected error', false, `${error.message ?? error}${data}`)
@@ -4878,7 +6111,33 @@ async function main() {
       for (const characterId of createdCharacters) {
         await quietly(() => client.mutation('characters:remove', { code, dmCode, characterId }))
       }
+      // ⚠️ **The handouts and the tracks go here, and the position is worked out from one fact
+      // rather than chosen: `files.discard` refuses a blob a live row still points at.** So each
+      // of these rows has to be deleted *before* the upload sweep below, exactly as a scene and
+      // a token do — otherwise the sweep reports a failed cleanup step for every blob that was
+      // doing its job, which is the failure the ordering note on that loop already describes.
+      // Both mutations take their blob with them in the same transaction, so after these loops
+      // the two ids on the upload list are the harmless no-op case rather than live references.
+      //
+      // Above the scene rather than below it only because neither points at one: a handout and a
+      // track belong to the *game*, not to a board, so nothing here depends on the scene
+      // surviving and nothing in `scenes:remove` reaches them. Sections 33 and 34 empty these
+      // lists on the way past, so on a run that finishes both loops are no-ops — what they are
+      // for is a run that failed between creating one of these rows and deleting it.
+      for (const modalImageId of createdHandouts) {
+        await quietly(() => client.mutation('modalImages:remove', { code, dmCode, modalImageId }))
+      }
+      for (const trackId of createdTracks) {
+        await quietly(() => client.mutation('music:remove', { code, dmCode, trackId }))
+      }
       if (sceneId) await quietly(() => client.mutation('scenes:remove', { code, dmCode, sceneId }))
+      // Section 32's second map, which exists only so that "a board nobody is looking at" is a
+      // real board. It takes its own fog and its own blob with it, as any scene does.
+      for (const extraSceneId of extraScenes) {
+        await quietly(() =>
+          client.mutation('scenes:remove', { code, dmCode, sceneId: extraSceneId }),
+        )
+      }
       // The seats go too, which they did not before: `players.leave` has always existed
       // and the note here used to say otherwise. It is also the mutation that revokes a
       // departing seat's grants, so this sweep is a second, blunter exercise of
@@ -4904,7 +6163,10 @@ async function main() {
         await quietly(() => client.mutation('files:discard', { code, dmCode, imageId }))
       }
       console.log(
-        `\n  cleaned up the scene, ${created.length} tokens, ${createdCharacters.length} characters and ${seats.length} seats, and swept ${uploads.length} uploads`,
+        `\n  cleaned up ${1 + extraScenes.length} scenes, ${created.length} tokens, ${createdCharacters.length} characters and ${seats.length} seats, and swept ${uploads.length} uploads`,
+      )
+      console.log(
+        '  the fog, the handout and the track went with them — sections 33, 34 and 35 delete their own rows, and the two loops above are for a run that did not get that far',
       )
       console.log(
         `  the game itself remains, and section 30's ad-hoc feed lines with it: ${code} — \`npm run prune-games\` sweeps these up, and counts the feed lines`,
