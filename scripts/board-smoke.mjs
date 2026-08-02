@@ -1294,7 +1294,7 @@ async function main() {
       dmCode,
       sceneId,
       name: 'Ambush Skeleton',
-      layer: 'dm',
+      layer: 'gm',
       sizeSquares: 2,
       tint: '#2c3e50',
       imageId: secretArt,
@@ -3574,7 +3574,7 @@ async function main() {
       dmCode,
       sceneId,
       name: 'Shadow Under the Arch',
-      layer: 'dm',
+      layer: 'gm',
       sizeSquares: 2,
       tint: '#2c3e50',
       characterId: ambush.characterId,
@@ -3630,7 +3630,7 @@ async function main() {
     // grant was never written in the first place.
     check(
       'the grant was really there — the DM sees it on the hidden coin',
-      onDmLayer.layer === 'dm' && onDmLayer.granted === JSON.stringify([seatA.playerId]),
+      onDmLayer.layer === 'gm' && onDmLayer.granted === JSON.stringify([seatA.playerId]),
       `positive control — granted ${onDmLayer.granted} on the ${onDmLayer.layer} layer`,
     )
 
@@ -3660,12 +3660,12 @@ async function main() {
       code,
       dmCode,
       tokenId: hiddenToken.tokenId,
-      layer: 'dm',
+      layer: 'gm',
     })
     const backOnDmLayer = await layerState()
     check(
       'and back: hiding the coin again took the sheet, the row and the placement off the wire',
-      backOnDmLayer.layer === 'dm' &&
+      backOnDmLayer.layer === 'gm' &&
         backOnDmLayer.sheet === null &&
         backOnDmLayer.row === null &&
         !backOnDmLayer.visible &&
@@ -4142,7 +4142,7 @@ async function main() {
       // give: what is written on a coin is public by design, so reusing the name would make
       // the scan below unable to tell a leak from the thing it is meant to allow.
       name: 'Something Coiled',
-      layer: 'dm',
+      layer: 'gm',
       sizeSquares: 3,
       tint: '#145a32',
       characterId: feedCreature.characterId,
@@ -4650,7 +4650,7 @@ async function main() {
       code,
       dmCode,
       tokenId: feedToken.tokenId,
-      layer: 'dm',
+      layer: 'gm',
     })
     const rehiddenFeed = await client.query('feed:list', { code })
     const rehiddenSerialised = JSON.stringify(redactOpaque(rehiddenFeed))
