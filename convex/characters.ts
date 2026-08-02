@@ -43,6 +43,7 @@ import { crValidator } from './lib/creatures'
 import { deleteFeedForCharacter } from './lib/feed'
 import {
   MAX_CHARACTERS_PER_GAME,
+  activeSceneId,
   findGameByCode,
   getGameByCode,
   requireDm,
@@ -306,6 +307,12 @@ export const vitals = query({
     const { visible, controlled } = await boardCharacterAccess(
       ctx,
       game._id,
+      // The board a player is looking at, so a creature standing in a fogged corridor
+      // contributes no health band. Read off the game document rather than taken as an
+      // argument: this query is already split per seat by `playerId`, and a second axis
+      // would multiply the cache entries again for a value that is provably the same one
+      // every time — a player has no route to a scene id other than the active one.
+      activeSceneId(game),
       isDm,
       seats,
       args.playerId,

@@ -18,7 +18,6 @@ import {
   setTokenCharacter,
   setTokenControllers,
   setTokenLayer,
-  tokenLayerValidator,
   visiblePositions,
 } from './lib/board'
 import { getCharacterInGame } from './lib/characters'
@@ -26,10 +25,15 @@ import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
 import {
   MAX_SEATS_PER_GAME,
   MAX_TOKENS_PER_GAME,
+  activeSceneId,
   findGameByCode,
   requireDm,
   resolveDmAccess,
 } from './lib/games'
+// The NARROW three-member union, which is the only one anything outside `convex/schema.ts`
+// uses. `addToken` and `setLayer` validate against it, so no `dm` row can be created from
+// this deploy forward however many are still stored.
+import { tokenLayerValidator } from './lib/layers'
 import { getSeatInGame, listSeats } from './lib/players'
 import type { Point } from './lib/grid'
 import { isUsableTokenSize, snapToGrid } from './lib/grid'
@@ -179,6 +183,11 @@ export const tokens = query({
       resolveDmAccess(ctx, args.code, args.dmCode),
       listSeats(ctx, game._id),
     ])
+    // ⚠️ **No fog here, and the absence is load-bearing.** This query resolves a signed
+    // storage URL per token, so putting the fog question in it would make every drag frame
+    // re-resolve two hundred of them — see the note on `visibleTokens`. A fogged creature
+    // loses its placement, its health band and its feed lines; its coin's *name* stays in
+    // this payload, and the GM layer is the tool for hiding that.
     return await publicTokens(ctx, game._id, isDm, seats)
   },
 })
@@ -212,6 +221,19 @@ export const positions = query({
     // empty answer for a foreign scene leaks nothing — it is the absence of one.
     const scene = await findSceneInGame(ctx, game._id, args.sceneId)
     if (!scene) return []
+
+    // ⚠️ **A non-DM may only ask about the board in front of them**, and this closes a hole
+    // the two scene scopes would otherwise open. Fog is per scene, but the *character*
+    // crossing fogs against `activeSceneId` because that is the only board a player can be
+    // looking at. Without this line a player could name some other scene and receive
+    // placements filtered by that scene's rectangles instead — publishing the coordinates of
+    // exactly what the DM had blacked out, from a map the party has not reached.
+    //
+    // Empty rather than thrown, in this query's own register: everything unknown here paints
+    // an empty board rather than an error screen. It costs nothing in practice — `useBoard`
+    // only ever passes the active scene, and `scenes.list` is DM-only so a player has no
+    // route to another scene's id anyway.
+    if (!isDm && scene._id !== activeSceneId(game)) return []
 
     return await visiblePositions(ctx, game._id, scene._id, isDm)
   },

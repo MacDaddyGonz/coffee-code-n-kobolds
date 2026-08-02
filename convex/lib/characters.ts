@@ -703,6 +703,12 @@ export async function publicCharacters(
 export async function readableCharacterIds(
   ctx: QueryCtx,
   gameId: Id<'games'>,
+  // The board the table is looking at, so a creature standing in a fogged corridor is not
+  // heard from either. This is the third consequence of one filter in `boardCharacterAccess`
+  // — the band and the placement are the other two — and it arrives here without this module
+  // learning anything new about tokens, because what crosses the boundary is still a `Set` of
+  // ids somebody else has already filtered.
+  sceneId: Id<'scenes'> | null,
   isDm: boolean,
 ): Promise<Set<Id<'characters'>>> {
   // ⚠️ **The board is not read for the DM at all, and skipping it is declining to ask a
@@ -720,7 +726,7 @@ export async function readableCharacterIds(
   // `tokens` one would be the same mistake with a different table.
   const [characters, visible] = await Promise.all([
     allCharacters(ctx, gameId),
-    isDm ? EMPTY_IDS : visibleCharacterIds(ctx, gameId, false),
+    isDm ? EMPTY_IDS : visibleCharacterIds(ctx, gameId, sceneId, false),
   ])
 
   const readable = new Set<Id<'characters'>>()

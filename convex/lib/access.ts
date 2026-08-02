@@ -4,6 +4,7 @@ import type { Doc, Id } from '../_generated/dataModel'
 import type { QueryCtx } from '../_generated/server'
 import { controlledCharacterIds } from './board'
 import { CHARACTER_NOT_FOUND, findVisibleCharacter } from './characters'
+import { activeSceneId } from './games'
 import { findClaimHolder, listSeats } from './players'
 
 // THE EDIT RULE, and why it is a module of its own rather than three functions inside
@@ -165,6 +166,16 @@ async function resolveEditableCharacter(
     const controlled = await controlledCharacterIds(
       ctx,
       game._id,
+      // ⚠️ **Fog reaches this write path too, and that is deliberate rather than incidental.**
+      // Control is what carries a creature's sheet and its exact hit points to a granted
+      // seat, so a grant on something the party cannot see would be a door onto a secret
+      // that fog had just closed on the read side — the payload would withhold the band
+      // while this let the same seat open the stat block. That said, `foggedTokenIds`
+      // excludes anything with an effective controller, so a *granted* creature is never
+      // fogged in the first place and this argument changes no answer today. It is passed
+      // because the alternative is a `null` that says "no board", which would be a lie, and
+      // because the exclusion is a rule that could be narrowed later.
+      activeSceneId(game),
       false,
       await listSeats(ctx, game._id),
       playerId,
