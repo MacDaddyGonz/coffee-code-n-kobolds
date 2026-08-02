@@ -34,6 +34,7 @@ import type { QueryCtx } from './_generated/server'
 import type { Id } from './_generated/dataModel'
 import { countTokensInGame, deleteTokensInGame } from './lib/board'
 import { countCharactersInGame, deleteCharactersInGame } from './lib/characters'
+import { countFeedInGame, deleteFeedInGame } from './lib/feed'
 import { MAX_GAMES_LISTED, MAX_GAMES_SWEPT, publicGameValidator } from './lib/games'
 import { deleteSeatsInGame, listSeats } from './lib/players'
 import { deleteScenesInGame, listScenes } from './lib/scenes'
@@ -52,6 +53,11 @@ const purgeCountsValidator = v.object({
   tokens: v.number(),
   characters: v.number(),
   seats: v.number(),
+  // ⚠️ **The only one of the five that is not bounded by a limit the application
+  // enforces**, which is what makes it the one number here that can be large and the one
+  // sweep that can come up short. `MAX_FEED_ROWS_SWEPT` carries that argument, and
+  // `countFeedInGame` carries what it costs this query.
+  feed: v.number(),
 })
 
 /**
@@ -75,13 +81,18 @@ const purgeCandidateValidator = publicGameValidator
   .extend({ counts: purgeCountsValidator })
 
 /**
- * Four bounded reads over four tables, and the largest read anything in this
+ * Five bounded reads over five tables, and the largest read anything in this
  * application performs. `MAX_GAMES_LISTED` is what stops it running fifty times over.
  *
- * Every count comes from the module that owns the table — two of them because
+ * Every count comes from the module that owns the table — three of them because
  * `leakGuard.test.ts` insists, and the other two because a purge is exactly the sort
  * of code that grows a private copy of a table read when there is nowhere obvious to
  * put one.
+ *
+ * ⚠️ **The feed is the term that could break this, and it is bounded rather than
+ * excluded.** The other four count tables the application itself caps, so each is a few
+ * hundred rows at worst; nothing caps the feed. `countFeedInGame` is where the cost, and
+ * the reason the mitigation is the prefix rather than a smaller bound, is written down.
  */
 async function countsFor(ctx: QueryCtx, gameId: Id<'games'>) {
   return {
@@ -89,6 +100,7 @@ async function countsFor(ctx: QueryCtx, gameId: Id<'games'>) {
     tokens: await countTokensInGame(ctx, gameId),
     characters: await countCharactersInGame(ctx, gameId),
     seats: (await listSeats(ctx, gameId)).length,
+    feed: await countFeedInGame(ctx, gameId),
   }
 }
 
@@ -157,10 +169,13 @@ export const listByPrefix = internalQuery({
  *     surviving token holds a grant naming a seat that has gone — which is the exact
  *     residue `revokeControlForSeat` exists to prevent, avoided here by ordering
  *     instead of by repair.
- *  3. **Characters and their vitals.** Nothing points at a character any more.
- *  4. **Scenes and their placements.** Their placements went with the tokens; the
+ *  3. **Feed rows.** A feed row points at a character too, and it is the one thing in
+ *     this list that is history rather than state — which changes nothing about where it
+ *     goes. `characters.remove` puts it in the same position for the same reason.
+ *  4. **Characters and their vitals.** Nothing points at a character any more.
+ *  5. **Scenes and their placements.** Their placements went with the tokens; the
  *     sweep is kept for the pathological row whose token had already vanished.
- *  5. **The game document**, which the scenes pointed at and which points at one of
+ *  6. **The game document**, which the scenes pointed at and which points at one of
  *     them through `activeSceneId`. That mutual pointer is why it is last and why
  *     nothing bothers clearing `activeSceneId` on the way through.
  *
@@ -192,12 +207,19 @@ export const purgeGame = internalMutation({
 
     const tokens = await deleteTokensInGame(ctx, game._id)
     const seats = await deleteSeatsInGame(ctx, game._id)
+    const feed = await deleteFeedInGame(ctx, game._id)
     const characters = await deleteCharactersInGame(ctx, game._id)
     const scenes = await deleteScenesInGame(ctx, game._id)
     await ctx.db.delete('games', game._id)
 
     // The name and the code are read off the document before it goes, so the receipt
-    // names the game rather than an id nobody can read back.
-    return { name: game.name, code: game.code, counts: { scenes, tokens, characters, seats } }
+    // names the game rather than an id nobody can read back. ⚠️ A `feed` count equal to
+    // MAX_FEED_ROWS_SWEPT means the sweep filled its window and rows were left behind
+    // that nothing can reach afterwards — the one way this receipt can be short.
+    return {
+      name: game.name,
+      code: game.code,
+      counts: { scenes, tokens, characters, seats, feed },
+    }
   },
 })

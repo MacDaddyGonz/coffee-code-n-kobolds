@@ -136,6 +136,10 @@ function describeCounts(counts) {
     count(counts.tokens, 'token'),
     count(counts.characters, 'character'),
     count(counts.seats, 'seat'),
+    // Printed rather than left out, because it is the only one of the five that can be
+    // short: nothing caps the feed, so a number equal to MAX_FEED_ROWS_SWEPT means the
+    // sweep filled its window and left rows nothing can reach. See that constant.
+    count(counts.feed, 'feed line'),
   ].join(', ')
 }
 

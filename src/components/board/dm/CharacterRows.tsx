@@ -1,13 +1,15 @@
 import type { ReactNode } from 'react'
 import { useMemo } from 'react'
 import { useMutation, useQuery } from 'convex/react'
-import { Eye, EyeOff } from 'lucide-react'
+import { Dices, Eye, EyeOff } from 'lucide-react'
 
 import { HpControls } from '@/components/HpControls'
 import { ConfirmDialog } from '@/components/lobby/ConfirmDialog'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useRollControls } from '@/hooks/useRoll'
 import { useHpActions, useVitals } from '@/hooks/useVitals'
 import { cn } from '@/lib/utils'
 import { api } from '@convex/_generated/api'
@@ -104,8 +106,8 @@ export function useCharactersByGroup(code: string, dmCode: string): CharactersBy
 }
 
 /**
- * Everything the DM's sheet list needs, wired once: the roster above, plus the four writes
- * a row offers and the hit points it prints.
+ * Everything the DM's sheet list needs, wired once: the roster above, plus the writes a row
+ * offers — a `−5`, a delete, an eye and a die — and the hit points it prints.
  *
  * Two subscriptions, deliberately separate. The roster changes when somebody is created or
  * claimed; the hit points change several times a round. Folding them together would
@@ -143,6 +145,32 @@ export function useDmCharacterRows(code: string, dmCode: string) {
   const removeCharacter = useMutation(api.characters.remove)
   const setReserved = useMutation(api.characters.setReserved)
   const action = useLobbyAction()
+
+  /**
+   * The dice, which are the one write here this hook does not wire itself. `RollProvider`
+   * in `RightPane` holds the code, the seat, the mode and the private toggle, so there is
+   * no mutation to call for and nothing to re-verify — what the bundle below adds is the
+   * *request*, so no call site restates `{ kind: 'initiative' }`.
+   *
+   * ⚠️ **Read once here rather than in each button**, so a two-hundred-row selector holds
+   * one context subscription instead of two hundred. The only thing taken off it is `roll`,
+   * whose identity is stable for the whole session — `RollProvider` holds the mode and the
+   * private toggle in refs precisely so that it is — so pressing a die re-renders **nothing
+   * at all**, and setting advantage re-renders this hook's caller exactly once.
+   *
+   * ⚠️ **That sentence is true because `pending` is not in this context, and it was not true
+   * while it was.** The flag flips twice per roll, so a selector reading the controls used to
+   * reconcile two hundred rows twice for every die anybody pressed anywhere — on a tab
+   * `RightPane` `forceMount`s, so it happened while the DM was reading the feed. It now lives
+   * behind `useRollPending`, whose one reader is the feed's composer. See `initiativeProps`
+   * below for the separate reason the button does not *want* it, and why a die that greyed
+   * itself out mid-encounter would have spent the whole feature it exists to provide.
+   *
+   * A refused roll is **not** merged into `error` below, and that is `useRoll.ts`'s decision
+   * rather than an omission: it toasts, because the row a failed roll would have appeared on
+   * does not exist and there is nothing on screen to hang a message under.
+   */
+  const rolls = useRollControls()
 
   const remove = (character: PublicCharacter) =>
     action.run(`remove:${character._id}`, `Could not delete ${character.name}.`, () =>
@@ -192,6 +220,28 @@ export function useDmCharacterRows(code: string, dmCode: string) {
       pending: action.pending === `reserve:${character._id}`,
       onSet: (reserved: boolean) => reserve(character, reserved),
     }),
+    /**
+     * And for the die. **No `busy`/`pending` pair, unlike the two above — and no `pending`
+     * at all, which is the correction rather than an omission.**
+     *
+     * ⚠️ **A die that disables while a roll is in flight defeats the only thing this control
+     * is for.** The feature is *"rolling initiative for six goblins is six clicks in one
+     * list"*, and `useRollPending` is the panel's count of every roll in flight — so the
+     * first click would grey out all six buttons until the round trip returned, and clicks
+     * two through six would land on disabled buttons and be silently dropped. A DM going
+     * down a list at the speed of a list is precisely the case, not an edge one.
+     *
+     * There is nothing to protect against either, which is what makes this safe rather than
+     * merely nicer. A second roll is a second feed line and both are wanted; the mutation is
+     * one transaction per click; and the two guards that matter are elsewhere — the *delete*
+     * beside it disables because deleting twice is a refusal, and `Reserve` because it is a
+     * toggle whose second press undoes the first. A die is neither. The other two bundles
+     * keep their flags for exactly those reasons.
+     */
+    initiativeProps: (character: PublicCharacter) => ({
+      character,
+      onRoll: () => rolls.roll(character._id, { kind: 'initiative' }),
+    }),
   }
 }
 
@@ -233,7 +283,12 @@ export type CharacterRowProps = {
   /** Null while the subscription is still loading. `HpControls` draws the gap. */
   vitals: PublicVitals | null
   onAdjust: (delta: number) => void
-  /** Anything that belongs beside the name — a Delete, typically. */
+  /**
+   * Anything that belongs beside the name — a die and a Delete, typically. Rendered in a
+   * flex row of its own, so several controls sit on the name's line rather than growing the
+   * row by one line each; the ⚠️ below is why they must be *beside* the name button and not
+   * inside it.
+   */
   actions?: ReactNode
   /**
    * Whether this row is the one the whole shell is currently talking about. Drawn as
@@ -321,6 +376,91 @@ export function CharacterRow({
       </div>
       <HpControls vitals={vitals} onAdjust={onAdjust} />
     </li>
+  )
+}
+
+/**
+ * Rolling initiative from the list, without opening the sheet.
+ *
+ * **This is the one control here that exists because of where it is.** Everything else on a
+ * row is also on the sheet a click away; initiative is the roll a DM makes for *every*
+ * creature at once, and on the sheets that is six selections, six panels and six scrolls to
+ * find the same button six times. Beside the name it is six clicks in one list, with the
+ * panel below never changing.
+ *
+ * ⚠️ **It cannot show the modifier it is about to roll, and must not pretend to.**
+ * `publicCharacterValidator` carries an id, a name, a kind, a group, who has claimed it and
+ * whether it is reserved — there is no initiative bonus in a row payload, and putting one
+ * there means a `characters.sheet` subscription per row, which is the objection the CR
+ * banner note above already records. The number is resolved server-side by
+ * `initiativeBonusOf`, so this button says *what* is being rolled and never what it comes
+ * to; the answer arrives in the feed like everybody else's.
+ *
+ * ⚠️ **One path serves a hero and a monster, and a reader expecting two will go looking for
+ * the missing one.** `feed.roll`'s `initiative` arm asks `initiativeBonusOf`, which answers
+ * `abilityModifier(dex)` for a `pc` sheet and the stored `initiativeBonus` for a creature —
+ * a reduced sheet has no Dexterity to consult. So nothing here branches on
+ * `character.group`, and nothing should: this is the same button in all three sections, and
+ * that is a property of the server's arithmetic rather than a simplification made here.
+ *
+ * **Offered on a reserved row too, deliberately.** Hiding a character from the players does
+ * not hide it from the DM, and a creature built for somebody who has not arrived is exactly
+ * the sort of thing whose initiative gets rolled with everybody else's;
+ * `readableCharacterIds` keeps the resulting line out of the players' feed without this
+ * control having to know it does.
+ */
+export function RollInitiativeButton({
+  character,
+  onRoll,
+}: {
+  character: PublicCharacter
+  onRoll: () => void
+}) {
+  // Names the character, because six dice in a list are six identical buttons to a screen
+  // reader, and "Roll initiative" repeated six times is a list nobody can navigate. Reused
+  // as the first half of the tooltip so the two cannot come to disagree.
+  const label = `Roll initiative for ${character.name}`
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          aria-label={label}
+          onClick={(event) => {
+            // ⚠️ **Stopped deliberately, and it is a guard rather than a fix.** This is the
+            // class of bug the board settled last milestone — clicking a token selects it
+            // and does not open the hit-point editor, clicking its health bar opens the
+            // editor and does not move the token — and the row has the same two gestures:
+            // pressing the name selects the character and swaps the sheet below, pressing
+            // the die rolls without disturbing what the DM is looking at. Today the name is
+            // a *sibling* button and the `<li>` carries no handler, so nothing would bubble
+            // into either; the day the row itself becomes the click target — the obvious
+            // next request for a list of sheets — an unguarded die would roll *and* pull the
+            // panel onto a different creature, which is precisely the wrong moment to
+            // discover that.
+            event.stopPropagation()
+            onRoll()
+          }}
+        >
+          {/* Two dice rather than `Dice6`: at fourteen pixels a single pipped square reads
+              as a rounded box with specks in it, and the plural silhouette is legible at the
+              size an icon button actually draws it. It is not claiming two dice are thrown —
+              the accessible name and the feed line both say initiative, and `aria-hidden`
+              means the picture is never read out. */}
+          <Dices aria-hidden />
+        </Button>
+      </TooltipTrigger>
+      {/* The sentence rather than the label alone, on `ReserveCharacterButton`'s reasoning:
+          the label is what the icon already says, and what a DM cannot see is where the
+          number comes from — the row does not print it, so the tooltip says whose bonus is
+          being added. */}
+      <TooltipContent>
+        {label} — a d20 and its own bonus, straight to the feed.
+      </TooltipContent>
+    </Tooltip>
   )
 }
 

@@ -1,11 +1,14 @@
 import { Trash2 } from 'lucide-react'
 
 import { FieldError } from '@/components/FieldError'
+import { RollButton } from '@/components/sheet/RollButton'
 import { SheetEntryPicker, spellLevelLabel } from '@/components/sheet/SheetEntryPicker'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
+import type { FeedPart } from '@convex/lib/roll'
+import { partLabel, partsFor } from '@convex/lib/roll'
 import type { CatalogueEntry } from '@convex/lib/rules'
 import type { SheetEntry, SheetEntryCategory, SheetProblem } from '@convex/lib/sheet'
 import {
@@ -80,10 +83,23 @@ const EMPTY_TAKEN: ReadonlySet<string> = new Set()
  * different answer for every line. So each list sub-groups under Weapons, Actions and
  * Passives rather than the categories replacing the lists.
  *
- * The rolls milestone makes each row clickable to send a roll to the feed, and
- * alt-click sends the description instead. Nothing here rolls anything: the id on each
- * entry is what that will aim at, which is why `sheetProblem` refuses a sheet with a
- * duplicate or a missing one.
+ * **Each row is clickable now, and what it offers comes out of `partsFor`.** A weapon
+ * shows two buttons, an action one, a passive one, and alt-click on any of them sends the
+ * description instead. Nothing here rolls anything: the id on each entry is what the
+ * request aims at, which is why `sheetProblem` refuses a sheet with a duplicate or a
+ * missing one, and the expression behind it is read off the stored sheet by the server.
+ *
+ * ⚠️ **The buttons go in the row header, and that placement is what makes one
+ * implementation serve both branches of this component.** The body of a row is two things
+ * depending on `readOnly` — a pair of printed rolls for a library character or a creature,
+ * a row of `<Input>`s for a hand-built sheet — so an affordance built onto either of them
+ * would have to be built twice, and the second copy is the one that gets forgotten. The
+ * header is the one part of the row that is the same shape on every sheet.
+ *
+ * The `ReadOnlyRoll` line underneath is left exactly as it was, deliberately: it is what a
+ * reader checks *before* clicking, and its own comment says so. A `1d20+STR+PROF` that had
+ * become the button would be an affordance and a value in one place, which is the state in
+ * which nobody can tell what they are about to send.
  */
 export function SheetEntryList({
   title,
@@ -205,6 +221,36 @@ export function SheetEntryList({
   )
 }
 
+/**
+ * THE SENTENCE A SCREEN READER HEARS ON EACH ROLL BUTTON.
+ *
+ * A `Record` keyed by `FeedPart` rather than a switch or a ternary chain, which is this
+ * codebase's rule for a discriminated union and earns the usual refusal: a fifth part fails
+ * to compile here instead of leaving a control with no accessible name.
+ *
+ * ⚠️ **The visible *label* is deliberately not here, and it used to be.** Each part carried
+ * a `label` thunk beside its `says`, and three of the four returned a constant out of
+ * lib/roll.ts while the fourth reached for the category's word — a table restating a rule
+ * that module already owns, and the one place where two names for one roll could come apart.
+ * `partLabel(part, category)` is that rule, in the file that has both sources in front of it,
+ * so the buttons below and the `ReadOnlyRoll` line beneath them cannot disagree. The `text`
+ * entry's label went with them and is not mourned: `partsFor` never returns `'text'`, so it
+ * was never called.
+ *
+ * What is left is the part that is genuinely this component's, because it needs a value only
+ * this component has: the accessible name needs the **entry's name**, since `To hit` alone
+ * does not say which of a hero's four weapons a button belongs to. `RollButton` appends the
+ * mode to it. The `text` row survives here for a reason it does not survive above — alt-click
+ * is a modifier on a gesture rather than a fifth button, and its wording is the tooltip's
+ * hint, which is what stops the exhaustiveness check costing a dead field.
+ */
+const PART_SAYS: Record<FeedPart, (name: string) => string> = {
+  toHit: (name) => `Roll to hit for ${name}`,
+  roll: (name) => `Roll for ${name}`,
+  use: (name) => `Use ${name}`,
+  text: (name) => `Read out ${name}`,
+}
+
 function EntryRow({
   entry,
   index,
@@ -302,18 +348,44 @@ function EntryRow({
           ) : null}
         </div>
 
-        {readOnly ? null : (
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="ghost"
-            disabled={disabled}
-            aria-label={`Remove ${entry.name}`}
-            onClick={() => remove(index)}
-          >
-            <Trash2 />
-          </Button>
-        )}
+        {/* ⚠️ **Driven by `partsFor(category)` and by nothing else.** That function is
+            composed out of `rollShapeOf`, which is the one place `SheetEntryCategory` is
+            answered — so a fourth category arrives here with buttons already decided,
+            rather than falling through a category switch written a second time in a
+            component. CLAUDE.md invariant 9 exists because of exactly that shape of test.
+            It is also why there is no "only if the expression is filled in" condition: a
+            weapon offers a to-hit because it is a weapon, and a half-typed one is a
+            refusal the server words, not a button this component quietly withholds.
+
+            `shrink-0` so the group keeps its width against a long entry name, and the
+            controls sit in the order `partsFor` returns them — to hit before damage,
+            because that is the order they are pressed in. */}
+        <div className="flex shrink-0 items-center gap-1">
+          {partsFor(category).map((part) => (
+            <RollButton
+              key={part}
+              request={{ kind: 'entry', entryId: entry.id, part }}
+              says={PART_SAYS[part](entry.name)}
+              altSays={PART_SAYS.text(entry.name)}
+              disabled={disabled}
+            >
+              {partLabel(part, category)}
+            </RollButton>
+          ))}
+
+          {readOnly ? null : (
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              disabled={disabled}
+              aria-label={`Remove ${entry.name}`}
+              onClick={() => remove(index)}
+            >
+              <Trash2 />
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* The one part of a copied entry that stays editable, and the
@@ -325,15 +397,24 @@ function EntryRow({
           instructions nobody could follow. */}
       {readOnly ? (
         // Two labelled values on a weapon and one on an action, rather than a single
-        // "Roll" carrying whichever happens to exist. The rolls milestone announces
-        // "attacks with their" against the first and prints a number against the
-        // second, so a reader who cannot tell them apart here cannot check what they
-        // are about to click. A passive shows neither, because it has neither — and
-        // then the row omits the line rather than leaving an empty one spacing itself
-        // out below the description.
+        // "Roll" carrying whichever happens to exist. The announcement says "attacks
+        // with their" against the first and prints a number against the second, so a
+        // reader who cannot tell them apart here cannot check what they are about to
+        // click. A passive shows neither, because it has neither — and then the row
+        // omits the line rather than leaving an empty one spacing itself out below
+        // the description.
+        //
+        // ⚠️ **Both labels come from the shared vocabulary and neither is a literal**,
+        // which used to be true of only one of them. This line sits directly beneath
+        // the roll buttons in the header, and those ask `partLabel` for their words — so
+        // the to-hit asks it too, with the part named rather than the word spelled, and a
+        // hard-coded `"To hit"` a centimetre from the button that reads it properly is
+        // the drift that would have shown up as one row calling the same roll two things.
         toHit === null && roll === null ? null : (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            {toHit === null ? null : <ReadOnlyRoll label="To hit" value={toHit} />}
+            {toHit === null ? null : (
+              <ReadOnlyRoll label={partLabel('toHit', category)} value={toHit} />
+            )}
             {roll === null ? null : <ReadOnlyRoll label={SHEET_ENTRY_ROLL_LABELS[category]} value={roll} />}
           </div>
         )

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { whenCreated } from '@/lib/when'
+import { clockTime, whenCreated } from '@/lib/when'
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
@@ -76,5 +76,55 @@ describe('whenCreated', () => {
   // bare `2 March` that reads as this year's.
   test('a date in another year keeps its year', () => {
     expect(whenCreated(new Date(2024, 10, 19, 20, 0, 0).getTime(), NOW)).toBe('19 November 2024')
+  })
+})
+
+/**
+ * ⚠️ **Asserted as an equivalence rather than against literals, because the locale is the
+ * machine's.** `clockTime` passes `undefined` as the locale on purpose — a table spread
+ * across two countries each reads its own convention — so `4:20 pm` here would pass in
+ * London and fail in a runner whose ICU data says `16:20`. The property worth pinning is
+ * that the shared formatter answers exactly what a per-call `toLocaleTimeString` with the
+ * same options would, which is the behaviour this function was extracted from `FeedRow.tsx`
+ * carrying, and that a formatter reused across calls holds no state between them.
+ */
+const asClock = (at: number) =>
+  new Date(at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+
+describe('clockTime', () => {
+  test('the time the browser itself would print, morning and afternoon', () => {
+    const morning = new Date(2026, 7, 1, 9, 5, 0).getTime()
+    const afternoon = new Date(2026, 7, 1, 16, 20, 0).getTime()
+
+    expect(clockTime(morning)).toBe(asClock(morning))
+    expect(clockTime(afternoon)).toBe(asClock(afternoon))
+  })
+
+  // The two ends of a day, which is where a formatter with the wrong `hour` option shows
+  // itself — midnight as `0` or `24`, and midday as `0` in a twelve-hour cycle.
+  test('midnight and midday', () => {
+    const midnight = new Date(2026, 7, 1, 0, 0, 0).getTime()
+    const midday = new Date(2026, 7, 1, 12, 0, 0).getTime()
+
+    expect(clockTime(midnight)).toBe(asClock(midnight))
+    expect(clockTime(midday)).toBe(asClock(midday))
+  })
+
+  // The seconds are not in the options, so two instants inside the same minute are the
+  // same line on a feed row — which is what a clock without a second hand means.
+  test('the seconds are dropped rather than rounded', () => {
+    const onTheMinute = new Date(2026, 7, 1, 9, 5, 0).getTime()
+
+    expect(clockTime(onTheMinute + 45_000)).toBe(clockTime(onTheMinute))
+    expect(clockTime(onTheMinute + 59_999)).toBe(clockTime(onTheMinute))
+  })
+
+  // One formatter is shared by every caller, so this is the test that it is a pure
+  // function of its argument and not something with a remembered instant in it.
+  test('the shared formatter keeps nothing between calls', () => {
+    const at = new Date(2026, 7, 1, 9, 5, 0).getTime()
+
+    expect(clockTime(at)).toBe(clockTime(at))
+    expect(clockTime(at + HOUR)).not.toBe(clockTime(at))
   })
 })

@@ -128,3 +128,237 @@
     @apply font-sans;
     }
 }
+
+/* ===========================================================================
+   WHAT HAPPENS OVER THE MAP WHEN SOMEBODY ROLLS — the first keyframes of this
+   project's own, and the reason they are here rather than in a component.
+
+   Everything else in this application is a Tailwind utility, and that is still
+   the right default: a class in the markup is a style you can read next to the
+   thing it styles. A keyframe cannot be one. `@keyframes` is a *named,
+   document-scoped* rule — the name is the only handle CSS gives you on it, there
+   is no scoping mechanism for it short of a shadow root, and a `<style>` tag
+   rendered per component would register the same global name once per mount. So
+   the global stylesheet is not a compromise here; it is the only place the
+   language allows the declaration to live. The utilities that *use* these names
+   stay in the components, which is why the classes below carry an `animation`
+   shorthand and almost nothing else.
+
+   `tw-animate-css` was tried first and is not enough on its own: it gives the
+   fade and slide the announcement wants, and nothing resembling a shake, a
+   pulse, a burst or a radial spark. Half the block below in utilities and half
+   in keyframes would be worse than either.
+
+   ⚠️ **Everything here is prefixed `kk-`.** These names are global for the whole
+   document and share one namespace with Tailwind's own, with `tw-animate-css`'s
+   and with shadcn's; an unprefixed `shake` is a collision waiting for the next
+   dependency.
+
+   ⚠️ **A colour appears nowhere in this block.** The crit's red and green are one
+   definition, in `@/lib/crit`, because the feed row's marker has to be the same
+   red — so the components pass a colour in and these rules animate `opacity` and
+   `transform` only. Both are compositor-only properties, which is also why a
+   shake over a Konva canvas costs no layout.
+   =========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   The roll announcement
+   --------------------------------------------------------------------------- */
+
+@keyframes kk-announce-in {
+    from {
+        opacity: 0;
+        transform: translateY(-0.5rem) scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes kk-announce-out {
+    from {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-0.375rem) scale(0.98);
+    }
+}
+
+.kk-announce-in {
+    animation: kk-announce-in 220ms cubic-bezier(0.2, 0.8, 0.25, 1) both;
+}
+
+.kk-announce-out {
+    animation: kk-announce-out 260ms ease-in both;
+}
+
+/* ---------------------------------------------------------------------------
+   The crit
+
+   The shake is applied to the *map pane* and never to the document: a transform
+   on `<body>` would carry the header and the right-hand panel with it, and on a
+   `h-dvh` shell that reads as the application breaking rather than as a die
+   landing badly. `CritEffect.tsx` holds the other half of that decision.
+   --------------------------------------------------------------------------- */
+
+@keyframes kk-crit-shake {
+    /* Damped rather than even, so it reads as an impact and not as a wobble.
+       The 1% scale is overscan: a bare translate slides the pane off its own
+       box and shows a sliver of the shell behind it, and growing it very
+       slightly covers most of that without being visible as a zoom. */
+    0% {
+        transform: translate3d(0, 0, 0) scale(1);
+    }
+    12% {
+        transform: translate3d(-5px, 2px, 0) scale(1.01);
+    }
+    28% {
+        transform: translate3d(4px, -3px, 0) scale(1.01);
+    }
+    44% {
+        transform: translate3d(-4px, -1px, 0) scale(1.01);
+    }
+    60% {
+        transform: translate3d(3px, 2px, 0) scale(1.008);
+    }
+    76% {
+        transform: translate3d(-2px, -1px, 0) scale(1.005);
+    }
+    88% {
+        transform: translate3d(1px, 1px, 0) scale(1.002);
+    }
+    100% {
+        transform: translate3d(0, 0, 0) scale(1);
+    }
+}
+
+/* No `both` on the fill: the pane must be left with **no** transform at all
+   afterwards, because a transform is also a containing block for any fixed
+   descendant and a stacking context, and neither should outlive the animation. */
+.kk-crit-shake {
+    animation: kk-crit-shake 480ms cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
+/* ⚠️ **The base state is the *held* state, and the animation overrides it.** That
+   inversion is what makes the reduced-motion rule at the bottom of this file a
+   substitution rather than a deletion: switch the animation off and this element
+   is still a visible wash, because its resting opacity is the one below rather
+   than zero. Written the other way round — opacity 0 at rest, made visible only
+   by the keyframe — `animation: none` would silently hide the whole effect from
+   exactly the reader it is meant to accommodate. */
+.kk-crit-wash {
+    opacity: 0.32;
+    animation: kk-crit-wash 900ms ease-out both;
+}
+
+@keyframes kk-crit-wash {
+    0% {
+        opacity: 0;
+    }
+    14% {
+        opacity: 0.42;
+    }
+    42% {
+        opacity: 0.16;
+    }
+    64% {
+        opacity: 0.34;
+    }
+    100% {
+        opacity: 0;
+    }
+}
+
+/* ---------------------------------------------------------------------------
+   Fireworks, in CSS and nothing else
+
+   No particle library and no new dependency: a burst is one element per spark,
+   each handed an angle and a distance as custom properties by the component, and
+   `rotate()` then `translateY()` is what turns those two numbers into a radial
+   throw. Rotating first means the translate runs along the spark's own rotated
+   axis, so ten sparks at 36° apart leave the same origin in ten directions from
+   one keyframe.
+   --------------------------------------------------------------------------- */
+
+@keyframes kk-crit-burst {
+    0% {
+        opacity: 0.9;
+        transform: scale(0.2);
+    }
+    100% {
+        opacity: 0;
+        transform: scale(2.4);
+    }
+}
+
+@keyframes kk-crit-spark {
+    0% {
+        opacity: 0;
+        transform: rotate(var(--kk-angle, 0deg)) translateY(0) scale(0.4);
+    }
+    12% {
+        opacity: 1;
+    }
+    70% {
+        opacity: 0.85;
+    }
+    100% {
+        opacity: 0;
+        transform: rotate(var(--kk-angle, 0deg)) translateY(calc(var(--kk-reach, 48px) * -1))
+            scale(0.85);
+    }
+}
+
+.kk-crit-burst {
+    animation: kk-crit-burst 620ms ease-out var(--kk-delay, 0ms) both;
+}
+
+.kk-crit-spark {
+    animation: kk-crit-spark 900ms cubic-bezier(0.16, 0.72, 0.28, 1) var(--kk-delay, 0ms) both;
+}
+
+/* ---------------------------------------------------------------------------
+   prefers-reduced-motion — a substitution, not a switch-off
+
+   ⚠️ **Somebody who has asked for less motion still has to know they rolled a
+   20.** So nothing here is `display: none` on the thing that carries the
+   information:
+
+   - The **announcement** stops sliding and simply appears and disappears. Its
+     words, its total and — the part that matters — the `CRIT_LABEL` beside the
+     total are present in both modes and are the whole guarantee. See
+     `@/lib/crit`.
+   - The **wash** stops pulsing and becomes a *held* colour for as long as the
+     effect is on screen, red or green, which is the substitute chosen for the
+     alarm. It works because the resting opacity above is the visible one.
+   - The **shake** goes entirely. There is no static substitute for a shake, and
+     inventing one would mean two ways of saying the same thing the wash already
+     says.
+   - The **sparks** go, and they are the one place `display: none` is right: a
+     firework with its motion removed is thirty dots in a ring, which is noise
+     rather than a celebration and would sit on top of the held wash that is
+     already carrying the message.
+
+   ⚠️ **This is why the shake is applied by adding a *class* and never by writing
+   `style.animation`.** An inline style beats a media query in the cascade, so an
+   imperatively-styled shake would keep shaking for a reader who had asked it not
+   to, and no amount of care in the component would fix it. `CritEffect.tsx` says
+   the same thing from the other side.
+   --------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+    .kk-announce-in,
+    .kk-announce-out,
+    .kk-crit-shake,
+    .kk-crit-wash {
+        animation: none;
+    }
+
+    .kk-crit-burst,
+    .kk-crit-spark {
+        display: none;
+    }
+}

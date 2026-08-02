@@ -88,6 +88,72 @@ export const MAX_GAMES_LISTED = 50
 export const MAX_GAMES_ON_LANDING = 30
 
 /**
+ * How many feed lines a client is sent: the newest sixty, which is the scrollback the
+ * rolls panel renders.
+ *
+ * **Bounded at the read, like every read in this application.** `visibleFeed` in
+ * lib/feed.ts takes this many in `desc` order and never calls `.collect()`. That is the
+ * whole of the mechanism, and the two things it deliberately does *not* do are worth
+ * more words than the number is.
+ *
+ * ⚠️ **Nothing trims the table on the write path, and that is invariant 2 applied
+ * rather than ignored.** The tempting shape is a count-and-delete beside every insert,
+ * so that the table stays sixty rows long for ever — and that is precisely a range read
+ * in a hot write path, which is the thing invariant 2 exists to forbid. Every roll at
+ * the table would put the game's whole feed range into its transaction's read set, so
+ * two players rolling at once would conflict over rows neither of them wrote. Note
+ * which half of invariant 2 that is: a feed is a few rolls a minute, not the ten writes
+ * a second a drag makes, so the *rate* is not the concern here — the **growth** is, and
+ * growth and rate want different answers. Bounding the read answers growth and costs the
+ * write nothing at all.
+ *
+ * The growth is affordable to leave alone. A row is a subject, an expression, a handful
+ * of dice and two short strings — a few hundred bytes — so a year of weekly sessions is
+ * single-digit megabytes, and it goes with the game when `admin.purgeGame` takes it
+ * (`npm run prune-games`).
+ *
+ * ⚠️ **No `truncated` flag**, for `MAX_GAMES_ON_LANDING`'s stated reason and against
+ * `admin.listByPrefix`'s. There the flag is not decoration, because an operator deletes
+ * what they were shown. Here sixty lines is a **scrollback and not a search**: nobody
+ * acts on the end of it, so an under-reporting list costs a reader nothing, while a flag
+ * no component renders is one more field to keep in step with the projection. Paging
+ * back through a session's history would need a cursor and a screen to put one on;
+ * neither exists, and half of one built here is how a field arrives that nothing reads.
+ */
+export const MAX_FEED_ROWS_LISTED = 60
+
+/**
+ * The second bound on the same table, and a maintenance one: how many feed rows
+ * `admin.purgeGame` sweeps, and how many `countFeedInGame` counts for its receipt.
+ *
+ * One number serving both reads deliberately, so the dry run and the purge cannot
+ * disagree about what is there — the relationship `MAX_TOKENS_PER_GAME` already has to
+ * `countTokensInGame` and `deleteTokensInGame`. A receipt that promises a number the
+ * sweep does not reach is the only sign anybody would get that something was written to
+ * the game between the two calls, which is what `purgeCountsValidator` is for.
+ *
+ * ⚠️ **It is the one bound in `purgeGame` that can genuinely truncate, and truncation
+ * there leaves residue nothing can name.** Every other count in that receipt is bounded
+ * by a limit the application itself enforces — two hundred tokens, two hundred
+ * characters — so those sweeps cannot come up short. Nothing caps the feed, by the
+ * decision above, so a game with more rows than this loses its game document and keeps
+ * its feed, and no query can reach the leftovers afterwards. Two thousand is far more
+ * than a smoke run (which writes none at all) or a real session (a few hundred rolls)
+ * produces, and a count that comes back at exactly this number is the signal to look.
+ *
+ * The alternative was a delete that loops across transactions, and it is refused here
+ * rather than judged unnecessary: that is what a genuine per-game delete path needs, and
+ * Milestone 12 owns that decision together with the question of *who may ask for it*
+ * (see the header of `convex/admin.ts`). A maintenance script does not get to invent it.
+ *
+ * ⚠️ **Nothing player-facing may borrow this number.** `MAX_FEED_ROWS_LISTED` above is
+ * the bound a browser reaches, and it is sized for a panel rather than for a sweep —
+ * exactly the distinction the two `MAX_GAMES_*` bounds keep against
+ * `MAX_GAMES_ON_LANDING`.
+ */
+export const MAX_FEED_ROWS_SWEPT = 2000
+
+/**
  * Whether the group is still gathering or already on the board, spelled once.
  *
  * The schema, the public projection and `gameStatus` below all need this union, and

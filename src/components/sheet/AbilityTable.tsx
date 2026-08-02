@@ -1,4 +1,5 @@
 import { FieldError } from '@/components/FieldError'
+import { RollButton } from '@/components/sheet/RollButton'
 import { NumberInput, SheetCheckbox, signed } from '@/components/sheet/SheetFields'
 import type {
   AbilityKey,
@@ -47,6 +48,12 @@ export type AbilityTableProps = {
  * inferred from the other, because they differ by the proficiency bonus exactly when
  * the box is ticked — and seeing both is how somebody checks they ticked the right
  * ones.
+ *
+ * **Both of those numbers are now the roll they describe.** The modifier sends an ability
+ * check and the bonus sends a saving throw, through `RollButton`, which reads the target
+ * itself — so a sheet with nothing to aim at prints the same twelve numbers it always did.
+ * Nothing here works a roll out; `+3` is a label on a request, and the expression behind it
+ * is read off the stored sheet by the server.
  */
 export function AbilityTable({ sheet, problem, disabled, onScores, onSaves }: AbilityTableProps) {
   return (
@@ -118,7 +125,30 @@ function AbilityRow({
         <span className="text-center text-sm font-medium tabular-nums">{score}</span>
       )}
 
-      <span className="text-center text-sm tabular-nums">{signed(abilityModifier(score))}</span>
+      {/* ⚠️ **A wrapper around a cell changes the grid**, so the control goes inside the
+          same `flex justify-center` span the Save tick already uses rather than beside it.
+          `AbilityRow` returns five bare cells and the parent's `grid-cols-[…]` counts
+          them; an extra element here would shunt every row one column to the left.
+
+          `disabled` is threaded in for the same reason the tick and the score box take it:
+          a sheet mid-save is a sheet whose numbers are about to change, and the confusing
+          click is the one that rolls the stored modifier while the screen is showing an
+          unsaved one. */}
+      <span className="flex justify-center">
+        <RollButton
+          request={{ kind: 'check', ability }}
+          // `the` rather than `a`, and it is the one word that avoids a duplicated rule.
+          // Intelligence is the only ability whose name begins with a vowel, so "a
+          // Intelligence check" is wrong — and `article` in convex/lib/roll.ts, which
+          // exists for exactly this and is private to that module, cannot be imported.
+          // `the` is invariant across all six.
+          says={`Roll the ${ABILITY_NAMES[ability]} check`}
+          look="number"
+          disabled={disabled}
+        >
+          {signed(abilityModifier(score))}
+        </RollButton>
+      </span>
       <span className="flex justify-center">
         <SheetCheckbox
           id={`save-${ability}`}
@@ -132,8 +162,19 @@ function AbilityRow({
           onChange={(proficient) => onProficient?.(proficient)}
         />
       </span>
-      <span className="text-center text-sm font-medium tabular-nums">
-        {signed(savingThrowBonus(sheet, ability))}
+      <span className="flex justify-center">
+        <RollButton
+          request={{ kind: 'save', ability }}
+          says={`Roll the ${ABILITY_NAMES[ability]} saving throw`}
+          look="number"
+          // The weight this cell has always had, passed in rather than baked into the
+          // `number` look — the Mod cell beside it is not `font-medium` and this change is
+          // not the place to decide which of the two is right.
+          className="font-medium"
+          disabled={disabled}
+        >
+          {signed(savingThrowBonus(sheet, ability))}
+        </RollButton>
       </span>
     </>
   )

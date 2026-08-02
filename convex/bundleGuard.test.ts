@@ -35,6 +35,26 @@ import { describe, expect, test } from 'vitest'
  * `lib/creatures.ts` — ten ratings, five tiers, eight roles, two dozen tags, and
  * never a creature — which is exactly what the picker imports instead.
  *
+ * ⚠️ **Milestone 9 adds two more modules and the stake changes completely, which is
+ * why it is written down here rather than left to be inferred from the list.** For the
+ * corpora the cost of a stray import is kilobytes, and for `lib/bestiary/` a shelf of
+ * creature names as well. For `lib/dice.ts` it is neither: it is **the rule that a roll
+ * is decided on the server.** That module holds the arithmetic and the randomness, so a
+ * browser that can import it is a browser that can compute a roll — and a client that
+ * can compute a roll can choose one. Nothing about the bundle size matters here at all;
+ * a single `import` would move where the dice are thrown. `lib/feed.ts` is on the list
+ * for the ordinary reason instead: it is a choke point over a secret-bearing table
+ * (`leakGuard.test.ts`), and its reads take a pre-filtered set of ids that only a
+ * Convex function can have built.
+ *
+ * ⚠️ **`lib/roll.ts` is deliberately NOT on the list, and that absence is the design
+ * rather than an omission.** The browser has to render a row it was *sent* — the
+ * sentence, the mode note, the arithmetic, the labels on the buttons — so the
+ * vocabulary is browser-shared on purpose and that module's own header says so. The
+ * split between it and `lib/dice.ts` **is** the boundary this test enforces: wording
+ * and shapes on one side, evaluation and randomness on the other. Anybody moving a
+ * function between the two files is moving it across a security boundary.
+ *
  * The glob is rooted at `/src` rather than written relative, because this file
  * lives in `convex/` and Vite resolves a leading slash against the project root.
  */
@@ -47,13 +67,24 @@ const sources = import.meta.glob('/src/**/*.{ts,tsx}', {
 const scanned = Object.entries(sources)
 
 /**
- * A **quoted module specifier** naming any of the three forbidden modules, in
+ * A **quoted module specifier** naming any of the five forbidden modules, in
  * any spelling: `'@convex/lib/library'`, `'@convex/lib/library/wizard'`,
- * `'@convex/lib/bestiary/monstersLow'`, `"../../convex/lib/resolve"`. The alias
- * and the relative form both have to be covered — the app is set up to write the
- * alias, but nothing stops a file under `src/` reaching
- * `../../convex/lib/resolve`, and a guard that only knew the tidy spelling would
- * pass over the untidy one.
+ * `'@convex/lib/bestiary/monstersLow'`, `"../../convex/lib/resolve"`,
+ * `'@convex/lib/dice'`. The alias and the relative form both have to be covered —
+ * the app is set up to write the alias, but nothing stops a file under `src/`
+ * reaching `../../convex/lib/resolve`, and a guard that only knew the tidy spelling
+ * would pass over the untidy one.
+ *
+ * ⚠️ **`convex/` is now part of the pattern, and adding it was forced rather than
+ * tidy.** The needle used to begin at `lib/`, which was harmless while every
+ * forbidden name existed only under `convex/lib/`. `lib/dice.ts` broke that on the
+ * day it was written: the browser's dice work lives in `src/lib/dice/`, so a needle
+ * matching `lib/dice` would flag `'@/lib/dice/box'` — the client's own module,
+ * importing itself — and this guard's entire history is false positives on the code
+ * written most carefully to respect it. Anchoring on `convex/lib/` distinguishes the
+ * two directories and costs nothing, because every route from `src/` into `convex/`
+ * spells `convex/` somewhere: the alias is `@convex/…`, which contains it, and the
+ * untidy form is `../../convex/…`, which is it.
  *
  * **Matching the quotes rather than the bare path is the whole of what makes
  * this usable**, and it was not the first thing tried. Four modules under
@@ -76,10 +107,16 @@ const scanned = Object.entries(sources)
  * instead — the browser-safe vocabulary is `lib/creatures.ts`, which shares no
  * prefix with the corpus at all, and the negative test below pins that
  * distinction so nobody "fixes" it by widening the pattern.
+ *
+ * `dice` and `feed` inherit that gap and the naming rule that mitigates it, and for
+ * `feed` the rule now has an obvious casualty: **`convex/lib/feedback.ts` may not be
+ * called that.** That is the rule working rather than an inconvenience — the choice is
+ * between one module picking a different name and a pattern that flags the client's own
+ * imports again.
  */
-const FORBIDDEN = /['"][^'"\n]*lib\/(?:library|resolve|bestiary)(?:\/[^'"\n]*)?['"]/
+const FORBIDDEN = /['"][^'"\n]*convex\/lib\/(?:library|resolve|bestiary|dice|feed)(?:\/[^'"\n]*)?['"]/
 
-describe('the server-only corpora are kept out of the browser bundle', () => {
+describe('the server-only modules are kept out of the browser bundle', () => {
   /**
    * The anti-vacuity check, copied in intent from `leakGuard.test.ts`: if
    * `?raw` ever stops resolving under the edge-runtime environment the glob
@@ -123,7 +160,7 @@ describe('the server-only corpora are kept out of the browser bundle', () => {
     expect(text).toContain('@convex/lib/creatures')
   })
 
-  test('no module under src/ imports either corpus or the resolver', () => {
+  test('no module under src/ imports a corpus, the resolver, the evaluator or the feed', () => {
     // Every match rather than the first, so one run names every specifier that
     // has to go rather than one per file per run.
     const every = new RegExp(FORBIDDEN.source, 'g')
@@ -173,6 +210,21 @@ describe('the server-only corpora are kept out of the browser bundle', () => {
       "const lazy = await import('@convex/lib/bestiary/benchmarks')",
       "export * from '@convex/lib/bestiary/types'",
       "vi.mock('@convex/lib/bestiary')",
+      // The evaluator and the feed's choke point, in the same spellings. The
+      // double-quoted, relative, dynamic, re-exported and mocked forms are each a real
+      // route into a bundle rather than a variation for its own sake — and for
+      // `lib/dice.ts` every one of them ends with the browser holding the arithmetic and
+      // the randomness, which is the one thing that must stay on the server.
+      "import { evaluateRoll } from '@convex/lib/dice'",
+      'import { evaluateRoll } from "@convex/lib/dice"',
+      "import { critOf } from '../../convex/lib/dice'",
+      "const lazy = await import('@convex/lib/dice')",
+      "export * from '@convex/lib/dice'",
+      "vi.mock('@convex/lib/dice')",
+      "import { visibleFeed } from '@convex/lib/feed'",
+      "import type { PublicFeedRow } from '@convex/lib/feed'",
+      "import { writeFeedRow } from '../../convex/lib/feed'",
+      "vi.mock('@convex/lib/feed')",
     ]
     for (const line of imports) {
       expect(FORBIDDEN.test(line), line).toBe(true)
@@ -200,6 +252,25 @@ describe('the server-only corpora are kept out of the browser bundle', () => {
       '// resolve.ts applies the library, then the race, then the overrides.',
       ' * ⚠️ Not restated here, and not imported from `lib/bestiary/` either — that module may never',
       '// The summaries come from the DM-gated index query, never from lib/bestiary/.',
+      // ⚠️ **The browser's own dice work, which is the reason `convex/` had to become
+      // part of the pattern.** `src/lib/dice/` holds the `dice-box` wrapper — the
+      // physics, the assets, the throw animation — and it is imported by the components
+      // that show a roll. A needle beginning at `lib/dice` would flag every one of them
+      // for importing the client module they belong to.
+      "import { throwDice } from '@/lib/dice/box'",
+      "import type { DiceTheme } from '@/lib/dice/theme'",
+      "import { showDice } from './dice/box'",
+      // ⚠️ **The shared vocabulary, which must stay importable.** A client renders a feed
+      // row it was sent, so `rollSentence`, `rollWorking` and the labels run in the
+      // browser by design — see the ⚠️ at the top of this file. `lib/roll.ts` on the
+      // forbidden list would make the feed unrenderable.
+      "import { rollSentence, rollWorking } from '@convex/lib/roll'",
+      "import type { RollResult, FeedPart } from '@convex/lib/roll'",
+      "import { ROLL_MODE_LABELS } from '../../convex/lib/roll'",
+      // Prose about the boundary, which the components that respect it will be written
+      // with, exactly as five of them already are about the corpora.
+      ' * The arithmetic is convex/lib/dice.ts and may never be imported here — a roll the',
+      '// Rows arrive from convex/lib/feed.ts already filtered; nothing here decides.',
     ]
     for (const line of innocent) {
       expect(FORBIDDEN.test(line), line).toBe(false)
@@ -221,15 +292,22 @@ describe('the server-only corpora are kept out of the browser bundle', () => {
    * be named with a forbidden directory as its prefix** — and it is checked here,
    * against the real tree, rather than trusted.
    */
-  test('no module under convex/lib is named with a corpus directory as its prefix', () => {
+  test('no module under convex/lib is named with a forbidden module as its prefix', () => {
     const convexModules = import.meta.glob('./lib/*.ts', { eager: false })
     const names = Object.keys(convexModules)
     expect(names.length, 'the convex/lib glob loaded nothing').toBeGreaterThan(5)
     expect(names).toContain('./lib/creatures.ts')
     expect(names).toContain('./lib/resolve.ts')
+    // The browser-shared half of the rolls work, which is on neither list and has to
+    // exist for the ⚠️ at the top of this file to be about anything.
+    expect(names).toContain('./lib/roll.ts')
 
+    // `dice` and `feed` are in this list as well as in `FORBIDDEN`, which is what makes
+    // the naming rule the mitigation for their share of the gap too. Its most likely
+    // casualty is a future `lib/feedback.ts`: rename it, rather than widening a pattern
+    // that would then flag `src/lib/dice/` again.
     const shadowing = names.filter((path) =>
-      /\/(?:library|resolve|bestiary)[A-Za-z0-9]/.test(path),
+      /\/(?:library|resolve|bestiary|dice|feed)[A-Za-z0-9]/.test(path),
     )
     expect(
       shadowing,

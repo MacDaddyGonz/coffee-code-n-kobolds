@@ -385,6 +385,34 @@ export async function controlledCharacterIds(
 }
 
 /**
+ * The sight half alone. For `readableCharacterIds` in lib/characters.ts, which asks whose
+ * *name* this caller may be told, and has no grant question to ask at all.
+ *
+ * ⚠️ **This is not a revival of the `visibleCharacterIds` ADR 0005 named and
+ * `boardCharacterAccess` replaced**, and the difference is the whole reason it is allowed to
+ * exist. That function was a *second traversal* of the same two hundred rows, which is what
+ * made keeping it beside the control question wasteful. This one delegates to the single
+ * pass and throws half the answer away, so there is still exactly one loop over the board
+ * and exactly one `maySee`.
+ *
+ * ⚠️ **The empty roster is correct rather than a shortcut, and it is what this wrapper is
+ * for.** `boardCharacterAccess` consults `seats` only to build `holderByCharacter` for the
+ * control comparison, and it skips that entirely when no `playerId` arrives — so a caller
+ * with no grant question to ask has no use for the roster, and passing `[]` says so. What it
+ * buys is real: `listSeats` is a range read, so taking it would put the whole `players`
+ * table into the read set of a query that re-runs on every roll at the table, and every
+ * join, rename, claim and release would then re-push the feed to everybody. The same trade
+ * `visiblePositions` refuses to make one screen down, for the same reason.
+ */
+export async function visibleCharacterIds(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+  isDm: boolean,
+): Promise<Set<Id<'characters'>>> {
+  return (await boardCharacterAccess(ctx, gameId, isDm, [])).visible
+}
+
+/**
  * Positions on one scene, filtered to tokens this caller may see. For `board.positions`.
  *
  * Each position row is hydrated back to its token so the same `maySee` decides it.

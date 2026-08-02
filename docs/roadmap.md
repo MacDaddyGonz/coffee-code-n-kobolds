@@ -52,12 +52,15 @@ against this table:
 | Milestone 7 — [0007](adr/0007-monster-bestiary-and-cr-scaling.md) | DM tooling, layers, fog of war | 10 |
 | Milestone 8 — [0006](adr/0006-premade-character-library.md) | orphaned-blob sweeper | 12 |
 
-[ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md) and
-[ADR 0009](adr/0009-who-plays-what-and-what-control-grants.md) have no rows, and that is the
-discipline working rather than an omission: neither names a milestone number anywhere, so the fourth
-and fifth renumberings cost them nothing. Both say "the dice milestone" and "the DM-tooling
-milestone", which is the formulation that survives. **Two in a row is the convention holding**, and
-the table above stops growing on the day the last numbered ADR is superseded.
+[ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md),
+[ADR 0009](adr/0009-who-plays-what-and-what-control-grants.md),
+[ADR 0010](adr/0010-the-way-in-and-the-dms-coins.md) and
+[ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md) have no rows, and that is the
+discipline working rather than an omission: not one of them names a milestone number anywhere, so the
+fourth and fifth renumberings cost them nothing. They say "the dice milestone" and "the DM-tooling
+milestone", which is the formulation that survives. **Four in a row is the convention holding** —
+which is now long enough that it is simply how an ADR is written here — and the table above stops
+growing on the day the last numbered ADR is superseded.
 
 **This file no longer contains a forward reference by number, and that is the fix rather than a
 tidy-up.** Three renumberings taught the lesson [ADR 0006](adr/0006-premade-character-library.md)
@@ -1362,7 +1365,66 @@ its art, and grants it to a second player without going near the map.
 
 ---
 
-## Milestone 9 — Rolls, feed and dice
+## ✅ Milestone 9 — Rolls, feed and dice
+
+**Done.** The decisions are recorded in
+[ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md). Seven things it settled
+differently from the plan below, or found out by building it, so read them together:
+
+- **The plan's own corpus count was wrong, and regenerating it is what caught that.** It says 27
+  distinct roll expressions across the bestiary. `roll:` is used only by creature *abilities* — an
+  attack's damage is in `damage:` — so the real figure at each creature's own rating is **61**, and
+  **194** once every creature is resolved at every rating through the scaler. The union across all
+  three corpora is **227**. An evaluator satisfied against the 27 would have met the other 34 in
+  front of the group. This section's own ⚠️ said to regenerate rather than trust the table; that is
+  what it was for.
+- **`20d6+455` is not reachable, and the extremes are tested synthetically instead.** Challenge
+  ratings only span 0 to 6, so the steepest ratio in play tops out at twelve dice and a `+18`
+  modifier. The scaler *can* emit the wider shape, so the grammar's extremes are exercised with a
+  note saying they are synthetic — leaving them out would leave the evaluator unchecked at exactly
+  the point a wider range first reaches it.
+- **The dice library had to change, and ADR 0001 is superseded on that one row.**
+  `@3d-dice/dice-box` cannot be told what numbers to display — it rolls its own — which is
+  irreconcilable with the server deciding every roll. `@3d-dice/dice-box-threejs` is the same
+  author's fork that exists to keep predetermined rolling. Proven from the bundle's source (it swaps
+  the face's material index *after* the physics settles and reads the value back off the mesh
+  normals) and then in headless Chrome, with an unpinned roll beside it as the control. It uses
+  cannon-es rather than an ammo.js WASM blob, so the risk flagged below largely evaporated — but its
+  **d100 is a tens die**, so a server-decided 47 cannot be rendered at all.
+- **A grant cannot widen the feed, and the parameter that said it could was pure cost.**
+  `boardCharacterAccess` adds to `controlled` only on an iteration that already added to `visible`,
+  so the grant disjunct could admit nothing sight had not. It was still putting `playerId` on
+  `feed.list` and splitting the highest-churn subscription in the app into one cache entry per seat.
+  Found by the agent writing the leak tests — the second time in this milestone that a test found the
+  *reasoning* wrong rather than the code.
+- **`visibleFeed`'s window-before-filter comment argued for the opposite of what the code does.** It
+  claimed filtering first would leak a count; it is the other way round. The bounded read is the real
+  reason and the count inference is a cost, and both now say so — including in the threat model,
+  which gains its first *paid* guard beside all the free ones.
+- **The five open questions all resolved to "announce, do not adjudicate", and one of them was
+  already answered.** A hero's initiative bonus needed no new field: `initiativeBonusOf` has answered
+  for both sheet kinds since the sheets milestone and only had to be found.
+- **Three bugs survived 1,314 green tests, a clean lint and a 187/187 real-deployment smoke run, and
+  a browser found all three.** That is now true of every milestone. The worst was a double-click on a
+  weapon **losing the damage roll every time** — `RollButton` disabled itself on a panel-wide
+  `pending` count, so the first click greyed out the button beside it. To-hit-then-damage is the
+  interaction this milestone exists for, and the identical correction had already been written for
+  the initiative die one file over. The dice canvas also did not follow the pane divider (the engine
+  resizes on a `window` resize and nothing else), and the crit halo lit up **2.5 seconds** before the
+  total — long enough to read the colour and call the crit before the die landed.
+
+**Acceptance, as met:** a player clicks a saving throw and both screens show the same dice faces, the
+same floating announcement and the same feed line, with the roller seeing it **without leaving their
+sheet tab**. A weapon is two clicks and two lines. A passive adds a line and throws no dice. Alt-click
+sends the description. A natural 1 shakes the map pane and flashes red on every screen that received
+the row, a natural 20 celebrates, and both are suppressed under `prefers-reduced-motion` — where a
+*held* wash and the crit in words replace them, rather than nothing. The DM rolls a DM-layer creature
+and the player's window shows **nothing at all**; the coin moves to the player layer and the line
+appears, while its sheet stays refused. `npm run test:smoke` passes 187/187 against the real dev
+deployment, including every subject kind through the union, the exact key set at three depths, and
+`roll: null` coming back as a present key rather than a missing one.
+
+**The original plan follows.**
 
 The bit that makes it feel like a game.
 

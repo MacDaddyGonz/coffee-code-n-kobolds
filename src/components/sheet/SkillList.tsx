@@ -1,10 +1,11 @@
 import { Fragment } from 'react'
 
+import { RollButton } from '@/components/sheet/RollButton'
 import { SheetCheckbox, signed } from '@/components/sheet/SheetFields'
 import type { Skill, SkillProficiencies } from '@convex/lib/skills'
 import { SKILLS, skillBonus } from '@convex/lib/skills'
-import type { AbilityKey, PcSheet } from '@convex/lib/sheet'
-import { skillProficienciesOf } from '@convex/lib/sheet'
+import type { PcSheet } from '@convex/lib/sheet'
+import { abilityAbbreviation, skillProficienciesOf } from '@convex/lib/sheet'
 
 export type SkillListProps = {
   sheet: PcSheet
@@ -50,6 +51,18 @@ const SKILLS_BY_NAME: readonly Skill[] = [...SKILLS].sort((a, b) => a.name.local
  * Constitution simply never appears, and now needs no special case for it: the list is
  * walked skill by skill rather than ability by ability, so an ability with nothing under
  * it is not a group to skip — it is an ability nothing here mentions.
+ *
+ * **The bonus is now the roll**, exactly as the saving-throw column beside it is, which is
+ * the same argument one more time: a skill is a stat check with a name, so clicking one has
+ * to feel like clicking the other. `RollButton` reads the target itself, so a sheet with
+ * nothing to aim at prints the same thirteen numbers it always did.
+ *
+ * ⚠️ **`CreatureSkills` in `CreatureSheetView.tsx` is not this and must not be given the
+ * same treatment.** A creature's skills are pre-calculated sparse bonuses with no ability
+ * score, level or proficiency behind them, and the server refuses a `skill` request against
+ * a creature outright — so a clickable badge there would be a control whose only outcome is
+ * a toast. That component's own ⚠️ already says the two are not interchangeable; this is the
+ * same warning arriving from the other side.
  */
 export function SkillList({ sheet, disabled, onChange, note }: SkillListProps) {
   const proficiencies = skillProficienciesOf(sheet)
@@ -70,7 +83,7 @@ export function SkillList({ sheet, disabled, onChange, note }: SkillListProps) {
           <Fragment key={skill.key}>
             <label htmlFor={`skill-${skill.key}`} className="truncate text-sm">
               {skill.name}{' '}
-              <span className="text-muted-foreground text-xs">({abbreviate(skill.ability)})</span>
+              <span className="text-muted-foreground text-xs">({abilityAbbreviation(skill.ability)})</span>
             </label>
             <span className="flex justify-center">
               <SheetCheckbox
@@ -81,8 +94,23 @@ export function SkillList({ sheet, disabled, onChange, note }: SkillListProps) {
                 onChange={(trained) => onChange?.({ ...proficiencies, [skill.key]: trained })}
               />
             </span>
-            <span className="text-center text-sm font-medium tabular-nums">
-              {signed(skillBonus(sheet.abilities, sheet.level, proficiencies, skill.key))}
+            {/* The `flex justify-center` wrapper the tick beside it uses, for the reason
+                `AbilityTable` spells out: these are bare cells of the parent's grid, so an
+                element added around one of them shifts the whole row. */}
+            <span className="flex justify-center">
+              <RollButton
+                request={{ kind: 'skill', skill: skill.key }}
+                // No article needed and none invented: four of the thirteen names begin
+                // with a vowel, which is why `article` exists in convex/lib/roll.ts at
+                // all, and "Roll Athletics" needs neither it nor the `the` the ability
+                // rows use.
+                says={`Roll ${skill.name}`}
+                look="number"
+                className="font-medium"
+                disabled={disabled}
+              >
+                {signed(skillBonus(sheet.abilities, sheet.level, proficiencies, skill.key))}
+              </RollButton>
             </span>
           </Fragment>
         ))}
@@ -91,7 +119,3 @@ export function SkillList({ sheet, disabled, onChange, note }: SkillListProps) {
   )
 }
 
-/** `str` → `STR`, matching the tokens a roll like `1d20+STR` is written with. */
-function abbreviate(ability: AbilityKey): string {
-  return ability.toUpperCase()
-}

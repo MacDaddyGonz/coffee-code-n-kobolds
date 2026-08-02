@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'vitest'
 
 /**
- * The structural half of CLAUDE.md invariant 8 — now for both of this
+ * The structural half of CLAUDE.md invariant 8 — now for all three of this
  * application's same-shape secrets rather than one of them.
  *
  * `publicGameValidator` makes a leaked *field* throw, because a DM code does not
@@ -23,10 +23,11 @@ import { describe, expect, test } from 'vitest'
  * the same sweep.
  *
  * Running the sweep per pair buys a second thing that a single merged list would
- * not: each reader is swept against the *other* pair's tables. `lib/board.ts` may
- * not read `characters`, and `lib/characters.ts` may not read `tokens` — the two
- * choke points meet only through the narrow crossing `boardCharacterAccess` makes,
- * two sets of ids and never a `Doc`. (ADR 0005 knows that crossing by the name of
+ * not: each reader is swept against every *other* entry's tables. `lib/board.ts` may
+ * not read `characters`, `lib/characters.ts` may not read `tokens`, and neither of
+ * them may read `feed` — the choke points meet only through narrow crossings, a set
+ * of ids and never a `Doc`, which is what `boardCharacterAccess` hands to
+ * `lib/characters.ts` and what `readableCharacterIds` hands to `lib/feed.ts`. (ADR 0005 knows that crossing by the name of
  * its sight half alone, `visibleCharacterIds`; a grant gave it a second question to
  * answer about the same rows, and answering both in one pass retired the name.)
  *
@@ -51,9 +52,34 @@ type Guard = {
   reader: string
 }
 
+/**
+ * ⚠️ **Milestone 9 adds a third pair, and a feed row is the same shape of secret as the
+ * two above rather than a new one.** `Ancient Red Dragon attacks with their Bite` is a
+ * leaked *row*: it has precisely the shape of a line about a hero, so a projection over
+ * `feed` would approve an array made entirely of spoilers and no `returns:` validator
+ * could tell. Hence the same arrangement — one reader, `lib/feed.ts`, swept by the same
+ * loop.
+ *
+ * Two things about this entry are worth knowing before editing it.
+ *
+ * **It is the first pair whose *writes* matter as much as its reads.** The needles below
+ * only find reads, and that is deliberate rather than an oversight — `lib/board.ts`
+ * already inserts and deletes rows in `tokens` and nothing mechanical stops a second
+ * writer being written next door. The discipline is that the reasoning about what a row
+ * publishes belongs beside the predicate that decides it; the guard is not what is
+ * holding that.
+ *
+ * **`./feed.ts` is deliberately absent from the load check below, and it exists.** The
+ * sweep is a deny-list of every module *but* the declared reader, so that file has been
+ * checked against all seven tables since the moment it was written, with no entry here — which
+ * is the argument the `convex/bestiary.ts` note below makes at length. Naming it would only
+ * add a second assertion that the glob loaded, which `./schema.ts` and `./lib/games.ts`
+ * already provide.
+ */
 const GUARDS: Guard[] = [
   { tables: ['tokens', 'tokenPositions'], reader: './lib/board.ts' },
   { tables: ['characters', 'characterVitals'], reader: './lib/characters.ts' },
+  { tables: ['feed'], reader: './lib/feed.ts' },
 ]
 
 /**
