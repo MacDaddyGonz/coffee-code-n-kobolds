@@ -8,6 +8,7 @@ import type { PublicVitals } from '@convex/lib/characters'
 import type { Point } from '@convex/lib/grid'
 import { mayPlayersMove } from '@convex/lib/layers'
 import type { PublicScene } from '@convex/lib/scenes'
+import { hiddenFromParty, useFog } from '@/hooks/useFog'
 import { useVitals } from '@/hooks/useVitals'
 
 /** A token joined to where it stands on the active scene, or null if it stands nowhere. */
@@ -50,6 +51,22 @@ export type BoardToken = PublicToken & {
    * token happens to be drawn on.
    */
   canEditHp: boolean
+  /**
+   * Whether the party has lost sight of this token behind the DM's own fog. **False on
+   * every screen but the DM's**, and a cue rather than anything anybody may act on.
+   *
+   * ⚠️ **It is joined on here rather than asked for by the coin, and the reason is the
+   * shape of the answer rather than tidiness.** It is a crossing of three things — a
+   * position, a rectangle and the token's controllers — and this hook is where the first
+   * two already meet. `TokenCoin` sits four components down inside the Konva tree with no
+   * game code to subscribe with, so the alternative was a subscription per coin.
+   *
+   * Nothing here withholds a row: the withholding is `foggedTokenIds`', server-side,
+   * before a player's payload was assembled (CLAUDE.md invariant 1). See
+   * `hiddenFromParty` for the three clauses and for why a controlled token is never
+   * fogged.
+   */
+  hiddenFromParty: boolean
 }
 
 export type Board = {
@@ -142,12 +159,19 @@ export function useBoard(args: {
   // copies of the same rows and patching them separately. See `vitalsArgs`.
   const { of: vitalsOf } = useVitals(code, dmCode, playerId)
 
+  // The rectangles, for the DM's cue and for nothing else this hook does. Not a fifth
+  // subscription in practice: `FogLayer` is drawing the same entry beside this one, and
+  // `fogArgs` is what makes the two of them name it — `fog.list` is ungated and cheap, so
+  // a player holds it too and simply never looks at the answer this file computes from it.
+  const fog = useFog(code, scene?._id ?? null, dmCode)
+
   const isDm = dmCode !== null
 
   const joined = useMemo<BoardToken[]>(() => {
     if (!tokens) return []
 
     const at = new Map((positions ?? []).map((row) => [row.tokenId, { x: row.x, y: row.y }]))
+    const rects = fog ?? []
 
     // Order is left alone — `TokenLayers` splits the tokens by layer and stacks them
     // by size, which is a drawing decision and belongs with the canvas.
@@ -231,12 +255,21 @@ export function useBoard(args: {
         (isDm ||
           token.characterId === myCharacterId ||
           (playerId !== null && token.controllerIds.includes(playerId))),
+      // `isDm` first, so a player's board computes nothing: the question is *has the
+      // party lost sight of this*, which is not a sentence about your own screen, and a
+      // player's payload has already had the fogged rows taken out of it.
+      hiddenFromParty: isDm && hiddenFromParty(token, at.get(token._id) ?? null, rects),
     }))
     // `vitalsOf` is stable until the vitals themselves change, at which point every
     // token object here is rebuilt and every coin reconciles. That is the trade, and
     // it is the right way round: damage lands a few times a round, whereas a pan
     // lands sixty times a second and touches none of these dependencies at all.
-  }, [tokens, positions, isDm, playerId, myCharacterId, vitalsOf])
+    //
+    // `fog` joins that trade on the cheap side of it: a rectangle is drawn a handful of
+    // times an evening, so rebuilding every token object when one lands costs a
+    // reconciliation nobody can perceive — and the cue has to be exact at the moment the
+    // fog moves, which is precisely when the DM is looking at it.
+  }, [tokens, positions, fog, isDm, playerId, myCharacterId, vitalsOf])
 
   return {
     scene: scene ?? null,

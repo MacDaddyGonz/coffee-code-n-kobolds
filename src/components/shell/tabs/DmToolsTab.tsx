@@ -1,18 +1,21 @@
-import type { ReactElement } from "react";
+import type { ReactElement } from 'react'
 
-import { MapSetupPanel } from "@/components/board/dm/MapSetupPanel";
-import { StartGameButton } from "@/components/board/dm/StartGameButton";
-import { TabBody, TabPane } from "@/components/shell/TabPane";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { PublicGame } from "@/hooks/useSeat";
+import { FogTools } from '@/components/board/dm/FogTools'
+import { MapSetupPanel } from '@/components/board/dm/MapSetupPanel'
+import { ModalImagePanel } from '@/components/board/dm/ModalImagePanel'
+import { MusicPanel } from '@/components/board/dm/MusicPanel'
+import { StartGameButton } from '@/components/board/dm/StartGameButton'
+import { TabBody, TabPane } from '@/components/shell/TabPane'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import type { PublicGame } from '@/hooks/useSeat'
 
 export type DmToolsTabProps = {
-  code: string;
+  code: string
   /** Present means this browser holds it; every call inside re-verifies it server-side. */
-  dmCode: string;
+  dmCode: string
   /** Taken whole rather than as two derived props: the Start button needs both. */
-  game: PublicGame;
-};
+  game: PublicGame
+}
 
 /**
  * The DM's tools: the map, the fog, the pictures, the music, and the switch that
@@ -111,33 +114,7 @@ export function DmToolsTab({ code, dmCode, game }: DmToolsTabProps): ReactElemen
       <TabsContent value="fog" className="min-h-0">
         <TabPane>
           <TabBody className="gap-3">
-            {/* WIRING: FogTools is being written in parallel and is not on disk yet.
-                When it lands, add to the imports at the top of this file:
-
-                  import { FogTools } from "@/components/board/dm/FogTools";
-                  import { useQuery } from "convex/react";
-                  import { api } from "@convex/_generated/api";
-
-                take the scene at the top of the component:
-
-                  const scene = useQuery(api.scenes.active, { code });
-
-                — `{ code }` exactly, because `MapSetupPanel` already subscribes with
-                those args and an argument object of the same shape is the same cache
-                entry, one socket and one server-side execution rather than two — and
-                replace the paragraph below with:
-
-                  <FogTools code={code} dmCode={dmCode} scene={scene} />
-
-                ⚠️ The subscription is `PublicScene | null | undefined`: null is a game
-                with no map on the table and undefined is the first frame. Fog is drawn
-                per scene, so both are states this panel has to say something about
-                rather than states `FogTools` can assume away. Check its actual prop
-                type before assuming it takes all three. */}
-            <p className="text-muted-foreground text-sm">
-              Not in this build yet. Fog goes here — the rectangles that hide a corridor
-              from the table until somebody walks down it.
-            </p>
+            <FogTools code={code} dmCode={dmCode} />
           </TabBody>
         </TabPane>
       </TabsContent>
@@ -145,21 +122,7 @@ export function DmToolsTab({ code, dmCode, game }: DmToolsTabProps): ReactElemen
       <TabsContent value="images" className="min-h-0">
         <TabPane>
           <TabBody className="gap-3">
-            {/* WIRING: ModalImagePanel is being written in parallel and is not on disk
-                yet. When it lands, add to the imports at the top of this file:
-
-                  import { ModalImagePanel } from "@/components/board/dm/ModalImagePanel";
-
-                and replace the paragraph below with:
-
-                  <ModalImagePanel code={code} dmCode={dmCode} />
-
-                Nothing else is needed here — the panel owns its own subscription and
-                its own uploads, the way `MapSetupPanel` does. */}
-            <p className="text-muted-foreground text-sm">
-              Not in this build yet. The picture library goes here — the portrait or the
-              handout you throw up on everybody's screen at once, and take down again.
-            </p>
+            <ModalImagePanel code={code} dmCode={dmCode} />
           </TabBody>
         </TabPane>
       </TabsContent>
@@ -167,23 +130,10 @@ export function DmToolsTab({ code, dmCode, game }: DmToolsTabProps): ReactElemen
       <TabsContent value="music" className="min-h-0">
         <TabPane>
           <TabBody className="gap-3">
-            {/* WIRING: MusicPanel is being written in parallel and is not on disk yet.
-                When it lands, add to the imports at the top of this file:
-
-                  import { MusicPanel } from "@/components/board/dm/MusicPanel";
-
-                and replace the paragraph below with:
-
-                  <MusicPanel code={code} dmCode={dmCode} />
-
-                Same as Images: it owns whatever it subscribes to. */}
-            <p className="text-muted-foreground text-sm">
-              Not in this build yet. The music selector goes here — what the table is
-              listening to, chosen by you and started for everybody.
-            </p>
+            <MusicPanel code={code} dmCode={dmCode} />
           </TabBody>
         </TabPane>
       </TabsContent>
     </Tabs>
-  );
+  )
 }

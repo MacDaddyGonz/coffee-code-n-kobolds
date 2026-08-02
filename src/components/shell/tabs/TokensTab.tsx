@@ -6,6 +6,7 @@ import { TokenSwatch } from '@/components/board/dm/TokenSwatch'
 import { Badge } from '@/components/ui/badge'
 import { PickerRow } from '@/components/ui/picker-row'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useHiddenFromParty } from '@/hooks/useFog'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicToken } from '@convex/lib/board'
 import type { PublicCharacter } from '@convex/lib/characters'
@@ -187,6 +188,23 @@ export function TokensTab({
   const roster = useCharactersByGroup(code, dmCode)
 
   /**
+   * Which of these coins the party has lost sight of, for the badge on the row.
+   *
+   * ⚠️ **The ⚠️ above says this tab is not told where a coin stands, and this does not
+   * undo that.** No placement joins the coin list — a row still cannot say which map it
+   * is on — and the hook answers about the **active scene only**, which is the honest
+   * scope: fog is per map, so a coin parked on last week's dungeon is not standing in the
+   * dark, it is standing somewhere else. What it does cost is a `board.positions`
+   * subscription while the map has fog on it, and only then; the hook's own docblock
+   * carries that trade and the gate that keeps a game which never fogs anything paying
+   * nothing at all.
+   *
+   * A cue and never a filter: every coin in the game is in this list either way, which is
+   * the whole reason the list exists.
+   */
+  const hiddenFromParty = useHiddenFromParty(code, dmCode)
+
+  /**
    * Which creature a coin stands for. **The one place this tab answers that**, for a row
    * and for the selected coin alike.
    *
@@ -267,6 +285,7 @@ export function TokensTab({
                 token={token}
                 character={boundTo(token)}
                 charactersLoading={roster.loading}
+                hidden={hiddenFromParty(token)}
                 selected={token._id === selectedToken?._id}
                 onSelect={() => onSelectToken(token._id)}
               />
@@ -343,6 +362,7 @@ function TokenRow({
   token,
   character,
   charactersLoading,
+  hidden,
   selected,
   onSelect,
 }: {
@@ -351,6 +371,11 @@ function TokenRow({
   character: PublicCharacter | null
   /** True until `characters.list` has arrived, so *waiting* is not printed as *nothing*. */
   charactersLoading: boolean
+  /**
+   * Whether the DM's fog has taken this coin off the party's board — answered by the
+   * caller, from the same predicate the map's mark uses and the server's filter ran.
+   */
+  hidden: boolean
   selected: boolean
   onSelect: () => void
 }) {
@@ -381,15 +406,22 @@ function TokenRow({
               {binding} · {squares}
             </span>
           </span>
-          {/* Read straight off the payload, and the only badge on the row: the layer is the
-              one field about a coin whose being wrong spoils something or strands it, and a
-              DM scanning this list for "what have I left somewhere odd" is scanning for
-              exactly this. See the ⚠️ on `LAYER_BADGES`. */}
-          {badge === null ? null : (
-            <Badge variant={badge.variant} className="ml-auto">
-              {badge.label}
-            </Badge>
-          )}
+          {/* Both badges answer the same question a DM scans this list with — *what have
+              I left somewhere odd* — so they share one right-aligned group rather than
+              each claiming `ml-auto`, which would have put the second one wherever the
+              first happened to end.
+
+              The layer is read straight off the payload and is the one *field* about a
+              coin whose being wrong spoils something or strands it; see the ⚠️ on
+              `LAYER_BADGES`. Fog is not a field at all — it is a rectangle crossed with a
+              position — and it is the DM's only warning that a creature has gone from the
+              party's board, or that a rectangle drawn over a corridor also covered
+              somebody standing in it. `outline` rather than `destructive`: fog is
+              normally something the DM meant. */}
+          <span className="ml-auto flex shrink-0 items-center gap-1">
+            {hidden ? <Badge variant="outline">Hidden from party</Badge> : null}
+            {badge === null ? null : <Badge variant={badge.variant}>{badge.label}</Badge>}
+          </span>
         </span>
       </PickerRow>
     </li>

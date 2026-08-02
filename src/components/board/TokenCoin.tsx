@@ -1,5 +1,5 @@
 import { memo, useMemo } from 'react'
-import { Circle, Group, Text } from 'react-konva'
+import { Circle, Group, Line, Text } from 'react-konva'
 import type Konva from 'konva'
 
 import { COIN_DETAIL_MIN_DIAMETER, TokenHealthBar } from './TokenHealthBar'
@@ -25,6 +25,31 @@ const NAME_FONT_SIZE = 12
 
 /** White dashes on a dark shadow, so the ring reads on any map art. */
 const SELECTION_COLOUR = '#ffffff'
+
+/**
+ * The hidden-from-the-party mark: a small dark disc with a stroke through it, pinned to
+ * the coin's upper-right shoulder.
+ *
+ * ⚠️ **Deliberately nothing like the selection ring.** That is a dashed white circle
+ * *outside* the coin meaning "the arrow keys will move this", and the two would be read as
+ * one thing if this were also a ring — a DM who thought the marked coins were the selected
+ * ones would have exactly the wrong picture of their own board. A filled pip inside the
+ * coin's outline, in the universal shape for *not*, cannot be confused with it.
+ *
+ * A mark rather than a word, and rather than dimming the coin: the GM layer already
+ * spends opacity (`GM_LAYER_OPACITY`), the bar is above the coin and the name below it, so
+ * this is the one place left that is quiet and unoccupied.
+ *
+ * Screen-pixel sizes over the scale, like every other annotation here — an eight-pixel
+ * pip stays an eight-pixel pip on a one-square goblin and on a four-square dragon, which
+ * is what keeps it subtle on the creature it matters most for.
+ */
+const HIDDEN_RADIUS = 7
+const HIDDEN_FILL = 'rgba(2, 6, 23, 0.92)'
+const HIDDEN_INK = '#e2e8f0'
+const HIDDEN_STROKE = 1.5
+/** Where on the rim it sits: up and to the right, at 45°. */
+const HIDDEN_ANGLE = Math.SQRT1_2
 
 export type TokenCoinProps = {
   token: BoardToken
@@ -238,6 +263,50 @@ export const TokenCoin = memo(function TokenCoin({
           canEditHp={token.canEditHp}
           onOpenHp={onOpenHp}
         />
+      ) : null}
+
+      {/*
+        THE DM'S CUE, and it is required rather than decorative. Fog is a veil on the
+        DM's own screen — they see straight through it — so nothing else on this board
+        says that the party has stopped seeing this creature, and nothing else says that
+        the rectangle just dragged over the corridor also covered somebody in it.
+
+        `hiddenFromParty` is false for every client but the DM's, and the coins it is true
+        of are the ones `foggedTokenIds` withheld from the party's board entirely — the
+        same three clauses, sharing `anyRectCovers` rather than restating it, so the mark
+        and the withholding cannot come apart. A hero or a granted pet is deliberately
+        never marked: the server does not fog one, so a mark would be a lie about the one
+        thing the DM would act on.
+
+        Behind `showDetail` with the bar and the name, so a zoom-out drops the coin's
+        three annotations together rather than leaving pips over anonymous discs.
+      */}
+      {showDetail && token.hiddenFromParty ? (
+        <Group
+          x={radius * HIDDEN_ANGLE}
+          y={-radius * HIDDEN_ANGLE}
+          listening={false}
+        >
+          <Circle
+            radius={HIDDEN_RADIUS / scale}
+            fill={HIDDEN_FILL}
+            stroke={HIDDEN_INK}
+            strokeWidth={HIDDEN_STROKE / scale}
+            perfectDrawEnabled={false}
+          />
+          <Line
+            points={[
+              (-HIDDEN_RADIUS * 0.5) / scale,
+              (HIDDEN_RADIUS * 0.5) / scale,
+              (HIDDEN_RADIUS * 0.5) / scale,
+              (-HIDDEN_RADIUS * 0.5) / scale,
+            ]}
+            stroke={HIDDEN_INK}
+            strokeWidth={HIDDEN_STROKE / scale}
+            lineCap="round"
+            perfectDrawEnabled={false}
+          />
+        </Group>
       ) : null}
 
       {showDetail ? (

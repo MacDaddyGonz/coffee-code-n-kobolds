@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 
 import { BoardEmpty } from '@/components/board/BoardEmpty'
 import { BoardStage } from '@/components/board/BoardStage'
+import { FogLayer } from '@/components/board/FogLayer'
 import { TokenHpPopover } from '@/components/board/TokenHpPopover'
 import { TokenLayers } from '@/components/board/TokenLayers'
 import { ZoomControls } from '@/components/board/ZoomControls'
@@ -355,6 +356,31 @@ export function Board({
             // a stale copy of one.
             grid={draftGrid ?? undefined}
           >
+            {/*
+              ⚠️ **Under the coins, not between the player and GM layers — and the plan
+              said between.** The obvious reading of "fog is a layer" puts it above the
+              player tokens, and that is wrong here for a reason that only appears once
+              the server's rule is in front of you.
+
+              `foggedTokenIds` deliberately never fogs a token the table controls, so a
+              player's own hero standing in the dark keeps its position row on purpose —
+              the whole point being that a player who walks into a corridor does not lose
+              their own coin with no way to select it back. An **opaque** rectangle painted
+              over the top would take it away again, visually, having gone to some trouble
+              on the server not to.
+
+              Underneath, nothing leaks: every coin a player could have inside a rectangle
+              is one their table controls, because the server dropped the rest before the
+              payload was built. So the veil is a wash on the map, the party's own figures
+              stand on top of it, and the DM — who sees it at partial opacity — reads their
+              own coins against the dark.
+            */}
+            <FogLayer
+              code={code}
+              dmCode={dm.dmCode}
+              scene={scene}
+              scale={camera.camera.scale}
+            />
             <TokenLayers
               tokens={tokens}
               scene={scene}
