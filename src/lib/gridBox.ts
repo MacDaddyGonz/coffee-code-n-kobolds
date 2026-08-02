@@ -53,8 +53,7 @@ export type GridHandle = 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w' | 'bo
  * Every handle, in **paint order, bottom first** — the same discipline `TOKEN_LAYERS`
  * applies to the board. The body is drawn underneath so the eight grips sit on top of it
  * and win hit-testing, which is how a press on a corner resizes instead of translating.
- * Iterated by the renderer rather than nine elements being written out, so a handle
- * cannot arrive with nowhere to be drawn.
+ * Iterated by the renderer rather than written out — see CLAUDE.md invariant 9.
  */
 export const GRID_HANDLES: readonly GridHandle[] = [
   'body',

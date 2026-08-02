@@ -62,12 +62,9 @@ export type DmToolsTabProps = {
  * than rising above the strip, because the condition it is disabled on is *there is a
  * scene on the table*, and the control that puts one there is the panel directly above it.
  *
- * Rendered only when this browser holds a DM code, and that is a display decision and
- * not the guard: every query and mutation inside takes the code and re-verifies it
- * server-side (CLAUDE.md invariant 7), so a player who forced this on would get a
- * panel of controls and a refusal from each one. The sub-tabs add no gating of their
- * own and must not look as though they do — `RightPane`'s `DM_ONLY_TABS` is what keeps
- * this whole subtree off a player's strip, and it is one decision rather than five.
+ * ⚠️ **The sub-tabs add no gating of their own and must not look as though they do.**
+ * `RightPane`'s `DM_ONLY_TABS` is what keeps this whole subtree off a player's strip, and
+ * it is one decision rather than five.
  */
 export function DmToolsTab({ code, dmCode, game }: DmToolsTabProps): ReactElement {
   return (

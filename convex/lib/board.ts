@@ -22,7 +22,7 @@ import {
   MAX_TOKENS_PER_GAME,
 } from './games'
 import { findClaimHolder, holderByCharacter, listSeats } from './players'
-import type { Grid, Point } from './grid'
+import type { Grid, Point, Rect } from './grid'
 import { anyRectCovers, cellOf, centreOfCell, snapToGrid } from './grid'
 import {
   layerOf,
@@ -168,96 +168,115 @@ function maySee(token: Doc<'tokens'>, isDm: boolean): boolean {
   return isDm || maySeeLayer(layerOf(token.layer))
 }
 
-/**
- * No fog to apply. Frozen and shared for `EMPTY_IDS`' reason next door: it is returned rather
- * than built, and a Convex isolate outlives the request that warmed it — so a caller that
- * mutated it would poison every later request in that isolate.
- */
-const NO_FOG: ReadonlySet<Id<'tokens'>> = Object.freeze(new Set<Id<'tokens'>>())
+type FogVeil = {
+  rects: readonly Rect[]
+  holders: Map<Id<'characters'>, Doc<'players'>>
+}
 
 /**
- * WHICH TOKENS ARE STANDING IN THE DARK, as a set of ids. Empty when nothing is.
+ * The fog on one scene, read once, or null when there is none to apply.
  *
- * The second reason a row may be withheld, computed once per query and `&&`-ed against
- * `maySee` at each call site.
+ * Split from the test below because **the callers already hold most of what deciding needs**,
+ * and the first version did not take advantage of that: it range-read the placements a second
+ * time, point-got token documents its caller had just read, and fetched a roster it had been
+ * handed. Three redundant reads on the two hottest queries in the application, for an answer
+ * that was correct. So this reads only the part nobody else has — the rectangles — and
+ * `veiled` below is pure.
  *
- * ⚠️ **Three early returns before any read, and they are the whole cost model rather than
- * micro-optimisations.** Putting fog into `visibleTokens` means the queries built on it —
- * `board.tokens`, `characters.vitals`, `feed.list` — acquire a `tokenPositions` range read,
- * and that is the table written ten times a second during a drag. Stated plainly because it
- * is the shape invariant 2 exists to forbid, and it must be visible here rather than
- * discovered from a profiler.
- *
- * What makes it survivable:
+ * The early returns are the cost model, and each is deliberate:
  *
  * - **The DM reads nothing at all.** Not an optimisation: a `fogRects` read in the DM's
  *   transaction would put the scene's fog into the read set of every board query belonging to
  *   the one client that is *drawing* the fog, so each rectangle would re-execute the lot. The
- *   answer is already known — the DM sees everything — which is the same reasoning
- *   `readableCharacterIds` uses to skip the board entirely for a DM.
- * - **A scene with no rectangles returns before the positions read.** So a game that never
- *   uses fog has read sets byte-identical to what they were before fog existed, which is
- *   every game until somebody draws one. Pay-as-you-go, and this is the line that makes it so.
- * - **`board.tokens` is not a caller.** Fog filters positions and the character crossing, not
- *   the token projection, so signed storage URLs are never re-resolved on a drag — the cost
+ *   same reasoning `readableCharacterIds` uses to skip the board entirely for a DM.
+ * - **A scene with no rectangles returns before anything else.** ⚠️ Stated precisely, because
+ *   an earlier version of this comment claimed read sets *byte-identical* to before the feature
+ *   and that is not quite true — one empty range read on this scene's `fogRects` remains. What
+ *   is true is the half that matters: **nothing a `tokenPositions` write does can invalidate
+ *   it**, because an empty range is invalidated only by an insert into that range, which is
+ *   `fog.draw` and nothing else. So no subscription joins a drag's invalidation set until a
+ *   rectangle actually exists.
+ * - **`board.tokens` is not a caller.** Fog filters positions and the character crossing, never
+ *   the token projection, so signed storage URLs are not re-resolved on a drag — the cost
  *   ADR 0004 split the two board queries to avoid.
  *
- * ⚠️ **A token anybody at the table controls is never fogged, and this is a correctness
- * requirement rather than a courtesy.** `board.positions` takes no seat and must not — that
- * is the per-seat cache split the feed deliberately walked away from — so fog is one answer
- * for every non-DM. Without this clause a player who drags their own hero into a fogged
- * corridor loses their own coin from their own screen, with no way to select it back and no
- * way to undo, recoverable only by asking the DM. The exclusion also states what fog is
- * *for*: it hides what the DM placed. A hero and a granted pet belong to the table.
- *
- * The seat read this needs is the one `visiblePositions` was written to refuse, and that
- * docblock is corrected rather than overridden: it forbids a roster read *unconditionally*,
- * and the reason it gave — every join, rename and claim re-executing the position query — is
- * still true and still a real cost. What changed is that the read is now gated behind a
- * rectangle existing, so it is paid only by a game using fog, and `players` is the lowest-churn
- * table in a session anyway: joins and claims happen in the lobby, before a rectangle exists.
+ * ⚠️ **`seats` is taken rather than read, and an empty roster is a real answer rather than a
+ * missing one.** `boardCharacterAccess` hands over the roster it already built;
+ * `visibleCharacterIds` passes the empty one deliberately, because putting a `players` range
+ * read into the feed's read set would re-push sixty rows on every join, rename and claim — a
+ * trade that function's docblock refuses in as many words, and which the first version of this
+ * one quietly made anyway by calling `listSeats` itself. The consequence is on `veiled`.
  */
-async function foggedTokenIds(
+async function fogVeil(
   ctx: QueryCtx,
-  gameId: Id<'games'>,
   sceneId: Id<'scenes'> | null,
   isDm: boolean,
-): Promise<ReadonlySet<Id<'tokens'>>> {
-  if (isDm || sceneId === null) return NO_FOG
+  seats: Doc<'players'>[],
+): Promise<FogVeil | null> {
+  if (isDm || sceneId === null) return null
 
   const rects = await sceneFog(ctx, sceneId)
-  if (rects.length === 0) return NO_FOG
+  if (rects.length === 0) return null
 
-  const [placements, seats] = await Promise.all([
-    ctx.db
-      .query('tokenPositions')
-      .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
-      .take(MAX_PLACEMENTS_PER_SCENE),
-    listSeats(ctx, gameId),
-  ])
-  const holders = holderByCharacter(seats)
-
-  const fogged = new Set<Id<'tokens'>>()
-  for (const placement of placements) {
-    // The centre point, not the footprint. `cellOf` carries a half-square parity offset —
-    // an even-sized token centres on a grid *intersection* — so a footprint test needs
-    // `sizeSquares` and `gridSize`, which would mean reading the scene *document* here and
-    // would make an uncalibrated grid produce a NaN half-extent that silently unfogs the
-    // whole map. The stored coordinate already *is* the centre, so no grid enters at all.
-    // It is also stable at the boundary, where a footprint test makes a 2×2 ogre one pixel
-    // over the line vanish entirely while most of it stands in the lit room.
-    if (!anyRectCovers(rects, placement)) continue
-
-    const token = await ctx.db.get('tokens', placement.tokenId)
-    if (!token || token.gameId !== gameId) continue
-    const holder = token.characterId ? holders.get(token.characterId) ?? null : null
-    if (effectiveControllersOf(token, holder).length > 0) continue
-
-    fogged.add(placement.tokenId)
-  }
-  return fogged
+  return { rects, holders: holderByCharacter(seats) }
 }
 
+/**
+ * Is this token, standing here, hidden from the party? **Pure**, so a caller decides with the
+ * token and the placement it already has in hand.
+ *
+ * The centre point, not the footprint. `cellOf` carries a half-square parity offset — an
+ * even-sized token centres on a grid *intersection* — so a footprint test would need
+ * `sizeSquares` and `gridSize`, which means reading the scene *document*, and an uncalibrated
+ * grid would then produce a NaN half-extent that silently unfogs the whole map. The stored
+ * coordinate already *is* the centre, so no grid enters the question at all. It is also stable
+ * at the boundary, where a footprint test makes a 2x2 ogre one pixel over the line vanish
+ * entirely while most of it stands in the lit room.
+ *
+ * ⚠️ **A token anybody at the table controls is never veiled, and this is a correctness
+ * requirement rather than a courtesy.** `board.positions` takes no seat and must not — that is
+ * the per-seat cache split the feed deliberately walked away from — so fog is one answer for
+ * every non-DM. Without this clause a player who drags their own hero into a fogged corridor
+ * loses their own coin from their own screen, with no way to select it back and no way to undo,
+ * recoverable only by asking the DM. The exclusion also says what fog is *for*: it hides what
+ * the DM placed. A hero and a granted pet belong to the table.
+ *
+ * ⚠️ **With an empty roster that exclusion is inert, and that is an accepted consequence rather
+ * than a bug.** `visibleCharacterIds` passes no seats — see `fogVeil` — so on the feed's path a
+ * claimed hero and a granted pet both look uncontrolled here. For a **hero** that costs exactly
+ * nothing: `maySeeCharacter` admits a `pc` on its first line, so a hero is never in `visible`
+ * for a reason that matters and is never withheld from the feed whatever this answers. For a
+ * **granted pet** it means its lines are withheld while it stands in fog, even though its coin
+ * is still drawn for the seat holding it. Mildly inconsistent, and the alternative is a
+ * `players` range read on the highest-churn subscription in the application, which is the more
+ * expensive of the two by a wide margin.
+ */
+function veiled(veil: FogVeil | null, token: Doc<'tokens'>, at: Point): boolean {
+  if (veil === null) return false
+  if (!anyRectCovers(veil.rects, at)) return false
+
+  const holder = token.characterId ? veil.holders.get(token.characterId) ?? null : null
+  return effectiveControllersOf(token, holder).length === 0
+}
+
+/**
+ * Where every token on one scene is standing, keyed by token.
+ *
+ * The fourth spelling of this bounded read in this file, and the one that exists because
+ * `boardCharacterAccess` needs the crossing without being a position query. It is called only
+ * when a veil exists, so a game without fog does not perform it.
+ */
+async function placementsOn(
+  ctx: QueryCtx,
+  sceneId: Id<'scenes'>,
+): Promise<Map<Id<'tokens'>, Point>> {
+  const placements = await ctx.db
+    .query('tokenPositions')
+    .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
+    .take(MAX_PLACEMENTS_PER_SCENE)
+
+  return new Map(placements.map((placement) => [placement.tokenId, placement]))
+}
 
 /**
  * The seats the DM has explicitly granted this token to. The one accessor for the
@@ -486,10 +505,15 @@ export async function boardCharacterAccess(
   seats: Doc<'players'>[],
   playerId?: Id<'players'>,
 ): Promise<{ visible: Set<Id<'characters'>>; controlled: Set<Id<'characters'>> }> {
-  const [tokens, fogged] = await Promise.all([
+  const [tokens, veil] = await Promise.all([
     visibleTokens(ctx, gameId, isDm),
-    foggedTokenIds(ctx, gameId, sceneId, isDm),
+    fogVeil(ctx, sceneId, isDm, seats),
   ])
+  // Read only when there is a veil to apply, and *after* it — which is why this is not in the
+  // `Promise.all` above. A game with no fog therefore performs no placement read here at all,
+  // which is the whole of what makes the cascade free until it is used. Sequential costs one
+  // round trip on the path that has already decided it is paying for fog.
+  const at = veil === null || sceneId === null ? null : await placementsOn(ctx, sceneId)
 
   const visible = new Set<Id<'characters'>>()
   const controlled = new Set<Id<'characters'>>()
@@ -517,7 +541,11 @@ export async function boardCharacterAccess(
     // and fog is a fact about where it is standing — two separately-statable reasons, which
     // the DM's own screen has to be able to tell apart when it explains why the party cannot
     // see something.
-    if (fogged.has(token._id)) continue
+    //
+    // A token with no placement on this scene is not standing anywhere on it, so it cannot be
+    // in the dark — which is also why a creature prepared on another map keeps its band.
+    const standing = at?.get(token._id)
+    if (standing !== undefined && veiled(veil, token, standing)) continue
     visible.add(characterId)
     if (control === null) continue
     // The same rule `publicTokens` projects through and `requireMovableToken` refuses
@@ -607,18 +635,22 @@ export async function visibleCharacterIds(
  * second a drag already makes. It was right to refuse that read *unconditionally* while
  * nothing needed it.
  *
- * Fog needs it, and only when fog exists. `foggedTokenIds` reads the roster to answer "does
- * anybody at this table control this token?", because a token somebody controls must never
- * be fogged — see the warning there. Both that read and the placements read sit behind a
- * rectangle existing on this scene, so the paragraph above still describes what a game
- * without fog costs, exactly. A game with fog pays the roster read, and `players` is the
+ * Fog needs it, and only when fog exists — because a token somebody controls must never be
+ * veiled, or a player who walks their hero into the dark loses their own coin. So the roster
+ * read sits behind a rectangle existing on this scene, and the paragraph above still describes
+ * exactly what a game without fog costs. A game with fog pays it, and `players` is the
  * lowest-churn table in a live session anyway: joins and claims happen in the lobby, before
  * anybody has drawn a rectangle.
  *
- * The distinction to keep is the one that sentence was protecting: this signature still takes
- * no seats, and nothing composes a controller field into a position row. The roster is read
- * *inside the fog question*, conditionally, and nothing about who may move a token leaves
- * through this payload.
+ * The distinction that sentence was protecting still holds: this signature takes no seats, and
+ * nothing composes a controller field into a position row. The roster is read *inside the fog
+ * question*, conditionally, and nothing about who may move a token leaves through this payload.
+ *
+ * ⚠️ **The fog test adds no read of its own here, and that is why it is shaped as a pure
+ * function.** This query already range-reads the placements and already point-gets each token,
+ * so `veiled` decides from what the loop is holding. An earlier version called a helper that
+ * did both reads *again* — a duplicate 200-row scan and up to 200 duplicate point gets, ten
+ * times a second per client, on the query invariant 2 exists to protect.
  */
 export async function visiblePositions(
   ctx: QueryCtx,
@@ -626,13 +658,17 @@ export async function visiblePositions(
   sceneId: Id<'scenes'>,
   isDm: boolean,
 ): Promise<PublicPosition[]> {
-  const [placements, fogged] = await Promise.all([
+  const [placements, rects] = await Promise.all([
     ctx.db
       .query('tokenPositions')
       .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
       .take(MAX_PLACEMENTS_PER_SCENE),
-    foggedTokenIds(ctx, gameId, sceneId, isDm),
+    isDm ? [] : sceneFog(ctx, sceneId),
   ])
+  // The roster only once a rectangle exists — see the ⚠️ above. `fogVeil` is handed the seats
+  // rather than reading them, so the conditional lives here where the trade is being made.
+  const veil =
+    rects.length === 0 ? null : await fogVeil(ctx, sceneId, isDm, await listSeats(ctx, gameId))
 
   const rows = await Promise.all(
     placements.map(async (placement) => {
@@ -647,7 +683,7 @@ export async function visiblePositions(
       // position rows for what is standing in it. The coin is not drawn because the client
       // renders the intersection of the two board subscriptions, so a token with no
       // placement is simply not on this board.
-      if (fogged.has(placement.tokenId)) return null
+      if (veiled(veil, token, placement)) return null
       return { tokenId: placement.tokenId, x: placement.x, y: placement.y }
     }),
   )

@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { ReactElement } from 'react'
 
 import { useCharactersByGroup } from '@/components/board/dm/CharacterRows'
@@ -13,15 +14,14 @@ import type { PublicCharacter } from '@convex/lib/characters'
 import type { TokenLayer } from '@convex/lib/layers'
 
 /**
- * The badge on a coin's row, or `null` for the layer that needs none.
+ * The badge on a coin's row, or `null` for the layer that needs none. Exhaustive by
+ * construction — see CLAUDE.md invariant 9.
  *
- * ⚠️ **A `Record` rather than the single `layer === 'dm'` test this replaced**, and the
- * difference is what a DM uses this list for: they scan it asking *what have I left
- * somewhere odd*, and the one-test version could only answer that about the GM layer. A
- * Background coin was drawn with no badge at all — indistinguishable from an ordinary one,
- * in the only list in the application that shows every coin in the game. So the arrangement
- * a fourth layer would have inherited was not "no badge yet", it was "silently filed as
- * normal".
+ * ⚠️ **Worth the `Record` here specifically**, because of what a DM uses this list for:
+ * they scan it asking *what have I left somewhere odd*, and the `layer === 'dm'` test this
+ * replaced drew a Background coin with no badge at all — indistinguishable from an ordinary
+ * one, in the only list in the application that shows every coin in the game. What a fourth
+ * layer would have inherited was not "no badge yet", it was "silently filed as normal".
  *
  * Two words rather than the layer's full label from `TOKEN_LAYER_LABELS`: those are
  * sentences chosen to make a *choice* unambiguous at the moment it is made, and this is a
@@ -35,6 +35,12 @@ const LAYER_BADGES: Record<
   player: null,
   gm: { label: 'GM layer', variant: 'destructive' },
 }
+
+/**
+ * Held still, so the two states with no coins in them are one dependency rather than a fresh
+ * literal per render — which is what `useHiddenFromParty` needs of it below.
+ */
+const NO_TOKENS: PublicToken[] = []
 
 /**
  * What this tab has been handed about the board's coins: three states, not an array and a
@@ -201,8 +207,19 @@ export function TokensTab({
    *
    * A cue and never a filter: every coin in the game is in this list either way, which is
    * the whole reason the list exists.
+   *
+   * ⚠️ **A set of ids, and the coins go *in* — so the hook is handed this tab's array rather
+   * than handing back a predicate over its own.** Its docblock carries the argument; the part
+   * that matters here is that the identity of what comes back changes only when a creature
+   * crosses a rectangle's edge, which is what lets `TokenRow` below be memoised at all. The
+   * empty array is a module constant for the same reason: a fresh literal in the not-ready
+   * branch would be a changed dependency on every render of a tab that has nothing to show.
    */
-  const hiddenFromParty = useHiddenFromParty(code, dmCode)
+  const hidden = useHiddenFromParty(
+    code,
+    dmCode,
+    tokenList.kind === 'ready' ? tokenList.tokens : NO_TOKENS,
+  )
 
   /**
    * Which creature a coin stands for. **The one place this tab answers that**, for a row
@@ -285,9 +302,12 @@ export function TokensTab({
                 token={token}
                 character={boundTo(token)}
                 charactersLoading={roster.loading}
-                hidden={hiddenFromParty(token)}
+                hidden={hidden.has(token._id)}
                 selected={token._id === selectedToken?._id}
-                onSelect={() => onSelectToken(token._id)}
+                // The prop straight through rather than an arrow per row: the id comes back
+                // out of the row, which is `TokenLayers`' arrangement and is what the memo
+                // on `TokenRow` needs to skip anything at all.
+                onSelect={onSelectToken}
               />
             ))}
           </ul>
@@ -357,8 +377,17 @@ export function TokensTab({
  * The caption is the one join this tab performs. `publicTokenValidator` carries a
  * `characterId` and never a name — see the ⚠️ on the tab — so the name arrives from
  * `characters.list` and is looked up by the caller, which already holds the map.
+ *
+ * **Memoised, for `TokenCoin`'s reason on a list of the same length.** There can be two
+ * hundred of these, and the tab around them re-renders ten times a second for as long as
+ * anybody at the table is dragging a coin — the fog cue holds a `board.positions`
+ * subscription, and its own docblock calls that the honest price of a cue that is never
+ * stale. The price was being paid twice: once for the subscription, and once more for two
+ * hundred rows rebuilding a name, a binding and two badges that had not changed. Every prop
+ * is a primitive or an identity the caller holds still, `hidden` included, which is what
+ * makes the memo more than decoration.
  */
-function TokenRow({
+const TokenRow = memo(function TokenRow({
   token,
   character,
   charactersLoading,
@@ -377,7 +406,8 @@ function TokenRow({
    */
   hidden: boolean
   selected: boolean
-  onSelect: () => void
+  /** The id comes back out, so the caller passes one function for the whole list. */
+  onSelect: (tokenId: Id<'tokens'>) => void
 }) {
   const squares = `${token.sizeSquares} ${token.sizeSquares === 1 ? 'square' : 'squares'}`
 
@@ -397,7 +427,7 @@ function TokenRow({
 
   return (
     <li>
-      <PickerRow className="w-full" selected={selected} onClick={onSelect}>
+      <PickerRow className="w-full" selected={selected} onClick={() => onSelect(token._id)}>
         <span className="flex w-full items-center gap-2">
           <TokenSwatch name={token.name} tint={token.tint} artUrl={token.artUrl} />
           <span className="flex min-w-0 flex-col">
@@ -426,4 +456,4 @@ function TokenRow({
       </PickerRow>
     </li>
   )
-}
+})

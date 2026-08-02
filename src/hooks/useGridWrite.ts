@@ -86,6 +86,15 @@ export function useGridWrite(args: {
   // A count rather than a boolean: `settle` can go out while a `push` is still in flight,
   // and a boolean cleared by whichever returned first would say "saved" with a write
   // still outstanding.
+  //
+  // ⚠️ **State and not a ref, and it is state for one reader.** `GridCalibrator` prints
+  // "— saving…" off `pending`, so a ref would freeze that line and dropping the member would
+  // delete it. The cost is worth writing down rather than rediscovering: `Board` holds a
+  // second instance of this hook and never reads `pending`, so each of the ten throttled
+  // writes a handle drag sends re-renders the whole board twice for a value nothing there
+  // consumes. Twenty renders a second on top of the sixty `setDraftGrid` is already causing,
+  // for about a second — which is why the fix is not an `options.trackPending` flag threaded
+  // through both call sites, and is recorded here instead.
   const [writes, setWrites] = useState(0)
 
   // Behind a ref so `send` — and therefore the debounce and the throttle wrapped around

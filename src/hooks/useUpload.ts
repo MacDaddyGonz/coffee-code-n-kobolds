@@ -146,9 +146,7 @@ export type StoredUpload = {
 export type Upload = {
   /** The prepared blob waiting to be stored, or null when nothing is chosen. */
   prepared: Prepared | null
-  /** The chosen file's own name, for the before-and-after line. */
   fileName: string | null
-  /** What this kind's file field should offer, straight off the spec. */
   accept: string
   /** What the picker says while `prepare` runs — see `UploadSpec.preparing`. */
   preparing: string

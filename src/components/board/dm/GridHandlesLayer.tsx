@@ -1,7 +1,7 @@
 import { useRef } from 'react'
 import { Layer, Rect } from 'react-konva'
-import type Konva from 'konva'
 
+import { setCursor } from '../konvaPointer'
 import { GRID_HANDLES, handleAnchor } from '@/lib/gridBox'
 import type { GridBox, GridHandle } from '@/lib/gridBox'
 import type { Point } from '@convex/lib/grid'
@@ -29,11 +29,7 @@ const GRIP_SIZE = 12
 const GRIP_STROKE = 1.5
 const BOX_STROKE = 2
 
-/**
- * What the pointer looks like over each grip, keyed by the union so a tenth handle fails
- * to compile here rather than arriving with the default arrow and no way to tell it
- * resizes anything.
- */
+/** What the pointer looks like over each grip. Exhaustive — see CLAUDE.md invariant 9. */
 const HANDLE_CURSORS: Record<GridHandle, string> = {
   body: 'move',
   n: 'ns-resize',
@@ -49,13 +45,11 @@ const HANDLE_CURSORS: Record<GridHandle, string> = {
 export type GridHandlesLayerProps = {
   /** The box to draw, in image space — the caller's draft if it has one, else the scene's. */
   box: GridBox
-  /** The camera's scale. Needed for the same reason `GridOverlay` needs it. */
   scale: number
-  /** A grip was taken. The caller snapshots the box this gesture is measured from. */
+  /** The caller snapshots the box this gesture is measured from. */
   onGrab: (handle: GridHandle) => void
   /** Cumulative pointer movement since the grab, in image space. Feed it to `dragBox`. */
   onMove: (handle: GridHandle, delta: Point) => void
-  /** The pointer came up. Settle the write. */
   onRelease: () => void
 }
 
@@ -93,14 +87,6 @@ export function GridHandlesLayer({
   // so one ref rather than one per handle.
   const origin = useRef<Point | null>(null)
 
-  // Konva's own container, which sits inside BoardStage's div — the same trick `TokenCoin`
-  // uses. An inline style overrides the class-set cursor while the pointer is on a grip
-  // and clearing it hands control straight back.
-  const cursor = (event: Konva.KonvaEventObject<MouseEvent>, style: string) => {
-    const container = event.target.getStage()?.container()
-    if (container) container.style.cursor = style
-  }
-
   return (
     <Layer>
       {GRID_HANDLES.map((handle) => {
@@ -126,8 +112,8 @@ export function GridHandlesLayer({
             cornerRadius={isBody ? 0 : (GRIP_SIZE / scale) * 0.2}
             perfectDrawEnabled={false}
             draggable
-            onMouseEnter={(event) => cursor(event, HANDLE_CURSORS[handle])}
-            onMouseLeave={(event) => cursor(event, '')}
+            onMouseEnter={(event) => setCursor(event, HANDLE_CURSORS[handle])}
+            onMouseLeave={(event) => setCursor(event, '')}
             onMouseDown={(event) => {
               // See the ⚠️ above: without this the stage pans under the gesture and the
               // selection is cleared on the way up.
@@ -152,7 +138,7 @@ export function GridHandlesLayer({
               event.cancelBubble = true
               origin.current = null
               event.target.position(at)
-              cursor(event, HANDLE_CURSORS[handle])
+              setCursor(event, HANDLE_CURSORS[handle])
               onRelease()
             }}
           />

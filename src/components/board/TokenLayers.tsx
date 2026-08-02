@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import { Layer } from 'react-konva'
 
 import { TokenCoin } from './TokenCoin'
@@ -100,8 +100,18 @@ export type TokenLayersProps = {
  * `BoardStage`'s docblock describes for the map and the grid, and the reason a player never
  * wrestles with a rock they were never going to move. The refusal is `requireMovableToken`'s,
  * server-side, on every write.
+ *
+ * **Memoised, which finishes the job `TokenCoin`'s own memo started rather than duplicating
+ * it.** That one stops a coin reconciling; this one stops the board even asking. Every prop
+ * is a primitive or an identity `Board` holds still deliberately — the token array is a
+ * `useMemo` in `useSmoothPositions`, `shown` is a `useMemo` in `useBoardLayers`, the six
+ * handlers are `useCallback`s, and the scene comes off the subscription by reference — so a
+ * pan, a calibration draft and a band all changed nothing here and were costing a render of
+ * this component plus a shallow comparison per coin at sixty frames a second. ⚠️ The list of
+ * props is therefore a contract: a fresh object or arrow added to the call site in `Board`
+ * silently returns the whole board to paying that, with nothing failing to say so.
  */
-export function TokenLayers({
+export const TokenLayers = memo(function TokenLayers({
   tokens,
   scene,
   scale,
@@ -183,4 +193,4 @@ export function TokenLayers({
       })}
     </>
   )
-}
+})

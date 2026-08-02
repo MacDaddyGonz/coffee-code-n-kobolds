@@ -175,10 +175,8 @@ export function GridCalibrator({ code, dmCode, scene }: GridCalibratorProps) {
    * the first keystroke of "16" is a valid calibration for a one-square map, so a leading
    * write would redraw the grid to something absurd en route to the answer.
    *
-   * ⚠️ **Each handler passes the value it was just handed**, which is why there is no
-   * `latest` ref here any more and no `override` parameter on the write. Both existed only
-   * because the debounced closure was built during render and read state that had not
-   * re-rendered yet — see `useGridWrite`'s docblock for the full account.
+   * ⚠️ **Each handler passes the value it was just handed** rather than letting the write
+   * read state that has not re-rendered yet — see `useGridWrite`'s docblock.
    *
    * Not disabled while a write is in flight, unlike the old Save button. A field that goes
    * dead for the length of a round trip drops the next keystroke, and with a write on every
@@ -263,8 +261,7 @@ export function GridCalibrator({ code, dmCode, scene }: GridCalibratorProps) {
             setGridVisible(next)
             // Settled rather than debounced: a checkbox is one decision, not a run of
             // input to wait out, and a third of a second before the grid vanishes reads
-            // as lag. `next` goes in as an argument — this handler is the one that used
-            // to need the `override` parameter, because the write happens before React
+            // as lag. `next` goes in as an argument because the write happens before React
             // has re-rendered with the value it just set.
             write.settle(grid, next)
           }}

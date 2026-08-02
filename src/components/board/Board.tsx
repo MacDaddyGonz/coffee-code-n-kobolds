@@ -16,6 +16,7 @@ import { useBoardCamera } from '@/hooks/useBoardCamera'
 import { useBoardKeys } from '@/hooks/useBoardKeys'
 import { useBoardLayers } from '@/hooks/useBoardLayers'
 import type { Dm } from '@/hooks/useDm'
+import { useFogMode } from '@/hooks/useFog'
 import { useGridWrite } from '@/hooks/useGridWrite'
 import { useHpTarget } from '@/hooks/useHpTarget'
 import { useSmoothPositions, useTokenMove } from '@/hooks/useTokenMove'
@@ -113,6 +114,29 @@ export function Board({
   // is read here for the same reason the camera is and goes to Convex for none of the same
   // reasons — see `useBoardLayers`. A player has no control that writes it.
   const layers = useBoardLayers(code)
+
+  /**
+   * ⚠️ **The second mode that takes the pointer off the coins, and the drag gate below had
+   * only ever heard of the first.**
+   *
+   * `FogTools` tells the DM in as many words that while a tool is armed "pressing the map
+   * draws or rubs out fog instead of picking up a coin", and `FogLayer` is mounted *under*
+   * the token layers for the reason written out at that mount — so without this a press that
+   * landed on a creature picked the creature up, which is the one gesture the panel promises
+   * it will not do.
+   *
+   * Read here rather than threaded down from `FogTools`, which is exactly what the
+   * module-level cell in `useFog` exists for: the control is in the right-hand pane and both
+   * readers of it are in this one.
+   *
+   * ⚠️ **The drag half of the promise and not the whole of it.** The coins sit above the
+   * fog, so a press on one still finds the coin rather than the rectangle underneath it and
+   * selects instead of erasing. Closing that too means giving the veil the pointer over the
+   * party's own figures, which is the trade the mount order already declined. What this
+   * closes is the half that *moves something the DM did not mean to move*.
+   */
+  const { mode: fogMode } = useFogMode(code)
+  const fogArmed = board.isDm && fogMode !== 'off'
 
   const selection = useTokenSelection(
     board.tokens,
@@ -393,8 +417,9 @@ export function Board({
               // Held space turns the whole board into a pan surface, so a press that
               // lands on a token has to move the view rather than the creature. The
               // calibration handles borrow the same mechanism: while the box is out, a
-              // press anywhere near a coin is aimed at the grid underneath it.
-              draggable={!camera.spacePanning && !calibrating}
+              // press anywhere near a coin is aimed at the grid underneath it — and an
+              // armed fog tool is the third of them, for the reason `fogArmed` carries.
+              draggable={!camera.spacePanning && !calibrating && !fogArmed}
               onSelect={onSelect}
               onDragStart={move.onDragStart}
               onDragMove={move.onDragMove}

@@ -76,7 +76,8 @@ const NEW_CREATURE = '__new-creature'
 const FROM_BESTIARY = '__from-bestiary'
 
 /**
- * What each layer means, **in this screen's words**, under the picker.
+ * What each layer means, **in this screen's words**, under the picker. Exhaustive by
+ * construction — see CLAUDE.md invariant 9.
  *
  * ⚠️ **Per screen on purpose, and keyed by the union all the same.** The titles are one
  * fact and live beside the union in `LayerChoice`; these bodies are sentences about *this*
@@ -84,9 +85,6 @@ const FROM_BESTIARY = '__from-bestiary'
  * editor's are about a press that can be undone — which is the carve-out convex/lib/sheet.ts
  * already makes for a per-screen sentence. Centralising them would produce copy that fits
  * neither screen.
- *
- * A `Record` rather than a ternary chain so a fourth layer fails to compile with no note,
- * which is the state this file was in for the two layers that had one between them.
  */
 const LAYER_NOTES: Record<TokenLayer, ReactNode> = {
   background: (

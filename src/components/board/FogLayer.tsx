@@ -1,58 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { Layer, Rect } from 'react-konva'
 import { useMutation } from 'convex/react'
 import { toast } from 'sonner'
 import type Konva from 'konva'
 
+import { setCursor, swallowLeftPress } from '@/components/board/konvaPointer'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { useFog, useFogMode } from '@/hooks/useFog'
 import { errorMessage } from '@/lib/errors'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
+import type { PublicFog } from '@convex/lib/fog'
 import type { Grid, Point, Rect as ImageRect } from '@convex/lib/grid'
 import { isUsableGrid, snapToGrid } from '@convex/lib/grid'
 import type { PublicScene } from '@convex/lib/scenes'
-
-// WIRING: nothing mounts this yet. `Board.tsx` and `BoardStage.tsx` belong to the grid
-// work happening in parallel, so the two lines below are deliberately not in this change
-// — they are the whole of what is missing.
-//
-// 1. **`Board.tsx`, inside `<BoardStage>`, beside `<TokenLayers>`:**
-//
-//        <FogLayer
-//          code={code}
-//          dmCode={dm.dmCode}
-//          scene={scene}
-//          scale={camera.camera.scale}
-//        />
-//
-//    Four props and no handlers. The rectangles, the armed tool, both writes and the
-//    cursor are held here, so nothing crosses `BoardStage` and no callback has to be
-//    threaded from the right-hand pane into the Konva tree.
-//
-// 2. **Where in the stack: after the player token layer and before the GM one.** Konva
-//    paints layers in child order, and the order this wants is Background tokens →
-//    player tokens → *fog* → GM tokens. The DM's own creatures then stay crisp above
-//    their own veil, which is the point of the position: everything the veil dims is
-//    something the party has lost, and everything above it is the DM's to place.
-//
-//    ⚠️ `TokenLayers` renders all three token layers as one fragment, so there is no
-//    slot between them today. Two ways to make one, and the choice is the wiring
-//    author's: give `TokenLayers` a `betweenPlayerAndGm` slot prop, or mount `<FogLayer>`
-//    *after* `<TokenLayers>` and accept the veil sitting over the GM layer too. The
-//    fallback costs the DM a dimmed monster and nothing else — no player is sent a GM
-//    row (`maySee`), so nothing is hidden from anybody who was going to see it — but on
-//    a player's screen it also blacks out a coin their own seat controls standing in
-//    fog, which is the one case `foggedTokenIds` goes out of its way to keep visible.
-//
-// 3. **The mode does not arrive as a prop.** `useFogMode(code)` is a subscribable cell
-//    keyed by game code, for the reason `useBoardLayers` is one: the control is in
-//    `FogTools` inside the right-hand pane and the gesture is here inside the map pane.
-//    So mounting `FogTools` anywhere in DM tools is enough to arm this — nothing to
-//    thread, and nothing for `GameShell` to hold.
-//
-// 4. **`FogTools` mounts with the same two props every DM panel takes:**
-//    `<FogTools code={code} dmCode={dmCode} />`.
 
 /**
  * Near-black rather than `#000000`, matching the ink the health bar's track uses: a
@@ -126,8 +87,16 @@ export type FogLayerProps = {
  * screen, and a fog rectangle has no intermediate state anybody at the table needs. So
  * the band is local until the mouse comes up, and the map goes dark for the party in one
  * step.
+ *
+ * **Memoised, and `scale` is the reason it is worth anything.** The other three props are a
+ * code, a secret and a scene row the subscription holds still, and the scale changes on a
+ * zoom rather than on a pan — so with this in place a pan and a calibration drag reconcile
+ * no fog at all, where before every frame of either re-entered this component and walked its
+ * whole rectangle list. `TokenCoin` makes the same trade one level down and states the
+ * numbers; the mode and the rectangles arrive through hooks rather than props, so arming a
+ * tool and drawing a rectangle still re-render this regardless of the memo.
  */
-export function FogLayer({ code, dmCode, scene, scale }: FogLayerProps) {
+export const FogLayer = memo(function FogLayer({ code, dmCode, scene, scale }: FogLayerProps) {
   const isDm = dmCode !== null
   const rects = useFog(code, scene._id, dmCode)
   const { mode } = useFogMode(code)
@@ -146,7 +115,15 @@ export function FogLayer({ code, dmCode, scene, scale }: FogLayerProps) {
   // disable while one is in flight, and the rectangle vanishing is the whole of the
   // feedback. So `erase` reports the way `Board` reports a refused move: the server's own
   // words, in a toast, over a board that has already settled.
-  const action = useLobbyAction()
+  //
+  // ⚠️ **The member is taken and not the object, and that is load-bearing rather than tidy.**
+  // `useLobbyAction` returns a fresh literal every render, so a `commit` closed over the whole
+  // thing had a fresh identity every render too — and the band effect below depends on
+  // `commit` while `setBand` fires on every `mousemove`, which tore down and re-added both
+  // `window` listeners sixty times a second for the length of every gesture. `run` is a
+  // `useCallback([])`, so depending on it is what holds `commit` still. Parking `commit` in a
+  // ref would have worked equally well and would have said none of this.
+  const { run } = useLobbyAction()
 
   const drawing = isDm && mode === 'draw'
   const erasing = isDm && mode === 'erase'
@@ -175,12 +152,16 @@ export function FogLayer({ code, dmCode, scene, scale }: FogLayerProps) {
     // would sit on the scene for ever counting against the cap.
     if (rect.width === 0 || rect.height === 0) return
 
-    void action.run('draw', 'Could not fog that area.', () =>
+    void run('draw', 'Could not fog that area.', () =>
       drawFog({ code, dmCode, sceneId: scene._id, ...rect }),
     )
-  }, [action, code, dmCode, drawFog, scene])
+  }, [code, dmCode, drawFog, run, scene])
 
-  const begin = (event: Konva.KonvaEventObject<MouseEvent>) => {
+  // Held still for the draw surface's sake. With the cursor handlers hoisted to module scope
+  // this is the only prop on that shape that could still change identity, and one unstable
+  // handler is enough to make Konva rebind on every frame of a band — a half-applied
+  // discipline that reads as if it had been applied.
+  const begin = useCallback((event: Konva.KonvaEventObject<MouseEvent>) => {
     // Left button only: a right-click is not a gesture and a middle-drag belongs to the
     // pan, which `BoardStage` claims on the container before Konva ever hears about it.
     if (event.evt.button !== 0) return
@@ -199,7 +180,7 @@ export function FogLayer({ code, dmCode, scene, scale }: FogLayerProps) {
     stageRef.current = stage
     bandRef.current = { from: point, to: point }
     setBand(bandRef.current)
-  }
+  }, [])
 
   const banding = band !== null
 
@@ -249,12 +230,18 @@ export function FogLayer({ code, dmCode, scene, scale }: FogLayerProps) {
     setBand(null)
   }, [drawing])
 
-  const erase = (fogId: Id<'fogRects'>) => {
-    if (dmCode === null) return
-    void eraseFog({ code, dmCode, fogId }).catch((thrown: unknown) => {
-      toast.error(errorMessage(thrown, 'Could not rub that out.'))
-    })
-  }
+  // A `useCallback` because it crosses into `FogRect`, whose memo is worth nothing unless the
+  // handler it is handed survives a render. Two hundred rectangles is `TokenLayers`' arithmetic
+  // exactly: one function for the whole list rather than one closed over each row.
+  const erase = useCallback(
+    (fogId: Id<'fogRects'>) => {
+      if (dmCode === null) return
+      void eraseFog({ code, dmCode, fogId }).catch((thrown: unknown) => {
+        toast.error(errorMessage(thrown, 'Could not rub that out.'))
+      })
+    },
+    [code, dmCode, eraseFog],
+  )
 
   // Nothing to draw and nothing to press. Absent rather than transparent, which is
   // `TokenLayers`' rule for an empty layer and matters more here: an empty `Layer` is a
@@ -288,30 +275,13 @@ export function FogLayer({ code, dmCode, scene, scale }: FogLayerProps) {
           height={scene.imageHeight}
           fill="transparent"
           onMouseDown={begin}
-          onMouseEnter={(event) => cursor(event, 'crosshair')}
-          onMouseLeave={(event) => cursor(event, '')}
+          onMouseEnter={crosshairCursor}
+          onMouseLeave={clearCursor}
         />
       ) : null}
 
       {drawn.map((rect) => (
-        <Rect
-          key={rect._id}
-          x={rect.x}
-          y={rect.y}
-          width={rect.width}
-          height={rect.height}
-          fill={FOG_FILL}
-          // The eraser is a click on a rectangle the client was *sent*, which is why
-          // rectangles are rows rather than one blob of geometry on the scene — see
-          // `publicFogValidator`. Deaf to the pointer at every other moment, including
-          // while the draw tool is down.
-          listening={erasing}
-          onMouseDown={swallowLeftPress}
-          onClick={() => erase(rect._id)}
-          onMouseEnter={(event) => cursor(event, 'pointer')}
-          onMouseLeave={(event) => cursor(event, '')}
-          perfectDrawEnabled={false}
-        />
+        <FogRect key={rect._id} rect={rect} listening={erasing} onErase={erase} />
       ))}
 
       {/*
@@ -336,7 +306,56 @@ export function FogLayer({ code, dmCode, scene, scale }: FogLayerProps) {
       ) : null}
     </Layer>
   )
+})
+
+type FogRectProps = {
+  /** The row as it arrived from `fog.list`, held by reference — see the memo below. */
+  rect: PublicFog
+  /** Whether the eraser is armed. Nothing else on this board makes a rectangle pressable. */
+  listening: boolean
+  /**
+   * One function for the whole list, given the rectangle it happened to, rather than one
+   * closed over each row. `TokenCoinProps` states the rule and the reason at length.
+   */
+  onErase: (fogId: Id<'fogRects'>) => void
 }
+
+/**
+ * ONE FOGGED RECTANGLE, and it is memoised for `TokenCoin`'s reason with numbers of the same
+ * order.
+ *
+ * Up to two hundred of these, four `on*` props each, and react-konva compares handlers by
+ * reference and answers a changed one by unbinding the old listener and binding the new one.
+ * Built inline they were fresh arrows on every render of the layer — so eight hundred
+ * detach/attach pairs per frame of a pan, of a calibration drag and of a rubber band, to
+ * arrive back at the picture already on screen.
+ *
+ * The memo only pays because every prop above is held still: the row comes off the
+ * subscription by reference, `listening` is a boolean, and `onErase` is the caller's
+ * `useCallback`. The arrow inside is a fresh identity per render of *this* component, which
+ * is fine and is the same arrangement `TokenCoin` uses — a render that did not happen builds
+ * no closures.
+ */
+const FogRect = memo(function FogRect({ rect, listening, onErase }: FogRectProps) {
+  return (
+    <Rect
+      x={rect.x}
+      y={rect.y}
+      width={rect.width}
+      height={rect.height}
+      fill={FOG_FILL}
+      // The eraser is a click on a rectangle the client was *sent*, which is why rectangles
+      // are rows rather than one blob of geometry on the scene — see `publicFogValidator`.
+      // Deaf to the pointer at every other moment, including while the draw tool is down.
+      listening={listening}
+      onMouseDown={swallowLeftPress}
+      onClick={() => onErase(rect._id)}
+      onMouseEnter={pointerCursor}
+      onMouseLeave={clearCursor}
+      perfectDrawEnabled={false}
+    />
+  )
+})
 
 /**
  * The rectangle a gesture asks for, on the grid.
@@ -373,17 +392,13 @@ function snappedRect(band: Band, grid: Grid): ImageRect {
 }
 
 /**
- * The container trick `TokenCoin` and `TokenHealthBar` both use: an inline style on
- * Konva's own container overrides the resting cursor `BoardStage`'s div sets with a
- * class, and clearing it hands control straight back.
+ * The three cursors this layer paints, bound once at module scope.
+ *
+ * An arrow closed over nothing but a string literal is precisely the prop that would defeat
+ * `FogRect`'s memo, so there is nowhere for these to live inside a component — the same reason
+ * `TokenLayers` hoists one `onSelect` for a whole layer of coins rather than one per coin.
  */
-function cursor(event: Konva.KonvaEventObject<MouseEvent>, style: string) {
-  const container = event.target.getStage()?.container()
-  if (container) container.style.cursor = style
-}
-
-/** A press on a rectangle is an erase, not the start of a pan. See `begin` above. */
-function swallowLeftPress(event: Konva.KonvaEventObject<MouseEvent>) {
-  if (event.evt.button !== 0) return
-  event.cancelBubble = true
-}
+const pointerCursor = (event: Konva.KonvaEventObject<MouseEvent>) => setCursor(event, 'pointer')
+const crosshairCursor = (event: Konva.KonvaEventObject<MouseEvent>) =>
+  setCursor(event, 'crosshair')
+const clearCursor = (event: Konva.KonvaEventObject<MouseEvent>) => setCursor(event, '')

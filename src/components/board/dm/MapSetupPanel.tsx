@@ -30,11 +30,6 @@ export type MapSetupPanelProps = {
  * Everything the DM does before a game can start: get a map in, calibrate its
  * grid, and put a few tokens on it.
  *
- * Rendered on the strength of `dm.dmCode` being present, and that display gate
- * authorises nothing — `scenes.list` throws for a caller without the code and
- * every mutation here re-verifies it, which is CLAUDE.md invariant 7 working as
- * intended. Nothing about this panel would be safe if the gate were `players.isDm`.
- *
  * Two subscriptions, both cheap and both low-churn: `scenes.list` for the DM's own
  * scene names, and `scenes.active` for the one board everybody is looking at.
  * Taking the active scene from the open query rather than threading

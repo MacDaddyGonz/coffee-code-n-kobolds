@@ -23,33 +23,21 @@ export type MusicPanelProps = {
   dmCode: string
 }
 
-// WIRING: this panel is not mounted anywhere yet. It wants to be the **Music** sub-tab of
-// `src/components/shell/tabs/DmToolsTab.tsx`, which another change owns — mount it as
-// `<MusicPanel code={code} dmCode={dmCode} />` beside the map panel.
-
 /**
  * The DM's tracks: what this game has, which one is on the table, and a way to delete one.
  *
  * ⚠️ **"On the table" is the whole of what putting a track on does, and the label is chosen
- * to say so.** *Play for the table* was the obvious wording and it is a lie: this cannot
- * start anybody's audio, because a browser will not begin playing without a gesture in that
- * browser. What the button does is name a track in everybody's header, where each person
- * presses play for themselves — so it borrows `SceneSelect`'s vocabulary, which already
- * describes exactly this relationship between the DM's list and the thing the group is
- * pointed at.
- *
- * Nothing here knows or records whether anybody is listening, and there is deliberately no
- * pause, no seek and no position: synced playback is a later milestone with a clock and a
- * drift policy in it. See the ⚠️ on `useMusic` and on `music.select`.
+ * to say so.** *Play for the table* was the obvious wording and it is a lie — see the ⚠️ on
+ * `music.select`. What the button does is name a track in everybody's header, where each
+ * person presses play for themselves, so it borrows `SceneSelect`'s vocabulary, which
+ * already describes exactly this relationship between the DM's list and the thing the group
+ * is pointed at. There is deliberately no pause, no seek and no position.
  *
  * Two subscriptions, both cheap and both low-churn: `music.list` for the DM's own track
  * names, which throws for a caller without the code because a list of them is a spoiler in
  * the way a scene list is, and `music.current` for the one everybody can see. Taking the
  * active track from the open query rather than threading `game.activeTrackId` in keeps this
  * component's props to a code and a secret, exactly as `MapSetupPanel` does.
- *
- * Rendered on the strength of `dm.dmCode` being present, and that display gate authorises
- * nothing — every call inside re-verifies the code server-side (CLAUDE.md invariant 7).
  */
 export function MusicPanel({ code, dmCode }: MusicPanelProps) {
   const tracks = useQuery(api.music.list, { code, dmCode })

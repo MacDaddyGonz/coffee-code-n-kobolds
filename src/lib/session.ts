@@ -95,6 +95,19 @@ function write(key: string, value: string | null): boolean {
   }
 }
 
+/**
+ * A stored string, but only if it is one of the members the union admits.
+ *
+ * The double cast is unavoidable and is confined here rather than written at each
+ * call site: `readonly T[]` has `includes(searchElement: T)`, so a `string | null`
+ * cannot be handed to it without asserting the thing the call is about to decide.
+ * Narrowing it in one place means the assertion is made once, next to the check that
+ * earns it, instead of twice per getter.
+ */
+function readMember<T extends string>(raw: string | null, members: readonly T[]): T | null {
+  return members.includes(raw as T) ? (raw as T) : null
+}
+
 /** Prefill for the display name field on the home screen. */
 export function getLastDisplayName(): string {
   return read(KEY.lastDisplayName) ?? ''
@@ -247,8 +260,7 @@ export function rememberPaneWidth(code: string, width: number) {
  * this half is one line of validation, because nothing here is data.
  */
 export function getLayerView(code: string): LayerView | null {
-  const stored = read(KEY.layerViewFor(code))
-  return LAYER_VIEWS.includes(stored as LayerView) ? (stored as LayerView) : null
+  return readMember(read(KEY.layerViewFor(code)), LAYER_VIEWS)
 }
 
 export function rememberLayerView(code: string, view: LayerView) {
@@ -257,8 +269,7 @@ export function rememberLayerView(code: string, view: LayerView) {
 
 /** Which layer the DM's next token lands on. See the note above for the validation. */
 export function getActiveLayer(code: string): TokenLayer | null {
-  const stored = read(KEY.activeLayerFor(code))
-  return TOKEN_LAYERS.includes(stored as TokenLayer) ? (stored as TokenLayer) : null
+  return readMember(read(KEY.activeLayerFor(code)), TOKEN_LAYERS)
 }
 
 export function rememberActiveLayer(code: string, layer: TokenLayer) {

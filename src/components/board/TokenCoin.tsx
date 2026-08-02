@@ -1,7 +1,7 @@
 import { memo, useMemo } from 'react'
 import { Circle, Group, Line, Text } from 'react-konva'
-import type Konva from 'konva'
 
+import { setCursor } from './konvaPointer'
 import { COIN_DETAIL_MIN_DIAMETER, TokenHealthBar } from './TokenHealthBar'
 import { useCanvasImage } from '@/hooks/useCanvasImage'
 // The tint and the letters on an art-less coin, shared with the HTML profile icon
@@ -146,15 +146,6 @@ export const TokenCoin = memo(function TokenCoin({
   // hover away, and the tint and art carry the identity in the meantime.
   const nameHalfWidth = radius
 
-  const cursor = (event: Konva.KonvaEventObject<MouseEvent>, style: string) => {
-    // Konva's own container, which sits inside BoardStage's div. That div sets the
-    // resting cursor with a class and `cursor` is inherited, so writing an inline
-    // style here overrides it while the pointer is on a coin and clearing it hands
-    // control straight back.
-    const container = event.target.getStage()?.container()
-    if (container) container.style.cursor = style
-  }
-
   return (
     <Group
       // Load-bearing, not decoration: it is how `useSmoothPositions` finds this node
@@ -172,10 +163,10 @@ export const TokenCoin = memo(function TokenCoin({
         if (event.evt.button !== 0) return
         onSelect(token)
       }}
-      onMouseEnter={(event) => cursor(event, draggable ? 'grab' : 'pointer')}
-      onMouseLeave={(event) => cursor(event, '')}
+      onMouseEnter={(event) => setCursor(event, draggable ? 'grab' : 'pointer')}
+      onMouseLeave={(event) => setCursor(event, '')}
       onDragStart={(event) => {
-        cursor(event, 'grabbing')
+        setCursor(event, 'grabbing')
         onDragStart?.(token)
       }}
       // Konva owns the node's position for the duration of a drag, so these read it
@@ -184,7 +175,7 @@ export const TokenCoin = memo(function TokenCoin({
       // same pointer and so is invisible.
       onDragMove={(event) => onDragMove?.(token, { x: event.target.x(), y: event.target.y() })}
       onDragEnd={(event) => {
-        cursor(event, draggable ? 'grab' : '')
+        setCursor(event, draggable ? 'grab' : '')
         onDragEnd?.(token, { x: event.target.x(), y: event.target.y() })
       }}
     >

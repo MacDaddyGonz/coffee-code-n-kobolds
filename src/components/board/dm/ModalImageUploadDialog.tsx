@@ -18,27 +18,13 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useUpload } from '@/hooks/useUpload'
-import { MODAL_MAX_EDGE } from '@/lib/images'
+import { MODAL_MAX_EDGE, nameFromFile } from '@/lib/images'
 import { api } from '@convex/_generated/api'
-import { MAX_SCENE_NAME_LENGTH, truncateCodePoints } from '@convex/lib/codes'
+import { MAX_SCENE_NAME_LENGTH } from '@convex/lib/codes'
 
 export type ModalImageUploadDialogProps = {
   code: string
   dmCode: string
-}
-
-/**
- * Filenames carry the useful part of a handout's name — `The Duke's Letter.png`.
- *
- * Cut by code point and not by `slice`, for the reason written out in full on
- * `SceneUploadDialog`'s copy of this: a filename with an emoji straddling the cut-off
- * yields a lone surrogate that the server's name check accepts — it is neither blank nor
- * over-length — and that a real deployment then refuses with a raw `Invalid arguments
- * provided`. `npm run test:smoke` is what finds that class of bug, because convex-test
- * cannot.
- */
-function nameFromFile(fileName: string): string {
-  return truncateCodePoints(fileName.replace(/\.[^./\\]+$/, ''), MAX_SCENE_NAME_LENGTH)
 }
 
 /**

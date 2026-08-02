@@ -1,8 +1,3 @@
-// WIRING: nothing mounts this yet. It belongs as the **Images** sub-tab of the DM tools
-// tab, which another branch owns — `src/components/shell/tabs/DmToolsTab.tsx` is
-// deliberately untouched here so the sub-tab strip and this panel can land separately.
-// It takes a game code and a DM code and nothing else, so mounting it is one line.
-
 import { useMutation, useQuery } from 'convex/react'
 import { ImageIcon } from 'lucide-react'
 
@@ -31,10 +26,6 @@ export type ModalImagePanelProps = {
 
 /**
  * The DM's handouts: what there is to show, and which one is up.
- *
- * Rendered on the strength of the DM code being present, and that display gate
- * authorises nothing — `modalImages.list` throws for a caller without it and every
- * mutation here re-verifies it, which is CLAUDE.md invariant 7 working as intended.
  *
  * Two subscriptions, and the second is not redundant. `list` is the DM's own shelf, whose
  * names are a spoiler and which nobody else may read; `open` is the one image the whole

@@ -364,8 +364,9 @@ function BindingControl({
 
 /**
  * What each layer means for a coin that **already exists**, in this panel's words.
+ * Exhaustive by construction — see CLAUDE.md invariant 9.
  *
- * ⚠️ **Per screen, and keyed by the union all the same** — see the ⚠️ on
+ * ⚠️ **Per screen** — see the ⚠️ on
  * `LAYER_ALERT_TITLES`, whose titles these borrow. `TokenAddDialog`'s three notes are about
  * a mistake to catch before saving; these three are about a press that has already
  * happened and what puts it back, which is a different sentence about the same fact.

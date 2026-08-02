@@ -18,12 +18,10 @@ import {
  * from the room — the same reasoning that makes `scenes.active` open while `scenes.list`
  * is not.
  *
- * ⚠️ **This says *which* track and nothing about playback.** No client is told whether
- * anybody else is listening, how far through the track they are, or when it started,
- * because none of that is written down anywhere: each browser presses play for itself.
- * See the ⚠️ on `publicTrackValidator`, and note that the absence is load-bearing rather
- * than incidental — the moment a field here says a track is playing, this query is half of
- * the synced-playback milestone.
+ * ⚠️ **This says *which* track and nothing about playback**, and the absence is
+ * load-bearing rather than incidental: the moment a field here says a track is playing,
+ * this query is half of the synced-playback milestone. See the ⚠️ on `select` for why
+ * there is no such field.
  *
  * Returns null rather than throwing for an unknown code or a game with nothing on: this
  * query paints a control in a header that is always on screen, and "no music" is a

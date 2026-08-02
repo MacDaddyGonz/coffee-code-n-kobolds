@@ -6,13 +6,10 @@ import { TOKEN_LAYERS, TOKEN_LAYER_LABELS, maySeeLayer } from '@convex/lib/layer
 
 /**
  * The heading over each layer's warning, in **one** spelling per layer, and `null` for the
- * layer that needs no warning at all.
- *
- * ⚠️ **A `Record` keyed by the union rather than a constant per interesting layer**, which
- * is `CHARACTER_GROUP_LABELS`' argument in convex/lib/sheet.ts applied to the field that
- * decides secrecy. A fourth layer fails to compile here, and the runtime consequence of the
- * arrangement it replaces — a lone `DM_LAYER_ALERT_TITLE` — was that a new layer would draw
- * *no* warning at all and look finished doing it.
+ * layer that needs no warning at all. Exhaustive by construction — see CLAUDE.md
+ * invariant 9, and note that this is the field that decides secrecy: the lone
+ * `DM_LAYER_ALERT_TITLE` this replaced would have let a new layer draw *no* warning at all
+ * and look finished doing it.
  *
  * ⚠️ **The descriptions are deliberately per-caller and these sentences deliberately are
  * not.** Creating a coin on the GM layer and moving an existing one there say different
@@ -44,10 +41,7 @@ export const LAYER_ALERT_TITLES: Record<TokenLayer, string | null> = {
  * click apart, so none of the choices is allowed to be jargon. The words come from
  * `TOKEN_LAYER_LABELS` beside the union itself, for the reason that record gives.
  *
- * ⚠️ **The union is iterated and the buttons are not written out**, which is CLAUDE.md
- * invariant 9's formulation. Three hand-written buttons is the arrangement where a fourth
- * layer is storable by the server, filterable by `maySee`, drawable by `TokenLayers` — and
- * unreachable from the one control in the application that sets the field.
+ * The union is iterated rather than three buttons written out — CLAUDE.md invariant 9.
  *
  * ⚠️ **This is the layer half of the same argument `requireTokenAppearance` makes on the
  * server** (see `TokenAppearanceFields`): the layers a DM may *create on* and may *move to*

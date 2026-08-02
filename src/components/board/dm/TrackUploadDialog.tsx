@@ -18,26 +18,10 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useUpload } from '@/hooks/useUpload'
-import { formatBytes } from '@/lib/images'
+import { formatBytes, nameFromFile } from '@/lib/images'
 import { api } from '@convex/_generated/api'
-import { MAX_SCENE_NAME_LENGTH, truncateCodePoints } from '@convex/lib/codes'
+import { MAX_SCENE_NAME_LENGTH } from '@convex/lib/codes'
 import { MAX_MUSIC_BYTES } from '@convex/lib/limits'
-
-/**
- * Filenames carry the useful part of a track's name — `tavern_ambience_loop.mp3`.
- *
- * Cut by code point, not by `slice`, for the reason `SceneUploadDialog` gives at length: a
- * filename with an emoji straddling code unit 60 otherwise yields a lone surrogate that
- * `requireTrackName` accepts and a real deployment refuses with a raw
- * `Invalid arguments provided`.
- *
- * The limit is the scene-name one because `requireTrackName` borrows it server-side; a
- * label on a DM-only row is a label on a DM-only row, and a sixth number for the client to
- * know about would be a sixth number to keep in step.
- */
-function nameFromFile(fileName: string): string {
-  return truncateCodePoints(fileName.replace(/\.[^./\\]+$/, ''), MAX_SCENE_NAME_LENGTH)
-}
 
 export type TrackUploadDialogProps = {
   code: string

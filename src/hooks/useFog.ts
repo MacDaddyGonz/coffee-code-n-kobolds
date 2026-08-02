@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
 import { useQuery } from 'convex/react'
 
 import { api } from '@convex/_generated/api'
@@ -197,6 +197,24 @@ export function hiddenFromParty(
   return anyRectCovers(rects, position)
 }
 
+/** Held still so a board with nothing in the dark hands every consumer the same empty set. */
+const NONE_HIDDEN: ReadonlySet<Id<'tokens'>> = new Set()
+
+/**
+ * Whether two id sets hold the same members. A size test and one walk.
+ *
+ * This is the whole of what makes `useHiddenFromParty` cheap, so it is worth saying what it
+ * is comparing: the *inputs* are rebuilt ten times a second while somebody is dragging, and
+ * the *answer* changes only when a coin crosses a rectangle's edge. Everything between those
+ * two facts is a list of two hundred rows re-rendering to say what it said a tenth of a
+ * second ago.
+ */
+function sameIds(a: ReadonlySet<Id<'tokens'>>, b: ReadonlySet<Id<'tokens'>>): boolean {
+  if (a.size !== b.size) return false
+  for (const id of a) if (!b.has(id)) return false
+  return true
+}
+
 /**
  * The same cue for a list of coins rather than a board of them: `TokensTab`, which has
  * the tokens and none of the geometry.
@@ -219,11 +237,27 @@ export function hiddenFromParty(
  * The DM gate is `dmCode`, not `players.isDm` (CLAUDE.md invariant 7). It costs nothing
  * — this tab is DM-only already — and it is what stops the cue ever being drawn on a
  * screen where "the party cannot see this" is not a sentence about somebody else.
+ *
+ * ⚠️ **The answer leaves rather than a closure over the inputs, and that is the difference
+ * between paying for the cue once per rectangle and paying for it ten times a second.** This
+ * used to hand back a `useCallback` whose dependencies were the position map and the
+ * rectangles, so the *function* was a new identity on every position tick — which is every
+ * hundred milliseconds for as long as anybody at the table is dragging a coin, for output
+ * that is byte-identical until a creature crosses an edge. A set of ids is what the server
+ * hands back from the same crossing (`foggedTokenIds`), and it can be compared: the set below
+ * is replaced only when its contents differ, so a memoised row sees one changed prop when the
+ * fog moves and none while the board is merely busy.
+ *
+ * The tokens have to arrive as an argument for that, because a set of *hidden* ids cannot be
+ * built without them — `hiddenFromParty`'s second clause is about who controls a coin, and
+ * splitting that off so this hook could answer from geometry alone would be two files
+ * describing one predicate.
  */
 export function useHiddenFromParty(
   code: string,
   dmCode: string | null,
-): (token: FoggableToken) => boolean {
+  tokens: readonly FoggableToken[],
+): ReadonlySet<Id<'tokens'>> {
   const scene = useQuery(api.scenes.active, { code })
   const sceneId = scene?._id ?? null
 
@@ -245,8 +279,25 @@ export function useHiddenFromParty(
 
   const isDm = dmCode !== null
 
-  return useCallback(
-    (token: FoggableToken) => isDm && hiddenFromParty(token, at.get(token._id) ?? null, rects),
-    [isDm, at, rects],
-  )
+  const built = useMemo(() => {
+    // Nothing to be in the dark, and the early return is what keeps a game that never fogs
+    // anything holding one shared empty set for the life of the session.
+    if (!isDm || rects.length === 0) return NONE_HIDDEN
+
+    const hidden = new Set<Id<'tokens'>>()
+    for (const token of tokens) {
+      if (hiddenFromParty(token, at.get(token._id) ?? null, rects)) hidden.add(token._id)
+    }
+    return hidden
+  }, [isDm, at, rects, tokens])
+
+  // ⚠️ **A ref written during render, which is the identity-collapsing escape hatch and not a
+  // piece of state.** The value above is a pure function of the inputs, so a render that runs
+  // twice — StrictMode, or a concurrent attempt that is thrown away — computes the same
+  // members both times and whichever set survives is the same answer. The alternative was
+  // `useState` plus an effect to copy into it, which is a second source of truth and a frame
+  // of staleness for a cue whose whole job is to be exact at the moment the fog moves.
+  const held = useRef(built)
+  if (!sameIds(held.current, built)) held.current = built
+  return held.current
 }

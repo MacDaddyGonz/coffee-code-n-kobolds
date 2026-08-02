@@ -17,6 +17,7 @@
 // The same `Size` the grid maths and the camera use. A width and a height is a
 // width and a height whichever side of the wire it is on, and a third local copy
 // of the pair is a third thing to keep in step.
+import { MAX_SCENE_NAME_LENGTH, truncateCodePoints } from '@convex/lib/codes'
 import type { Size } from '@convex/lib/grid'
 
 /**
@@ -68,6 +69,28 @@ export const MODAL_QUALITY = 0.82
  * module, which is where the check and the resize belong together.
  */
 export { MAX_SCENE_BYTES } from '@convex/lib/limits'
+
+/**
+ * A default name from the file the DM picked, extension dropped — a map arrives
+ * as `Admittance [Gridded 16x12].jpg`, a handout as `The Duke's Letter.png`, a
+ * track as `tavern_ambience_loop.mp3`, and in all three cases the useful part is
+ * the stem.
+ *
+ * ⚠️ **Cut by code point, not by `slice`.** A filename with an emoji straddling
+ * code unit 60 would otherwise yield a lone surrogate that the server's name
+ * check accepts — it is neither blank nor over-length — and that a real
+ * deployment then refuses with a raw `Invalid arguments provided`. That is the
+ * Milestone 1 display-name bug exactly, one milestone later and in a different
+ * file; `npm run test:smoke` found it, because convex-test cannot.
+ *
+ * The scene-name limit governs all three because `requireTrackName` and the
+ * handout's check borrow it server-side. A label on a DM-only row is a label on a
+ * DM-only row, and a sixth number for the client to know about would be a sixth
+ * number to keep in step.
+ */
+export function nameFromFile(fileName: string): string {
+  return truncateCodePoints(fileName.replace(/\.[^./\\]+$/, ''), MAX_SCENE_NAME_LENGTH)
+}
 
 export type Downscaled = {
   blob: Blob

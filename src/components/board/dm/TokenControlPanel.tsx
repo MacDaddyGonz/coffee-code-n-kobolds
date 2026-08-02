@@ -12,8 +12,8 @@ import type { PublicToken } from '@convex/lib/board'
 import type { TokenLayer } from '@convex/lib/layers'
 
 /**
- * The resting state of a grant on a layer players cannot move, keyed by the union so the
- * next layer has to answer the question rather than inheriting silence.
+ * The resting state of a grant on a layer players cannot move. Exhaustive by construction
+ * — see CLAUDE.md invariant 9.
  *
  * ⚠️ **Two layers make a grant inert now, for two different reasons, and collapsing them
  * would be wrong in both directions.** On the GM layer a granted seat is sent nothing at

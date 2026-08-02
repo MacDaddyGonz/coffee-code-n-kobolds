@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useQuery, useMutation } from 'convex/react'
 
 import { ConfirmDialog } from '@/components/lobby/ConfirmDialog'
@@ -77,6 +78,24 @@ export function FogTools({ code, dmCode }: FogToolsProps) {
 
   const fog = useFog(code, sceneId, dmCode)
   const { mode, setMode } = useFogMode(code)
+
+  /**
+   * ⚠️ **Put down on the way out, and this is `useFog`'s own rule applied to the second way
+   * of losing sight of these buttons.**
+   *
+   * That hook refuses to write the mode to `localStorage` because an armed eraser is one
+   * click from deleting the ambush the DM spent the afternoon drawing, and a tool still armed
+   * after a refresh nobody remembers doing is exactly how that click happens. The cell is
+   * module-level, though, and `DmToolsTab`'s sub-tab strip is uncontrolled with a subtree that
+   * is not force-mounted — so arming the eraser, glancing at the Feed and coming back reached
+   * the same place without needing a refresh: an armed tool, no lit button anywhere on screen,
+   * and presses on the map that delete fog.
+   *
+   * Three lines here rather than relocating the controls somewhere permanent, which is the
+   * other fix and a much larger one. Off is the only safe thing to arrive at, and now the only
+   * thing to come back to.
+   */
+  useEffect(() => () => setMode('off'), [setMode])
 
   const clearFog = useMutation(api.fog.clear)
   const action = useLobbyAction()

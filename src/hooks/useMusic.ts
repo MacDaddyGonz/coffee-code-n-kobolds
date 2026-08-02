@@ -165,13 +165,6 @@ export function useMusic(code: string): Music {
     })
   }, [])
 
-  // Read by the swap below without putting `playing` in its dependencies, which would make
-  // every pause re-assign the source and start the track over from the beginning.
-  const playingRef = useRef(false)
-  useEffect(() => {
-    playingRef.current = playing
-  }, [playing])
-
   useEffect(() => {
     const audio = audioRef.current
     if (!audio) return
@@ -189,7 +182,16 @@ export function useMusic(code: string): Music {
     // is what a DM changing the music mid-scene means by it. Somebody who had *not*
     // pressed play stays silent: the new track is theirs to start, exactly as the old one
     // was.
-    const wasPlaying = playingRef.current
+    //
+    // ⚠️ **The element, asked directly, and read before the assignment.** The docblock above
+    // says the element is the source of truth for `playing`, and a ref mirrored off that state
+    // by an effect was a third copy of it to keep in step — for a question this effect already
+    // holds the element to answer. Reading the `playing` *state* here instead is what the ref
+    // existed to avoid, and still is: it would put a pause in this effect's dependencies, so
+    // every pause would re-assign the source and start the track over from the beginning. The
+    // order is load-bearing too — setting `src` runs the media load algorithm, which pauses
+    // the element, so this line cannot move below the next one.
+    const wasPlaying = !audio.paused
     audio.src = url
     if (wasPlaying) start(audio)
   }, [start, url])

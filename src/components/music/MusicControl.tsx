@@ -19,11 +19,8 @@ export type MusicControlProps = {
  * with them. The element and the button that starts it belong in the one component that is
  * on screen for the whole session; splitting them is what this comment exists to prevent.
  *
- * **Nothing here starts playing by itself, for two reasons that agree.** Which track is on
- * is the DM's to say and every client is told; whether *this* browser is playing it is the
- * person's, and a browser will not begin audio without a gesture in it anyway. So the first
- * press is always somebody's own — see the ⚠️ on `useMusic`, which is where the argument
- * lives and why synced playback is a later milestone rather than a missing field.
+ * **Nothing here starts playing by itself**, so the first press is always somebody's own.
+ * See the ⚠️ on `music.select` for the two reasons.
  *
  * Renders nothing at all when there is no track, rather than a dead control with a
  * disabled button: a game with no music is the ordinary case, and the header's space is the

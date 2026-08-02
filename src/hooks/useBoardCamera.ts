@@ -14,6 +14,7 @@ import {
   zoomTo,
 } from '@/lib/camera'
 import { getCamera, rememberCamera } from '@/lib/session'
+import { PERSIST_DELAY_MS } from '@/lib/throttle'
 import { isTypingElement } from '@/lib/utils'
 
 /**
@@ -24,23 +25,6 @@ import { isTypingElement } from '@/lib/utils'
  * the gesture's own speed supplies the rest.
  */
 const PINCH_STEP = 1.02
-
-/**
- * How still the camera has to be before it is written to local storage.
- *
- * `localStorage.setItem` is *synchronous* and disk-backed, and that — not the size
- * of the payload — is why the write cannot live in the frame callback. A pan, a
- * wheel spin and a held arrow key all land the camera up to sixty times a second,
- * so writing where the camera lands means sixty blocking round trips to disk a
- * second in the middle of the one loop that has 16 ms to finish in. A trailing
- * timer collapses a whole gesture into one write instead.
- *
- * Trailing rather than leading because nothing reads this until the next visit, so
- * there is no value in an early write; and the "zooms and immediately closes the
- * tab" case is covered properly by the flushes below rather than by paying for it
- * on every frame.
- */
-const PERSIST_DELAY_MS = 250
 
 export type BoardCamera = {
   camera: Camera
