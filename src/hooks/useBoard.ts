@@ -6,6 +6,7 @@ import type { Id } from '@convex/_generated/dataModel'
 import type { PublicToken } from '@convex/lib/board'
 import type { PublicVitals } from '@convex/lib/characters'
 import type { Point } from '@convex/lib/grid'
+import { mayPlayersMove } from '@convex/lib/layers'
 import type { PublicScene } from '@convex/lib/scenes'
 import { useVitals } from '@/hooks/useVitals'
 
@@ -148,7 +149,7 @@ export function useBoard(args: {
 
     const at = new Map((positions ?? []).map((row) => [row.tokenId, { x: row.x, y: row.y }]))
 
-    // Order is left alone — `TokenLayer` splits the tokens by layer and stacks them
+    // Order is left alone — `TokenLayers` splits the tokens by layer and stacks them
     // by size, which is a drawing decision and belongs with the canvas.
     return tokens.map((token) => ({
       ...token,
@@ -176,15 +177,28 @@ export function useBoard(args: {
       // member of that array and does not need to be — being the DM is holding the
       // DM code (invariant 7), which is exactly what `isDm` says here.
       //
-      // ⚠️ The `token.layer === 'player'` clause is gone and nothing replaced it,
-      // which looks like a dropped check and is not. It could only ever be reached
-      // by a caller `isDm` had already failed, and such a caller never holds a
-      // DM-layer token to test: `maySee` in convex/lib/board.ts filters them out of
-      // the payload, and the controller sets are computed over that visible half
-      // only. Restoring it would guard nothing and cost the case it appears to
-      // protect — the DM's own view, where a hero parked on the DM layer must stay
-      // draggable, is already answered by `isDm` above.
-      canMove: isDm || (playerId !== null && token.controllerIds.includes(playerId)),
+      // ⚠️ **There is a layer clause again, and the sentence that used to stand here
+      // said there must never be one — so this is a correction rather than an
+      // override of it.** That argument was that a non-DM never holds a token such a
+      // clause could refuse, because `maySee` in convex/lib/board.ts filtered them
+      // out of the payload and the controller sets are computed over the visible half
+      // only. It was true of the GM layer and remains true of it. It is **false of
+      // Background**, which players do receive, are drawn, and can click on: the old
+      // clause's premise was that sight and interaction were one answer, and a third
+      // layer exists precisely because they are not.
+      //
+      // What it is emphatically not is the old `token.layer === 'player'` restored.
+      // That was a rule re-derived here, and re-deriving it is what the property
+      // above forbids; `mayPlayersMove` is the shared predicate
+      // `requireMovableToken` throws `TOKEN_NOT_MOVABLE` on, read rather than
+      // restated, so the affordance and the refusal cannot come apart. The DM's own
+      // view is untouched — a hero parked on the GM layer, or a rock the DM is
+      // rearranging, is still draggable, because `isDm` is answered first.
+      canMove:
+        isDm ||
+        (mayPlayersMove(token.layer) &&
+          playerId !== null &&
+          token.controllerIds.includes(playerId)),
       vitals: vitalsOf(token.characterId),
       // `requireEditableCharacter` restated, exactly as `canMove` restates
       // `requireMovableToken`: the DM may change anybody's hit points, a player may

@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 
 import { DialogFormFooter } from '@/components/DialogFormFooter'
 import { FieldError } from '@/components/FieldError'
-import { ImagePicker } from '@/components/ImagePicker'
+import { UploadPicker } from '@/components/UploadPicker'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { Button } from '@/components/ui/button'
 import {
@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useImageUpload } from '@/hooks/useImageUpload'
+import { useUpload } from '@/hooks/useUpload'
 import { api } from '@convex/_generated/api'
 import { MAX_SCENE_NAME_LENGTH, truncateCodePoints } from '@convex/lib/codes'
 
@@ -45,7 +45,7 @@ function nameFromFile(fileName: string): string {
  *
  * Three steps, in this order and no other: shrink, store, then ask the server to
  * accept the stored blob as a scene. The last step can refuse — a full game, or
- * a blob still over the limit — and `useImageUpload.commit` discards the file
+ * a blob still over the limit — and `useUpload.commit` discards the file
  * when it does.
  *
  * The refusal is reported in the form rather than as a toast, because this dialog
@@ -56,7 +56,7 @@ function nameFromFile(fileName: string): string {
  */
 export function SceneUploadDialog({ code, dmCode }: SceneUploadDialogProps) {
   const createScene = useMutation(api.scenes.create)
-  const upload = useImageUpload({ code, dmCode, kind: 'map' })
+  const upload = useUpload({ code, dmCode, kind: 'map' })
   const action = useLobbyAction()
   const fieldId = useId()
 
@@ -122,7 +122,7 @@ export function SceneUploadDialog({ code, dmCode }: SceneUploadDialogProps) {
         </DialogHeader>
 
         <form className="flex flex-col gap-3" onSubmit={(event) => void submit(event)}>
-          <ImagePicker
+          <UploadPicker
             id={`${fieldId}-file`}
             label="Map image"
             upload={upload}

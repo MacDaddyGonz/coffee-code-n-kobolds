@@ -9,6 +9,31 @@ import { Skeleton } from '@/components/ui/skeleton'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicToken } from '@convex/lib/board'
 import type { PublicCharacter } from '@convex/lib/characters'
+import type { TokenLayer } from '@convex/lib/layers'
+
+/**
+ * The badge on a coin's row, or `null` for the layer that needs none.
+ *
+ * ⚠️ **A `Record` rather than the single `layer === 'dm'` test this replaced**, and the
+ * difference is what a DM uses this list for: they scan it asking *what have I left
+ * somewhere odd*, and the one-test version could only answer that about the GM layer. A
+ * Background coin was drawn with no badge at all — indistinguishable from an ordinary one,
+ * in the only list in the application that shows every coin in the game. So the arrangement
+ * a fourth layer would have inherited was not "no badge yet", it was "silently filed as
+ * normal".
+ *
+ * Two words rather than the layer's full label from `TOKEN_LAYER_LABELS`: those are
+ * sentences chosen to make a *choice* unambiguous at the moment it is made, and this is a
+ * pill at the end of a row that already carries a name, a binding and a size.
+ */
+const LAYER_BADGES: Record<
+  TokenLayer,
+  { label: string; variant: 'destructive' | 'secondary' } | null
+> = {
+  background: { label: 'Scenery', variant: 'secondary' },
+  player: null,
+  gm: { label: 'GM layer', variant: 'destructive' },
+}
 
 /**
  * What this tab has been handed about the board's coins: three states, not an array and a
@@ -343,6 +368,8 @@ function TokenRow({
         ? '…'
         : (character?.name ?? MISSING_SHEET)
 
+  const badge = LAYER_BADGES[token.layer]
+
   return (
     <li>
       <PickerRow className="w-full" selected={selected} onClick={onSelect}>
@@ -354,14 +381,15 @@ function TokenRow({
               {binding} · {squares}
             </span>
           </span>
-          {/* Read straight off the payload, and the only badge on the row: it is the one
-              field about a coin whose being wrong spoils something, and a DM scanning this
-              list for "what have I left hidden" is scanning for exactly this. */}
-          {token.layer === 'dm' ? (
-            <Badge variant="destructive" className="ml-auto">
-              DM layer
+          {/* Read straight off the payload, and the only badge on the row: the layer is the
+              one field about a coin whose being wrong spoils something or strands it, and a
+              DM scanning this list for "what have I left somewhere odd" is scanning for
+              exactly this. See the ⚠️ on `LAYER_BADGES`. */}
+          {badge === null ? null : (
+            <Badge variant={badge.variant} className="ml-auto">
+              {badge.label}
             </Badge>
-          ) : null}
+          )}
         </span>
       </PickerRow>
     </li>

@@ -4,13 +4,14 @@ import { toast } from 'sonner'
 import { BoardEmpty } from '@/components/board/BoardEmpty'
 import { BoardStage } from '@/components/board/BoardStage'
 import { TokenHpPopover } from '@/components/board/TokenHpPopover'
-import { TokenLayer } from '@/components/board/TokenLayer'
+import { TokenLayers } from '@/components/board/TokenLayers'
 import { ZoomControls } from '@/components/board/ZoomControls'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BoardToken } from '@/hooks/useBoard'
 import { useBoard } from '@/hooks/useBoard'
 import { useBoardCamera } from '@/hooks/useBoardCamera'
 import { useBoardKeys } from '@/hooks/useBoardKeys'
+import { useBoardLayers } from '@/hooks/useBoardLayers'
 import type { Dm } from '@/hooks/useDm'
 import { useHpTarget } from '@/hooks/useHpTarget'
 import { useSmoothPositions, useTokenMove } from '@/hooks/useTokenMove'
@@ -49,7 +50,7 @@ export type BoardProps = {
  *
  * Almost nothing happens in this file, which is the point. Secrecy was settled
  * server-side before any of this data arrived (ADR 0004), the drawing belongs to
- * `BoardStage` and `TokenLayer`, and the movement rules are `useTokenMove`'s. What
+ * `BoardStage` and `TokenLayers`, and the movement rules are `useTokenMove`'s. What
  * is left here is wiring a handful of hooks to each other in the one order that
  * works.
  *
@@ -100,6 +101,12 @@ export function Board({
   // — to fit a map to and to zoom about the centre of — so it takes the element
   // rather than being told, which is one measurement and one piece of state.
   const camera = useBoardCamera({ code, sceneId: scene?._id ?? null, image, containerRef })
+
+  // Which layers this browser is choosing to paint. A view rather than board state, so it
+  // is read here for the same reason the camera is and goes to Convex for none of the same
+  // reasons — see `useBoardLayers`. A player has no control that writes it.
+  const layers = useBoardLayers(code)
+
   const selection = useTokenSelection(
     board.tokens,
     selectedTokenId,
@@ -149,7 +156,7 @@ export function Board({
   const hpTarget = useHpTarget(tokens)
   const hpToken = hpTarget.hpToken
 
-  // Hoisted out of the JSX so `TokenLayer` is handed the same function every render.
+  // Hoisted out of the JSX so `TokenLayers` is handed the same function every render.
   // A fresh arrow there would have been a changed prop on every coin on every frame
   // of a pan, and react-konva answers a changed handler by rebinding the listener.
   const onSelect = useCallback(
@@ -217,11 +224,15 @@ export function Board({
       ) : drawable && scene ? (
         <>
           <BoardStage scene={scene} camera={camera} onBackgroundClick={onBackgroundClick}>
-            <TokenLayer
+            <TokenLayers
               tokens={tokens}
               scene={scene}
               scale={camera.camera.scale}
               selectedId={selection.selectedTokenId}
+              // What the pointer may pick up and which layers are painted, never what
+              // arrived — the secrecy filter ran on the server. See `TokenLayers`.
+              isDm={board.isDm}
+              shown={layers.shown}
               // Held space turns the whole board into a pan surface, so a press that
               // lands on a token has to move the view rather than the creature.
               draggable={!camera.spacePanning}

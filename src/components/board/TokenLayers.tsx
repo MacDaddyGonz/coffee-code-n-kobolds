@@ -5,20 +5,53 @@ import { TokenCoin } from './TokenCoin'
 import type { BoardToken } from '@/hooks/useBoard'
 import type { Id } from '@convex/_generated/dataModel'
 import type { Point } from '@convex/lib/grid'
+import type { TokenLayer } from '@convex/lib/layers'
+import { TOKEN_LAYERS, mayPlayersMove } from '@convex/lib/layers'
 import type { PublicScene } from '@convex/lib/scenes'
 
 /**
- * A DM-layer coin is drawn slightly ghosted. It is a label, not a lock: the only
+ * A GM-layer coin is drawn slightly ghosted. It is a label, not a lock: the only
  * person who ever sees one is the DM, and they need to be able to tell at a glance
  * which of the tokens in front of them the party cannot see.
  */
-const DM_LAYER_OPACITY = 0.88
+const GM_LAYER_OPACITY = 0.88
 
-export type TokenLayerProps = {
+/**
+ * How each layer is drawn, keyed by the union so a fourth member fails to compile here
+ * rather than arriving at full opacity as somebody's secret.
+ *
+ * ⚠️ **`dmOnly` is not a substitute for the server's filter and is not claimed to be.** A
+ * player is sent no GM rows at all (`maySee` in convex/lib/board.ts, CLAUDE.md invariant 1),
+ * so on their screen this flag has nothing to hide. What it *is* the floor under is `shown`:
+ * that set comes out of a **stored preference**, and a preference must never be the thing
+ * that decides whether a secret layer is painted. `dmOnly && !isDm` means the worst a
+ * corrupt or hand-edited `localStorage` key can do is hide a layer, never reveal one.
+ *
+ * There is deliberately no `listening` column. Whether a layer answers the pointer is
+ * `mayPlayersMove` — the same predicate `requireMovableToken` refuses on — so it is read
+ * below rather than restated here as a third fact that could come to disagree with it.
+ */
+const TOKEN_LAYER_STYLES: Record<TokenLayer, { opacity: number; dmOnly: boolean }> = {
+  background: { opacity: 1, dmOnly: false },
+  player: { opacity: 1, dmOnly: false },
+  gm: { opacity: GM_LAYER_OPACITY, dmOnly: true },
+}
+
+export type TokenLayersProps = {
   tokens: BoardToken[]
   scene: PublicScene
   scale: number
   selectedId: Id<'tokens'> | null
+  /**
+   * Whether this browser holds the DM code. **It decides interactivity and view, never
+   * what arrived** — see the ⚠️ in this component's docblock.
+   */
+  isDm: boolean
+  /**
+   * Which layers the viewer is choosing to look at, from `useBoardLayers`. The DM's
+   * preview toggle: a preference, and never a permission.
+   */
+  shown: ReadonlySet<TokenLayer>
   /** Off while the space bar is held, so a drag pans the board instead. */
   draggable: boolean
   /**
@@ -35,75 +68,119 @@ export type TokenLayerProps = {
 }
 
 /**
- * The two interactive layers of the board — the player layer and, above it, the DM
- * layer — as one element the stage can be handed.
+ * The interactive layers of the board — scenery, the party, and the DM's own — as one
+ * element the stage can be handed.
  *
- * The split is by `layer` because requirements.md stacks the board that way, and
- * separate Konva layers mean separate canvases: the DM shuffling their ambush about
- * does not force a redraw of the party standing still one layer down.
+ * The split is by `layer` because requirements.md stacks the board that way, and separate
+ * Konva layers mean separate canvases: the DM shuffling their ambush about does not force a
+ * redraw of the party standing still one layer down. `TOKEN_LAYERS` is iterated rather than
+ * three `<Layer>`s being written out, so the array *is* the paint order — bottom to top —
+ * and a fourth layer cannot arrive with nowhere to be drawn.
  *
- * The DM layer is absent, not hidden, when there is nothing on it — and for a player
- * there never is anything on it, because `convex/lib/board.ts` did not send them a
- * single DM-layer row. So there is nothing here to toggle open, nothing to peel back
- * in the devtools, and no `isDm` for this component to be told. That filtering is
- * server-side by construction (CLAUDE.md invariants 1 and 8); the emptiness on a
- * player's screen is a consequence of it rather than an implementation of it.
+ * A layer with nothing on it renders no `<Layer>` at all: absent, not hidden. For a player
+ * the GM layer is always in that state, because `convex/lib/board.ts` did not send them a
+ * single GM row. So there is nothing here to toggle open, nothing to peel back in the
+ * devtools, and the filtering is server-side by construction (CLAUDE.md invariants 1 and 8)
+ * — the emptiness on a player's screen is a consequence of that rather than an
+ * implementation of it.
+ *
+ * ⚠️ **This component is told `isDm` now, and the sentence that used to stand here said it
+ * must not be — so read the correction rather than assuming the old argument lapsed.** That
+ * argument was that a player is sent no GM rows, so there is nothing for an `isDm` to
+ * toggle. Every word of it still holds *of the GM layer*, and it was never an argument about
+ * a layer players genuinely receive. Background is exactly that: it is in everybody's
+ * payload, and the two things the DM does with it that a player must not — pick a piece of
+ * scenery up, and hide the GM layer to preview the table's view — are questions about **who
+ * is looking, not about what arrived**. So `isDm` here decides interactivity and view, and
+ * decides nothing about secrecy, which stays where it was.
+ *
+ * **Background is `listening={isDm}`, and that is the affordance rather than the
+ * enforcement.** With the layer deaf to the pointer a player's press on scenery finds no
+ * node at all, so Konva walks up to the draggable Stage and pans — the same trick
+ * `BoardStage`'s docblock describes for the map and the grid, and the reason a player never
+ * wrestles with a rock they were never going to move. The refusal is `requireMovableToken`'s,
+ * server-side, on every write.
  */
-export function TokenLayer({
+export function TokenLayers({
   tokens,
   scene,
   scale,
   selectedId,
+  isDm,
+  shown,
   draggable,
   onSelect,
   onDragStart,
   onDragMove,
   onDragEnd,
   onOpenHp,
-}: TokenLayerProps) {
+}: TokenLayersProps) {
   // On `tokens` alone, because that is the only thing any of it depends on. A pan
-  // changes neither which tokens exist nor where they are, and paying for three
-  // filters, two array copies and two sorts on each of its sixty frames a second is
-  // work whose entire output is the array we already had.
-  const { playerTokens, dmTokens } = useMemo(() => {
-    const placed = tokens.filter((token) => token.position !== null)
-    return {
-      playerTokens: byDescendingSize(placed.filter((token) => token.layer === 'player')),
-      dmTokens: byDescendingSize(placed.filter((token) => token.layer === 'dm')),
-    }
-  }, [tokens])
+  // changes neither which tokens exist nor where they are, and paying for a bucketing and
+  // a sort per layer on each of its sixty frames a second is work whose entire output is
+  // the array we already had.
+  //
+  // The buckets come from `TOKEN_LAYERS` rather than from an object literal, so the union
+  // is named once in this file and a fourth layer arrives with a bucket rather than with
+  // an `undefined` to push onto.
+  const byLayer = useMemo<Record<TokenLayer, BoardToken[]>>(() => {
+    const grouped = Object.fromEntries(
+      TOKEN_LAYERS.map((layer) => [layer, [] as BoardToken[]]),
+    ) as Record<TokenLayer, BoardToken[]>
 
-  const coins = (layerTokens: BoardToken[]) =>
-    layerTokens.map((token) => (
-      <TokenCoin
-        key={token._id}
-        token={token}
-        scene={scene}
-        scale={scale}
-        selected={token._id === selectedId}
-        // `canMove` is an affordance: it stops a player wrestling with a token that
-        // is not theirs, and the server refuses the write regardless.
-        draggable={draggable && token.canMove}
-        onSelect={onSelect}
-        onDragStart={onDragStart}
-        onDragMove={onDragMove}
-        onDragEnd={onDragEnd}
-        onOpenHp={onOpenHp}
-      />
-    ))
+    for (const token of tokens) {
+      if (token.position === null) continue
+      grouped[token.layer].push(token)
+    }
+    // Big tokens underneath. A hero standing on a dragon's four-square footprint would
+    // otherwise be unclickable, since the last node drawn is the one the pointer hits.
+    for (const layer of TOKEN_LAYERS) grouped[layer].sort((a, b) => b.sizeSquares - a.sizeSquares)
+    return grouped
+  }, [tokens])
 
   return (
     <>
-      <Layer>{coins(playerTokens)}</Layer>
-      {dmTokens.length > 0 ? <Layer opacity={DM_LAYER_OPACITY}>{coins(dmTokens)}</Layer> : null}
+      {TOKEN_LAYERS.map((layer) => {
+        const style = TOKEN_LAYER_STYLES[layer]
+        // Three reasons not to draw one, in the order of how far each is trusted: what
+        // this caller is, what they have chosen to look at, and whether there is anything
+        // on it. The last is what keeps an empty layer absent rather than transparent.
+        if (style.dmOnly && !isDm) return null
+        if (!shown.has(layer)) return null
+
+        const layerTokens = byLayer[layer]
+        if (layerTokens.length === 0) return null
+
+        return (
+          <Layer
+            key={layer}
+            opacity={style.opacity}
+            // The shared predicate, so the cursor and the server agree about scenery by
+            // reading one rule rather than by two files describing it. The DM keeps the
+            // pointer on every layer, which is what makes the GM layer's own `false` moot
+            // — it is only ever drawn for them in the first place.
+            listening={isDm || mayPlayersMove(layer)}
+          >
+            {layerTokens.map((token) => (
+              <TokenCoin
+                key={token._id}
+                token={token}
+                scene={scene}
+                scale={scale}
+                selected={token._id === selectedId}
+                // `canMove` is an affordance: it stops a player wrestling with a token
+                // that is not theirs, and the server refuses the write regardless.
+                draggable={draggable && token.canMove}
+                onSelect={onSelect}
+                onDragStart={onDragStart}
+                onDragMove={onDragMove}
+                onDragEnd={onDragEnd}
+                onOpenHp={onOpenHp}
+              />
+            ))}
+          </Layer>
+        )
+      })}
     </>
   )
-}
-
-/**
- * Big tokens underneath. A hero standing on a dragon's four-square footprint would
- * otherwise be unclickable, since the last node drawn is the one the pointer hits.
- */
-function byDescendingSize(tokens: BoardToken[]): BoardToken[] {
-  return [...tokens].sort((a, b) => b.sizeSquares - a.sizeSquares)
 }

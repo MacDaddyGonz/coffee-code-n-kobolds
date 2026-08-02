@@ -128,7 +128,7 @@ export async function getFogRect(
   fogId: Id<'fogRects'>,
 ): Promise<Doc<'fogRects'>> {
   const row = await ctx.db.get('fogRects', fogId)
-  if (!row) throw new (await import('convex/values')).ConvexError(FOG_NOT_FOUND)
+  if (!row) throw new ConvexError(FOG_NOT_FOUND)
   return row
 }
 

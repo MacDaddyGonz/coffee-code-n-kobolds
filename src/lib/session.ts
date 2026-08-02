@@ -13,6 +13,19 @@
  */
 
 import type { Camera } from '@/lib/camera'
+import type { TokenLayer } from '@convex/lib/layers'
+import { TOKEN_LAYERS } from '@convex/lib/layers'
+
+/**
+ * Whether the DM is looking at the board the way the table is, or at all of it.
+ *
+ * Declared here rather than in `useBoardLayers` because this is the module that has to
+ * *validate* it, and a hook importing storage while storage imported the hook is a cycle
+ * for a two-member union. `TokenLayer` comes the other way for the opposite reason: it is
+ * the server's union and neither side of the wire may spell it twice.
+ */
+export type LayerView = 'player' | 'all'
+const LAYER_VIEWS: readonly LayerView[] = ['player', 'all']
 
 const KEY = {
   lastDisplayName: 'ccnk.lastDisplayName',
@@ -27,6 +40,14 @@ const KEY = {
   // Per game rather than global, for the same reason the camera is: a game you run
   // wants the tools wide open and a game you play in wants the map.
   paneWidthFor: (code: string) => `ccnk.paneWidth.${code}`,
+  // Per game and deliberately **not** per scene, which is `paneWidthFor`'s reasoning
+  // rather than `cameraFor`'s. A camera is where you were looking at one map, so it
+  // belongs to that map; which layer you are working on and whether you are previewing
+  // the table's view are *tools*, and a tool you set stays set when you change maps —
+  // a DM who is building scenery does not want to be put back on the player layer by
+  // switching to the next room.
+  layerViewFor: (code: string) => `ccnk.layerView.${code}`,
+  activeLayerFor: (code: string) => `ccnk.activeLayer.${code}`,
 } as const
 
 function read(key: string): string | null {
@@ -196,4 +217,44 @@ export function getPaneWidth(code: string): number | null {
 
 export function rememberPaneWidth(code: string, width: number) {
   write(KEY.paneWidthFor(code), String(width))
+}
+
+/**
+ * Whether this browser was last previewing the table's view of the board, and which layer
+ * it was working on. Two facts, one argument, so they are documented together.
+ *
+ * Both are the same kind of value as the camera and the pane width — a view rather than
+ * shared state, never written to Convex (ADR 0004's reasoning, and the DM working the GM
+ * layer while everybody looks at the map is the point rather than drift) — and losing
+ * either costs one press.
+ *
+ * ⚠️ **Both getters check membership of the union rather than merely parsing a string**,
+ * which is `getCamera`'s NaN-scale check applied to a discriminator: an unrecognised value
+ * that typechecks as `TokenLayer` because a cast said so is a `Record` lookup returning
+ * `undefined` and a layer nothing can label or draw.
+ *
+ * That has a concrete payoff beyond tidiness, and it is why this needed no migration of its
+ * own. The GM layer was stored as `dm` before it was renamed, so a browser still holding
+ * that value reads back as unrecognised, falls through to the default, and is written over
+ * on the DM's next press — which is exactly the right outcome for a preference. The
+ * database's half of the rename is a real widen-migrate-narrow in `convex/lib/layers.ts`;
+ * this half is one line of validation, because nothing here is data.
+ */
+export function getLayerView(code: string): LayerView | null {
+  const stored = read(KEY.layerViewFor(code))
+  return LAYER_VIEWS.includes(stored as LayerView) ? (stored as LayerView) : null
+}
+
+export function rememberLayerView(code: string, view: LayerView) {
+  write(KEY.layerViewFor(code), view)
+}
+
+/** Which layer the DM's next token lands on. See the note above for the validation. */
+export function getActiveLayer(code: string): TokenLayer | null {
+  const stored = read(KEY.activeLayerFor(code))
+  return TOKEN_LAYERS.includes(stored as TokenLayer) ? (stored as TokenLayer) : null
+}
+
+export function rememberActiveLayer(code: string, layer: TokenLayer) {
+  write(KEY.activeLayerFor(code), layer)
 }

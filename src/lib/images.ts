@@ -34,17 +34,29 @@ import type { Size } from '@convex/lib/grid'
  * 256 for a token because a token is drawn a square or two across — around 140
  * px at native zoom on those same maps — so 256 already carries a factor of two
  * for zooming in, and a token is a circle of art with no fine detail to lose.
+ *
+ * 1920 for a handout because it is looked at rather than zoomed into: it fills a
+ * dialog on the desktop browsers ADR 0001 targets and needs none of a map's
+ * headroom for panning around inside it. `MAX_MODAL_BYTES` in
+ * `convex/lib/limits.ts` is tuned against exactly this edge, so the two numbers
+ * are one decision and moving either alone breaks the arithmetic there.
  */
 export const MAP_MAX_EDGE = 2560
 export const TOKEN_MAX_EDGE = 256
+export const MODAL_MAX_EDGE = 1920
 
 /**
  * Lossy quality. Maps are photographic and forgiving, so 0.82 buys most of the
  * saving. Tokens are small enough that the extra bytes at 0.9 are irrelevant,
  * and their hard edges against transparency show artefacts far more readily.
+ *
+ * A handout takes the map's number for the map's reason — it is a picture being
+ * looked at, at a size where 0.82 is invisible — and not the token's, which is
+ * paying for edges a full-screen illustration does not have.
  */
 export const MAP_QUALITY = 0.82
 export const TOKEN_QUALITY = 0.9
+export const MODAL_QUALITY = 0.82
 
 /**
  * The server's own limit, not a copy of it: `convex/lib/limits.ts` holds the one
@@ -215,6 +227,10 @@ export function downscaleMap(file: Blob): Promise<Downscaled> {
 
 export function downscaleToken(file: Blob): Promise<Downscaled> {
   return downscaleImage(file, { maxEdge: TOKEN_MAX_EDGE, quality: TOKEN_QUALITY })
+}
+
+export function downscaleModal(file: Blob): Promise<Downscaled> {
+  return downscaleImage(file, { maxEdge: MODAL_MAX_EDGE, quality: MODAL_QUALITY })
 }
 
 const KB = 1024
