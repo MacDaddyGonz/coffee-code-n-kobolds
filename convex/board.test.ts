@@ -346,11 +346,73 @@ describe('the DM layer never reaches a player', () => {
   })
 
   /**
+   * ⚠️ **THE INSTRUMENT FOR THE TWO LAYER NEEDLES ABOVE, AND FOR THE HALF-RUN MIGRATION
+   * THEY ARE A PAIR TO CATCH.**
+   *
+   * A scan whose needle does not work passes in silence, and `'"gm"'` is a needle that
+   * became correct only when the stored value was renamed. So both spellings are shown
+   * doing real work here rather than assumed to: `"gm"` really does appear in a payload
+   * that carries a GM-layer token, and a row still stored as the legacy `dm` really is
+   * projected as `gm` on the way out.
+   *
+   * That second half is the whole reason `'"dm"'` stays in the scan. `publicTokens`
+   * normalises through `layerOf`, so a leak of an *unmigrated* row would arrive wearing the
+   * new word and the old needle alone would miss it — while a projection that ever stopped
+   * normalising would arrive wearing the old one and the new needle alone would miss that.
+   * Neither needle catches the other's failure, which is why there are two.
+   *
+   * The legacy row is inserted directly because it can no longer be created through the
+   * API: `board.addToken`'s validator takes the narrow three-member union while the schema
+   * still takes the wide four (see the TRANSITION section of lib/layers.ts), and this test
+   * is the only thing in the suite that stands in that gap.
+   */
+  test('the layer needles work: “gm” is in the DM’s payload, and a legacy “dm” row leaves as “gm”', async () => {
+    const t = harness()
+    const fixture = await boardFixture(t)
+
+    // Needle one, as an instrument rather than as an assumption.
+    expect(
+      JSON.stringify(
+        await t.query(api.board.tokens, { code: fixture.code, dmCode: fixture.dmCode }),
+      ),
+    ).toContain('"gm"')
+
+    const legacy = await t.run(async (ctx) => {
+      const gameId = (await ctx.db.query('games').first())!._id
+      return await ctx.db.insert('tokens', {
+        gameId,
+        name: 'Unmigrated Skeleton',
+        layer: 'dm',
+        sizeSquares: 1,
+        tint: TINT,
+      })
+    })
+    expect((await tokenRow(t, legacy))?.layer).toBe('dm')
+
+    // The stored word never leaves the server, in either audience's payload.
+    const asDm = JSON.stringify(
+      await t.query(api.board.tokens, { code: fixture.code, dmCode: fixture.dmCode }),
+    )
+    expect(asDm).toContain('"gm"')
+    expect(asDm).not.toContain('"dm"')
+    expect(await dmTokenPayload(t, fixture, legacy)).toMatchObject({ layer: 'gm' })
+
+    // And it is withheld from a player exactly as a canonical `gm` row is, which is what
+    // makes the read path `maySeeLayer(layerOf(stored))` rather than `maySeeLayer(stored)`
+    // — the latter would fall through to the `never` arm for every unmigrated ambush.
+    const asPlayer = JSON.stringify(await t.query(api.board.tokens, { code: fixture.code })) ?? ''
+    expect(asPlayer).not.toContain(legacy)
+    expect(asPlayer).not.toContain('Unmigrated Skeleton')
+    expect(asPlayer).not.toContain('"gm"')
+    expect(asPlayer).not.toContain('"dm"')
+  })
+
+  /**
    * Enumerated from the modules rather than from a list kept in this file, so a
    * query added in a later milestone that forgets the gate fails here without
    * anyone remembering to extend anything.
    */
-  test('every exported query of board, scenes, bestiary and feed is swept for the DM-layer id', async () => {
+  test('every exported query of board, scenes, bestiary, feed and fog is swept for the DM-layer id', async () => {
     const t = harness()
     const fixture = await boardFixture(t)
     const wrongDmCode = twiddle(fixture.dmCode)
@@ -376,6 +438,14 @@ describe('the DM layer never reaches a player', () => {
     // query added to that module in a later milestone is swept for the DM layer with no
     // edit to any list.
     //
+    // ⚠️ **`fog` joins them and needs no shape of its own either — but only because
+    // `board.positions`' shape already fits, and that is worth checking rather than
+    // assuming.** `fog.list` takes `{ code, sceneId, dmCode? }`, which the third and fourth
+    // entries below satisfy exactly; if it ever grows a required argument those shapes stop
+    // reaching it, the query silently drops out of the loop, and the `reached` assertion is
+    // the only thing that would say so. That is what that assertion is for, and the
+    // `swept` list at the foot of this test is what stops the module being dropped whole.
+    //
     // ⚠️ **No shape here names a seat, and adding one would be worse than useless.** Not
     // one query in the four modules swept below accepts a `playerId` — the board's
     // subscriptions are keyed on the DM code alone by design — so an argument set carrying
@@ -393,7 +463,7 @@ describe('the DM layer never reaches a player', () => {
     ]
 
     const swept: string[] = []
-    for (const moduleName of ['board', 'scenes', 'bestiary', 'feed']) {
+    for (const moduleName of ['board', 'scenes', 'bestiary', 'feed', 'fog']) {
       const loader = modules[`./${moduleName}.ts`]
       expect(loader, `convex/${moduleName}.ts is missing`).toBeTypeOf('function')
       const exports = (await loader()) as Record<string, unknown>
@@ -443,6 +513,7 @@ describe('the DM layer never reaches a player', () => {
     expect(swept).toContain('bestiary.index')
     expect(swept).toContain('bestiary.entry')
     expect(swept).toContain('feed.list')
+    expect(swept).toContain('fog.list')
   })
 
   /**
@@ -2877,6 +2948,258 @@ describe('players.leave takes the seat’s grants with it', () => {
         playerId: benAgain,
       }),
       'TokenNotYours',
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Milestone 10: the Background layer — seen by everybody, moved by nobody but the DM
+// ---------------------------------------------------------------------------
+//
+// ⚠️ **THE FIRST LAYER THAT SEPARATES SIGHT FROM INTERACTION, WHICH IS WHY IT COULD NOT BE
+// A WIDER VERSION OF THE OLD TEST.** While there were two layers, `isDm || layer ===
+// 'player'` answered both questions at once and the coincidence was invisible. Background
+// breaks it: a player **sees** scenery and may never **touch** it, so there are now two
+// predicates — `maySeeLayer` and `mayPlayersMove` in lib/layers.ts — and this section is the
+// behavioural half of `lib/layers.test.ts`'s unit coverage of them.
+//
+// It is also the one layer section in this file whose headline assertion is **presence**.
+// Every other test about a layer asserts that something is absent from a player's payload;
+// the interesting failure here is the opposite one, a scenery token that has quietly become
+// invisible to the table because the sight question was answered with the movement one.
+
+/** A board with one Background token, one ordinary player-layer token, and two seats. */
+async function backgroundFixture(t: Harness) {
+  const game = await makeGame(t)
+  const sceneId = await makeScene(t, game.code, game.dmCode)
+  await calibrate(t, game.code, game.dmCode, sceneId)
+
+  const ana = await makeSeat(t, game.code, 'Ana')
+  const scenery = await addToken(t, game.code, game.dmCode, sceneId, {
+    name: 'Toppled Cart',
+    layer: 'background',
+    x: 300,
+    y: 300,
+  })
+  const openToken = await addToken(t, game.code, game.dmCode, sceneId, {
+    name: 'Village Guard',
+    layer: 'player',
+    x: 900,
+    y: 300,
+  })
+
+  return { ...game, sceneId, ana, scenery, openToken }
+}
+
+describe('a Background token is on everybody’s board', () => {
+  /**
+   * ⚠️ **THE POSITIVE HALF, AND THE UNUSUAL ONE.**
+   *
+   * `maySeeLayer` is fail-closed — an unrecognised member is withheld — so the cheapest way
+   * to get this layer wrong is to have it withheld by accident, and the whole table would
+   * then be playing on a map with the scenery missing. Both halves of the board are
+   * asserted, because a token in `board.tokens` with no row in `board.positions` is not on
+   * the board at all: the client renders the intersection of the two subscriptions.
+   */
+  test('the coin and its placement are both in a player’s payload', async () => {
+    const t = harness()
+    const fixture = await backgroundFixture(t)
+
+    const tokens = await t.query(api.board.tokens, { code: fixture.code })
+    const drawn = tokens.find((token) => token._id === fixture.scenery)
+    expect(drawn, 'the Background token is missing from a player’s board.tokens').toBeDefined()
+    expect(drawn).toMatchObject({ name: 'Toppled Cart', layer: 'background' })
+
+    const positions = await t.query(api.board.positions, {
+      code: fixture.code,
+      sceneId: fixture.sceneId,
+    })
+    expect(positions.map((row) => row.tokenId)).toContain(fixture.scenery)
+
+    // And no seat is in either control array, which is what says "seen by everybody, moved
+    // by nobody" in the payload rather than only in the refusal below.
+    expect(drawn!.controllerIds).toEqual([])
+    expect(drawn!.grantedPlayerIds).toEqual([])
+  })
+
+  test('a player is refused with TokenNotMovable, and the DM’s identical call lands', async () => {
+    const t = harness()
+    const fixture = await backgroundFixture(t)
+    const before = await placement(t, fixture.sceneId, fixture.scenery)
+
+    await expectKind(
+      t.mutation(api.board.moveToken, {
+        code: fixture.code,
+        sceneId: fixture.sceneId,
+        tokenId: fixture.scenery,
+        x: 1200,
+        y: 900,
+        settle: true,
+        playerId: fixture.ana,
+      }),
+      'TokenNotMovable',
+    )
+    expect(await placement(t, fixture.sceneId, fixture.scenery)).toMatchObject({
+      x: before!.x,
+      y: before!.y,
+    })
+
+    // Passing no seat at all is the same answer, because the refusal is above the claim and
+    // grant read entirely — there is nothing about the caller for it to consult.
+    await expectKind(
+      t.mutation(api.board.moveToken, {
+        code: fixture.code,
+        sceneId: fixture.sceneId,
+        tokenId: fixture.scenery,
+        x: 1200,
+        y: 900,
+        settle: true,
+      }),
+      'TokenNotMovable',
+    )
+
+    // The DM rearranges scenery freely: the acceptance is that a Background token cannot be
+    // picked up *by a player*, which is why `mayPlayersMove` is named for the audience it
+    // refuses and why `requireMovableToken` returns for a DM above it.
+    await t.mutation(api.board.moveToken, {
+      code: fixture.code,
+      dmCode: fixture.dmCode,
+      sceneId: fixture.sceneId,
+      tokenId: fixture.scenery,
+      x: 1200,
+      y: 900,
+      settle: true,
+    })
+    expect(await placement(t, fixture.sceneId, fixture.scenery)).toMatchObject(
+      snapToGrid({ x: 1200, y: 900 }, GRID, 1),
+    )
+  })
+
+  /**
+   * ⚠️ **A REFUSAL-*DIFFERENCE* TEST, NOT A PARITY TEST — AND THE INVERSION IS DELIBERATE.
+   * DO NOT "FIX" THIS INTO A `toEqual`.**
+   *
+   * Every other refusal comparison in this file asserts that two refusals are
+   * indistinguishable, because telling "you may not move that" apart from "no such token"
+   * is an existence oracle: somebody who can distinguish them enumerates the GM layer one
+   * guessed id at a time, and knowing an ambush exists spoils it whether or not you can see
+   * it. That reasoning is why `TOKEN_NOT_FOUND` is one shared constant, and it still holds
+   * for a GM-layer token — which is why the middle assertion below is a parity one.
+   *
+   * It does not hold here, and the docblock on `TOKEN_NOT_MOVABLE` in lib/board.ts is where
+   * the argument lives. **A Background token is in the player's payload**: it is drawn on
+   * their screen, they clicked on it, and they can see it did not move. There is no
+   * existence to confirm and nothing to enumerate. Answering "that token is not on this
+   * board" about a coin somebody is looking at is not discretion, it is a lie, and it reads
+   * as a bug in the application rather than as a rule of the game.
+   *
+   * So the property under test is that the two refusals **differ**, and the test asserts
+   * both sides of that at once: distinct from `TokenNotFound`, and distinct from
+   * `TokenNotYours` as well — that message ends "ask the DM to hand it to you", which here
+   * is untrue, since the DM cannot hand over scenery without first taking it off the
+   * Background layer.
+   */
+  test('TokenNotMovable is deliberately distinguishable from TokenNotFound and TokenNotYours', async () => {
+    const t = harness()
+    const fixture = await backgroundFixture(t)
+    const hidden = await addToken(t, fixture.code, fixture.dmCode, fixture.sceneId, {
+      name: 'Ambush Skeleton',
+      layer: 'gm',
+      x: 1500,
+      y: 900,
+    })
+    const ghost = await vanishedTokenId(t)
+
+    const move = (tokenId: Id<'tokens'>) =>
+      t.mutation(api.board.moveToken, {
+        code: fixture.code,
+        sceneId: fixture.sceneId,
+        tokenId,
+        x: 1200,
+        y: 900,
+        settle: true,
+        playerId: fixture.ana,
+      })
+
+    const scenery = await refusalOf(move(fixture.scenery))
+    const secret = await refusalOf(move(hidden))
+    const vanished = await refusalOf(move(ghost))
+    const notYours = await refusalOf(move(fixture.openToken))
+
+    // The rule that has not changed: a hidden coin and a coin that never existed are still
+    // one refusal, message included.
+    expect(secret.kind).toBe('TokenNotFound')
+    expect(secret).toEqual(vanished)
+
+    // The rule this layer inverts, asserted as kind *and* as message so that "fixing" it
+    // into parity fails here rather than passing quietly.
+    expect(scenery.kind).toBe('TokenNotMovable')
+    expect(scenery).not.toEqual(secret)
+    expect(scenery.message).not.toBe(secret.message)
+    expect(notYours.kind).toBe('TokenNotYours')
+    expect(scenery).not.toEqual(notYours)
+    expect(scenery.message).not.toBe(notYours.message)
+  })
+
+  /**
+   * ⚠️ **A GRANT ON SCENERY IS INERT, AND THIS IS WHAT PROVES THE CHECK SITS ABOVE THE
+   * GRANT READ.**
+   *
+   * `requireMovableToken` refuses a Background token *before* it looks up the claim holder
+   * or the stored grants, so a layer is something a grant cannot open — exactly what
+   * `board.setControllers` already says about the GM layer, now true of two layers by one
+   * line rather than two. Without the ordering, a DM ticking a box would hand a player a
+   * piece of the map.
+   *
+   * The refusal stays `TokenNotMovable` rather than becoming `TokenNotYours`, which is the
+   * observable signature of the ordering: a check that ran *after* the grant read would have
+   * had to decide between the two, and the honest answer for a granted seat is neither.
+   */
+  test('granting a Background token to a seat still refuses that seat', async () => {
+    const t = harness()
+    const fixture = await backgroundFixture(t)
+
+    await setControllers(t, fixture, fixture.scenery, [fixture.ana])
+    // The grant really was written — the point is that it buys nothing, not that it was
+    // rejected.
+    expect((await tokenRow(t, fixture.scenery))?.controllerIds).toEqual([fixture.ana])
+    const payload = (await t.query(api.board.tokens, { code: fixture.code })).find(
+      (token) => token._id === fixture.scenery,
+    )
+    expect(payload?.grantedPlayerIds).toEqual([fixture.ana])
+
+    const before = await placement(t, fixture.sceneId, fixture.scenery)
+    await expectKind(
+      t.mutation(api.board.moveToken, {
+        code: fixture.code,
+        sceneId: fixture.sceneId,
+        tokenId: fixture.scenery,
+        x: 1200,
+        y: 900,
+        settle: true,
+        playerId: fixture.ana,
+      }),
+      'TokenNotMovable',
+    )
+    expect(await placement(t, fixture.sceneId, fixture.scenery)).toMatchObject({
+      x: before!.x,
+      y: before!.y,
+    })
+
+    // And the grant is inert rather than destroyed: moving the coin onto the player layer
+    // makes it live, with nothing rewritten — the same round trip a GM-layer ambush makes.
+    await setLayer(t, fixture, fixture.scenery, 'player')
+    await t.mutation(api.board.moveToken, {
+      code: fixture.code,
+      sceneId: fixture.sceneId,
+      tokenId: fixture.scenery,
+      x: 1200,
+      y: 900,
+      settle: true,
+      playerId: fixture.ana,
+    })
+    expect(await placement(t, fixture.sceneId, fixture.scenery)).toMatchObject(
+      snapToGrid({ x: 1200, y: 900 }, GRID, 1),
     )
   })
 })

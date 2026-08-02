@@ -2181,3 +2181,265 @@ describe('a row arriving because the audience widened is marked as history', () 
     expect(published[0].predatesReveal).toBe(true)
   })
 })
+
+// ---------------------------------------------------------------------------
+// (m) Fog — the fourth reason a line is withheld, and the first one that is geometry
+// ---------------------------------------------------------------------------
+//
+// ⚠️ **NOTHING IN `convex/feed.ts` IS FOG-SHAPED, AND THAT IS THE ARRANGEMENT WORKING RATHER
+// THAN A GAP IN IT.** `feed.list` asks `readableCharacterIds` about the *active scene*, that
+// walks into `boardCharacterAccess`, and one `continue` there — a token standing in a
+// rectangle — costs a creature its placement, its health band and its feed lines together.
+// The first is `fog.test.ts`'s and the second is `vitals.test.ts`'s; this section is the
+// third, and the three exist separately because each suite already owns the payloads and the
+// needles for its own half.
+//
+// The subject is therefore the same one section (d) has: `mayHearOf`'s `visible` disjunct,
+// moved live by the write that is supposed to move it. There the write was `board.setLayer`;
+// here it is `fog.draw` and `fog.erase`, and the difference between the two pairs is worth
+// keeping in view — a layer is a fact about the row, and fog is a fact about where the row is
+// standing. A creature the DM blacks out is still in `board.tokens` by name, which is exactly
+// why the *line* has to go: a roll announces what a creature did, and `Skarnvex the Undrawn
+// attacks with their Skarnfang Rend` from inside a corridor the party cannot see into is the
+// ambush spoiling itself.
+
+describe('a creature in the dark is not heard from', () => {
+  /**
+   * The section (a) fixture with the coin brought out onto the player layer, which is the
+   * only state in which fog has anything to do: a GM-layer creature was already silent, so a
+   * rectangle over it would make every assertion below pass for the wrong reason.
+   */
+  async function litFixture(t: Harness) {
+    const fixture = await feedFixture(t)
+    await t.mutation(api.board.setLayer, {
+      code: fixture.code,
+      dmCode: fixture.dmCode,
+      tokenId: fixture.creatureToken,
+      layer: 'player',
+    })
+    return fixture
+  }
+
+  /** Where a coin is actually standing — snapping and displacement both move it. */
+  async function placementOf(t: Harness, sceneId: Id<'scenes'>, tokenId: Id<'tokens'>) {
+    const row = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query('tokenPositions')
+          .withIndex('by_sceneId_and_tokenId', (q) =>
+            q.eq('sceneId', sceneId).eq('tokenId', tokenId),
+          )
+          .unique(),
+    )
+    if (!row) throw new Error('that token has no placement on that scene')
+    return { x: row.x, y: row.y }
+  }
+
+  /** A rectangle centred on one coin, reaching no other — the fixture spaces them widely. */
+  async function fogOver(t: Harness, fixture: Fixture, tokenId: Id<'tokens'>) {
+    const at = await placementOf(t, fixture.sceneId, tokenId)
+    const { fogId } = await t.mutation(api.fog.draw, {
+      code: fixture.code,
+      dmCode: fixture.dmCode,
+      sceneId: fixture.sceneId,
+      x: at.x - 40,
+      y: at.y - 40,
+      width: 80,
+      height: 80,
+    })
+    return fogId
+  }
+
+  /**
+   * ⚠️ **THE LIVE DISJUNCT, DRIVEN BY THE TWO WRITES THAT ARE SUPPOSED TO MOVE IT.**
+   *
+   * Section (d)'s discipline, applied to the fog pair: withheld while the corridor is dark,
+   * heard again the moment it is not, with no second roll and nothing else rewritten. A
+   * withholding-only test here would be satisfied by a feed that had simply gone silent.
+   */
+  test('the creature’s rolls disappear under a rectangle and come back when it is erased', async () => {
+    const t = harness()
+    const fixture = await litFixture(t)
+    const { code } = fixture
+    await rollCreatureAttack(t, fixture)
+    await rollHeroInitiative(t, fixture)
+    const totals = await rolledTotals(t, fixture)
+
+    // Heard, because the coin is on the board. This is the precondition the whole section
+    // rests on, and it is section (d)'s conclusion restated in one line.
+    const lit = await t.query(api.feed.list, { code })
+    expect(lit.map((row) => row.actorName)).toEqual([CREATURE_NAME, CREATURE_NAME, HERO_NAME])
+
+    const fogId = await fogOver(t, fixture, fixture.creatureToken)
+
+    const dark = await t.query(api.feed.list, { code })
+    expect(dark.map((row) => row.actorName)).toEqual([HERO_NAME])
+
+    // Not by name, not by id, and not by number — the full needle table, because a row
+    // dropped from the array but echoed in a sibling field would satisfy a length check.
+    const serialised = JSON.stringify(dark) ?? ''
+    for (const [what, needle] of CREATURE_STRINGS) {
+      expect(serialised, `the fogged creature’s feed leaked ${what}`).not.toContain(needle)
+    }
+    for (const [what, needle] of CREATURE_NUMBERS) {
+      expect(containsNumber(serialised, needle), `the fogged creature’s feed leaked ${what}`).toBe(
+        false,
+      )
+    }
+    for (const total of totals) {
+      expect(containsNumber(serialised, total), 'a rolled total survived the fog').toBe(false)
+    }
+    expect(serialised, 'the fogged creature’s id travelled anyway').not.toContain(fixture.creature)
+
+    // The positive control, both halves: the DM hears all three lines throughout, so the
+    // rows exist and the player is being told nothing rather than being told about an empty
+    // game.
+    expect((await dmFeed(t, fixture)).map((row) => row.actorName)).toEqual([
+      CREATURE_NAME,
+      CREATURE_NAME,
+      HERO_NAME,
+    ])
+
+    await t.mutation(api.fog.erase, { code, dmCode: fixture.dmCode, fogId })
+
+    // ⚠️ Field for field against the DM's own rows — **except `predatesReveal`, which this
+    // very write is supposed to move.** Erasing fog is a widening, so the lines become
+    // history to the table at the moment they become audible to them; that flag is section
+    // (l)'s subject and is asserted below with a fixture that owns the clock. What is claimed
+    // here is the sharper thing: nothing *else* about a row was rewritten to publish it.
+    expect(withoutRevealFlag(await t.query(api.feed.list, { code }))).toEqual(
+      withoutRevealFlag(await dmFeed(t, fixture)),
+    )
+  })
+
+  /**
+   * ⚠️ **A HERO IN FOG KEEPS EVERYTHING, AND THIS IS THE FEED HALF OF THAT.**
+   *
+   * `foggedTokenIds` excludes any token with an effective controller, so a claimed hero's
+   * coin is never fogged at all. On the position side that is a correctness requirement — a
+   * player who walks into the dark would otherwise lose their own coin with no way to get it
+   * back — and here it is the same rule seen from the feed: the party would stop hearing
+   * their own dice.
+   *
+   * The rectangle covers the hero **and** the creature, which is what makes this an assertion
+   * about control rather than about the rectangle having missed.
+   */
+  test('a claimed hero is not fogged, so the party still hears their own dice', async () => {
+    const t = harness()
+    const fixture = await litFixture(t)
+    const { code } = fixture
+    await rollCreatureAttack(t, fixture)
+    await rollHeroInitiative(t, fixture)
+
+    const hero = await placementOf(t, fixture.sceneId, fixture.heroToken)
+    const creature = await placementOf(t, fixture.sceneId, fixture.creatureToken)
+    await t.mutation(api.fog.draw, {
+      code,
+      dmCode: fixture.dmCode,
+      sceneId: fixture.sceneId,
+      x: Math.min(hero.x, creature.x) - 100,
+      y: Math.min(hero.y, creature.y) - 100,
+      width: Math.abs(creature.x - hero.x) + 200,
+      height: Math.abs(creature.y - hero.y) + 200,
+    })
+
+    const heard = await t.query(api.feed.list, { code })
+    // The creature went, so the rectangle covered the pair of them.
+    expect(heard.map((row) => row.actorName)).toEqual([HERO_NAME])
+    expect(heard[0].characterId).toBe(fixture.hero)
+    expect(heard[0].roll?.expression).toBe(HERO_INITIATIVE_ROLL)
+
+    // And rolling again from inside the dark still reaches the table, which is the half a
+    // snapshot of an existing feed could not show.
+    await rollHeroInitiative(t, fixture)
+    expect((await t.query(api.feed.list, { code })).map((row) => row.actorName)).toEqual([
+      HERO_NAME,
+      HERO_NAME,
+    ])
+  })
+
+  /**
+   * ⚠️ **THE STAMP, FOR THE TWO WRITES THIS MILESTONE ADDS — SECTION (l)'S OWN INSTRUCTION,
+   * FOLLOWED.** That section says in as many words that coverage of `stampReveal` is
+   * discipline rather than construction: a stamp never written on a mutation invented later
+   * fails nothing at all, because no test knows the mutation exists. `fog.erase` is such a
+   * mutation, and fog is what turns replaying a stale roll from a curiosity into the ordinary
+   * case — a creature that rolled six times in a dark corridor sends six rows the moment the
+   * party walks in.
+   *
+   * ⚠️ **And `fog.draw` deliberately does not stamp**, which is the same asymmetry (l)
+   * asserts for `setLayer`: drawing only ever *narrows*, so a stamp there would silence the
+   * flourish for rolls the table has been watching all along, every time the DM tidies the
+   * board. Asserted on a row written between the two writes, because that is the only shape
+   * that can see the difference.
+   */
+  test('erasing fog marks the lines it publishes, and drawing it marks nothing', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(BEFORE_REVEAL)
+
+    const t = harness()
+    const fixture = await litFixture(t)
+    const { code, dmCode } = fixture
+    await rollCreatureAttack(t, fixture)
+    await rollHeroInitiative(t, fixture)
+
+    // The negative control: nothing has been revealed since these rows were written, so
+    // nothing is history yet.
+    expect((await t.query(api.feed.list, { code })).some((row) => row.predatesReveal)).toBe(false)
+
+    // The narrowing write, one minute on. It reveals nobody, so it must move nothing — and
+    // the hero's line is the row that can tell, because it is audible on both sides of it.
+    vi.setSystemTime(AFTER_REVEAL)
+    const fogId = await fogOver(t, fixture, fixture.creatureToken)
+    expect(newest(await t.query(api.feed.list, { code })).predatesReveal).toBe(false)
+    expect((await dmFeed(t, fixture)).some((row) => row.predatesReveal)).toBe(false)
+
+    // The widening write, a minute after that. Every line older than the click is history,
+    // to the DM as well, because the flag is a fact about the game's clock rather than about
+    // this caller's audience.
+    vi.setSystemTime(new Date('2026-08-02T20:02:00.000Z'))
+    await t.mutation(api.fog.erase, { code, dmCode, fogId })
+
+    const published = await t.query(api.feed.list, { code })
+    expect(published.map((row) => row.actorName)).toEqual([
+      CREATURE_NAME,
+      CREATURE_NAME,
+      HERO_NAME,
+    ])
+    expect(published.every((row) => row.predatesReveal)).toBe(true)
+    expect((await dmFeed(t, fixture)).every((row) => row.predatesReveal)).toBe(true)
+
+    // The live half, without which everything above is satisfied by a flag stuck at `true`:
+    // a roll made after the reveal is current, and the flourish plays.
+    await rollHeroInitiative(t, fixture)
+    expect(newest(await t.query(api.feed.list, { code })).predatesReveal).toBe(false)
+  })
+
+  /**
+   * `fog.clear`'s stamp is **conditional**, and that is the one place it and `erase` differ.
+   * `getFogRect` has already proved a rectangle existed by the time `erase` writes, so that
+   * write always widens; clearing a scene with no fog on it reveals nobody, and stamping
+   * anyway would cost the flourish on every line older than the click in exchange for a
+   * reveal that did not happen.
+   */
+  test('clearing an already-clear scene reveals nobody and moves no flag', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(BEFORE_REVEAL)
+
+    const t = harness()
+    const fixture = await litFixture(t)
+    const { code, dmCode, sceneId } = fixture
+    await rollHeroInitiative(t, fixture)
+
+    vi.setSystemTime(AFTER_REVEAL)
+    expect(await t.mutation(api.fog.clear, { code, dmCode, sceneId })).toEqual({ removed: 0 })
+    expect(newest(await t.query(api.feed.list, { code })).predatesReveal).toBe(false)
+
+    // The positive control on the same mutation: with a rectangle to remove it *is* a
+    // widening, and it does stamp.
+    await fogOver(t, fixture, fixture.creatureToken)
+    vi.setSystemTime(new Date('2026-08-02T20:02:00.000Z'))
+    expect(await t.mutation(api.fog.clear, { code, dmCode, sceneId })).toEqual({ removed: 1 })
+    expect(newest(await t.query(api.feed.list, { code })).predatesReveal).toBe(true)
+  })
+})
