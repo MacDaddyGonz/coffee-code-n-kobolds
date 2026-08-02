@@ -74,11 +74,18 @@ export const TOKEN_LAYER_LABELS: Record<TokenLayer, string> = {
 }
 
 /**
- * THE SIGHT HALF, as a function of the layer alone.
+ * THE SIGHT HALF: may a caller who is **not** the DM be sent a token on this layer?
  *
- * Background and Player are public; GM is the secret. `maySee` in lib/board.ts calls this
- * with `isDm` already short-circuited above it, so this switch is about layers and nothing
- * else — see the docblock there for why that ordering matters.
+ * Background and Player are public; GM is the secret. `maySee` in lib/board.ts short-circuits
+ * the DM above this, so the switch is about layers and nothing else — see the docblock there
+ * for why that ordering matters.
+ *
+ * ⚠️ **It takes no `isDm`, and the first draft did.** A parameter this function ignores is a
+ * signature that lies: `maySeeLayer('gm', true)` read as *may the DM see the GM layer?* and
+ * answered `false`, because the DM case had already been handled a level up. Its own test
+ * caught it. Named for the audience it answers about instead, which also makes the pair with
+ * `mayPlayersMove` below obviously a pair — two questions about what a **player** may do,
+ * and the DM is not a case in either of them.
  *
  * ⚠️ **The runtime default is fail-closed: withhold.** Same direction as `isMonsterSheet`'s
  * `true` and for the same operational reason, which is worth restating because it is not
@@ -95,8 +102,7 @@ export const TOKEN_LAYER_LABELS: Record<TokenLayer, string> = {
  * fail-*open*, the unknown layer would reach the projection and Convex would refuse the
  * payload, turning a stale read into an outage.
  */
-export function maySeeLayer(layer: TokenLayer, isDm: boolean): boolean {
-  void isDm
+export function maySeeLayer(layer: TokenLayer): boolean {
   switch (layer) {
     case 'background':
     case 'player':

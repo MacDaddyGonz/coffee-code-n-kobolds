@@ -165,8 +165,7 @@ export const TOKEN_NOT_MOVABLE = {
  * `ReadonlySet`s the compiler cannot tell apart, one of which publishes everything.
  */
 function maySee(token: Doc<'tokens'>, isDm: boolean): boolean {
-  if (isDm) return true
-  return maySeeLayer(layerOf(token.layer), isDm)
+  return isDm || maySeeLayer(layerOf(token.layer))
 }
 
 /**
