@@ -1812,6 +1812,15 @@ the section below, or found out by building it, so read them together:
   so with space held a right-press began a pan and then opened the menu. Nothing could reach it before
   the board had a right-click gesture, and that handler's own docblock had always described the
   intended behaviour correctly.
+- ⚠️ **`npm run test:smoke` caught a regression this milestone introduced, and it is the file's own
+  argument arriving from an unexpected direction.** Unifying add and duplicate meant running the
+  DM's *typed* name through `duplicateNames` — and its skip case returns the **base**, so a DM
+  typing `Kobold of the Arch 3` on a board with no kobolds got a coin called `Kobold of the Arch`,
+  with no way to create a trailing number at all. Nothing local saw it: every test asserted the
+  numbering, and the bug was in the typing. The rule that survives is the honest one — **a name
+  somebody typed is not a copy of anything, so nothing rewrites it**; only the coins the DM did not
+  name are numbered. Note what this says about that script: its usual job is values a real
+  deployment refuses, and here it was a *behaviour* nobody had thought to assert.
 - ⚠️ **The browser confirmed rather than corrected, and that is worth recording because it breaks the
   run.** Every milestone in this file has found at least one thing by opening the app that lint and
   the suite did not — the layout milestone's `forceMount` panel, the DM-tooling milestone's veil above

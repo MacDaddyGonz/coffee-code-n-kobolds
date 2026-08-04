@@ -332,10 +332,24 @@ export const addToken = mutation({
     // scene, so the cap above already bounds one scene's placements structurally.
     // See the note on the constant in lib/games.ts.
 
-    // The DM typed one name and asked for `count` coins, so the numbering is the same
-    // rule a duplicate uses — reading the board, not the argument. At a count of one on
-    // a board with no `Goblin`, this is the name they typed, unchanged.
-    const names = await requireBatchNames(ctx, game._id, name, count)
+    // ⚠️ **One coin keeps the name the DM typed, exactly, and only a batch is numbered.**
+    //
+    // This ran everything through `duplicateNames` at first, on the reasoning that add and
+    // duplicate should be one rule — and `npm run test:smoke` caught what that costs. The
+    // skip case returns the *base*, so a DM typing `Kobold of the Arch 3` on a board with
+    // no kobolds got a coin called `Kobold of the Arch`: the number silently stripped, and
+    // no way to create a coin with a trailing number at all. Nothing local could see it,
+    // because the suite asserted the numbering rather than the typing.
+    //
+    // The rule that survives is the honest one: a name somebody **typed** is not a copy of
+    // anything, so nothing may rewrite it. Numbering is for the coins the DM did not name —
+    // the second through fifth of a batch — and `duplicateNames` is exactly right for those.
+    // Which is also why two coins may still both be called `Goblin` through this path: the
+    // DM typed it twice, deliberately, and that has been true since the board existed.
+    // `duplicateToken` is the path where a name is *derived*, and it never skips, because
+    // its source is always already on the board.
+    const names =
+      count === 1 ? [name] : await requireBatchNames(ctx, game._id, name, count)
     const cells = await freeCellsNear(ctx, scene._id, scene, sizeSquares, { x: args.x, y: args.y }, count)
 
     const tokenIds: Id<'tokens'>[] = []

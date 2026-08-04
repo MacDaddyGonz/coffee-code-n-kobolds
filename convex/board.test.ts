@@ -2434,6 +2434,48 @@ describe('duplicating a coin', () => {
     expect((await tokenRow(t, f.tokenId))?.name).toBe('Goblin')
   })
 
+  /**
+   * ⚠️ **A name somebody typed is not a copy of anything, so nothing rewrites it.**
+   *
+   * Found by `npm run test:smoke` and not by this suite, which is worth recording because
+   * it is the shape of failure that file exists for in reverse: nothing here was wrong,
+   * and everything here asserted the *numbering* while the bug was in the *typing*. Sending
+   * one coin called `Goblin 3` through `duplicateNames` hits the skip case and returns the
+   * base, so the coin arrived called `Goblin` — and there was no way to create a coin with
+   * a trailing number at all.
+   */
+  test('one coin keeps the name the DM typed, trailing number and all', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    await calibrate(t, game.code, game.dmCode, sceneId)
+
+    const typed = await addToken(t, game.code, game.dmCode, sceneId, { name: 'Goblin 3' })
+    expect((await tokenRow(t, typed))?.name).toBe('Goblin 3')
+
+    // And two coins may share a name through this path, because the DM typed it twice.
+    // That has been true since the board existed and is not the duplicate rule's business.
+    const again = await addToken(t, game.code, game.dmCode, sceneId, { name: 'Goblin 3' })
+    expect((await tokenRow(t, again))?.name).toBe('Goblin 3')
+
+    // A *batch* is still numbered from the typed name's base, which is the whole point of
+    // the count — so the two rules do not collide, they apply to different things.
+    const { tokenIds } = await t.mutation(api.board.addToken, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId,
+      name: 'Goblin 3',
+      layer: 'player',
+      sizeSquares: 1,
+      tint: TINT,
+      x: 500,
+      y: 500,
+      count: 2,
+    })
+    const named = await Promise.all(tokenIds.map(async (id) => (await tokenRow(t, id))?.name))
+    expect(named).toEqual(['Goblin 4', 'Goblin 5'])
+  })
+
   test('adding five from scratch gets Goblin 1 … Goblin 5', async () => {
     // The other half of the one naming rule, and the roadmap's acceptance line verbatim:
     // nothing called `Goblin` is on the board, so the run starts at one.

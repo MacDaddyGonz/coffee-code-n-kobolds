@@ -123,6 +123,35 @@
 //     over-limit refusal below POSTs ten megabytes and one byte of real bytes at a real
 //     upload URL, because that is the only way to find out that the check is there.
 //
+// ⚠️ **The tokens milestone adds three things whose whole content is a round trip, and
+// sections 36 to 38 are them.** None is new logic the suite has not covered; all three are
+// questions convex-test is structurally unable to be asked.
+//
+//   - **A placement that is asserted by what did *not* change.** `board.placeOnScene`
+//     returns `null` whether it wrote or returned early, so idempotence has no return value
+//     to test: the only way to ask is to settle a coin at a known point, press the button
+//     again and read the coordinate back off the wire. The upsert formulation — the bug the
+//     early return exists to prevent — puts the coin back in the middle of the map, which is
+//     a coordinate and therefore something only a real placement row can report.
+//   - **A seventeen-member `v.union` as an argument validator and inside a `returns:`
+//     one.** `board.setMarkers` takes `v.array(tokenMarkerValidator)` and `board.markers`
+//     projects it, so the vocabulary crosses Convex's own value validation in both
+//     directions — and the refusal of a word the union has never heard of comes from the
+//     **function boundary**, before any handler runs, which is precisely the mechanism this
+//     script exists to reach and the one the local suite cannot reproduce. Beside it, an
+//     empty array **deletes the row** rather than storing `[]`, so the assertion is the
+//     absence of a row in a real payload rather than the emptiness of one.
+//   - **N coins and N sheets in one transaction, and a blob four of them share.**
+//     `copyTokenRow` **spreads** its two optional fields rather than writing
+//     `imageId: undefined`, and that line exists for this script: `undefined` is not a
+//     Convex value, so naming a key and handing it that is a different write from omitting
+//     the key, it passes the whole local suite, and it is exactly what the field-by-field
+//     comparison below reports as `present on one side only`. The delete is the sharper
+//     half — convex-test's file storage is an in-memory stub keyed on the content hash, so
+//     five copies of one seventy-byte PNG are *one* entry there and a delete of the wrong
+//     blob, the right blob twice, or neither all look identical. `and the other four still
+//     have their art` is a sentence only a bearer URL that still returns bytes can settle.
+//
 //   node scripts/board-smoke.mjs
 //
 // Plain .mjs on purpose: no tsx, no new dependency, nothing to install.
@@ -1063,6 +1092,15 @@ const FOG_REACH = 30
 const FOG_RECT_KEYS = '_id,height,width,x,y'
 const MODAL_IMAGE_KEYS = '_id,imageHeight,imageUrl,imageWidth,name'
 const TRACK_KEYS = '_id,name,url'
+/**
+ * `publicTokenMarkersValidator`, hand-spelled — two keys and no more.
+ *
+ * The same argument as the three above, with one extra edge: a marker row is the first row
+ * in this application a **non-DM** can cause to exist, so a field added here would be a
+ * field a player writes. Two keys is what says the row carries a coin's conditions and
+ * nothing about who ticked them.
+ */
+const MARKER_ROW_KEYS = 'markers,tokenId'
 
 /**
  * THE HANDOUT. Named the way `modalImages.list`'s docblock names the risk, because the whole
@@ -1109,6 +1147,150 @@ const MP3_BYTES = Buffer.concat([
   Buffer.from([0xff, 0xfb, 0x90, 0x64]),
   Buffer.alloc(413),
 ])
+
+/**
+ * MILESTONE 11'S FIXTURES — tokens.
+ *
+ * One new vocabulary, one new naming rule and one new limit, all restated by hand for the
+ * reason every number above is restated: this is plain .mjs on purpose, it cannot import a
+ * .ts module, and a fixture derived from the code under test agrees with a broken rule
+ * exactly as readily as with a correct one.
+ */
+
+/**
+ * THE SEVENTEEN CONDITIONS, alphabetically, copied out of `convex/lib/markers.ts`.
+ *
+ * ⚠️ **The spellings are AMERICAN — `paralyzed` — against this codebase's British house
+ * style, and copying them faithfully is the whole point of this constant.** Exactly one of
+ * the seventeen actually differs, the surrounding prose is British, and the next reader will
+ * see `paralyzed` as a typo. A stored key whose spelling changes is a marker that silently
+ * stops drawing: `normaliseMarkers` drops the value it has never heard of, exactly as
+ * designed, and the pip disappears from a board mid-session with nothing failing anywhere.
+ * This array is a second place, outside `convex/`, where that change fails a check.
+ *
+ * The **order** is load-bearing too, and it is asserted rather than merely relied on: the
+ * canonical order is what `normaliseMarkers` produces, so the round trip below sends the
+ * list backwards and diffs what comes back against this one element by element.
+ */
+const ALL_MARKERS = [
+  'blinded',
+  'charmed',
+  'concentrating',
+  'dead',
+  'deafened',
+  'exhaustion',
+  'frightened',
+  'grappled',
+  'incapacitated',
+  'invisible',
+  'paralyzed',
+  'petrified',
+  'poisoned',
+  'prone',
+  'restrained',
+  'stunned',
+  'unconscious',
+]
+
+/**
+ * A subset sent out of order **and with one member repeated**, and the array the vocabulary
+ * puts it back as.
+ *
+ * ⚠️ **The repeat is here rather than on the seventeen, and the deployment is what decided
+ * that.** `setMarkers` refuses an array longer than the vocabulary before it reads anything —
+ * an argument-only bound, so a call that will be refused on its arguments alone costs no I/O
+ * to refuse — which means *the whole vocabulary plus a repeat* is not a payload a client can
+ * send at all. So the two claims are split: the seventeen prove the **order**, at the cap,
+ * and this proves the **deduplication**. A double-clicked checkbox is what sends the repeat,
+ * and it never sends more than seventeen boxes.
+ */
+const SUBSET_SENT = ['unconscious', 'charmed', 'prone', 'blinded', 'charmed']
+const SUBSET_CANONICAL = ['blinded', 'charmed', 'prone', 'unconscious']
+
+/** `MAX_DUPLICATE_COUNT`, copied by hand out of `convex/lib/limits.ts`. */
+const MAX_DUPLICATE_COUNT = 10
+
+/**
+ * THE COIN THE NAMING RULE IS ASSERTED OVER, and the emoji is inside the base on purpose.
+ *
+ * The rule is three sentences: the **base** is the source name with one trailing
+ * ` <digits>` group removed, `n` is the highest number already in use among names matching
+ * that base — a bare base counting as 1 — and the copies are `base n+1 …`. So a source
+ * called `Kobold of the Arch 🐉 3` duplicates to `… 🐉 4`, `… 🐉 5`, `… 🐉 6`.
+ *
+ * ⚠️ **The emoji sits before the number rather than after it, and that is the fixture doing
+ * its job rather than a decoration.** `NUMBERED_NAME` is anchored — a name counts as
+ * numbered only when it *ends* in a space and digits — so `Kobold of the Arch 3 🐉` has no
+ * trailing sequence number at all, its base is the whole string and its copies would be
+ * numbered from 2. Both readings are correct behaviour; only this one puts a surrogate pair
+ * in the middle of a string the server slices a number off the end of, which is the
+ * Milestone 1 bug class arriving at a new field. The name is asserted to hold an astral
+ * character at the check, so an innocent edit that ASCII-fies it fails rather than quietly
+ * testing nothing.
+ *
+ * ⚠️ **And a coin called `… 🐉 3` cannot be made by typing that name, which is a fact about
+ * the deployment and not about this fixture.** `addToken` runs the DM's typed name through
+ * the *same* `duplicateNames` a duplication uses, so asking for one coin called `… 🐉 3` on
+ * a board with no kobolds hits the skip case and stores `… 🐉` with the number **stripped** —
+ * and every claim below about the base rule would then have been about a different string.
+ * So the source is made by adding **three** coins on the bare base, which numbers them 1, 2
+ * and 3, and the third one is the source. That is asserted on the way past rather than
+ * assumed, because it is the fact the rest of the section rests on.
+ */
+const KOBOLD_BASE = 'Kobold of the Arch 🐉'
+const KOBOLD_COIN_NAME = `${KOBOLD_BASE} 3`
+const KOBOLD_TINT = '#C0FFEE'
+const KOBOLD_SIZE = 3
+const KOBOLD_MAX_HP = 353
+/** Damage to exactly one copy. 111 of 353 leaves 242 — three numbers no other fixture uses. */
+const KOBOLD_DAMAGE = 111
+/**
+ * The source's sheet: a `pc`, because `setReserved` refuses anything else and *reserved
+ * travels to the copy* is one of the claims below. Small on purpose — the diff is copy
+ * against source rather than against this, so what matters is that every field is one a
+ * field-by-field rebuild could drop.
+ */
+const KOBOLD_SHEET = {
+  kind: 'pc',
+  level: 5,
+  className: 'Warden of the Arch',
+  abilities: { str: 13, dex: 19, con: 11, int: 7, wis: 15, cha: 9 },
+  saveProficiencies: { str: false, dex: true, con: false, int: false, wis: true, cha: false },
+  armourClass: 16,
+  maxHp: KOBOLD_MAX_HP,
+  hitDice: { count: 5, faces: 8 },
+  feats: [
+    {
+      id: 'kobold-arch-lore',
+      name: 'Arch-Lore 🜁',
+      text: 'Knows which of the nine arches the water goes under first, and says so at length.',
+      roll: null,
+      level: null,
+      catalogueKey: null,
+      category: 'passive',
+    },
+  ],
+  spells: [],
+}
+
+/**
+ * Exactly forty UTF-16 code units and no trailing digits, so numbering one copy off it
+ * would take the name to forty-two and `duplicateNamesProblem` refuses the batch.
+ *
+ * The length is asserted at the check rather than trusted, for `EDITED_TOKEN_NAME`'s reason:
+ * an innocent edit to the string is exactly how a boundary test stops sitting on the
+ * boundary. It borrows `MAX_TOKEN_NAME_LENGTH` above rather than declaring a second
+ * constant, because the limit `duplicateNamesProblem` applies *is* the character-name limit
+ * — one number in `convex/lib/codes.ts`, and two names for it here would be one more place
+ * for a copy to go stale.
+ */
+const OVERLONG_SOURCE_NAME = 'Kobold Sergeant of the Ninth Arch Bridge'
+
+/** A base nothing on the board uses, for *add five of these*. */
+const SWARM_NAME = 'Culvert Rat'
+
+/** The coin section 36 walks between two boards. Distinct from every other name here. */
+const TRAVELLER_COIN_NAME = 'Lantern-Bearer of the Undercroft'
 
 /**
  * The eight numbers a rating shift moves, pulled off a resolved sheet in one shape so
@@ -1385,6 +1567,24 @@ async function main() {
   const grantedTokens = []
   const reservedCharacters = []
   const seats = []
+  // ⚠️ **Every coin this run ticks a condition on, and it is swept before the token loop
+  // rather than after it.** A marker row hangs off a coin, so clearing one on a coin
+  // `board:removeToken` has already taken means `TokenNotFound` — and `quietly` would report
+  // a failed cleanup step for a run that went perfectly, which is the one thing a cleanup
+  // path must never do. `removeToken` calls `deleteTokenMarkers` itself, so the ordering
+  // buys nothing except a receipt that tells the truth. Section 37 empties this list inline
+  // where the clearing is itself an assertion, exactly as sections 25, 33 and 34 do; what is
+  // left here is a run that failed halfway.
+  const markedTokens = []
+  // ⚠️ **A whole second game, and it exists for one refusal.** `board:placements` has to
+  // answer *a coin at another table* and *a coin that no longer exists* identically, and a
+  // fabricated id cannot ask that question — a string that is not a `tokens` id at all is
+  // refused by Convex's argument validation at the function boundary, which is a different
+  // refusal from a different layer. So the foreign token is a real row in a real game, and
+  // that game's own scene, coin and blob are swept below. The game document itself is named
+  // with this run's `Board Smoke ` prefix so that `npm run prune-games` reaches it exactly as
+  // it reaches the main one.
+  const foreignGames = []
   // ⚠️ **Three more registries, and the two `_storage`-backed ones are the reason the sweep at
   // the bottom of this file has an order at all.** A handout and a track each own a blob, and
   // `files.discard` refuses any blob a live row still points at — so a run that fails between
@@ -6054,6 +6254,893 @@ async function main() {
         !purgeMessage.includes('gameId'),
       purgeRefusal ? purgeMessage : 'the deployment accepted a call to an internal mutation',
     )
+
+    // 36. PLACEMENT: ONE COIN ON TWO BOARDS, AND AN IDEMPOTENCE THAT IS OBSERVED RATHER THAN
+    // DECLARED.
+    //
+    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE.** Three things, and the first is the one
+    // worth the section.
+    //
+    //   - **Idempotence, seen from outside.** `placeOnScene` answers `null` whether it wrote
+    //     a placement or returned having touched nothing, so there is no return value to
+    //     assert on and no way to ask the question except by watching a **coordinate**. The
+    //     formulation the early return exists to prevent — leaning on `placeToken`'s upsert —
+    //     is not an error and not a missing row: it silently patches the coin back to the
+    //     middle of the map, which the DM experiences as a coin teleporting out of the
+    //     doorway they had just dragged it into. So the coin is settled somewhere it did not
+    //     land, the button is pressed a second time, and the placement is read back and
+    //     diffed field by field. **That is the check that fails if the early return is ever
+    //     replaced by the upsert**, and nothing else here is.
+    //   - **A no-op that is genuinely not an error.** `removeFromScene` twice has to be one
+    //     removal and then nothing, for `files.discard`'s reason: the menu that calls it may
+    //     be a frame stale, and a second press should be nothing rather than a second error
+    //     on top of the first. "It did not throw" is worth having only when the throw would
+    //     have crossed a real transport.
+    //   - **`placements` projects bare ids.** Its `returns:` validator is
+    //     `v.array(v.id('scenes'))`, and this query is the obvious place for a scene *name*
+    //     to be helpfully added — which `scenes.list` is DM-only precisely to avoid, because
+    //     a list of map names is a spoiler. So what comes back is compared as a sorted array
+    //     of the two ids this run made, and nothing else is allowed to be on it.
+    //
+    // ⚠️ **And the refusal parity, which is the one thing in this section guarding
+    // anything.** `requireDmToken` shares `TOKEN_NOT_FOUND` with every other board function,
+    // so a coin at another table and a coin that has gone must be one answer word for word.
+    // Both operands are made rather than fabricated, for the reason section 30's ghost is
+    // made and unmade: an id that is not a `tokens` id is refused at the function boundary,
+    // which is a refusal from a different layer and not the one being compared.
+    const secondBoardArt = await uploadPng(client, code, dmCode)
+    uploads.push(secondBoardArt)
+    const secondBoard = await client.mutation('scenes:create', {
+      code,
+      dmCode,
+      name: 'The Undercroft, One Floor Down',
+      imageId: secondBoardArt,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+    })
+    extraScenes.push(secondBoard.sceneId)
+
+    const traveller = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      name: TRAVELLER_COIN_NAME,
+      layer: 'player',
+      sizeSquares: 1,
+      tint: '#d35400',
+      x: 1000,
+      y: 300,
+    })
+    created.push(traveller.tokenId)
+
+    const boardsOf = (tokenId) => client.query('board:placements', { code, dmCode, tokenId })
+    const sortedIds = (ids) => [...ids].sort()
+
+    const onOneBoard = await boardsOf(traveller.tokenId)
+    check(
+      'a new coin stands on exactly the board it was added to',
+      Array.isArray(onOneBoard) && onOneBoard.length === 1 && onOneBoard[0] === sceneId,
+      `${JSON.stringify(onOneBoard)} — the positive control every count below rests on`,
+    )
+
+    await client.mutation('board:placeOnScene', {
+      code,
+      dmCode,
+      sceneId: secondBoard.sceneId,
+      tokenId: traveller.tokenId,
+    })
+    const onBoth = await boardsOf(traveller.tokenId)
+    const wantedBoards = sortedIds([sceneId, secondBoard.sceneId])
+    check(
+      'board:placeOnScene put the coin on a second board without taking it off the first',
+      JSON.stringify(sortedIds(onBoth)) === JSON.stringify(wantedBoards),
+      `${JSON.stringify(sortedIds(onBoth))} against ${JSON.stringify(wantedBoards)} — ids and never names, because a map's name is a spoiler`,
+    )
+
+    // THE IDEMPOTENCE, AND IT IS A COORDINATE RATHER THAN A COUNT.
+    //
+    // The target is fractional so the settling write is arithmetic over real float64s, and
+    // where the coin lands is not predicted here: the second board's grid is whatever
+    // `scenes.create` defaults to, and this section is about a row that does not move rather
+    // than about the snap that section 31 already asserts. What makes it an assertion is the
+    // pair — the cell `placeOnScene` chose, and the cell the DM dragged it to, being
+    // different — because the upsert formulation would put it back in the first.
+    const spotOnSecondBoard = async () =>
+      (
+        await client.query('board:positions', { code, sceneId: secondBoard.sceneId, dmCode })
+      ).find((row) => row.tokenId === traveller.tokenId) ?? null
+
+    const landedAt = await spotOnSecondBoard()
+    await client.mutation('board:moveToken', {
+      code,
+      dmCode,
+      sceneId: secondBoard.sceneId,
+      tokenId: traveller.tokenId,
+      x: 320.5,
+      y: 1240.75,
+      settle: true,
+    })
+    const settledAt = await spotOnSecondBoard()
+    await client.mutation('board:placeOnScene', {
+      code,
+      dmCode,
+      sceneId: secondBoard.sceneId,
+      tokenId: traveller.tokenId,
+    })
+    const afterSecondPress = await spotOnSecondBoard()
+    const idempotenceDrift =
+      settledAt && afterSecondPress
+        ? firstDifference(settledAt, afterSecondPress, 'placement')
+        : 'no placement came back off the second board'
+    check(
+      'pressing place a second time wrote nothing — the coin is still where the DM settled it',
+      idempotenceDrift === null &&
+        // The positive control, and it is half the assertion: without it this passes on a
+        // deployment where the drop never landed either, which is exactly what the upsert
+        // formulation looks like when both writes go to the same cell.
+        landedAt !== null &&
+        (landedAt.x !== settledAt.x || landedAt.y !== settledAt.y),
+      idempotenceDrift ??
+        `placed at ${landedAt.x} / ${landedAt.y}, settled at ${settledAt.x} / ${settledAt.y}, and unmoved by the second press`,
+    )
+
+    await client.mutation('board:removeFromScene', {
+      code,
+      dmCode,
+      sceneId: secondBoard.sceneId,
+      tokenId: traveller.tokenId,
+    })
+    const afterFirstRemoval = await boardsOf(traveller.tokenId)
+    await client.mutation('board:removeFromScene', {
+      code,
+      dmCode,
+      sceneId: secondBoard.sceneId,
+      tokenId: traveller.tokenId,
+    })
+    const afterSecondRemoval = await boardsOf(traveller.tokenId)
+    check(
+      'taking the coin off the second board twice was one removal and then nothing at all',
+      JSON.stringify(afterFirstRemoval) === JSON.stringify([sceneId]) &&
+        JSON.stringify(afterSecondRemoval) === JSON.stringify([sceneId]),
+      `${JSON.stringify(afterFirstRemoval)} then ${JSON.stringify(afterSecondRemoval)} — the second call is the no-op, and it crossed a real transport to be one`,
+    )
+
+    // AND THE LAST BOARD OFF, which is a legitimate state and deliberately not refused: a
+    // coin on no map at all is what the schema means by *tokens belong to the game, not to
+    // this map*, it keeps its row, its sheet and its grants, and one press puts it back.
+    await client.mutation('board:removeFromScene', {
+      code,
+      dmCode,
+      sceneId,
+      tokenId: traveller.tokenId,
+    })
+    const onNoBoard = await boardsOf(traveller.tokenId)
+    const stillACoin = await tokensOf(traveller.tokenId)
+    check(
+      'taking the last board off left the coin standing on none — and left the coin',
+      onNoBoard.length === 0 &&
+        stillACoin !== null &&
+        stillACoin.name === TRAVELLER_COIN_NAME &&
+        stillACoin.layer === 'player',
+      stillACoin
+        ? `${onNoBoard.length} boards, and ${JSON.stringify(stillACoin.name)} is still in board:tokens`
+        : 'the coin went with its last placement',
+    )
+
+    await refuses('board:placements refused a well-formed wrong DM code', () =>
+      client.query('board:placements', {
+        code,
+        dmCode: 'not-the-dm-code',
+        tokenId: traveller.tokenId,
+      }),
+    )
+
+    // THE SECOND GAME. Named with this run's own prefix so `npm run prune-games` sweeps it,
+    // and its scene, coin and blob are all reclaimed in `finally` by mutations an ordinary
+    // client can call — see the registry's note.
+    const otherTable = await client.mutation('games:create', {
+      name: `${gameName} (the other table)`,
+      dmName: SMOKE_DM_NAME,
+      recoveryPhrase: 'brass lantern smoke',
+    })
+    foreignGames.push(otherTable)
+    otherTable.imageId = await uploadPng(client, otherTable.code, otherTable.dmCode)
+    const otherTableScene = await client.mutation('scenes:create', {
+      code: otherTable.code,
+      dmCode: otherTable.dmCode,
+      name: 'Somebody Else’s Map',
+      imageId: otherTable.imageId,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+    })
+    otherTable.sceneId = otherTableScene.sceneId
+    const otherTableToken = await client.mutation('board:addToken', {
+      code: otherTable.code,
+      dmCode: otherTable.dmCode,
+      sceneId: otherTableScene.sceneId,
+      name: 'A Coin at Another Table',
+      layer: 'player',
+      sizeSquares: 1,
+      tint: '#34495e',
+      x: 400,
+      y: 400,
+    })
+    otherTable.tokenId = otherTableToken.tokenId
+
+    // Made and unmade, for section 30's reason, and reused by section 37 further down: this
+    // is the state a second browser tab is in the instant after a delete, so it is a real
+    // click rather than a hostile one.
+    const vanishing = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      name: 'Coin That Is About to Go',
+      layer: 'player',
+      sizeSquares: 1,
+      tint: '#95a5a6',
+      x: 1200,
+      y: 200,
+    })
+    await client.mutation('board:removeToken', { code, dmCode, tokenId: vanishing.tokenId })
+
+    const foreignRefusal = await refusalOf(() => boardsOf(otherTable.tokenId))
+    const vanishedRefusal = await refusalOf(() => boardsOf(vanishing.tokenId))
+    check(
+      'a coin at another table and a coin that has gone are one refusal, word for word',
+      foreignRefusal !== null &&
+        vanishedRefusal !== null &&
+        JSON.stringify(foreignRefusal) === JSON.stringify(vanishedRefusal) &&
+        foreignRefusal.kind === 'TokenNotFound',
+      `${JSON.stringify(foreignRefusal)} against ${JSON.stringify(vanishedRefusal)}`,
+    )
+
+    // 37. CONDITIONS: A SEVENTEEN-MEMBER UNION AS AN ARGUMENT AND AS A PROJECTED FIELD, AND A
+    // ROW WHOSE EXISTENCE IS THE FACT.
+    //
+    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE.** The vocabulary is a seventeen-member
+    // `v.union` of literals, and it crosses Convex's own value validation **twice per call**:
+    // once as `v.array(tokenMarkerValidator)` on the way in, and once inside
+    // `publicTokenMarkersValidator` on the way out. The local suite writes through the schema
+    // and reads a return value the harness never validates, so neither crossing exists there.
+    // Three consequences, and each is a check below:
+    //
+    //   - **A word the union has never heard of is refused at the function boundary**, before
+    //     `setMarkers`' handler runs and before `normaliseMarkers` gets a chance to drop it.
+    //     That is a *transport* refusal rather than a handler one — no `kind`, because it is
+    //     not a `ConvexError` — and section 35 already tells those two apart this way.
+    //   - **The canonical order and the deduplication are what is stored**, not what the
+    //     caller sent, so the whole vocabulary goes out backwards and has to come back
+    //     forwards. Diffed element by element rather than compared as a set, so a member that
+    //     came back re-tagged, dropped or reordered is *named*. ⚠️ **The repeat is asserted
+    //     on the subset below rather than on the seventeen, because the deployment refused
+    //     the other arrangement**: `setMarkers` bounds the array at the vocabulary's own
+    //     length before it reads anything, so *all seventeen plus a duplicate* is eighteen
+    //     values and not a payload any client can send. That refusal is checked too.
+    //   - **An empty array deletes the row.** The row's existence *is* the fact, the way a
+    //     placement row's is, so what has to be observed is a payload with **no row in it**
+    //     rather than a row holding `[]` — which is a distinction a value comparison cannot
+    //     make and an empty local fixture would satisfy either way.
+    //
+    // ⚠️ **And the presence half and the absence half are one check**, for section 31's
+    // reason: a player must receive the player-layer coin's conditions and no row whatever
+    // for the GM-layer one. Either alone means nothing — the first passes on a deployment
+    // that published everything, the second on one that sent nobody anything.
+    const markersSeenBy = (extra) => client.query('board:markers', { code, ...extra })
+    const markerRowFor = async (tokenId) =>
+      (await markersSeenBy({ dmCode })).find((row) => row.tokenId === tokenId) ?? null
+
+    // Backwards, and exactly at the cap — a coin carrying every condition in the book is the
+    // largest array this table ever stores, so the round trip is over a bound as well as over
+    // an order.
+    await client.mutation('board:setMarkers', {
+      code,
+      dmCode,
+      tokenId: heroToken.tokenId,
+      markers: [...ALL_MARKERS].reverse(),
+    })
+    markedTokens.push(heroToken.tokenId)
+    const everyCondition = await markerRowFor(heroToken.tokenId)
+    const markerDrift = everyCondition
+      ? firstDifference(ALL_MARKERS, everyCondition.markers, 'markers')
+      : 'no marker row came back at all'
+    check(
+      'all seventeen conditions, sent backwards, came back forwards in the vocabulary’s order',
+      markerDrift === null &&
+        everyCondition &&
+        Object.keys(everyCondition).sort().join(',') === MARKER_ROW_KEYS &&
+        // Asserted rather than assumed, because the vocabulary is copied by hand and a
+        // truncated copy would agree with a truncated payload.
+        ALL_MARKERS.length === 17,
+      markerDrift ??
+        `${everyCondition.markers.length} conditions back, keys: ${Object.keys(everyCondition).sort().join(',')}`,
+    )
+    // AND ONE MORE THAN THE VOCABULARY HOLDS, which is the argument-only bound: refused
+    // before `resolveDmAccess`, before the token is read, and before `normaliseMarkers` would
+    // have squeezed the repeat out anyway. What it stops is a caller buying an unbounded array
+    // with one argument, and it is why the repeat is asserted on the subset below.
+    const tooManyRefusal = await refusalOf(() =>
+      client.mutation('board:setMarkers', {
+        code,
+        dmCode,
+        tokenId: heroToken.tokenId,
+        markers: [...ALL_MARKERS, 'poisoned'],
+      }),
+    )
+    check(
+      'an eighteenth entry was refused as BadInput, even though it repeats a condition already there',
+      tooManyRefusal !== null && tooManyRefusal.kind === 'BadInput',
+      tooManyRefusal
+        ? JSON.stringify(tooManyRefusal)
+        : `the deployment accepted ${ALL_MARKERS.length + 1} entries for a ${ALL_MARKERS.length}-word vocabulary`,
+    )
+
+    await client.mutation('board:setMarkers', {
+      code,
+      dmCode,
+      tokenId: heroToken.tokenId,
+      markers: SUBSET_SENT,
+    })
+    const subsetRow = await markerRowFor(heroToken.tokenId)
+    const subsetDrift = subsetRow
+      ? firstDifference(SUBSET_CANONICAL, subsetRow.markers, 'markers')
+      : 'no marker row came back'
+    check(
+      'a subset sent out of order and with one repeat came back deduplicated, in the vocabulary’s order',
+      subsetDrift === null &&
+        // Asserted rather than trusted: an edit that drops the duplicate leaves this checking
+        // only the ordering, which the seventeen above already cover.
+        SUBSET_SENT.length === SUBSET_CANONICAL.length + 1,
+      subsetDrift ??
+        `${JSON.stringify(SUBSET_SENT)} was stored as ${JSON.stringify(subsetRow.markers)}`,
+    )
+
+    // ⚠️ **THE ROW'S EXISTENCE IS THE FACT**, so this asserts an absence rather than an empty
+    // array — a deployment that stored `[]` would satisfy every value comparison and leave a
+    // game with two hundred coins holding two hundred rows.
+    await client.mutation('board:setMarkers', {
+      code,
+      dmCode,
+      tokenId: heroToken.tokenId,
+      markers: [],
+    })
+    const clearedRows = await markersSeenBy({ dmCode })
+    check(
+      'clearing the last condition deleted the row rather than storing an empty array',
+      !clearedRows.some((row) => row.tokenId === heroToken.tokenId) &&
+        // The positive control, and it is the read one call earlier rather than an argument
+        // about one: without it this passes on a deployment that never stored anything.
+        subsetRow !== null &&
+        subsetRow.markers.length === SUBSET_CANONICAL.length,
+      `${clearedRows.length} rows left in the game, none of them this coin’s — and it carried ${subsetRow ? subsetRow.markers.length : 0} one call ago`,
+    )
+
+    // THE ARGUMENT VALIDATOR, which is the mechanism this whole script exists to reach.
+    // `exhausted` is the mistake somebody actually makes — the vocabulary's word is
+    // `exhaustion` — and it is refused before any handler runs, so `normaliseMarkers` never
+    // sees it and the refusal names the field rather than the value's meaning.
+    //
+    // ⚠️ **Caught here rather than through `refusalOf`, and the reason is the reporter rather
+    // than the refusal.** `describeError` trims a message to 110 code points so that one check
+    // stays one line — and a real deployment spends the first seventy of an
+    // `ArgumentValidationError` on a request id and the error class, so the *path* falls off
+    // the end. This is the one assertion in this file about the tail of a message, so it reads
+    // the untrimmed one. `kind` is still the thing that separates a transport refusal from a
+    // handler's `ConvexError`, exactly as in section 35.
+    let unknownKind = 'the deployment accepted it'
+    let unknownMessage = ''
+    try {
+      await client.mutation('board:setMarkers', {
+        code,
+        dmCode,
+        tokenId: heroToken.tokenId,
+        markers: ['prone', 'exhausted'],
+      })
+    } catch (error) {
+      const data = error && error.data
+      unknownKind = data && typeof data === 'object' ? (data.kind ?? null) : null
+      unknownMessage = String((error && error.message) ?? error)
+        .trim()
+        .replace(/\s+/g, ' ')
+    }
+    check(
+      'a condition the vocabulary has never heard of was refused by Convex’s own argument validation, naming the field',
+      unknownKind === null && unknownMessage.includes('markers'),
+      unknownMessage
+        ? unknownMessage.slice(0, 180)
+        : 'the deployment stored a condition nothing can label, draw or normalise',
+    )
+
+    // THE PRESENCE HALF AND THE ABSENCE HALF, in one check because neither is worth having
+    // alone.
+    await client.mutation('board:setMarkers', {
+      code,
+      dmCode,
+      tokenId: heroToken.tokenId,
+      markers: ['concentrating', 'poisoned'],
+    })
+    await client.mutation('board:setMarkers', {
+      code,
+      dmCode,
+      tokenId: secret.tokenId,
+      markers: ['invisible'],
+    })
+    markedTokens.push(secret.tokenId)
+    const markersToPlayer = await markersSeenBy({})
+    const markersToDm = await markersSeenBy({ dmCode })
+    check(
+      'a player got the player-layer coin’s conditions and no row at all for the GM-layer coin',
+      markersToPlayer.some((row) => row.tokenId === heroToken.tokenId) &&
+        !markersToPlayer.some((row) => row.tokenId === secret.tokenId) &&
+        // `invisible` is on the ambush and on nothing else, so the scan is a needle rather
+        // than a word that might legitimately be in the payload.
+        !JSON.stringify(redactOpaque(markersToPlayer)).includes('invisible') &&
+        // Both positive controls: the DM has the row the player does not, and the DM's
+        // payload is longer — without them the absence half passes on an empty answer.
+        markersToDm.some((row) => row.tokenId === secret.tokenId) &&
+        markersToDm.length > markersToPlayer.length,
+      `${markersToPlayer.length} rows to a player against ${markersToDm.length} to the DM — positive control included`,
+    )
+
+    // THE THREE REFUSALS, OVER A REAL WIRE AND WITH A REAL SEAT — and the write that has to
+    // land first, because three refusals prove nothing on a deployment that refuses
+    // everything. A player may mark the coins they may drag, which is `requireMovableToken`
+    // reused deliberately rather than a third predicate.
+    await client.mutation('board:setMarkers', {
+      code,
+      playerId: seatA.playerId,
+      tokenId: heroToken.tokenId,
+      markers: ['concentrating'],
+    })
+    const markedByPlayer = await markerRowFor(heroToken.tokenId)
+    check(
+      'the seat playing the hero marked its own coin, holding no DM code',
+      markedByPlayer && JSON.stringify(markedByPlayer.markers) === JSON.stringify(['concentrating']),
+      markedByPlayer
+        ? `${JSON.stringify(markedByPlayer.markers)} — the positive control for the three refusals below`
+        : 'no marker row came back after a player wrote one',
+    )
+
+    const markAs = (tokenId) => () =>
+      client.mutation('board:setMarkers', {
+        code,
+        playerId: seatA.playerId,
+        tokenId,
+        markers: ['prone'],
+      })
+    const ungrantedMarkRefusal = await refusalOf(markAs(fogToken.tokenId))
+    const sceneryMarkRefusal = await refusalOf(markAs(scenery.tokenId))
+    const gmMarkRefusal = await refusalOf(markAs(secret.tokenId))
+    const goneMarkRefusal = await refusalOf(markAs(vanishing.tokenId))
+    check(
+      'three coins, three different refusals — and the GM-layer one is a vanished coin’s word for word',
+      ungrantedMarkRefusal !== null &&
+        ungrantedMarkRefusal.kind === 'TokenNotYours' &&
+        sceneryMarkRefusal !== null &&
+        sceneryMarkRefusal.kind === 'TokenNotMovable' &&
+        gmMarkRefusal !== null &&
+        gmMarkRefusal.kind === 'TokenNotFound' &&
+        goneMarkRefusal !== null &&
+        // Parity where a secret is behind it, and a deliberate difference where the player is
+        // looking straight at the coin — section 31's inversion, reached by a second route.
+        JSON.stringify(gmMarkRefusal) === JSON.stringify(goneMarkRefusal) &&
+        gmMarkRefusal.message !== sceneryMarkRefusal.message,
+      `${ungrantedMarkRefusal && ungrantedMarkRefusal.kind} / ${sceneryMarkRefusal && sceneryMarkRefusal.kind} / ${gmMarkRefusal && gmMarkRefusal.kind}, and the ambush's refusal is ${JSON.stringify(gmMarkRefusal)}`,
+    )
+
+    // Cleared here rather than in `finally`, because the clearing is itself the assertion —
+    // sections 25, 33 and 34 empty their registries on the way past for the same reason.
+    for (const tokenId of [heroToken.tokenId, secret.tokenId]) {
+      await client.mutation('board:setMarkers', { code, dmCode, tokenId, markers: [] })
+    }
+    const noMarkersLeft = await markersSeenBy({ dmCode })
+    check(
+      'both coins were cleared, and the table holds no row for either',
+      !noMarkersLeft.some(
+        (row) => row.tokenId === heroToken.tokenId || row.tokenId === secret.tokenId,
+      ) &&
+        // The positive control again, from the read two calls ago.
+        markersToDm.length >= 2,
+      `${noMarkersLeft.length} rows left, down from ${markersToDm.length}`,
+    )
+    markedTokens.length = 0
+
+    // 38. DUPLICATE: N COINS AND N SHEETS IN ONE TRANSACTION, COMPARED FIELD BY FIELD — AND
+    // THE BLOB FOUR OF THEM SHARE.
+    //
+    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE, and the last of the three is the reason
+    // this section is here rather than in the suite.**
+    //
+    //   - **The field-by-field rebuild, which is this file's oldest trap on a new writer.**
+    //     `copyTokenRow` **spreads** `imageId` and `characterId` rather than writing
+    //     `imageId: undefined`, and that line exists for this comparison: `undefined` is not
+    //     a Convex value, so naming a key and handing it that is a *different write* from
+    //     omitting the key, it round-trips through a validator that permits the field to be
+    //     absent, and the whole local suite stays green. `firstDifference` reports
+    //     `present on one side only`; nothing else in this project ever has.
+    //   - **N coins and N sheets in one transaction**, asserted as an observation rather than
+    //     read off a docblock: the over-length refusal below is made to fire and the token
+    //     and character counts are compared across it, so a writer that inserted before it
+    //     validated leaves evidence.
+    //   - ⚠️ **THE CHECK NOTHING BUT A DEPLOYMENT CAN MAKE.** convex-test's file storage is
+    //     an in-memory stub keyed on the **content hash**, and every upload in this script is
+    //     the same seventy bytes — so the four twins are *one* entry there, and a delete of
+    //     the wrong blob, of the right blob twice, or of neither are indistinguishable.
+    //     There are no bearer URLs to keep resolving either. `board.removeToken`'s delete
+    //     became conditional in the commit that first allowed a twin to exist, and *the other
+    //     four still have their art* is the acceptance sentence: a URL captured before the
+    //     delete, fetched after it, returning the bytes.
+    const koboldArt = await uploadPng(client, code, dmCode)
+    uploads.push(koboldArt)
+    const koboldCharacter = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: KOBOLD_COIN_NAME,
+      sheet: KOBOLD_SHEET,
+    })
+    createdCharacters.push(koboldCharacter.characterId)
+    // ⚠️ **Three coins on the bare base rather than one coin with a 3 typed on the end**, and
+    // the deployment is what decided that: `addToken` runs the DM's typed name through the
+    // same numbering rule a duplicate uses, so asking for `… 🐉 3` on a board with no kobolds
+    // stores `… 🐉` with the number stripped. Adding three numbers them 1, 2 and 3, and the
+    // third is the source every claim below is about. One `imageId` and one `characterId`
+    // across the batch, which is `addToken`'s documented answer — *five coins of that
+    // creature*, not five creatures — and it makes the shared blob three coins wide before a
+    // single copy exists.
+    const koboldBatch = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      name: KOBOLD_BASE,
+      layer: 'player',
+      sizeSquares: KOBOLD_SIZE,
+      tint: KOBOLD_TINT,
+      imageId: koboldArt,
+      characterId: koboldCharacter.characterId,
+      x: 1000,
+      y: 1400,
+      count: 3,
+    })
+    for (const tokenId of koboldBatch.tokenIds) created.push(tokenId)
+    const kobold = { tokenId: koboldBatch.tokenIds[2] }
+    const boardAfterBatch = await client.query('board:tokens', { code, dmCode })
+    const batchNames = koboldBatch.tokenIds.map((tokenId) => {
+      const row = boardAfterBatch.find((entry) => entry._id === tokenId)
+      return row ? row.name : null
+    })
+    const batchDrift = firstDifference(
+      [1, 2, 3].map((n) => `${KOBOLD_BASE} ${n}`),
+      batchNames,
+      'names',
+    )
+    check(
+      'three coins added on a base with an astral character in it were numbered 1, 2 and 3',
+      batchDrift === null,
+      batchDrift ?? `${JSON.stringify(batchNames)} — the third of them is the source below`,
+    )
+
+    // Granted before the copy is made, so *grants are dropped* is a claim about a grant that
+    // really existed rather than about an empty array staying empty.
+    await client.mutation('board:setControllers', {
+      code,
+      dmCode,
+      tokenId: kobold.tokenId,
+      playerIds: [seatA.playerId],
+    })
+    grantedTokens.push(kobold.tokenId)
+
+    const koboldRow = await tokensOf(kobold.tokenId)
+    const copies = await client.mutation('board:duplicateToken', {
+      code,
+      dmCode,
+      sceneId,
+      tokenId: kobold.tokenId,
+      count: 3,
+    })
+    for (const tokenId of copies.tokenIds) created.push(tokenId)
+    const copyNames = [4, 5, 6].map((n) => `${KOBOLD_BASE} ${n}`)
+    const sourceAfterCopy = await tokensOf(kobold.tokenId)
+    const nameDrift = firstDifference(copyNames, copies.names, 'names')
+    check(
+      'three copies were numbered on from the source, and the source was not renamed',
+      nameDrift === null &&
+        copies.tokenIds.length === 3 &&
+        sourceAfterCopy &&
+        sourceAfterCopy.name === KOBOLD_COIN_NAME &&
+        // Asserted rather than trusted: a fixture edited down to ASCII would make the base
+        // rule cross the wire over a string nothing interesting could happen to.
+        KOBOLD_COIN_NAME.length > [...KOBOLD_COIN_NAME].length,
+      nameDrift ??
+        `${JSON.stringify(copies.names)} beside a source still called ${JSON.stringify(sourceAfterCopy.name)}, ${KOBOLD_COIN_NAME.length} code units and ${[...KOBOLD_COIN_NAME].length} code points`,
+    )
+
+    const boardAfterCopies = await client.query('board:tokens', { code, dmCode })
+    const copyRows = copies.tokenIds.map(
+      (tokenId) => boardAfterCopies.find((row) => row._id === tokenId) ?? null,
+    )
+    for (const copy of copyRows) {
+      if (copy && copy.characterId) createdCharacters.push(copy.characterId)
+    }
+
+    // FIELD BY FIELD AGAINST THE SOURCE. Six of the nine keys are substituted with what the
+    // copy is *supposed* to hold — its own id, its numbered name, its own art URL, its own
+    // character, and two empty arrays because a grant does not travel — so what is left
+    // compared verbatim is `layer`, `sizeSquares` and `tint`, which is exactly the row the
+    // rebuild has to carry. A key the rebuild forgot arrives here as
+    // `present on one side only`.
+    let copyDrift = null
+    for (const [index, copy] of copyRows.entries()) {
+      if (!copy) {
+        copyDrift = `copy${index + 1}: did not come back off the board at all`
+        break
+      }
+      const expected = {
+        ...koboldRow,
+        _id: copy._id,
+        name: copyNames[index],
+        artUrl: copy.artUrl,
+        characterId: copy.characterId,
+        controllerIds: [],
+        grantedPlayerIds: [],
+      }
+      copyDrift = firstDifference(expected, copy, `copy${index + 1}`)
+      if (copyDrift) break
+      if (copy.artUrl === null) {
+        copyDrift = `copy${index + 1}.artUrl: the copy came back with no art`
+        break
+      }
+      if (copy.characterId === null || copy.characterId === koboldRow.characterId) {
+        copyDrift = `copy${index + 1}.characterId: ${JSON.stringify(copy.characterId)} against the source's ${JSON.stringify(koboldRow.characterId)} — a copy must not share a sheet`
+        break
+      }
+    }
+    check(
+      'every copy matched the source field by field — layer, size and tint carried, art shared, grants dropped, a sheet of its own',
+      copyDrift === null &&
+        // The positive control on the substitution: the source really was granted, so the
+        // two empty arrays above are a grant being dropped rather than one never existing.
+        koboldRow &&
+        koboldRow.grantedPlayerIds.includes(seatA.playerId),
+      copyDrift ??
+        `3 copies at ${koboldRow.sizeSquares} squares on ${koboldRow.layer}, tint ${koboldRow.tint}, from a source granted to ${JSON.stringify(koboldRow.grantedPlayerIds)}`,
+    )
+
+    // AND THE SHEET, which is the other half of the transaction. `_id` and `name` come off
+    // because those are the two things a copy is *meant* to differ in; everything else — the
+    // resolved sheet, the selections, the extras, the creature labels — has to be the same
+    // document.
+    const sheetBodyOf = (payload) => {
+      const body = { ...payload }
+      delete body._id
+      delete body.name
+      return body
+    }
+    const sourceSheet = await client.query('characters:sheet', {
+      code,
+      dmCode,
+      characterId: koboldCharacter.characterId,
+    })
+    let sheetDrift = sourceSheet === null ? 'no sheet came back for the source' : null
+    if (sheetDrift === null) {
+      for (const [index, copy] of copyRows.entries()) {
+        const copySheet = await client.query('characters:sheet', {
+          code,
+          dmCode,
+          characterId: copy.characterId,
+        })
+        sheetDrift =
+          copySheet === null
+            ? `copy${index + 1}Sheet: no sheet came back`
+            : firstDifference(sheetBodyOf(sourceSheet), sheetBodyOf(copySheet), `copy${index + 1}Sheet`)
+        if (sheetDrift) break
+      }
+    }
+    check(
+      'each copy’s sheet is the source’s, field for field, under a name of its own',
+      sheetDrift === null,
+      sheetDrift ??
+        `${sourceSheet.sheet.kind} sheet at ${sourceSheet.sheet.maxHp} hp, copied three times`,
+    )
+
+    // ⚠️ **THE ROLL20 TRAP, ASSERTED.** Roll20's own documentation tells a GM that eight
+    // identical goblins have to have their hit-point bars manually unlinked or damaging one
+    // damages all eight. One point of damage to one copy, and the other three rows have to
+    // be untouched — which is a claim about four documents and is meaningless with fewer.
+    await client.mutation('characters:adjustHp', {
+      code,
+      dmCode,
+      characterId: copyRows[0].characterId,
+      delta: -KOBOLD_DAMAGE,
+    })
+    const vitalsAfterDamage = await client.query('characters:vitals', { code, dmCode })
+    const vitalsOf = (characterId) =>
+      vitalsAfterDamage.find((row) => row.characterId === characterId) ?? null
+    const hurtCopy = vitalsOf(copyRows[0].characterId)
+    const unhurtTwins = [
+      koboldCharacter.characterId,
+      copyRows[1].characterId,
+      copyRows[2].characterId,
+    ].map(vitalsOf)
+    check(
+      'damaging one copy moved one health bar — the source and the other two are still at full',
+      hurtCopy &&
+        hurtCopy.kind === 'exact' &&
+        hurtCopy.current === KOBOLD_MAX_HP - KOBOLD_DAMAGE &&
+        hurtCopy.max === KOBOLD_MAX_HP &&
+        unhurtTwins.every(
+          (row) =>
+            row && row.kind === 'exact' && row.current === KOBOLD_MAX_HP && row.max === KOBOLD_MAX_HP,
+        ),
+      `${hurtCopy ? hurtCopy.current : 'no row'} of ${KOBOLD_MAX_HP} on the one that was hit, ${JSON.stringify(unhurtTwins.map((row) => row && row.current))} on the other three`,
+    )
+
+    // RESERVED TRAVELS, AND IT IS FAIL-CLOSED. A hero the DM has withheld from the table must
+    // not become visible by being copied — so the flag is carried, and the copy is absent
+    // from a player's list exactly as its source is.
+    await client.mutation('characters:setReserved', {
+      code,
+      dmCode,
+      characterId: koboldCharacter.characterId,
+      reserved: true,
+    })
+    reservedCharacters.push(koboldCharacter.characterId)
+    const reservedCopy = await client.mutation('board:duplicateToken', {
+      code,
+      dmCode,
+      sceneId,
+      tokenId: kobold.tokenId,
+      count: 1,
+    })
+    created.push(reservedCopy.tokenIds[0])
+    const reservedCopyRow = await tokensOf(reservedCopy.tokenIds[0])
+    if (reservedCopyRow && reservedCopyRow.characterId) {
+      createdCharacters.push(reservedCopyRow.characterId)
+      reservedCharacters.push(reservedCopyRow.characterId)
+    }
+    const charactersToDm = await client.query('characters:list', { code, dmCode })
+    const charactersToPlayer = await client.query('characters:list', { code })
+    const reservedCopyId = reservedCopyRow ? reservedCopyRow.characterId : null
+    const reservedCopyListing = charactersToDm.find((row) => row._id === reservedCopyId) ?? null
+    check(
+      'the copy of a reserved hero is reserved too, and absent from a player’s list',
+      reservedCopyListing !== null &&
+        reservedCopyListing.reserved === true &&
+        !charactersToPlayer.some((row) => row._id === reservedCopyId) &&
+        // The positive control, and it is the copies made *before* the reservation: they are
+        // unreserved and they are in a player's list, so this is a flag travelling rather
+        // than the whole list being withheld.
+        charactersToDm.find((row) => row._id === copyRows[1].characterId)?.reserved === false &&
+        charactersToPlayer.some((row) => row._id === copyRows[1].characterId),
+      reservedCopyListing
+        ? `${JSON.stringify(reservedCopyListing.name)} reserved, absent from ${charactersToPlayer.length} player-visible rows of ${charactersToDm.length}`
+        : 'the copy did not appear in the DM’s list',
+    )
+
+    // ⚠️ **THE CHECK NOTHING BUT A DEPLOYMENT CAN MAKE.** The URL is captured before the
+    // delete and fetched after it: the bytes have to still be there, because four other
+    // coins point at the same blob. An unconditional `ctx.storage.delete` here is the failure
+    // the roadmap names — `Goblin 2` becoming a purple disc mid-fight — and it is invisible
+    // to a store that never held two copies of one file.
+    const sharedArtUrl = koboldRow.artUrl
+    const doomedCopy = copyRows[0]
+    await client.mutation('board:removeToken', { code, dmCode, tokenId: doomedCopy._id })
+    // Off the cleanup list the instant it is gone, or a run that went perfectly reports a
+    // failed cleanup step for a coin this section deleted on purpose.
+    created.splice(created.indexOf(doomedCopy._id), 1)
+    const artAfterDelete = sharedArtUrl ? await fetch(sharedArtUrl) : null
+    const bytesBack =
+      artAfterDelete && artAfterDelete.ok ? (await artAfterDelete.arrayBuffer()).byteLength : 0
+    const survivingCopy = await tokensOf(copyRows[1]._id)
+    check(
+      'deleting one copy left the blob its twins share — the URL still resolves and still returns the bytes',
+      artAfterDelete !== null &&
+        artAfterDelete.ok &&
+        bytesBack === Buffer.from(PNG_BASE64, 'base64').byteLength &&
+        // The positive control on *shared*: the same blob means the same URL, so a copy that
+        // had quietly been given art of its own would make this a claim about nothing.
+        survivingCopy !== null &&
+        survivingCopy.artUrl === sharedArtUrl,
+      artAfterDelete
+        ? `${artAfterDelete.status} and ${bytesBack} bytes from the URL captured before the delete, still shared by ${copyRows.length} of the copies`
+        : 'no art URL to re-fetch',
+    )
+
+    // THE COUNT BOUND, at the function boundary and just past it. Zero and eleven are the two
+    // ends; 2.5 is the one a spinner produces and the one `Number.isInteger` is there for.
+    for (const [label, count] of [
+      ['no copies at all', 0],
+      ['a fractional count', 2.5],
+      ['one more than the cap', MAX_DUPLICATE_COUNT + 1],
+    ]) {
+      const countRefusal = await refusalOf(() =>
+        client.mutation('board:duplicateToken', {
+          code,
+          dmCode,
+          sceneId,
+          tokenId: kobold.tokenId,
+          count,
+        }),
+      )
+      check(
+        `board:duplicateToken refused ${label} as BadInput`,
+        countRefusal !== null && countRefusal.kind === 'BadInput',
+        countRefusal ? JSON.stringify(countRefusal) : `the deployment accepted a count of ${count}`,
+      )
+    }
+
+    // THE OVER-LENGTH REFUSAL, AND THE ONE-TRANSACTION CLAIM AS AN OBSERVATION. The DM never
+    // typed `… 2` — the app added it — so there is no field whose `maxLength` could have
+    // stopped it on the way in, and truncating instead is the Milestone 1 bug exactly: a
+    // `slice` counts UTF-16 code units and can leave half an emoji behind.
+    const tokensBeforeRefusal = (await client.query('board:tokens', { code, dmCode })).length
+    const charactersBeforeRefusal = (await client.query('characters:list', { code, dmCode })).length
+    await client.mutation('board:updateToken', {
+      code,
+      dmCode,
+      tokenId: kobold.tokenId,
+      name: OVERLONG_SOURCE_NAME,
+      sizeSquares: KOBOLD_SIZE,
+      tint: KOBOLD_TINT,
+    })
+    const overlongRefusal = await refusalOf(() =>
+      client.mutation('board:duplicateToken', {
+        code,
+        dmCode,
+        sceneId,
+        tokenId: kobold.tokenId,
+        count: 1,
+      }),
+    )
+    const tokensAfterRefusal = (await client.query('board:tokens', { code, dmCode })).length
+    const charactersAfterRefusal = (await client.query('characters:list', { code, dmCode })).length
+    check(
+      'numbering a name already at the limit was refused, and neither a coin nor a sheet was written',
+      overlongRefusal !== null &&
+        overlongRefusal.kind === 'BadInput' &&
+        tokensAfterRefusal === tokensBeforeRefusal &&
+        charactersAfterRefusal === charactersBeforeRefusal &&
+        // The boundary, asserted rather than trusted — an innocent edit to the string is how
+        // a boundary test stops sitting on the boundary.
+        OVERLONG_SOURCE_NAME.length === MAX_TOKEN_NAME_LENGTH,
+      overlongRefusal
+        ? `${JSON.stringify(overlongRefusal.message)} — ${tokensAfterRefusal} coins and ${charactersAfterRefusal} sheets, unchanged`
+        : 'the deployment numbered a copy past the limit',
+    )
+
+    // AND *ADD FIVE OF THESE*, FROM SCRATCH, which is the acceptance line: nothing called
+    // `Culvert Rat` exists, so `n` is 0 and the run starts at 1 — where duplicating an
+    // existing coin continues past what is on the board. The difference is entirely that the
+    // source is never renamed, and both are correct. Read back off `board:tokens` rather than
+    // off the mutation's own answer, so the names asserted are the names stored.
+    const swarm = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      name: SWARM_NAME,
+      layer: 'player',
+      sizeSquares: 1,
+      tint: '#7f8c8d',
+      x: 200,
+      y: 200,
+      count: 5,
+    })
+    for (const tokenId of swarm.tokenIds) created.push(tokenId)
+    const boardAfterSwarm = await client.query('board:tokens', { code, dmCode })
+    const swarmNames = swarm.tokenIds.map((tokenId) => {
+      const row = boardAfterSwarm.find((entry) => entry._id === tokenId)
+      return row ? row.name : null
+    })
+    const swarmDrift = firstDifference(
+      [1, 2, 3, 4, 5].map((n) => `${SWARM_NAME} ${n}`),
+      swarmNames,
+      'names',
+    )
+    check(
+      'adding five coins to a board with none gave X 1 … X 5, and the first of them is the returned tokenId',
+      swarmDrift === null &&
+        swarm.tokenIds.length === 5 &&
+        swarm.tokenId === swarm.tokenIds[0],
+      swarmDrift ?? JSON.stringify(swarmNames),
+    )
   } catch (error) {
     const data = error && error.data ? ` ${JSON.stringify(error.data)}` : ''
     record('the run completed without an unexpected error', false, `${error.message ?? error}${data}`)
@@ -6103,6 +7190,18 @@ async function main() {
             characterId,
             reserved: false,
           }),
+        )
+      }
+      // ⚠️ **Between the grants and the coins, and the position is worked out rather than
+      // chosen.** A marker row hangs off a coin, so clearing one on a coin the loop below has
+      // already removed throws `TokenNotFound` and `quietly` reports a failed cleanup step
+      // for a run that went perfectly — the one thing a cleanup path must never do.
+      // `removeToken` calls `deleteTokenMarkers` itself, so this buys no reclamation at all;
+      // what it buys is a receipt that tells the truth. Section 37 empties the list on the way
+      // past, exactly as sections 25, 33 and 34 do, so on a run that finishes this is a no-op.
+      for (const tokenId of markedTokens) {
+        await quietly(() =>
+          client.mutation('board:setMarkers', { code, dmCode, tokenId, markers: [] }),
         )
       }
       for (const tokenId of created) {
@@ -6173,6 +7272,44 @@ async function main() {
       )
     } else {
       console.log('\n  nothing to clean up: the game was never created')
+    }
+    // ⚠️ **Section 36's second game, swept under its own codes.** Every step here is an
+    // ordinary client mutation authenticated with that game's join code and DM code, in the
+    // same order the loops above use and for the same reason: `files.discard` refuses a blob
+    // a live row still points at, so the coin and the scene go first. The game *document*
+    // stays, as this run's own does, and `npm run prune-games` reaches it because its name
+    // starts with the same `Board Smoke ` prefix.
+    for (const foreign of foreignGames) {
+      if (foreign.tokenId) {
+        await quietly(() =>
+          client.mutation('board:removeToken', {
+            code: foreign.code,
+            dmCode: foreign.dmCode,
+            tokenId: foreign.tokenId,
+          }),
+        )
+      }
+      if (foreign.sceneId) {
+        await quietly(() =>
+          client.mutation('scenes:remove', {
+            code: foreign.code,
+            dmCode: foreign.dmCode,
+            sceneId: foreign.sceneId,
+          }),
+        )
+      }
+      if (foreign.imageId) {
+        await quietly(() =>
+          client.mutation('files:discard', {
+            code: foreign.code,
+            dmCode: foreign.dmCode,
+            imageId: foreign.imageId,
+          }),
+        )
+      }
+      console.log(
+        `  the other table's scene, coin and blob went too: ${foreign.code} — its game document is swept by the same broom`,
+      )
     }
   }
 
