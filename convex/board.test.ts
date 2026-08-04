@@ -7,10 +7,10 @@ import { describe, expect, test } from 'vitest'
 import { api, internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
-import { MAX_TOKENS_PER_GAME } from './lib/games'
+import { MAX_CHARACTERS_PER_GAME, MAX_TOKENS_PER_GAME } from './lib/games'
 import { cellOf, snapToGrid } from './lib/grid'
 import type { Grid, Point } from './lib/grid'
-import { MAX_TOKEN_BYTES } from './lib/limits'
+import { MAX_DUPLICATE_COUNT, MAX_TOKEN_BYTES } from './lib/limits'
 import schema from './schema'
 
 const modules = import.meta.glob('./**/*.ts')
@@ -2127,6 +2127,357 @@ describe('board.removeToken', () => {
       tokenId: first,
     })
     expect(await t.query(api.board.tokens, { code: game.code })).toEqual([])
+  })
+})
+
+/**
+ * FIVE GOBLINS, FIVE SHEETS — the thing Roll20 needs a community script for.
+ *
+ * Its own documentation tells a GM that eight identical goblins must have their hit-point
+ * bars *manually unlinked* from the character sheet, or damaging one damages all eight.
+ * A copy that makes its own character document costs one function, so the assertions here
+ * are mostly about that: the names, the sheets, and the four bars that do not move.
+ */
+describe('duplicating a coin', () => {
+  async function goblin(t: Harness, options: { layer?: 'background' | 'player' | 'gm' } = {}) {
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    await calibrate(t, game.code, game.dmCode, sceneId)
+    const characterId = await makeCharacter(t, game, 'Goblin')
+    const art = await storeImage(t, 'goblin-art')
+    const tokenId = await addToken(t, game.code, game.dmCode, sceneId, {
+      name: 'Goblin',
+      layer: options.layer ?? 'player',
+      sizeSquares: 2,
+      tint: '#3d9970',
+      imageId: art,
+      characterId,
+    })
+    return { ...game, sceneId, characterId, art, tokenId }
+  }
+
+  const duplicate = (
+    t: Harness,
+    f: { code: string; dmCode: string; sceneId: Id<'scenes'>; tokenId: Id<'tokens'> },
+    count: number,
+  ) =>
+    t.mutation(api.board.duplicateToken, {
+      code: f.code,
+      dmCode: f.dmCode,
+      sceneId: f.sceneId,
+      tokenId: f.tokenId,
+      count,
+    })
+
+  test('four copies of Goblin are Goblin 2 … Goblin 5, and the source keeps its name', async () => {
+    const t = harness()
+    const f = await goblin(t)
+
+    const { names, tokenIds } = await duplicate(t, f, 4)
+
+    expect(names).toEqual(['Goblin 2', 'Goblin 3', 'Goblin 4', 'Goblin 5'])
+    expect(tokenIds).toHaveLength(4)
+    // ⚠️ The source is never renamed. `Goblin 1 … Goblin 5` reads better and is refused:
+    // it is a write to a coin the DM did not ask to change, it re-pushes `board.tokens`
+    // to the whole table, and on a bound coin it leaves the sheet's name disagreeing with
+    // the coin's. Adding five from scratch is the act that gets `Goblin 1 … Goblin 5`.
+    expect((await tokenRow(t, f.tokenId))?.name).toBe('Goblin')
+  })
+
+  test('adding five from scratch gets Goblin 1 … Goblin 5', async () => {
+    // The other half of the one naming rule, and the roadmap's acceptance line verbatim:
+    // nothing called `Goblin` is on the board, so the run starts at one.
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    await calibrate(t, game.code, game.dmCode, sceneId)
+
+    const { tokenIds } = await t.mutation(api.board.addToken, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId,
+      name: 'Goblin',
+      layer: 'player',
+      sizeSquares: 1,
+      tint: TINT,
+      x: 500,
+      y: 500,
+      count: 5,
+    })
+
+    const named = await Promise.all(tokenIds.map(async (id) => (await tokenRow(t, id))?.name))
+    expect(named).toEqual(['Goblin 1', 'Goblin 2', 'Goblin 3', 'Goblin 4', 'Goblin 5'])
+  })
+
+  /**
+   * **The Roll20 trap, asserted.** Five goblins sharing one hit-point pool is a bug that
+   * looks like a feature until the second one takes damage.
+   */
+  test('each copy gets its own character and its own vitals, so damage moves one bar', async () => {
+    const t = harness()
+    const f = await goblin(t)
+    const { tokenIds } = await duplicate(t, f, 4)
+
+    const characterIds = await Promise.all(
+      tokenIds.map(async (id) => (await tokenRow(t, id))?.characterId),
+    )
+    // Five distinct sheets, none of them the source's.
+    expect(new Set([...characterIds, f.characterId]).size).toBe(5)
+
+    const first = characterIds[0]!
+    await t.mutation(api.characters.setHp, {
+      code: f.code,
+      dmCode: f.dmCode,
+      characterId: first,
+      currentHp: 1,
+    })
+
+    const vitals = await t.query(api.characters.vitals, { code: f.code, dmCode: f.dmCode })
+    const currentOf = (characterId: Id<'characters'>) => {
+      const row = vitals.find((entry) => entry.characterId === characterId)
+      // The DM always gets the `exact` variant; a band here would mean the payload
+      // decided this caller was a player, which is a different bug entirely.
+      if (row?.kind !== 'exact') throw new Error(`no exact vitals for ${characterId}`)
+      return row.current
+    }
+
+    expect(currentOf(first)).toBe(1)
+    // The source and the other three are untouched — which is the whole feature.
+    for (const other of [f.characterId, ...characterIds.slice(1)]) {
+      expect(currentOf(other!)).toBeGreaterThan(1)
+    }
+  })
+
+  test('a copy carries layer, size, tint and art, and carries no grants', async () => {
+    const t = harness()
+    const f = await goblin(t)
+    const seat = await makeSeat(t, f.code, 'Priya')
+    await t.mutation(api.board.setControllers, {
+      code: f.code,
+      dmCode: f.dmCode,
+      tokenId: f.tokenId,
+      playerIds: [seat],
+    })
+
+    const { tokenIds } = await duplicate(t, f, 1)
+    const copy = await tokenRow(t, tokenIds[0])
+    const source = await tokenRow(t, f.tokenId)
+
+    expect(copy?.layer).toBe(source?.layer)
+    expect(copy?.sizeSquares).toBe(source?.sizeSquares)
+    expect(copy?.tint).toBe(source?.tint)
+    expect(copy?.imageId).toBe(f.art)
+    // ⚠️ A grant is a decision about a person and a coin. An unattached copy is the DM's,
+    // which is the correction the first real session forced, reached by a new route.
+    expect(copy?.controllerIds).toBeUndefined()
+    expect(source?.controllerIds).toEqual([seat])
+  })
+
+  /**
+   * ⚠️ The optional fields are **spread** into the insert rather than written as
+   * `imageId: undefined`. `undefined` is not a Convex value, so the two spellings are
+   * different writes — and convex-test does not apply Convex's own value validation, so
+   * the wrong one passes this suite and fails a real deployment. The smoke script makes
+   * the same comparison over the wire; this asserts the shape locally.
+   */
+  test('a copy of an unbound, art-less coin has neither key rather than an undefined one', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    await calibrate(t, game.code, game.dmCode, sceneId)
+    const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { name: 'Barrel' })
+
+    const { tokenIds } = await t.mutation(api.board.duplicateToken, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId,
+      tokenId,
+      count: 2,
+    })
+
+    for (const id of tokenIds) {
+      const row = (await tokenRow(t, id))!
+      expect('imageId' in row).toBe(false)
+      expect('characterId' in row).toBe(false)
+    }
+    // And no sheets were written for a coin that stands for nobody.
+    expect(await t.query(api.characters.list, { code: game.code, dmCode: game.dmCode })).toEqual([])
+  })
+
+  test('the copies land on different squares rather than stacking', async () => {
+    const t = harness()
+    const f = await goblin(t)
+    const { tokenIds } = await duplicate(t, f, 4)
+
+    const spots = await Promise.all(
+      [f.tokenId, ...tokenIds].map(async (id) => {
+        const row = await placement(t, f.sceneId, id)
+        return `${row?.x},${row?.y}`
+      }),
+    )
+    expect(new Set(spots).size).toBe(5)
+  })
+
+  test('a reserved source makes reserved copies, and that is fail-closed', async () => {
+    // A hero the DM has withheld from the table must not become visible by being copied.
+    const t = harness()
+    const f = await goblin(t)
+    const hidden = await makeCharacter(t, f, 'Understudy')
+    await t.mutation(api.characters.setReserved, {
+      code: f.code,
+      dmCode: f.dmCode,
+      characterId: hidden,
+      reserved: true,
+    })
+    await t.mutation(api.board.setCharacter, {
+      code: f.code,
+      dmCode: f.dmCode,
+      tokenId: f.tokenId,
+      characterId: hidden,
+    })
+
+    const { tokenIds } = await duplicate(t, f, 1)
+    const copyCharacterId = (await tokenRow(t, tokenIds[0]))?.characterId
+    const asPlayer = await t.query(api.characters.list, { code: f.code })
+    expect(asPlayer.map((row) => row._id)).not.toContain(copyCharacterId)
+  })
+
+  test('refuses a count that is not a whole number in range, before writing anything', async () => {
+    const t = harness()
+    const f = await goblin(t)
+    const before = await t.query(api.board.tokens, { code: f.code, dmCode: f.dmCode })
+
+    for (const count of [0, -1, 2.5, Number.NaN, MAX_DUPLICATE_COUNT + 1]) {
+      expect((await refusalOf(duplicate(t, f, count))).kind).toBe('BadInput')
+    }
+
+    expect(await t.query(api.board.tokens, { code: f.code, dmCode: f.dmCode })).toEqual(before)
+  })
+
+  /**
+   * ⚠️ **Refused rather than truncated.** Milestone 1 shipped exactly the bug a truncation
+   * causes — a `slice` on a UTF-16 boundary leaving a lone surrogate that convex-test
+   * stores happily and a real deployment refuses. And nothing is written, which is the
+   * one-transaction claim made as an observation rather than as a comment.
+   */
+  test('refuses when numbering would overrun the name limit, and writes nothing', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    await calibrate(t, game.code, game.dmCode, sceneId)
+    const long = 'G'.repeat(MAX_CHARACTER_NAME_LENGTH)
+    const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { name: long })
+
+    const refusal = await refusalOf(
+      t.mutation(api.board.duplicateToken, {
+        code: game.code,
+        dmCode: game.dmCode,
+        sceneId,
+        tokenId,
+        count: 2,
+      }),
+    )
+    expect(refusal.kind).toBe('BadInput')
+    // The message names the fix rather than being a dead end mid-session.
+    expect(refusal.message).toMatch(/shorter name/i)
+    expect(await t.query(api.board.tokens, { code: game.code, dmCode: game.dmCode })).toHaveLength(1)
+  })
+
+  /**
+   * ⚠️ **Two messages and not one, because "too many coins" and "too many sheets" are two
+   * different reasons the DM is stuck and the fix is in two different tabs.** The kind is
+   * the same `GameFull` both `addToken` and `characters.create` already use — a client
+   * acts on the message, and a second kind for one category of refusal is a distinction
+   * nothing consumes. Asserted as an inequality so a later tidy-up that collapses them
+   * into one string fails here.
+   *
+   * The rows are inserted directly rather than through the public API: the point is the
+   * arithmetic at the boundary, and two hundred round trips to reach it would be two
+   * hundred round trips per run for no extra coverage.
+   */
+  test('both caps refuse before anything is written, and say different things', async () => {
+    const t = harness()
+    const f = await goblin(t)
+    const gameId = await t.run(async (ctx) => (await ctx.db.query('games').first())!._id)
+
+    // One token short of a full game, so asking for four is three too many.
+    await t.run(async (ctx) => {
+      for (let index = 0; index < MAX_TOKENS_PER_GAME - 2; index += 1) {
+        await ctx.db.insert('tokens', {
+          gameId,
+          name: `Filler ${index}`,
+          layer: 'gm',
+          sizeSquares: 1,
+          tint: TINT,
+        })
+      }
+    })
+
+    const coins = await refusalOf(duplicate(t, f, 4))
+    expect(coins.kind).toBe('GameFull')
+    expect(coins.message).toContain(`${MAX_TOKENS_PER_GAME} tokens`)
+    // Nothing was written — the one-transaction claim as an observation.
+    expect(await t.query(api.board.tokens, { code: f.code, dmCode: f.dmCode })).toHaveLength(
+      MAX_TOKENS_PER_GAME - 1,
+    )
+
+    // Now make room for the coins and take it away from the sheets instead, so the
+    // *second* cap is the one that fires and the message is the other one.
+    await t.run(async (ctx) => {
+      const filler = await ctx.db
+        .query('tokens')
+        .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+        .take(MAX_TOKENS_PER_GAME)
+      for (const token of filler.filter((row) => row.name.startsWith('Filler '))) {
+        await ctx.db.delete('tokens', token._id)
+      }
+      for (let index = 0; index < MAX_CHARACTERS_PER_GAME - 2; index += 1) {
+        await ctx.db.insert('characters', { gameId, name: `Extra ${index}` })
+      }
+    })
+
+    const sheets = await refusalOf(duplicate(t, f, 4))
+    expect(sheets.kind).toBe('GameFull')
+    expect(sheets.message).toContain(`${MAX_CHARACTERS_PER_GAME} character sheets`)
+    expect(sheets.message).not.toBe(coins.message)
+
+    // The other side of that asymmetry, asserted on the same expensive fixture rather
+    // than on a second one: the character cap is asked **only when there are sheets to
+    // write**, so a game with no room for another sheet can still make more barrels.
+    const barrel = await addToken(t, f.code, f.dmCode, f.sceneId, { name: 'Barrel' })
+    const { tokenIds } = await t.mutation(api.board.duplicateToken, {
+      code: f.code,
+      dmCode: f.dmCode,
+      sceneId: f.sceneId,
+      tokenId: barrel,
+      count: 2,
+    })
+    expect(tokenIds).toHaveLength(2)
+  })
+
+  test('is the DM’s alone, and refuses a foreign coin with TokenNotFound', async () => {
+    const t = harness()
+    const f = await goblin(t)
+    await expectKind(
+      t.mutation(api.board.duplicateToken, {
+        code: f.code,
+        dmCode: twiddle(f.dmCode),
+        sceneId: f.sceneId,
+        tokenId: f.tokenId,
+        count: 1,
+      }),
+      'NotDm',
+    )
+    await expectKind(
+      t.mutation(api.board.duplicateToken, {
+        code: f.code,
+        dmCode: f.dmCode,
+        sceneId: f.sceneId,
+        tokenId: await vanishedTokenId(t),
+        count: 1,
+      }),
+      'TokenNotFound',
+    )
   })
 })
 

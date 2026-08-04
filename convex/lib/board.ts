@@ -21,6 +21,7 @@ import {
   MAX_SCENES_PER_GAME,
   MAX_TOKENS_PER_GAME,
 } from './games'
+import { duplicateNames } from './names'
 import { findClaimHolder, holderByCharacter, listSeats } from './players'
 import type { Grid, Point, Rect } from './grid'
 import { anyRectCovers, cellOf, centreOfCell, snapToGrid } from './grid'
@@ -1513,6 +1514,87 @@ export async function deleteTokensInGame(
   }
 
   return tokens.length
+}
+
+/**
+ * The names the next `count` coins should take, given a source name and everything
+ * already on the board.
+ *
+ * ⚠️ **This shape is what keeps invariant 8 intact, and the obvious alternative breaks
+ * it.** A helper handing back *every token name in the game* would give `convex/board.ts`
+ * an array containing `Ambush Skeleton` — the exact string `board.test.ts` scans player
+ * payloads for, and the secret this module exists to hold. What leaves here is
+ * `Goblin 4`, `Goblin 5`: strings derived from the source name the caller already holds
+ * and from an integer. A GM-layer coin's name **influences the number and nothing else**,
+ * which is the same narrow crossing `countTokensInGame` below makes with one integer and
+ * `tokenReferencesImage` with one boolean.
+ *
+ * Counting both layers is required for the reason those two give: numbering that ignored
+ * the hidden half would hand the DM a `Goblin 4` to stand beside the `Goblin 4` they had
+ * already prepared.
+ *
+ * The rule itself is `duplicateNames` in lib/names.ts, which is pure and browser-shared —
+ * so the dialog's live preview and this write are one function rather than two that
+ * agreed on the day they were written.
+ */
+export async function nextTokenNames(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+  sourceName: string,
+  count: number,
+): Promise<string[]> {
+  const tokens = await ctx.db
+    .query('tokens')
+    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  return duplicateNames(
+    sourceName,
+    tokens.map((token) => token.name),
+    count,
+  )
+}
+
+/**
+ * One more coin exactly like this one, under a new name and standing for a new creature.
+ *
+ * ⚠️ **Both optional fields are spread, never written as `imageId: undefined`, and that
+ * is the line `npm run test:smoke` exists to protect.** `undefined` is not a Convex value,
+ * so an insert naming a field and giving it that is a *different write* from an insert
+ * omitting the field — and convex-test does not apply Convex's own value validation, so
+ * the spelled-out version passes the whole suite and only misbehaves against a real
+ * deployment. It is also exactly what makes the smoke script's field-by-field comparison
+ * report `present on one side only`. `insertCharacter` carries the same warning for the
+ * same reason.
+ *
+ * `layer` is carried as **stored**, legacy spelling and all, because `layerOf` is a
+ * read-time reader and a copy is not the place to migrate a row.
+ *
+ * ⚠️ **`controllerIds` is omitted rather than written as `[]`**, matching `addToken` — a
+ * duplicate is `addToken`'s decision made a second time, and both spellings read
+ * identically through `grantedControllersOf`. (`setTokenControllers` writes `[]`, and that
+ * is right for *it*: an edit that clears a list should leave the shape it always leaves.)
+ *
+ * **Grants are dropped, and that is the decision rather than a simplification.** A grant
+ * is a decision about a person and a coin; an unattached copy is the DM's, which is the
+ * correction the first real session forced on `requireMovableToken` reached by a new
+ * route.
+ */
+export async function copyTokenRow(
+  ctx: MutationCtx,
+  source: Doc<'tokens'>,
+  name: string,
+  characterId: Id<'characters'> | undefined,
+): Promise<Id<'tokens'>> {
+  return await ctx.db.insert('tokens', {
+    gameId: source.gameId,
+    name,
+    layer: source.layer,
+    sizeSquares: source.sizeSquares,
+    tint: source.tint,
+    ...(source.imageId === undefined ? {} : { imageId: source.imageId }),
+    ...(characterId === undefined ? {} : { characterId }),
+  })
 }
 
 /**

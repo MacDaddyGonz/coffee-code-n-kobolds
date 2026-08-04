@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { useId, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { useMutation, useQuery } from 'convex/react'
 import { toast } from 'sonner'
 
@@ -21,6 +21,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
+import { tokensArgs } from '@/hooks/useBoard'
 import { useBoardLayers } from '@/hooks/useBoardLayers'
 import { useUpload } from '@/hooks/useUpload'
 import { parseNumber } from '@/lib/utils'
@@ -29,6 +30,8 @@ import type { Id } from '@convex/_generated/dataModel'
 import { MAX_CHARACTER_NAME_LENGTH } from '@convex/lib/codes'
 import type { TokenLayer } from '@convex/lib/layers'
 import { maySeeLayer } from '@convex/lib/layers'
+import { MAX_DUPLICATE_COUNT } from '@convex/lib/limits'
+import { duplicateNames, duplicateNamesProblem } from '@convex/lib/names'
 import type { PublicScene } from '@convex/lib/scenes'
 import { crLabel } from '@convex/lib/creatures'
 import type { CreatureChoice } from './BestiaryPicker'
@@ -42,6 +45,9 @@ import {
 import { LAYER_ALERT_TITLES, LayerChoice } from './LayerChoice'
 import type { TokenAppearanceDraft } from './TokenAppearanceFields'
 import { TokenAppearanceFields, isUsableAppearance } from './TokenAppearanceFields'
+// The preview sentence, shared with the duplicate dialog rather than written twice — see
+// the ⚠️ on `CopyNamesPreview`. One naming rule, one summary of a run.
+import { CopyNamesPreview } from './TokenDuplicateDialog'
 
 export type TokenAddDialogProps = {
   code: string
@@ -131,6 +137,15 @@ const LAYER_NOTES: Record<TokenLayer, ReactNode> = {
  * Art is optional. A token with none is drawn as a coloured coin with the name's
  * initials, which is enough to play with and saves an upload per goblin.
  *
+ * ⚠️ **The count makes this *add five of these*, and it is the same act
+ * `TokenDuplicateDialog` performs from the other end** — one press, N coins, named by one
+ * browser-shared function so the preview under the field and the write are the same code.
+ * What it does **not** do is give each coin a sheet: the art is one blob and the character
+ * is one document, both shared by the whole batch, because attaching a *named* creature to
+ * five coins is the DM asking for five coins of that creature. Duplicate is where a copy
+ * gets a sheet of its own, and the sentence under the field says so at the moment the
+ * distinction starts to matter.
+ *
  * So is a character, and that stays a real choice rather than an oversight: a token
  * with no character attached has no health bar, cannot be moved by anybody but the
  * DM, and is exactly the right thing for a barrel, a door marker or a crowd of
@@ -151,6 +166,14 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
   // answers with the player characters alone — a creature's *existence* is the spoiler,
   // which is why the filtering is the query's job and not a `.filter()` here.
   const characters = useQuery(api.characters.list, { code, dmCode })
+  // ⚠️ **Every coin's name in the game, for the preview alone — and it costs no server
+  // execution.** `tokensArgs(code, dmCode)` is the exact cache entry `RightPane` is already
+  // holding for the Tokens tab while this dialog is open, so this is one more reader of an
+  // existing socket rather than a second subscription: Convex keys a query by its arguments,
+  // which is why the args are built by the shared function instead of spelled out here. It
+  // has to be the DM's entry in any case — the numbering counts a name on the GM layer, and
+  // a run that skipped the coins a player cannot see would collide with them.
+  const tokens = useQuery(api.board.tokens, tokensArgs(code, dmCode))
   const upload = useUpload({ code, dmCode, kind: 'token' })
   const action = useLobbyAction()
   const fieldId = useId()
@@ -168,6 +191,11 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
   // absolute over all three — and because a name, a size and a colour are one appearance,
   // which is the shape `board.updateToken` writes them in too.
   const [appearance, setAppearance] = useState<TokenAppearanceDraft>(EMPTY_APPEARANCE)
+  // A **string** for the same reason the size is one — see `TokenAppearanceDraft`. Its own
+  // piece of state rather than a fourth member of the appearance draft: how many coins to
+  // make is not a fact about a coin, `board.updateToken` has nothing to do with it, and the
+  // editor's copy of that form must never grow a count field.
+  const [howMany, setHowMany] = useState('1')
   const [characterId, setCharacterId] = useState('')
   const [creatureName, setCreatureName] = useState('')
   const [creatureStats, setCreatureStats] = useState(defaultCreatureStats)
@@ -179,6 +207,12 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
       setAppearance(EMPTY_APPEARANCE)
       // The layer is deliberately absent from this reset — see the note on `useBoardLayers`
       // above. Everything else here is a fact about one coin and goes back to nothing.
+      //
+      // The count included, and it is worth saying why it is not the layer's kind of
+      // setting: laying out scenery is a run of presses on one layer, whereas five goblins
+      // is one press about one encounter, and a dialog that reopened asking for five more of
+      // whatever is typed next is a DM who has to notice a number they did not set.
+      setHowMany('1')
       setCharacterId('')
       setCreatureName('')
       setCreatureStats(defaultCreatureStats())
@@ -192,8 +226,29 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
   // draft above is what the fields write to; these are what the mutation and the copy read.
   const { name, tint } = appearance
   const sizeSquares = parseNumber(appearance.size)
+  const count = parseNumber(howMany)
+  const usableCount = Number.isInteger(count) && count >= 1 && count <= MAX_DUPLICATE_COUNT
   const makingCreature = characterId === NEW_CREATURE
   const fromBestiary = characterId === FROM_BESTIARY
+  // Any of the select's three attaching answers. All of them produce **one** character on
+  // **N** coins — see the sentence under the field — so the warning is about the select
+  // having an answer at all rather than about which one it is.
+  const attaching = characterId !== ''
+
+  // The names the batch will take, from the one function `board.addToken` writes with:
+  // `duplicateNames(what the DM typed, every name in the game, the count)`. Undefined names
+  // means the subscription has not landed, which `CopyNamesPreview` prints as *not known
+  // yet* rather than as a run starting from 1 — see the ⚠️ there.
+  const existingNames = useMemo(() => tokens?.map((row) => row.name), [tokens])
+  const names = useMemo(
+    () => duplicateNames(name, existingNames ?? [], count),
+    [name, existingNames, count],
+  )
+  // The server's own refusal, so the dialog offers exactly the batch the mutation takes.
+  // Only asked once the names are real: a run computed from an empty board can be shorter
+  // than the one that will be written, and refusing on that is a dialog that says no to
+  // something it has not seen.
+  const nameProblem = existingNames === undefined ? null : duplicateNamesProblem(names)
   // Only asked of the fields that are on screen. A blank armour class in a section
   // nobody opened is not a reason to refuse a barrel.
   const creatureProblem = makingCreature ? creatureStatsProblem(creatureStats) : null
@@ -269,6 +324,15 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
           characterId: attachTo,
           x: scene.imageWidth / 2,
           y: scene.imageHeight / 2,
+          // ⚠️ **One character on N coins, and that is the server's behaviour rather than a
+          // shortcut this dialog takes.** The creature branches above still create exactly
+          // one sheet, because attaching a *named* creature to five coins is the DM asking
+          // for five coins of that creature — and `board.duplicateToken` is where a copy
+          // gets a sheet of its own. The upload is one blob shared by all N for the same
+          // reason: five goblins with five copies of one picture is storage spent against
+          // the 1 GB ceiling for nothing (invariant 6), and the delete paths already ask
+          // whether a blob is some *other* token's art.
+          count,
         }
 
         // Only the art path needs the discard-on-refusal dance, so a token with no
@@ -282,14 +346,22 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
     if (!done) return
 
     changeOpen(false)
+    // ⚠️ **A batch is counted and not named, and the asymmetry with `TokenDuplicateDialog`
+    // is deliberate.** That one names the copies because `board.duplicateToken` reports what
+    // it wrote; `board.addToken` answers with ids, so the only names available here are the
+    // preview's — computed from this browser's `board.tokens` subscription, which can be a
+    // frame behind the transaction. Naming five coins from it is the one place this dialog
+    // could print a name the server did not write, and a count is true whatever the numbers
+    // came out as.
+    const subject = count > 1 ? `${count} coins are` : `${name.trim()} is`
     // The shared predicate again rather than a layer literal: what makes the second sentence
     // worth saying is that the coin was withheld, and that is the question `maySeeLayer`
     // answers. Scenery lands with the ordinary wording, which is true of it — everybody can
     // see it, and only the DM can move it, which the picker has just said in as many words.
     toast.success(
       maySeeLayer(layer)
-        ? `${name.trim()} is on the map.`
-        : `${name.trim()} is on your layer. Nobody else can see it.`,
+        ? `${subject} on the map.`
+        : `${subject} on your layer. Nobody else can see ${count > 1 ? 'them' : 'it'}.`,
     )
   }
 
@@ -328,6 +400,48 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
               {LAYER_NOTES[layer]}
             </div>
           </TokenAppearanceFields>
+
+          {/* Directly under the three appearance fields, because *how many* is a question
+              about the name above it: the preview is the answer, and it moves on every
+              keystroke in either field. Above the art and the character on purpose — both of
+              those are shared by the whole batch, and a DM who reads the count first reads
+              the two sentences about sharing in the right order. */}
+          <div className="flex flex-col gap-2">
+            <Label htmlFor={`${fieldId}-count`}>How many</Label>
+            <Input
+              id={`${fieldId}-count`}
+              type="number"
+              min={1}
+              max={MAX_DUPLICATE_COUNT}
+              step={1}
+              value={howMany}
+              onChange={(event) => setHowMany(event.target.value)}
+              className="tabular-nums"
+              disabled={busy}
+              autoComplete="off"
+            />
+            <p className="text-muted-foreground text-xs">
+              Up to {MAX_DUPLICATE_COUNT} at a time, each on an empty square of its own.
+            </p>
+
+            <CopyNamesPreview names={existingNames === undefined ? null : names} />
+
+            {/* ⚠️ Said on screen because it is the one thing about a batch that is not
+                obvious and is expensive to discover: the five coins share the creature, so
+                the second one to take damage moves the same health bar as the first. It is
+                the correct behaviour — attaching a *named* creature to five coins is the DM
+                asking for five coins of that creature — and the route to the other reading
+                is named in the same breath, because a DM who wanted five goblins wants
+                Duplicate and has no way to know that from here. */}
+            {usableCount && count > 1 && attaching ? (
+              <p className="text-muted-foreground text-xs">
+                All {count} coins will stand for the{' '}
+                <span className="text-foreground font-medium">same creature</span> and share its
+                hit points. Use <span className="text-foreground font-medium">Duplicate</span> on
+                a coin to give each its own sheet.
+              </p>
+            ) : null}
+          </div>
 
           <UploadPicker
             id={`${fieldId}-art`}
@@ -478,7 +592,7 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
             </div>
           ) : null}
 
-          <FieldError message={action.error ?? creatureProblem} />
+          <FieldError message={action.error ?? creatureProblem ?? nameProblem} />
 
           <DialogFormFooter
             busy={busy}
@@ -486,13 +600,26 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
               // The shared predicate, so *what the server will accept* is asked in one
               // place for both the dialog and the editor.
               isUsableAppearance(appearance) &&
+              // The count the mutation refuses past, from the constant the mutation reads.
+              usableCount &&
+              // And the numbering it refuses rather than truncates — `duplicateNamesProblem`
+              // is the same function `requireBatchNames` throws with.
+              nameProblem === null &&
               creatureProblem === null &&
               // A shelf entry chosen, when the shelf is the answer. Refused rather than
               // silently adding a coin with no sheet, which is what the select's own empty
               // option is for and is not what was asked for here.
               (!fromBestiary || creature !== null)
             }
-            submitLabel={upload.stage === 'uploading' ? 'Uploading…' : 'Add the token'}
+            // The count, so the button says what the press does. A DM who typed 5 into a
+            // field above a button reading *Add the coin* has been given two answers.
+            submitLabel={
+              upload.stage === 'uploading'
+                ? 'Uploading…'
+                : usableCount && count > 1
+                  ? `Add ${count} coins`
+                  : 'Add the coin'
+            }
             onCancel={() => changeOpen(false)}
           />
         </form>

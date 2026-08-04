@@ -1,6 +1,6 @@
 import type { ReactElement, ReactNode } from 'react'
-import { useId, useState } from 'react'
-import { useMutation } from 'convex/react'
+import { useId, useMemo, useState } from 'react'
+import { useMutation, useQuery } from 'convex/react'
 
 import { FieldError } from '@/components/FieldError'
 import { UploadPicker } from '@/components/UploadPicker'
@@ -12,6 +12,7 @@ import {
 } from '@/components/board/dm/TokenAppearanceFields'
 import { TokenControlPanel } from '@/components/board/dm/TokenControlPanel'
 import { TokenDeleteDialog } from '@/components/board/dm/TokenDeleteDialog'
+import { TokenDuplicateDialog } from '@/components/board/dm/TokenDuplicateDialog'
 import { TokenPlacementControl } from '@/components/board/dm/TokenPlacementControl'
 import { TokenSwatch } from '@/components/board/dm/TokenSwatch'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
@@ -20,6 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Separator } from '@/components/ui/separator'
+import { tokensArgs } from '@/hooks/useBoard'
 import { useUpload } from '@/hooks/useUpload'
 import { parseNumber } from '@/lib/utils'
 import { api } from '@convex/_generated/api'
@@ -119,7 +121,10 @@ export type TokenEditPanelProps = {
  * **Placement is third rather than filed with the cosmetics**, because it is the same
  * register as the two above it: a coin standing on no board at all is the third of the
  * three kinds this tab exists to reach, beside one bound to nothing and one on a layer
- * that is not being drawn.
+ * that is not being drawn. **Duplicate joins that section rather than opening a seventh**,
+ * because copying a coin is a placement act — N coins on one named map — and the DM reading
+ * *which maps it is on* is the DM thinking *and five more here*; a section of its own would
+ * put a second heading between placement and appearance for a control that is one button.
  *
  * ⚠️ **Delete is last, and that is the roadmap's own argument scaled down one level.** A
  * destructive control on a row in a two-hundred-row list was refused because it is one
@@ -175,6 +180,7 @@ export function TokenEditPanel({
 
       <EditorSection title="Which maps it is on">
         <TokenPlacementControl code={code} dmCode={dmCode} token={token} />
+        <DuplicateControl code={code} dmCode={dmCode} token={token} />
       </EditorSection>
 
       <Separator />
@@ -724,6 +730,81 @@ function ArtControl({
           </Button>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * One line under the map list: copy this coin, N times, onto the board that is on the table.
+ *
+ * **The two facts the dialog needs are subscribed here rather than threaded down from the
+ * tab**, and both are cache entries the application is already holding — `scenes.active` with
+ * `{ code }` exactly, which `useBoard`, `MapSetupPanel` and `TokenPlacementControl` next door
+ * all read, and `board.tokens` through the shared `tokensArgs`, which is `RightPane`'s own
+ * entry for the list this panel is mounted inside. So this is two more readers of two open
+ * sockets and no server execution, which is what makes a control this small affordable at all.
+ *
+ * ⚠️ **The names are `board.tokens`' and not the tab's filtered rows.** The numbering counts
+ * every coin in the game — the GM layer included — because a run that skipped the coins a
+ * player cannot see would hand a copy the name of one that is already standing there. It is
+ * the DM's entry for the same reason `TokenAddDialog` insists on the DM's.
+ *
+ * ⚠️ **The active scene is where the copies land, and the trigger is disabled without one.**
+ * `duplicateToken` takes a `sceneId` and places every copy on it, so *which map* is not a
+ * question this control can leave unanswered — and the map on the table is the only answer a
+ * one-line control can give without becoming a second copy of the list above it. Never
+ * disabled with the *no map* sentence while `scenes.active` is still in flight, which is the
+ * discipline `TokenPlacementControl` keeps about `board.placements`: saying there is no map
+ * for one frame of every mount is saying something false about the usual case.
+ */
+function DuplicateControl({
+  code,
+  dmCode,
+  token,
+}: {
+  code: string
+  dmCode: string
+  token: PublicToken
+}): ReactElement {
+  const active = useQuery(api.scenes.active, { code })
+  const tokens = useQuery(api.board.tokens, tokensArgs(code, dmCode))
+
+  // Held still while the answer has not moved, so the dialog's `useMemo` over it is not
+  // rebuilt on every unrelated re-render of this panel.
+  const existingNames = useMemo(() => (tokens ?? []).map((row) => row.name), [tokens])
+
+  // Both facts, because the preview is the feature: an offer to copy a coin that renders a
+  // run starting from 1 on a board that already holds five of them is worse than a button
+  // that waits a frame.
+  const ready = active !== undefined && active !== null && tokens !== undefined
+
+  const trigger = (
+    <Button type="button" size="sm" variant="outline" disabled={!ready}>
+      Duplicate this coin…
+    </Button>
+  )
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {ready ? (
+        <TokenDuplicateDialog
+          code={code}
+          dmCode={dmCode}
+          token={token}
+          scene={active}
+          existingNames={existingNames}
+          trigger={trigger}
+        />
+      ) : (
+        trigger
+      )}
+      <span className="text-muted-foreground min-w-0 flex-1 text-xs">
+        {active === undefined || tokens === undefined
+          ? '…'
+          : active === null
+            ? 'Put a map on the table first — the copies have to land somewhere.'
+            : `Copies land on ${active.name}, the map on the table.`}
+      </span>
     </div>
   )
 }

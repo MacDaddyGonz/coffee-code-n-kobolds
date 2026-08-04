@@ -4,9 +4,12 @@ import type { Id } from './_generated/dataModel'
 import type { MutationCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import {
+  copyTokenRow,
   countTokensInGame,
   deleteTokenPlacements,
   freeCellNear,
+  freeCellsNear,
+  nextTokenNames,
   otherTokenReferencesImage,
   placeToken,
   placementOf,
@@ -24,9 +27,10 @@ import {
   tokenPlacementScenes,
   visiblePositions,
 } from './lib/board'
-import { getCharacterInGame } from './lib/characters'
+import { copyCharacter, countCharactersInGame, getCharacterInGame } from './lib/characters'
 import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
 import {
+  MAX_CHARACTERS_PER_GAME,
   MAX_SEATS_PER_GAME,
   MAX_TOKENS_PER_GAME,
   activeSceneId,
@@ -44,8 +48,8 @@ import { layerOf, tokenLayerValidator } from './lib/layers'
 import { getSeatInGame, listSeats } from './lib/players'
 import type { Point } from './lib/grid'
 import { isUsableTokenSize, snapToGrid } from './lib/grid'
-import { MAX_TOKEN_BYTES } from './lib/limits'
-import { requireText } from './lib/names'
+import { MAX_DUPLICATE_COUNT, MAX_TOKEN_BYTES } from './lib/limits'
+import { duplicateNamesProblem, requireText } from './lib/names'
 import { findSceneInGame, getSceneInGame } from './lib/scenes'
 
 // Not one row of the `tokens` or `tokenPositions` tables is read in this file.
@@ -258,6 +262,21 @@ export const positions = query({
  * `requireTokenArt` — shared with the edit mutations further down, so that the names,
  * sizes, tints and blobs a DM may *create* stay the same set as the ones they may
  * *change to*.
+ *
+ * ⚠️ **`count` is optional and absent means one, which is what keeps every existing
+ * caller unchanged** — and it is here rather than only on `duplicateToken` because *add
+ * five of these* and *duplicate this five times* are the same act with a different source
+ * of the fields. Adding five `Goblin`s to a board with none gets `Goblin 1 … Goblin 5`;
+ * duplicating a `Goblin` already standing there gets `Goblin 2 …`, because the source is
+ * never renamed. Both come out of `duplicateNames` in lib/names.ts, so the dialog's live
+ * preview and this write are one function.
+ *
+ * Note what the count does **not** change: one `imageId`, so the five copies share a blob
+ * — which is exactly the state `otherTokenReferencesImage` exists for — and one
+ * `characterId` when the DM attached an existing creature, because attaching a *named*
+ * character to five coins is the DM asking for five coins of that creature rather than
+ * five creatures. `duplicateToken` is where a copy gets a sheet of its own; here the DM
+ * either picked one creature or picked none.
  */
 export const addToken = mutation({
   args: {
@@ -272,10 +291,14 @@ export const addToken = mutation({
     characterId: v.optional(v.id('characters')),
     x: v.number(),
     y: v.number(),
+    count: v.optional(v.number()),
   },
-  returns: v.object({ tokenId: v.id('tokens') }),
+  returns: v.object({ tokenId: v.id('tokens'), tokenIds: v.array(v.id('tokens')) }),
   handler: async (ctx, args) => {
     const game = await requireDm(ctx, args.code, args.dmCode)
+    const count = args.count ?? 1
+    requireCount(count)
+
     const scene = await getSceneInGame(ctx, game._id, args.sceneId)
     const { name, sizeSquares, tint } = requireTokenAppearance(args)
     requireFinite(args)
@@ -292,35 +315,39 @@ export const addToken = mutation({
     // against nothing, while never appearing on anybody's board. Counted across
     // both layers, as the DM sees them: a limit that only counted the visible half
     // would let the DM layer push player tokens off the end of that window.
-    if ((await countTokensInGame(ctx, game._id)) >= MAX_TOKENS_PER_GAME) {
-      throw new ConvexError({
-        kind: 'GameFull',
-        message: `This game already has ${MAX_TOKENS_PER_GAME} tokens.`,
-      })
-    }
+    //
+    // No character cap is asked, and the asymmetry with `duplicateToken` is the point:
+    // this mutation writes no sheets. The DM either attached a creature that already
+    // exists or attached none.
+    await requireRoomFor(ctx, game._id, count, false)
     // And that is the only cap needed here. There is deliberately no second check
     // against MAX_PLACEMENTS_PER_SCENE: a token holds at most one placement per
     // scene, so the cap above already bounds one scene's placements structurally.
     // See the note on the constant in lib/games.ts.
 
-    const tokenId = await ctx.db.insert('tokens', {
-      gameId: game._id,
-      name,
-      layer: args.layer,
-      sizeSquares,
-      imageId: args.imageId,
-      tint,
-      characterId: args.characterId,
-    })
-    // On a square from the moment it exists rather than from its first drag — and on
-    // an *empty* one. Every token is added at the same default point, so snapping
-    // alone dropped each new one into the square the last one is already in.
-    await placeToken(
-      ctx,
-      scene._id,
-      tokenId,
-      await freeCellNear(ctx, scene._id, scene, args.sizeSquares, { x: args.x, y: args.y }),
-    )
+    // The DM typed one name and asked for `count` coins, so the numbering is the same
+    // rule a duplicate uses — reading the board, not the argument. At a count of one on
+    // a board with no `Goblin`, this is the name they typed, unchanged.
+    const names = await requireBatchNames(ctx, game._id, name, count)
+    const cells = await freeCellsNear(ctx, scene._id, scene, sizeSquares, { x: args.x, y: args.y }, count)
+
+    const tokenIds: Id<'tokens'>[] = []
+    for (let index = 0; index < count; index += 1) {
+      const tokenId = await ctx.db.insert('tokens', {
+        gameId: game._id,
+        name: names[index],
+        layer: args.layer,
+        sizeSquares,
+        imageId: args.imageId,
+        tint,
+        characterId: args.characterId,
+      })
+      // On a square from the moment it exists rather than from its first drag — and on
+      // an *empty* one. Every token is added at the same default point, so snapping
+      // alone dropped each new one into the square the last one is already in.
+      await placeToken(ctx, scene._id, tokenId, cells[index])
+      tokenIds.push(tokenId)
+    }
     // A coin created straight onto the player layer with a creature already on it is a
     // reveal like any other — the DM's usual way of putting a monster the party has been
     // fighting elsewhere onto this board — and that creature's earlier lines become
@@ -329,7 +356,10 @@ export const addToken = mutation({
     if (args.layer === 'player' && args.characterId !== undefined) {
       await stampReveal(ctx, game._id)
     }
-    return { tokenId }
+    // `tokenId` is the first of them, kept so every existing caller and test reads the
+    // same field it always did. `tokenIds` is the whole batch, for a client that asked
+    // for more than one.
+    return { tokenId: tokenIds[0], tokenIds }
   },
 })
 
@@ -656,6 +686,170 @@ export const setControllers = mutation({
 
     await setTokenControllers(ctx, token._id, args.playerIds)
     return null
+  },
+})
+
+/**
+ * How many coins one call may create, argument-checked before any read.
+ *
+ * Shared by `addToken`'s optional `count` and by `duplicateToken`, so the two ways of
+ * asking for five goblins are refused by one rule. Argument-only, so a bad call costs no
+ * I/O to refuse — `moveToken`'s ordering, applied to the mutation that writes the most.
+ */
+function requireCount(count: number): void {
+  if (!Number.isInteger(count) || count < 1 || count > MAX_DUPLICATE_COUNT) {
+    throw new ConvexError({
+      kind: 'BadInput',
+      message: `Add between 1 and ${MAX_DUPLICATE_COUNT} coins at a time.`,
+    })
+  }
+}
+
+/**
+ * Both caps, checked before **anything** is written, with two messages.
+ *
+ * ⚠️ **Two messages and not one, because "too many coins" and "too many sheets" are two
+ * different reasons the DM is stuck and the fix is in two different tabs.** Same `kind`,
+ * which both `addToken` and `characters.create` already use for their own single-row
+ * versions: a client acts on the message, and inventing a second kind for one category of
+ * refusal would be a distinction nothing consumes.
+ *
+ * `>` on `existing + count` rather than `>=` on `existing`, which is arithmetic the
+ * single-row checks never had to do. The character cap is asked only when there are sheets
+ * to write, so a game at two hundred sheets can still make more barrels.
+ */
+async function requireRoomFor(
+  ctx: MutationCtx,
+  gameId: Id<'games'>,
+  count: number,
+  sheets: boolean,
+): Promise<void> {
+  if ((await countTokensInGame(ctx, gameId)) + count > MAX_TOKENS_PER_GAME) {
+    throw new ConvexError({
+      kind: 'GameFull',
+      message: `That would take this game past ${MAX_TOKENS_PER_GAME} tokens. Delete some coins, or add fewer.`,
+    })
+  }
+  if (sheets && (await countCharactersInGame(ctx, gameId)) + count > MAX_CHARACTERS_PER_GAME) {
+    throw new ConvexError({
+      kind: 'GameFull',
+      message: `That would take this game past ${MAX_CHARACTERS_PER_GAME} character sheets. Delete some sheets, or add fewer.`,
+    })
+  }
+}
+
+/**
+ * The names for a batch, refused rather than truncated when numbering would overrun.
+ *
+ * Milestone 1 shipped exactly the bug a truncation causes — a `slice` on a UTF-16
+ * boundary leaving a lone surrogate that convex-test stored happily and the cloud
+ * refused — and `npm run test:smoke` exists because of it. `duplicateNamesProblem` is the
+ * browser-shared half, so the dialog refuses the same batch this does and its message
+ * names the fix rather than being a dead end mid-session.
+ */
+async function requireBatchNames(
+  ctx: MutationCtx,
+  gameId: Id<'games'>,
+  sourceName: string,
+  count: number,
+): Promise<string[]> {
+  const names = await nextTokenNames(ctx, gameId, sourceName, count)
+  const problem = duplicateNamesProblem(names)
+  if (problem) throw new ConvexError({ kind: 'BadInput', message: problem })
+  return names
+}
+
+/**
+ * Copy a coin, N times, each copy with **its own character document and its own vitals
+ * row**.
+ *
+ * That is the whole feature and it is the thing Roll20 needs a community script for: its
+ * own documentation tells a GM that eight identical goblins must have their hit-point bars
+ * manually unlinked, or damaging one damages all eight. Five goblins sharing one pool is a
+ * bug that looks like a feature until the second one takes damage.
+ *
+ * ⚠️ **One transaction, and `TokenAddDialog`'s argument for two does not transfer.** There
+ * the *client* owns the sequence — create a character, then a token — and a refused token
+ * leaves a sheet the Sheets tab deletes in two clicks. Here the server owns both halves,
+ * so N coins and N sheets arrive together or not at all. Twelve half-created goblins is
+ * not a state anybody should have to clean up.
+ *
+ * **The copies land on the board named in the arguments, and only that one.** A coin that
+ * appeared on all five of the source's maps at once is a surprise; `placeOnScene` is the
+ * deliberate way to reach the other four.
+ *
+ * **The character takes the coin's name**, which is `TokenAddDialog`'s own rule — a coin
+ * reading `Goblin 4` over a sheet called something else is a confusion nobody asked for —
+ * and here there is nobody typing a different one.
+ *
+ * ⚠️ **The reveal stamp mirrors `addToken`'s condition exactly**, with one spelling
+ * difference that is required rather than stylistic: `addToken` compares its **narrow**
+ * argument validator and needs no `layerOf`, while this reads a **stored** layer that may
+ * still be the legacy `dm`. Both clauses are needed for `addToken`'s reasons verbatim: an
+ * empty coin names nobody, and a GM-layer one is the encounter being prepared rather than
+ * sprung.
+ *
+ * Worth knowing what that stamp can and cannot do here: the copies' creatures are made in
+ * this transaction and have rolled nothing, so no feed row becomes audible through this
+ * write. What it costs is the flourish on rolls made in the last few minutes. That is the
+ * trade `gameRevealedAt` already states — a stamp too many costs one missing animation and
+ * a stamp too few replays an evening — and it is the right way round. The day this learns
+ * to *reuse* the source's character, the stamp is already correct.
+ */
+export const duplicateToken = mutation({
+  args: {
+    code: v.string(),
+    dmCode: v.string(),
+    sceneId: v.id('scenes'),
+    tokenId: v.id('tokens'),
+    count: v.number(),
+  },
+  returns: v.object({ tokenIds: v.array(v.id('tokens')), names: v.array(v.string()) }),
+  handler: async (ctx, args) => {
+    const game = await requireDm(ctx, args.code, args.dmCode)
+    requireCount(args.count)
+
+    const scene = await getSceneInGame(ctx, game._id, args.sceneId)
+    const source = await requireDmToken(ctx, game, args.tokenId)
+    const sourceCharacter =
+      source.characterId === undefined
+        ? null
+        : await getCharacterInGame(ctx, game._id, source.characterId)
+
+    await requireRoomFor(ctx, game._id, args.count, sourceCharacter !== null)
+    const names = await requireBatchNames(ctx, game._id, source.name, args.count)
+
+    // Beside the coin the DM pressed on, or the middle of the map when the source is not
+    // standing on *this* board — which is reachable: the Tokens tab can duplicate a coin
+    // that stands only on another map.
+    const anchor = (await placementOf(ctx, scene._id, source._id)) ?? {
+      x: scene.imageWidth / 2,
+      y: scene.imageHeight / 2,
+    }
+    const cells = await freeCellsNear(
+      ctx,
+      scene._id,
+      scene,
+      source.sizeSquares,
+      { x: anchor.x, y: anchor.y },
+      args.count,
+    )
+
+    const tokenIds: Id<'tokens'>[] = []
+    for (let index = 0; index < args.count; index += 1) {
+      const characterId = sourceCharacter
+        ? await copyCharacter(ctx, game._id, names[index], sourceCharacter)
+        : undefined
+      const tokenId = await copyTokenRow(ctx, source, names[index], characterId)
+      await placeToken(ctx, scene._id, tokenId, cells[index])
+      tokenIds.push(tokenId)
+    }
+
+    if (layerOf(source.layer) === 'player' && source.characterId !== undefined) {
+      await stampReveal(ctx, game._id)
+    }
+
+    return { tokenIds, names }
   },
 })
 
