@@ -970,12 +970,20 @@ const OVERLONG_ROLL = `1d6${'+1'.repeat(20)}`
 /**
  * The die-count ceiling, copied by hand out of `convex/lib/sheet.ts`.
  *
- * Enforced by `ROLL_PATTERN`'s own `(?:[1-9]|1\d|20)` rather than by a comparison, which is
- * why one over it and a wildly-over-it are both worth sending: `21d6` is the shape a regex
- * that had been loosened by one character would accept, and `99d20` is the shape a physics
- * engine is asked to render.
+ * Enforced by `ROLL_PATTERN`'s own `(?:[1-9]|[1-4]\d|50)` rather than by a comparison, which
+ * is why one over it and a wildly-over-it are both worth sending: `51d6` is the shape a
+ * regex that had been loosened by one character would accept, and `99d20` is the shape a
+ * physics engine is asked to render.
+ *
+ * ⚠️ **Twenty until [ADR 0014](../docs/adr/0014-what-a-coin-says-about-itself.md) widened it
+ * for the ad-hoc dice tray, and the hand copy is what caught this file up.** The check
+ * below is written as `MAX_ROLL_DICE + 1` rather than as a literal, so moving the number
+ * here moved the assertion — and the run that failed on `21d6` was this fixture doing
+ * exactly its job: telling a person that the deployment now accepts something the script
+ * still believed was refused. That is the whole argument for copying constants by hand
+ * rather than importing them.
  */
-const MAX_ROLL_DICE = 20
+const MAX_ROLL_DICE = 50
 
 /**
  * THE KEY SETS, hand-spelled out of `publicFeedValidator`, `rollResultValidator`,
@@ -7328,6 +7336,80 @@ async function main() {
         raftersRowToDm.armourClass === RAFTERS_AC,
       raftersRowToDm ? JSON.stringify(raftersRowToDm) : 'no row for the rafters at all',
     )
+
+    // 41. THE WIDENED DICE GRAMMAR, AT BOTH ITS NEW EDGES.
+    //
+    // `feed:rollDice` is the one place an expression legitimately arrives from a person, so
+    // it is where the grammar is reachable as an *argument* rather than as a stored field.
+    // What a deployment adds over the suite here is the whole round trip: fifty dice have to
+    // be generated, validated on the way out through `feed:list`'s own `returns:` validator,
+    // and come back as fifty entries — a projection that capped the array somewhere would
+    // pass convex-test and fail here.
+    // Any seat this run has already made. An ad-hoc roll is announced as the *person*, so
+    // it needs one — and there is no reason for this section to create a third.
+    const feedRoller = seats[0]
+    if (feedRoller) {
+      const beforeRoll = (await client.query('feed:list', { code })).length
+      await client.mutation('feed:rollDice', {
+        code,
+        playerId: feedRoller,
+        expression: '50d6',
+        mode: 'flat',
+        dmOnly: false,
+      })
+      const afterRoll = await client.query('feed:list', { code })
+      const fiftyRow = afterRoll.find((row) => row.roll && row.roll.expression === '50d6')
+      check(
+        'feed:rollDice accepted fifty dice and the line came back with fifty of them',
+        afterRoll.length === beforeRoll + 1 &&
+          fiftyRow !== undefined &&
+          Array.isArray(fiftyRow.roll.dice) &&
+          fiftyRow.roll.dice.length === 50 &&
+          // Every face in range, so this is fifty real d6 rather than a padded array.
+          fiftyRow.roll.dice.every((die) => die.faces === 6 && die.value >= 1 && die.value <= 6),
+        fiftyRow ? `${fiftyRow.roll.dice.length} dice, total ${fiftyRow.roll.total}` : 'no line',
+      )
+
+      await client.mutation('feed:rollDice', {
+        code,
+        playerId: feedRoller,
+        expression: '1d2',
+        mode: 'flat',
+        dmOnly: false,
+      })
+      const afterD2 = await client.query('feed:list', { code })
+      const d2Row = afterD2.find((row) => row.roll && row.roll.expression === '1d2')
+      check(
+        'feed:rollDice accepted the new d2 and rolled a 1 or a 2',
+        d2Row !== undefined &&
+          d2Row.roll.dice.length === 1 &&
+          d2Row.roll.dice[0].faces === 2 &&
+          [1, 2].includes(d2Row.roll.dice[0].value),
+        d2Row ? JSON.stringify(d2Row.roll.dice) : 'no line',
+      )
+
+      // The far side of both edges. `d3` is the case that says d2 was added to an
+      // allow-list rather than the allow-list being abandoned.
+      for (const [label, expression] of [
+        ['one more die than the cap', '51d6'],
+        ['a die the allow-list still refuses', '1d3'],
+      ]) {
+        const rollRefusal = await refusalOf(() =>
+          client.mutation('feed:rollDice', {
+            code,
+            playerId: feedRoller,
+            expression,
+            mode: 'flat',
+            dmOnly: false,
+          }),
+        )
+        check(
+          `feed:rollDice refused ${label} as BadInput`,
+          rollRefusal !== null && rollRefusal.kind === 'BadInput',
+          rollRefusal ? JSON.stringify(rollRefusal) : `the deployment rolled ${expression}`,
+        )
+      }
+    }
   } catch (error) {
     const data = error && error.data ? ` ${JSON.stringify(error.data)}` : ''
     record('the run completed without an unexpected error', false, `${error.message ?? error}${data}`)

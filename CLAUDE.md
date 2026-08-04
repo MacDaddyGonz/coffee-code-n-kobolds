@@ -399,8 +399,29 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
     d6's 1 come up about 2% more often than its 5, forever, on every damage roll in the game.
 
     The **die-count cap is load-bearing** and is the grammar rather than a separate check:
-    `ROLL_PATTERN` admits 1–20 dice and `MAX_ROLL_DICE` is that fact named, so a client cannot ask
-    the physics engine for 99,999 dice. A scaled creature's damage already goes through it.
+    `ROLL_PATTERN` admits **1–50 dice over eight faces — d2, d4, d6, d8, d10, d12, d20, d100** —
+    and `MAX_ROLL_DICE` is that fact named, so a client cannot ask the physics engine for 99,999
+    dice. A scaled creature's damage already goes through it.
+
+    ⚠️ **It was 1–20 over seven faces, and it moved by decision rather than by drift.** The ad-hoc
+    dice tray wanted a d2 and a 1×–50× count;
+    [ADR 0014](docs/adr/0014-what-a-coin-says-about-itself.md) records it and
+    [docs/requirements.md](docs/requirements.md) carries the amendment. Two things to know before
+    touching it again:
+
+    - **It is one grammar for two callers**, and that was the contested part. A sheet entry and a
+      string somebody types in the tray are checked by this one expression, with no second bound
+      anywhere — so the price, taken knowingly, is that a stored damage expression may now
+      legitimately read `30d6`. Two caps are two things that agree on the day they are written; if
+      this has to be re-narrowed, narrow it *here*, for both.
+    - **`MAX_ROLL_DICE`'s docblock is the checklist** and it was used as one. Moving the number
+      moves the regex, the constant, both `clamp` calls in `lib/dice.ts`, the CR scaler that reads
+      it to bound its multiplication, `ORDINARY_FACES` in `src/lib/dice/notation.ts` — the
+      renderer's own face list, which nothing checks against the grammar — and this paragraph.
+
+    ⚠️ **The renderer has no die-count cap at all, so the grammar is also the rigid-body count.**
+    Fifty dice is fifty bodies in the physics engine. If that turns out to be unusable the fix is a
+    *renderer* cap that shows a subset and says so — **never** a second grammar.
 
 ### Threat model — what the invariants above are for, and where the line is
 

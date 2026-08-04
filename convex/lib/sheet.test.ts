@@ -454,13 +454,24 @@ describe('the roll grammar', () => {
     '1d4',
     '2d20-2+CON',
     '19d10+999',
+    // Both halves of the widening in ADR 0014, each sitting on its own boundary: the new
+    // face, the new ceiling, and the count either side of the old one so that a regex
+    // narrowed back to twenty fails here rather than in a browser.
+    '1d2',
+    '50d2',
+    '50d100+CHA+PROF',
+    '20d6',
+    '21d6',
+    '49d20',
   ]
 
   const INVALID = [
     'd8', // no count
     '1d7', // not a real die
     '0d6', // no dice at all
-    '21d6', // over the cap Milestone 4's physics engine has to render
+    '51d6', // over the cap the physics engine has to render — fifty since ADR 0014
+    '100d6',
+    '1d3', // still not a real die: d2 was added to the allow-list, d3 was not
     '+5', // a modifier is not a roll
     '',
     '2d6 + 3', // spaces are normalised away, not accepted

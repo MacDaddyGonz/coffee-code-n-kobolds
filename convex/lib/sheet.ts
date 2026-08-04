@@ -151,14 +151,28 @@ export const ROLL_MODIFIER_TOKENS = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA', '
  * evaluator lands on top of a corpus already known to conform.
  *
  * Die faces are an allow-list because `1d7` is a typo rather than a house rule, and
- * the count is capped at twenty because the alternative is a client asking for
- * 99999 dice to be rendered in Milestone 6's physics engine.
+ * the count is capped because the alternative is a client asking for 99999 dice to be
+ * rendered in the physics engine.
+ *
+ * ⚠️ **Both halves were widened deliberately, on the record, and this is not a place to
+ * widen one quietly.** It admitted `4|6|8|10|12|20|100` and 1–20 dice; the ad-hoc dice
+ * tray asked for a **d2** and a **1×–50× count**, and
+ * [ADR 0014](../../docs/adr/0014-what-a-coin-says-about-itself.md) records the decision
+ * along with the amendment in `docs/requirements.md`. CLAUDE.md invariant 10 calls this
+ * regex the cap itself, so moving it is a change to an invariant rather than a constant
+ * bump — which is exactly why it went through that door.
+ *
+ * ⚠️ **This is one grammar for two callers, and that was the contested part.** A sheet
+ * entry and a string somebody types into the tray are checked here, by this expression,
+ * with no second bound anywhere — so the price of not having two caps that agreed once is
+ * that **a stored damage expression may now legitimately read `30d6`**. That was weighed
+ * and taken. If it ever has to be re-narrowed, narrow it *here*, for both.
  */
 export const ROLL_PATTERN =
-  /^(?:[1-9]|1\d|20)d(?:4|6|8|10|12|20|100)(?:[+-](?:\d{1,3}|STR|DEX|CON|INT|WIS|CHA|PROF))*$/
+  /^(?:[1-9]|[1-4]\d|50)d(?:2|4|6|8|10|12|20|100)(?:[+-](?:\d{1,3}|STR|DEX|CON|INT|WIS|CHA|PROF))*$/
 
 /**
- * The die-count cap the pattern above enforces, named — the `(?:[1-9]|1\d|20)` at the
+ * The die-count cap the pattern above enforces, named — the `(?:[1-9]|[1-4]\d|50)` at the
  * front of it and this constant are **one fact spelled twice**, and the regex is the
  * copy that decides.
  *
@@ -168,8 +182,16 @@ export const ROLL_PATTERN =
  * to clamp against, and a scaler that hard-coded its own 20 would be a second cap free
  * to disagree with the first. When one moves, both move: the regex is the enforcement
  * and this is what everything else reads.
+ *
+ * ⚠️ **It moved, and "when one moves, both move" was the checklist.** Twenty became fifty
+ * for the ad-hoc dice tray ([ADR 0014](../../docs/adr/0014-what-a-coin-says-about-itself.md)),
+ * and what had to move with it was this constant, the regex above, the two `clamp` calls in
+ * `lib/dice.ts`, the CR scaler that reads this to bound its multiplication, the renderer's
+ * face allow-list in `src/lib/dice/notation.ts` — which also gained the d2 — and CLAUDE.md
+ * invariant 10. Six places plus the invariant, which is what a sentence like the one above
+ * is for.
  */
-export const MAX_ROLL_DICE = 20
+export const MAX_ROLL_DICE = 50
 
 /**
  * The longest a roll expression may be, which the grammar itself does not bound.

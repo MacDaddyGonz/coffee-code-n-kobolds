@@ -1874,8 +1874,10 @@ describe('the dice tray is the one place a roll arrives from a human', () => {
 
     const refused = [
       chain,
-      // Twenty dice is the grammar's ceiling and `MAX_ROLL_DICE` is that fact named.
-      '21d6',
+      // Fifty dice is the grammar's ceiling and `MAX_ROLL_DICE` is that fact named. It
+      // was twenty until ADR 0014 widened it for the dice tray — one grammar for a sheet
+      // entry and for a person typing, which is why this list moved with it.
+      '51d6',
       '99d20',
       // A die the allow-list does not carry: `1d7` is a typo rather than a house rule.
       '1d7',

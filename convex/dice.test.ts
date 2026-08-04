@@ -563,7 +563,9 @@ describe('an expression the grammar refuses is an empty roll rather than a throw
       '   ',
       '1d7',
       '0d6',
-      '30d6',
+      // Fifty is the ceiling since ADR 0014, so this is the first count the grammar
+      // refuses rather than the first it did.
+      '51d6',
       '1d20+',
       'STR',
       '1d20+STR+',

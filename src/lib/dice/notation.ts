@@ -50,10 +50,18 @@ export type ShownDie = { faces: number; value: number }
  * module exists to prevent. So the support test is a value test and not merely a
  * face-count test.
  *
- * The engine also ships `d1`, `d2`, `d3`, a Fudge die and about a dozen Star Wars and
- * poker dice. Those are absent here on purpose — D&D Lite rolls none of them, and a
- * face count this app cannot produce is better reported as unshowable than quietly
- * mapped onto a novelty die.
+ * The engine also ships `d1`, `d3`, a Fudge die and about a dozen Star Wars and poker
+ * dice. Those are absent here on purpose — D&D Lite rolls none of them, and a face count
+ * this app cannot produce is better reported as unshowable than quietly mapped onto a
+ * novelty die.
+ *
+ * ⚠️ **`d2` moved from that sentence into the list**, because the dice tray offers one and
+ * `ROLL_PATTERN` now admits it ([ADR 0014](../../../docs/adr/0014-what-a-coin-says-about-itself.md)).
+ * The engine has always had the shape; what changed is that a server-decided `1d2` can now
+ * exist, and a roll the feed shows and the tray cannot render is exactly what this module
+ * exists to prevent. **The grammar and this list are two halves of one fact and neither is
+ * checked against the other** — a face admitted by the regex and missing here comes back
+ * `unshowable`, which is quiet and correct and easy to not notice.
  *
  * ⚠️ **`d100` is a tens die on its own, so it shows 10, 20 … 100 and nothing between.**
  * Its declared triple is `[10, 100, 10]`. There is no percentile *pair* in this engine,
@@ -61,7 +69,7 @@ export type ShownDie = { faces: number; value: number }
  * rounded to 50 — a die displaying a number the feed disagrees with is worse than a die
  * that does not appear.
  */
-const ORDINARY_FACES: readonly number[] = [4, 6, 8, 10, 12, 20]
+const ORDINARY_FACES: readonly number[] = [2, 4, 6, 8, 10, 12, 20]
 
 /** An integer in `[min, max]`. Rejects `NaN`, infinities and 3.5 without four tests at each call. */
 function isWhole(value: number, min: number, max: number): boolean {
