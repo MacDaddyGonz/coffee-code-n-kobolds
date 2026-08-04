@@ -5,7 +5,6 @@ import type { MutationCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import {
   copyTokenRow,
-  countTokensInGame,
   deleteTokenMarkers,
   deleteTokenPlacements,
   freeCellNear,
@@ -326,30 +325,23 @@ export const addToken = mutation({
     // No character cap is asked, and the asymmetry with `duplicateToken` is the point:
     // this mutation writes no sheets. The DM either attached a creature that already
     // exists or attached none.
-    await requireRoomFor(ctx, game._id, count, false)
+    //
+    // ⚠️ **`typed`, so one coin keeps the name the DM wrote and only a batch is numbered —
+    // and that rule lives in `addedNames` rather than in a branch here.** It was a
+    // `count === 1` branch in this handler at first, which is one wire's worth of the
+    // truth: `duplicateNames` claims to be the one function the preview and the write
+    // share, and a branch on only the server side made that false — the dialog went on
+    // previewing `Goblin 2` for an add this would store as `Goblin`, and could disable a
+    // submit for a batch this would have accepted.
+    //
+    // The count comes back with the names from one read of the same rows, which is what
+    // stops this asking the two-hundred-row question twice.
+    const { names, total } = await requireBatchNames(ctx, game._id, name, count, true)
+    requireTokenRoom(total, count)
     // And that is the only cap needed here. There is deliberately no second check
     // against MAX_PLACEMENTS_PER_SCENE: a token holds at most one placement per
     // scene, so the cap above already bounds one scene's placements structurally.
     // See the note on the constant in lib/games.ts.
-
-    // ⚠️ **One coin keeps the name the DM typed, exactly, and only a batch is numbered.**
-    //
-    // This ran everything through `duplicateNames` at first, on the reasoning that add and
-    // duplicate should be one rule — and `npm run test:smoke` caught what that costs. The
-    // skip case returns the *base*, so a DM typing `Kobold of the Arch 3` on a board with
-    // no kobolds got a coin called `Kobold of the Arch`: the number silently stripped, and
-    // no way to create a coin with a trailing number at all. Nothing local could see it,
-    // because the suite asserted the numbering rather than the typing.
-    //
-    // The rule that survives is the honest one: a name somebody **typed** is not a copy of
-    // anything, so nothing may rewrite it. Numbering is for the coins the DM did not name —
-    // the second through fifth of a batch — and `duplicateNames` is exactly right for those.
-    // Which is also why two coins may still both be called `Goblin` through this path: the
-    // DM typed it twice, deliberately, and that has been true since the board existed.
-    // `duplicateToken` is the path where a name is *derived*, and it never skips, because
-    // its source is always already on the board.
-    const names =
-      count === 1 ? [name] : await requireBatchNames(ctx, game._id, name, count)
     const cells = await freeCellsNear(ctx, scene._id, scene, sizeSquares, { x: args.x, y: args.y }, count)
 
     const tokenIds: Id<'tokens'>[] = []
@@ -739,19 +731,31 @@ function requireCount(count: number): void {
  * single-row checks never had to do. The character cap is asked only when there are sheets
  * to write, so a game at two hundred sheets can still make more barrels.
  */
-async function requireRoomFor(
-  ctx: MutationCtx,
-  gameId: Id<'games'>,
-  count: number,
-  sheets: boolean,
-): Promise<void> {
-  if ((await countTokensInGame(ctx, gameId)) + count > MAX_TOKENS_PER_GAME) {
+function requireTokenRoom(total: number, count: number): void {
+  if (total + count > MAX_TOKENS_PER_GAME) {
     throw new ConvexError({
       kind: 'GameFull',
       message: `That would take this game past ${MAX_TOKENS_PER_GAME} tokens. Delete some coins, or add fewer.`,
     })
   }
-  if (sheets && (await countCharactersInGame(ctx, gameId)) + count > MAX_CHARACTERS_PER_GAME) {
+}
+
+/**
+ * The other half, asked **only when there are sheets to write** — which is why it is a
+ * second function rather than a `sheets: boolean` on the first.
+ *
+ * A flag whose one caller always passes a constant is the shape `otherTokenReferencesImage`
+ * argues against a thousand lines away in lib/board.ts: `addToken` writes no sheets and
+ * would have passed `false` for ever. Two names for two questions, and the asymmetry — a
+ * game with no room for another sheet can still make more barrels — reads off the call
+ * sites instead of off an argument.
+ */
+async function requireSheetRoom(
+  ctx: MutationCtx,
+  gameId: Id<'games'>,
+  count: number,
+): Promise<void> {
+  if ((await countCharactersInGame(ctx, gameId)) + count > MAX_CHARACTERS_PER_GAME) {
     throw new ConvexError({
       kind: 'GameFull',
       message: `That would take this game past ${MAX_CHARACTERS_PER_GAME} character sheets. Delete some sheets, or add fewer.`,
@@ -760,24 +764,29 @@ async function requireRoomFor(
 }
 
 /**
- * The names for a batch, refused rather than truncated when numbering would overrun.
+ * The names a batch will take and how many coins the game already holds, from **one** read
+ * of the token rows — refused rather than truncated when numbering would overrun.
  *
  * Milestone 1 shipped exactly the bug a truncation causes — a `slice` on a UTF-16
  * boundary leaving a lone surrogate that convex-test stored happily and the cloud
  * refused — and `npm run test:smoke` exists because of it. `duplicateNamesProblem` is the
  * browser-shared half, so the dialog refuses the same batch this does and its message
  * names the fix rather than being a dead end mid-session.
+ *
+ * `typed` picks which of the two naming rules applies: a name somebody wrote in a field, or
+ * a name derived from a coin already on the board. See `addedNames` beside `duplicateNames`.
  */
 async function requireBatchNames(
   ctx: MutationCtx,
   gameId: Id<'games'>,
   sourceName: string,
   count: number,
-): Promise<string[]> {
-  const names = await nextTokenNames(ctx, gameId, sourceName, count)
-  const problem = duplicateNamesProblem(names)
+  typed = false,
+): Promise<{ names: string[]; total: number }> {
+  const batch = await nextTokenNames(ctx, gameId, sourceName, count, typed)
+  const problem = duplicateNamesProblem(batch.names)
   if (problem) throw new ConvexError({ kind: 'BadInput', message: problem })
-  return names
+  return batch
 }
 
 /**
@@ -837,8 +846,12 @@ export const duplicateToken = mutation({
         ? null
         : await getCharacterInGame(ctx, game._id, source.characterId)
 
-    await requireRoomFor(ctx, game._id, args.count, sourceCharacter !== null)
-    const names = await requireBatchNames(ctx, game._id, source.name, args.count)
+    // Both caps before anything is written, and the token count rides along with the names
+    // out of one read of the same rows. The sheet cap is only asked when there are sheets
+    // to write, which is why it is a call rather than a flag.
+    const { names, total } = await requireBatchNames(ctx, game._id, source.name, args.count)
+    requireTokenRoom(total, args.count)
+    if (sourceCharacter) await requireSheetRoom(ctx, game._id, args.count)
 
     // Beside the coin the DM pressed on, or the middle of the map when the source is not
     // standing on *this* board — which is reachable: the Tokens tab can duplicate a coin

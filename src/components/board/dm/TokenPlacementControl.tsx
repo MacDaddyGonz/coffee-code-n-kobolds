@@ -58,6 +58,11 @@ export function TokenPlacementControl({
   // time an unrelated query re-runs.
   const on = useMemo(() => new Set(placements ?? []), [placements])
 
+  // Loop-invariant, so it is asked once rather than once per map. Disabled while the answer
+  // is in flight as well as while a write is: a row that does not yet know whether the coin
+  // is on it would offer the wrong button.
+  const busy = action.pending !== null || placements === undefined
+
   const put = (sceneId: Id<'scenes'>, name: string) => {
     void action.run(`place:${sceneId}`, `Could not put ${token.name} on ${name}.`, () =>
       placeOnScene({ code, dmCode, sceneId, tokenId: token._id }),
@@ -94,7 +99,6 @@ export function TokenPlacementControl({
           <ul className="flex max-h-48 flex-col gap-2 overflow-y-auto">
             {scenes.map((scene) => {
               const here = on.has(scene._id)
-              const busy = action.pending !== null || placements === undefined
               return (
                 <li key={scene._id} className="flex items-center gap-2">
                   <span className="min-w-0 flex-1 truncate text-sm">{scene.name}</span>

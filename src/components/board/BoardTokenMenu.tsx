@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { useMutation } from 'convex/react'
 
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
@@ -14,11 +15,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import type { BoardToken } from '@/hooks/useBoard'
-import { TOKEN_MARKER_PIPS } from '@/lib/markers'
+import { PIP_INK, TOKEN_MARKER_PIPS } from '@/lib/markers'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import { TOKEN_LAYERS, TOKEN_LAYER_LABELS } from '@convex/lib/layers'
-import { TOKEN_MARKERS, TOKEN_MARKER_LABELS } from '@convex/lib/markers'
+import { TOKEN_MARKERS, TOKEN_MARKER_LABELS, toggleMarker } from '@convex/lib/markers'
 import type { TokenMarker } from '@convex/lib/markers'
 import type { PublicScene } from '@convex/lib/scenes'
 
@@ -42,8 +43,16 @@ export type BoardTokenMenuProps = {
    * ⚠️ Deliberately not a `Point`. That type means image space everywhere else on this
    * board, and `@/lib/camera`'s header is entirely about what goes wrong when the two
    * systems are confused — which is nothing at all at 100% zoom and then everything.
+   *
+   * ⚠️ **Two numbers rather than one object, and that is what makes the `memo` below mean
+   * anything.** This menu is deliberately `modal={false}` so the board keeps zooming
+   * underneath it, and `Board` re-renders on every frame of that zoom — an object literal
+   * at the call site would reconcile the whole portalled subtree, seventeen checkbox items
+   * included, sixty times a second. `ZoomControls` takes a scale rather than a camera for
+   * exactly this reason.
    */
-  at: { x: number; y: number }
+  atX: number
+  atY: number
   onClose: () => void
   /** Select the coin and send the reader to the panel that edits it. */
   onEdit: (tokenId: Id<'tokens'>) => void
@@ -79,13 +88,14 @@ export type BoardTokenMenuProps = {
  * that decides whether to open this at all, because the honest way to give somebody no menu
  * is to never suppress their browser's own.
  */
-export function BoardTokenMenu({
+export const BoardTokenMenu = memo(function BoardTokenMenu({
   code,
   dmCode,
   playerId,
   token,
   scene,
-  at,
+  atX,
+  atY,
   onClose,
   onEdit,
   onOpenSheet,
@@ -98,15 +108,12 @@ export function BoardTokenMenu({
   const action = useLobbyAction()
 
   const isDm = dmCode !== null
-  const on = new Set<string>(token.markers)
 
   const toggle = (marker: TokenMarker) => {
-    // Absolute, like every other writer of this array: build the next state from the
-    // current one and send all of it, so two clients racing on one coin end with one of
-    // the two intentions rather than an interleaving of both.
-    const next = TOKEN_MARKERS.filter((each) =>
-      each === marker ? !on.has(each) : on.has(each),
-    )
+    // Absolute, like every other writer of this array, and built by the one shared
+    // function so this surface and the DM's panel cannot produce different orderings for
+    // the same tick — see its docblock.
+    const next = toggleMarker(token.markers, marker)
     void action.run('markers', `Could not change ${token.name}'s conditions.`, () =>
       setMarkers({
         code,
@@ -126,7 +133,7 @@ export function BoardTokenMenu({
     // why the map stopped responding. The menu itself is portalled and brings its own.
     <div
       className="pointer-events-none absolute top-0 left-0"
-      style={{ transform: `translate(${at.x}px, ${at.y}px)` }}
+      style={{ transform: `translate(${atX}px, ${atY}px)` }}
     >
       <DropdownMenu
         open
@@ -229,7 +236,7 @@ export function BoardTokenMenu({
                   {TOKEN_MARKERS.map((marker) => (
                     <DropdownMenuCheckboxItem
                       key={marker}
-                      checked={on.has(marker)}
+                      checked={token.markers.includes(marker)}
                       // Ticking three conditions should be one opening rather than three
                       // right-clicks, so the menu is told not to close on select.
                       onSelect={(event) => {
@@ -239,8 +246,8 @@ export function BoardTokenMenu({
                     >
                       <span
                         aria-hidden
-                        className="inline-flex size-4 items-center justify-center rounded-full text-[9px] font-bold text-white"
-                        style={{ backgroundColor: TOKEN_MARKER_PIPS[marker].fill }}
+                        className="inline-flex size-4 items-center justify-center rounded-full text-[9px] font-bold"
+                        style={{ backgroundColor: TOKEN_MARKER_PIPS[marker].fill, color: PIP_INK }}
                       >
                         {TOKEN_MARKER_PIPS[marker].glyph}
                       </span>
@@ -266,4 +273,4 @@ export function BoardTokenMenu({
       </DropdownMenu>
     </div>
   )
-}
+})

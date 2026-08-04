@@ -24,7 +24,7 @@ import {
 // The condition vocabulary, and the normaliser that runs on both sides of the wire. One of
 // the three modules inside `convex/` allowed to import it — see `markerGuard.test.ts`.
 import { normaliseMarkers, tokenMarkerValidator, type TokenMarker } from './markers'
-import { duplicateNames } from './names'
+import { addedNames, duplicateNames } from './names'
 import { findClaimHolder, holderByCharacter, listSeats } from './players'
 import type { Grid, Point, Rect } from './grid'
 import { anyRectCovers, cellOf, centreOfCell, snapToGrid } from './grid'
@@ -1317,27 +1317,30 @@ export async function placementOf(
 }
 
 /**
- * Take one token off one board, leaving every other placement alone. Answers whether a
- * row actually went.
+ * Take one token off one board, leaving every other placement alone.
  *
  * The single-board sibling of `deleteTokenPlacements` below, which sweeps *every* board
  * because the token itself is going. Two functions rather than one with a nullable
  * `sceneId`, for `deleteScenePlacements`' reason: the axis differs, so the bound differs,
  * and one function taking either would be one function with two bounds.
  *
- * The boolean is what lets `board.removeFromScene` be a no-op rather than a throw
- * without the mutation having to look first.
+ * ⚠️ **The no-op is the early return, and this deliberately reports nothing.** It answered
+ * a boolean at first, on a docblock claiming that was *what let `board.removeFromScene` be
+ * a no-op rather than a throw* — which was not true: the mutation discarded it, and the
+ * `if (!placement) return` above is the whole of the behaviour. A return value nobody reads
+ * is the same shape as a guard that cannot fail, and this file argues against keeping those.
+ * If a caller ever needs to tell the two outcomes apart it can have the boolean back, and
+ * that day the sentence will be true.
  */
 export async function removeTokenFromScene(
   ctx: MutationCtx,
   sceneId: Id<'scenes'>,
   tokenId: Id<'tokens'>,
-): Promise<boolean> {
+): Promise<void> {
   const placement = await placementOf(ctx, sceneId, tokenId)
-  if (!placement) return false
+  if (!placement) return
 
   await ctx.db.delete('tokenPositions', placement._id)
-  return true
 }
 
 /**
@@ -1508,9 +1511,24 @@ export async function deleteTokensInGame(
     // so no ordering of failures can leave a scene holding a position for a document
     // that has gone.
     await deleteTokenPlacements(ctx, token._id)
-    await deleteTokenMarkers(ctx, token._id)
     if (token.imageId) blobs.add(token.imageId)
     await ctx.db.delete('tokens', token._id)
+  }
+
+  // ⚠️ **One range read for the conditions, not `deleteTokenMarkers` per token.** This
+  // loop first called that helper per row, which is a `by_tokenId` index read apiece — two
+  // hundred of them, to clear a table a real game holds a handful of rows in. It is the
+  // same per-row question the note above rejects for the blob predicate, arriving linear
+  // instead of quadratic and so much easier to miss. `by_gameId` already exists because
+  // `visibleMarkers` needs it, and this is the function that has to work on the largest
+  // game in the deployment.
+  const markerRows = await ctx.db
+    .query('tokenMarkers')
+    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  for (const row of markerRows) {
+    await ctx.db.delete('tokenMarkers', row._id)
   }
 
   for (const imageId of blobs) {
@@ -1571,18 +1589,30 @@ export async function visibleMarkers(
     .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
     .take(MAX_TOKENS_PER_GAME)
 
+  // Concurrent, like `publicTokens` next door: no lookup depends on another, and the
+  // array is bounded by the same cap the range read is. Awaiting them in a loop made one
+  // serial round trip per *marked* coin on a subscription that re-executes for every
+  // client at the table whenever anybody ticks a checkbox.
+  //
+  // ⚠️ Still a point get per marked coin rather than a `visibleTokens` range read, which
+  // is the load-bearing half: a range read would put all two hundred token documents into
+  // this subscription's read set, so renaming an unmarked coin would re-push every
+  // client's pips — and it would spend the free case, where a game with nothing ticked
+  // does no `tokens` work at all.
+  const tokens = await Promise.all(rows.map((row) => ctx.db.get('tokens', row.tokenId)))
+
   const visible: PublicTokenMarkers[] = []
-  for (const row of rows) {
-    const token = await ctx.db.get('tokens', row.tokenId)
+  rows.forEach((row, index) => {
+    const token = tokens[index]
     // The `gameId` test is `visiblePositions`' verbatim: a marker row pointing at a token
     // in another game is data that should not exist, and dropping it here means a stray
     // row can never become a pip on somebody else's coin.
-    if (!token || token.gameId !== gameId || !maySee(token, isDm)) continue
+    if (!token || token.gameId !== gameId || !maySee(token, isDm)) return
 
     const markers = normaliseMarkers(row.markers)
-    if (markers.length === 0) continue
+    if (markers.length === 0) return
     visible.push({ tokenId: row.tokenId, markers })
-  }
+  })
   return visible
 }
 
@@ -1678,26 +1708,39 @@ export async function deleteTokenMarkers(
  * the hidden half would hand the DM a `Goblin 4` to stand beside the `Goblin 4` they had
  * already prepared.
  *
- * The rule itself is `duplicateNames` in lib/names.ts, which is pure and browser-shared —
- * so the dialog's live preview and this write are one function rather than two that
- * agreed on the day they were written.
+ * ⚠️ **The `total` comes back with the names, and that is what stops the caller reading
+ * these two hundred rows twice.** `addToken` and `duplicateToken` both need a count for the
+ * cap check *and* the names for the batch, and asking `countTokensInGame` separately meant
+ * the same range read twice, back to back, on the two mutations that write the most. It is
+ * the argument invariant 8 already settled in the other direction — *asking a second
+ * question about the same two hundred rows should not read them twice* is why
+ * `visibleCharacterIds` was retired into `boardCharacterAccess`. A number is the narrowest
+ * crossing there is, so nothing about the boundary changes.
+ *
+ * **Two derivations, one read**, because a name somebody *typed* and a name derived from a
+ * coin on the board are two acts — see `addedNames` beside `duplicateNames` in lib/names.ts.
+ * Both are pure and browser-shared, so the dialog's live preview and this write are one
+ * function rather than two that agreed on the day they were written.
  */
 export async function nextTokenNames(
   ctx: QueryCtx,
   gameId: Id<'games'>,
   sourceName: string,
   count: number,
-): Promise<string[]> {
+  typed = false,
+): Promise<{ names: string[]; total: number }> {
   const tokens = await ctx.db
     .query('tokens')
     .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
     .take(MAX_TOKENS_PER_GAME)
 
-  return duplicateNames(
-    sourceName,
-    tokens.map((token) => token.name),
-    count,
-  )
+  const existing = tokens.map((token) => token.name)
+  return {
+    names: typed
+      ? addedNames(sourceName, existing, count)
+      : duplicateNames(sourceName, existing, count),
+    total: tokens.length,
+  }
 }
 
 /**

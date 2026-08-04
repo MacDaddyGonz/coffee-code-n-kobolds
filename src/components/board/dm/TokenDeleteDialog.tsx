@@ -34,8 +34,9 @@ export type TokenDeleteDialogProps = {
 /**
  * The confirmation, and the sentence about what deleting a coin does **not** do.
  *
- * Split out so the wording is one string rather than one per call site, and exported so
- * it can be read without rendering a dialog.
+ * Split out so the wording is one string rather than one per call site — and it is the
+ * *only* place either caller says it, including the panel, which paraphrased it once and
+ * had drifted within a commit.
  *
  * ⚠️ **Saying what survives is the whole job of this copy.** A coin and a creature are
  * different things and the application treats them that way — `characters.remove`
@@ -44,6 +45,16 @@ export type TokenDeleteDialogProps = {
  * destroy a sheet is the coupling `TokenAddDialog` refuses in the other direction. So
  * the asymmetry is deliberate, and a DM who expects one press to take both is a DM who
  * will not find the sheet again.
+ *
+ * ⚠️ **Three states, not two, and the third is why this signature changed.** *Bound and
+ * named*, *bound but the name is not to hand*, and *bound to nobody* are different
+ * sentences — and a two-state version forced a caller who merely lacked the roster to
+ * assert the third. The board's menu is exactly that caller: it holds no
+ * `characters.list`, passed `bound={null}`, and so told the DM that a goblin standing on
+ * a sheet *stands for no creature and there is no sheet to worry about* — wrong copy, on
+ * the one irreversible control in the application, in the sentence written to reassure.
+ * `token.characterId` is on the payload every caller already has, so the question is
+ * answerable without a subscription.
  */
 export function tokenDeleteCopy(
   token: PublicToken,
@@ -51,13 +62,16 @@ export function tokenDeleteCopy(
 ): { title: string; description: string } {
   const gone =
     'The coin comes off every map it is standing on and its picture is deleted. There is no undo.'
+  const survives =
+    'the sheet, the hit points and everything written on it stay in the game, and are deleted from the Sheets tab if you want them gone too'
 
-  return {
-    title: `Delete ${token.name}?`,
-    description: bound
-      ? `${gone} ${bound.name} is not touched — the sheet, the hit points and everything written on it stay in the game, and are deleted from the Sheets tab if you want them gone too.`
-      : `${gone} It stands for no creature, so there is no sheet to worry about.`,
-  }
+  const description = bound
+    ? `${gone} ${bound.name} is not touched — ${survives}.`
+    : token.characterId !== null
+      ? `${gone} The creature it stands for is not touched — ${survives}.`
+      : `${gone} It stands for no creature, so there is no sheet to worry about.`
+
+  return { title: `Delete ${token.name}?`, description }
 }
 
 /**

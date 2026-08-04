@@ -7,6 +7,7 @@ import {
   PIP_GAP,
   PIP_INK,
   PIP_ROW_GAP,
+  PIP_UNIT,
   PIP_STROKE,
   TOKEN_MARKER_PIPS,
   markerRow,
@@ -100,7 +101,7 @@ export const TokenMarkerPips = memo(function TokenMarkerPips({
   // shows `capacity - 1` pips on a collapse: the row is as wide as what it draws.
   const slots = shown.length + (overflow > 0 ? 1 : 0)
   const pipRadius = PIP_DIAMETER / 2 / scale
-  const step = (PIP_DIAMETER + PIP_GAP) / scale
+  const step = PIP_UNIT / scale
   const width = (slots * PIP_DIAMETER + (slots - 1) * PIP_GAP) / scale
   // Centred on the coin, and hung below the rim by the gap the row's height is measured
   // from — `MARKER_ROW_SCREEN_HEIGHT` is the same three constants, which is what lets

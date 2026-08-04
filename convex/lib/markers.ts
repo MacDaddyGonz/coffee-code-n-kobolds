@@ -210,3 +210,32 @@ export function normaliseMarkers(raw: readonly string[]): TokenMarker[] {
   const given = new Set(raw)
   return TOKEN_MARKERS.filter((marker) => given.has(marker))
 }
+
+/**
+ * The array a client should send after somebody ticks or unticks one condition.
+ *
+ * ⚠️ **One function because the write is absolute, and an absolute write built two ways is
+ * two answers.** Both surfaces that mark a coin — the DM's panel and the board's menu —
+ * send the whole array rather than a delta, for `setControllers`' reason: two clients
+ * racing on one coin end with one of the two intentions rather than an interleaving of
+ * both, and clearing everything is expressible. They wrote that array differently at
+ * first, and only one of the two spellings was canonically ordered.
+ *
+ * Nothing was visibly wrong, because `board.setMarkers` normalises server-side. But
+ * `normaliseMarkers`' whole stated purpose is that **the browser's value and the stored
+ * one are the same bytes**, and the day this mutation grows a `withOptimisticUpdate` — the
+ * pattern `useTokenMove` and `useVitals` already use — one of the two would have reshuffled
+ * the pips on the round trip and the other would not. That is a latent divergence exactly
+ * where the design says there must be none, so it is one function here rather than two
+ * expressions there.
+ *
+ * Built by intersecting the vocabulary, so the result is canonical by construction rather
+ * than by remembering to sort — and an unknown value already in `current` is dropped on the
+ * way through, which is the same fail-closed behaviour for the same reason.
+ */
+export function toggleMarker(current: readonly string[], marker: TokenMarker): TokenMarker[] {
+  const on = new Set(current)
+  if (on.has(marker)) on.delete(marker)
+  else on.add(marker)
+  return TOKEN_MARKERS.filter((each) => on.has(each))
+}

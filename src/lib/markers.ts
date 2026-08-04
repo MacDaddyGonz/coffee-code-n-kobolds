@@ -12,7 +12,7 @@
 // the pips can be drawn on the canvas and the same colours reused in HTML — and so
 // this is testable as arithmetic rather than through a rendered component.
 
-import { TOKEN_MARKERS } from '@convex/lib/markers'
+import { normaliseMarkers } from '@convex/lib/markers'
 import type { TokenMarker } from '@convex/lib/markers'
 
 /**
@@ -141,8 +141,14 @@ export const PIP_STROKE = 1
  */
 export const MARKER_ROW_SCREEN_HEIGHT = PIP_ROW_GAP + PIP_DIAMETER + PIP_NAME_GAP
 
-/** Centre-to-centre spacing: a pip plus the gap that follows it. */
-const PIP_UNIT = PIP_DIAMETER + PIP_GAP
+/**
+ * Centre-to-centre spacing: a pip plus the gap that follows it.
+ *
+ * Exported for the same reason MARKER_ROW_SCREEN_HEIGHT is: the renderer needs the step
+ * between two pips, and deriving it there from the two constants separately is the
+ * two-files-agreeing-by-arithmetic failure this module argues against four lines above.
+ */
+export const PIP_UNIT = PIP_DIAMETER + PIP_GAP
 
 /**
  * How many pips fit across a coin drawn this many screen pixels wide.
@@ -177,21 +183,27 @@ export function pipCapacity(drawnDiameter: number): number {
 /**
  * What to draw on this coin, and how many conditions were left out of it.
  *
- * ⚠️ **Iterates `TOKEN_MARKERS` and intersects with `stored` — it never maps over
- * `stored`.** That is the fail-closed runtime behaviour the vocabulary has instead of
- * a `never` arm, and the case it exists for is an **older bundle reading a newer
- * deployment**: GitHub Pages serves a cached bundle, a Convex `returns:` validator
- * has already approved a marker this browser's union has never heard of, and it
- * arrives in the array. Mapping the stored array would take that string to a
- * `TOKEN_MARKER_PIPS` lookup inside JSX, read `undefined.glyph` and take down the
- * whole board — every coin, not just the goblin somebody ticked. Intersecting drops
- * it silently, which is exactly right for a label that adjudicates nothing.
+ * ⚠️ **The narrowing is `normaliseMarkers`, imported rather than rewritten — and this
+ * used to be a second copy of it.** That function iterates the vocabulary and
+ * intersects, never mapping over the stored array, and its own docblock says it runs in
+ * three places: the write path, the server projection and **here**. A local
+ * reimplementation made that sentence false the day it was written, and left two
+ * spellings of one fail-closed rule to drift — which is exactly the failure the rule
+ * exists to prevent, one level up.
  *
- * ⚠️ **`stored` is `readonly string[]` and not `TokenMarker[]`, deliberately.** A
- * `TokenMarker[]` parameter would make the paragraph above unwriteable in a test —
- * the compiler would refuse the one input the function exists to survive — and a
- * guard with no failing case is a guard that gets deleted. The caller passes the row
- * as it arrived from the server, unnarrowed, and this is the narrowing.
+ * What it is for: an **older bundle reading a newer deployment**. GitHub Pages serves a
+ * cached bundle, a Convex `returns:` validator has already approved a marker this
+ * browser's union has never heard of, and it arrives in the array. Mapping the stored
+ * array would take that string to a `TOKEN_MARKER_PIPS` lookup inside JSX, read
+ * `undefined.glyph` and take down the whole board — every coin, not just the goblin
+ * somebody ticked. Intersecting drops it silently, which is exactly right for a label
+ * that adjudicates nothing.
+ *
+ * ⚠️ **`stored` is `readonly string[]` and not `TokenMarker[]`, deliberately** — the same
+ * signature `normaliseMarkers` keeps, for the same reason. A `TokenMarker[]` parameter
+ * would make the paragraph above unwriteable in a test, because the compiler would refuse
+ * the one input the function exists to survive, and a guard with no failing case is a
+ * guard that gets deleted.
  *
  * **The order is `TOKEN_MARKERS`' own, which is alphabetical.** So *which* markers
  * survive a collapse is arbitrary but **stable, and identical on every screen at the
@@ -207,7 +219,7 @@ export function markerRow(
   stored: readonly string[],
   drawnDiameter: number,
 ): { shown: TokenMarker[]; overflow: number } {
-  const present = TOKEN_MARKERS.filter((marker) => stored.includes(marker))
+  const present = normaliseMarkers(stored)
   if (present.length === 0) return { shown: [], overflow: 0 }
 
   const capacity = pipCapacity(drawnDiameter)

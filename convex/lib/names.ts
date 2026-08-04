@@ -277,3 +277,36 @@ export function duplicateNamesProblem(names: readonly string[]): string | null {
   if (!names.some((name) => name.length > MAX_CHARACTER_NAME_LENGTH)) return null
   return `Numbering the copies would take a name past ${MAX_CHARACTER_NAME_LENGTH} characters. Give the coin a shorter name first.`
 }
+
+/**
+ * The names **`board.addToken`** will write, for a name somebody has **typed**.
+ *
+ * ⚠️ **A sibling of `duplicateNames` rather than a flag on it, and the divergence lives
+ * here rather than in the mutation.** The two acts differ in one way that matters: a
+ * duplicate derives its names from a coin already standing on the board, and an add is
+ * given a name a person just wrote down. So **one coin keeps exactly what was typed** —
+ * trailing number and all — and only a *batch* is numbered, because the second through
+ * fifth of it are coins nobody named.
+ *
+ * `npm run test:smoke` is what found this: routing a typed name through `duplicateNames`
+ * hits its skip case, which returns the *base*, so `Kobold of the Arch 3` was stored as
+ * `Kobold of the Arch` and a trailing number could not be created at all.
+ *
+ * ⚠️ **The first fix put the `count === 1` branch inside the mutation, and that was the
+ * wrong altitude — it is the reason this function exists.** `duplicateNames` claims to be
+ * *the one function the preview and the write share*, and a branch on only one side of the
+ * wire makes that false: the dialog went on previewing `Goblin 2` for an add the server
+ * would store as `Goblin`, and `duplicateNamesProblem` could disable a submit for a batch
+ * the server would have accepted. Both callers now ask this, so the sentence is true again.
+ *
+ * `collapseWhitespace` rather than the raw string, because that is what `requireText`
+ * stores and a preview must show the name that will exist.
+ */
+export function addedNames(
+  typedName: string,
+  existingNames: readonly string[],
+  count: number,
+): string[] {
+  if (count === 1) return [collapseWhitespace(typedName)]
+  return duplicateNames(typedName, existingNames, count)
+}

@@ -31,7 +31,7 @@ import { MAX_CHARACTER_NAME_LENGTH } from '@convex/lib/codes'
 import type { TokenLayer } from '@convex/lib/layers'
 import { maySeeLayer } from '@convex/lib/layers'
 import { MAX_DUPLICATE_COUNT } from '@convex/lib/limits'
-import { duplicateNames, duplicateNamesProblem } from '@convex/lib/names'
+import { addedNames, duplicateNamesProblem } from '@convex/lib/names'
 import type { PublicScene } from '@convex/lib/scenes'
 import { crLabel } from '@convex/lib/creatures'
 import type { CreatureChoice } from './BestiaryPicker'
@@ -236,12 +236,18 @@ export function TokenAddDialog({ code, dmCode, scene }: TokenAddDialogProps) {
   const attaching = characterId !== ''
 
   // The names the batch will take, from the one function `board.addToken` writes with:
-  // `duplicateNames(what the DM typed, every name in the game, the count)`. Undefined names
+  // `addedNames(what the DM typed, every name in the game, the count)`. Undefined names
   // means the subscription has not landed, which `CopyNamesPreview` prints as *not known
   // yet* rather than as a run starting from 1 — see the ⚠️ there.
+  //
+  // ⚠️ **`addedNames` and not `duplicateNames`, which this asked at first and which made the
+  // preview lie.** A name somebody typed is not a copy of anything, so one coin keeps it
+  // exactly — trailing number and all — and only a batch is numbered. Asking the duplicate
+  // rule here previewed `Goblin 2` for an add the server stores as `Goblin`, and could
+  // refuse a batch the server would have taken. Two acts, two functions, both shared.
   const existingNames = useMemo(() => tokens?.map((row) => row.name), [tokens])
   const names = useMemo(
-    () => duplicateNames(name, existingNames ?? [], count),
+    () => addedNames(name, existingNames ?? [], count),
     [name, existingNames, count],
   )
   // The server's own refusal, so the dialog offers exactly the batch the mutation takes.

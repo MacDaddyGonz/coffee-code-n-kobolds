@@ -234,15 +234,27 @@ export function useBoard(args: {
 
   const isDm = dmCode !== null
 
+  /**
+   * Conditions by coin, keyed by token because the query is game-scoped and sends a row
+   * only for a coin that carries something — a marked goblin in a two-hundred-coin game is
+   * one entry here, and every other coin falls through to the shared empty array below.
+   *
+   * ⚠️ **Built out here rather than inside the join, and the reason is invariant 2.** That
+   * memo depends on `positions`, which is re-pushed ten times a second for the whole of
+   * anybody's drag — so a `Map` built in there was rebuilt at that rate for an input that
+   * changes when somebody ticks a checkbox. The join still has to *depend* on this, which
+   * is the accepted widening the note at its foot argues; what this stops is the rebuilding.
+   */
+  const marked = useMemo(
+    () => new Map((markers ?? []).map((row) => [row.tokenId, row.markers])),
+    [markers],
+  )
+
   const joined = useMemo<BoardToken[]>(() => {
     if (!tokens) return []
 
     const at = new Map((positions ?? []).map((row) => [row.tokenId, { x: row.x, y: row.y }]))
     const rects = fog ?? []
-    // Keyed by token because the query is game-scoped and sends a row only for a coin
-    // that carries something — a marked goblin in a two-hundred-coin game is one entry
-    // here, and every other coin falls through to the shared empty array below.
-    const marked = new Map((markers ?? []).map((row) => [row.tokenId, row.markers]))
 
     // Order is left alone — `TokenLayers` splits the tokens by layer and stacks them
     // by size, which is a drawing decision and belongs with the canvas.
@@ -351,7 +363,7 @@ export function useBoard(args: {
     // of these dependencies at all. What it costs when one *is* ticked is every token
     // object rebuilt and every coin reconciled — the same charge damage already pays, for
     // an event that happens far less often than damage does.
-  }, [tokens, positions, fog, markers, isDm, playerId, myCharacterId, vitalsOf])
+  }, [tokens, positions, fog, marked, isDm, playerId, myCharacterId, vitalsOf])
 
   return {
     scene: scene ?? null,

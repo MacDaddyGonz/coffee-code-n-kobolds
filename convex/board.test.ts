@@ -312,6 +312,11 @@ describe('the DM layer never reaches a player', () => {
         dmCode: wrongDmCode,
       }),
       await t.query(api.scenes.active, { code: fixture.code }),
+      // The conditions on a coin. A marker row names a `tokenId`, so a row belonging to the
+      // hidden coin says a hidden coin exists — which is the same oracle the id, the name
+      // and the art URL are scanned for, and why `boardFixture` marks that coin.
+      await t.query(api.board.markers, { code: fixture.code }),
+      await t.query(api.board.markers, { code: fixture.code, dmCode: wrongDmCode }),
     ]
 
     for (const payload of payloads) {

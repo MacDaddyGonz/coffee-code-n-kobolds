@@ -368,7 +368,16 @@ export const TokenCoin = memo(function TokenCoin({
         which is why `nameTop` above exists and why it is the *name* that yields. Four
         annotations, four places, and no two of them can ever be asked to share one.
       */}
-      {showDetail ? (
+      {/*
+        ⚠️ **Gated on `hasMarkers` as well as `showDetail`, and the second test is not
+        redundant with the component's own early return.** `scale` is a prop here, so a
+        wheel-zoom busts this memo on every frame — which without the gate meant mounting
+        two hundred `TokenMarkerPips`, each missing its `useMemo` on the changed `scale`
+        and running a seventeen-member intersection to conclude that nothing is ticked. It
+        renders `null` either way; the gate is about not asking. `hasMarkers` is already
+        computed above for `nameTop`, so it costs nothing.
+      */}
+      {showDetail && hasMarkers ? (
         <TokenMarkerPips markers={token.markers} radius={radius} scale={scale} />
       ) : null}
 

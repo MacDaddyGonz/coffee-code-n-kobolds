@@ -11,7 +11,7 @@ import {
   isUsableAppearance,
 } from '@/components/board/dm/TokenAppearanceFields'
 import { TokenControlPanel } from '@/components/board/dm/TokenControlPanel'
-import { TokenDeleteDialog } from '@/components/board/dm/TokenDeleteDialog'
+import { TokenDeleteDialog, tokenDeleteCopy } from '@/components/board/dm/TokenDeleteDialog'
 import { TokenDuplicateDialog } from '@/components/board/dm/TokenDuplicateDialog'
 import { TokenMarkerControl } from '@/components/board/dm/TokenMarkerControl'
 import { TokenPlacementControl } from '@/components/board/dm/TokenPlacementControl'
@@ -718,7 +718,13 @@ function ArtControl({
         <p className="text-muted-foreground text-xs">
           {token.artUrl === null
             ? 'No art. Drawn as a coloured coin with its initials, which is enough to play with and saves an upload per goblin.'
-            : 'Replacing it deletes the old picture from storage there and then. There is no undo, and no other token is using it.'}
+            : // ⚠️ **The clause that used to end this sentence — "and no other token is
+              // using it" — was true and is now false.** It was written when an upload made
+              // exactly one coin, and duplication broke it: copies share their source's
+              // `imageId`. `replaceTokenArt` was made conditional in the same milestone, so
+              // the picture survives while a twin still draws it — which means the honest
+              // sentence is about *this* coin rather than about storage.
+              'Replacing it changes this coin only. The old picture is deleted unless a copy is still using it, and there is no undo.'}
         </p>
       </div>
 
@@ -855,15 +861,16 @@ function RemoveControl({
 }): ReactElement {
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-muted-foreground text-xs">
-        Deleting the coin takes it off every map it is standing on and deletes its picture.
-        There is no undo.
-      </p>
+      {/*
+        ⚠️ **The dialog's own sentence, not a second one.** This paraphrased it at first —
+        same three facts, different words, in a second file — which is precisely what
+        `tokenDeleteCopy` was extracted and exported to prevent, defeated on its first
+        opportunity. Two wordings for one irreversible act drift the moment the semantics
+        move, and the reader who finds them disagreeing cannot tell which is current.
+      */}
       <p className="text-muted-foreground text-xs">
         <strong className="text-foreground font-medium">The creature is not deleted.</strong>{' '}
-        {bound === null
-          ? 'This coin stands for nobody, so there is no sheet to worry about.'
-          : `${bound.name}'s sheet, hit points and everything written on them stay in the game — delete those from the Sheets tab.`}
+        {tokenDeleteCopy(token, bound).description}
       </p>
       <div>
         <TokenDeleteDialog

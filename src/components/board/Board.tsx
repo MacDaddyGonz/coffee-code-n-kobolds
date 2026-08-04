@@ -31,6 +31,9 @@ import { cn } from '@/lib/utils'
 import type { Id } from '@convex/_generated/dataModel'
 import type { Grid, Point } from '@convex/lib/grid'
 
+/** Held still, so a board with no dialog open hands the same array every render. */
+const NO_NAMES: readonly string[] = []
+
 export type BoardProps = {
   code: string
   dm: Dm
@@ -168,12 +171,6 @@ export function Board({
   })
 
   const hp = useHpActions({ code, dmCode: dm.dmCode, playerId })
-
-  // Every coin's name, for the duplicate dialog's live preview. Read off the array this
-  // component is already holding rather than through a subscription of its own, so the
-  // preview and the write take the same three inputs — which is the whole reason
-  // `duplicateNames` is one browser-shared function rather than two that agreed once.
-  const names = useMemo(() => board.tokens.map((token) => token.name), [board.tokens])
 
   /**
    * Which token the hit point editor is open on — its own question, asked by
@@ -348,12 +345,31 @@ export function Board({
   // closing on select and the dialog never appears.
   const [duplicating, setDuplicating] = useState<Id<'tokens'> | null>(null)
   const [deleting, setDeleting] = useState<Id<'tokens'> | null>(null)
+  // Guarded on the id rather than scanning for a match that cannot be there. `tokens` is a
+  // fresh array ten times a second during anybody's drag, and both of these are null for
+  // the whole of a session except the seconds a dialog is open.
   const duplicateToken = useMemo(
-    () => tokens.find((token) => token._id === duplicating) ?? null,
+    () => (duplicating === null ? null : (tokens.find((token) => token._id === duplicating) ?? null)),
     [tokens, duplicating],
   )
+  // Every coin's name, for the duplicate dialog's live preview. Read off the array this
+  // component is already holding rather than through a subscription of its own, so the
+  // preview and the write take the same three inputs — which is the whole reason
+  // `addedNames` and `duplicateNames` are browser-shared rather than two rules that
+  // agreed once.
+  //
+  // ⚠️ Gated on the dialog being open, like the two lookups above. UnGated this mapped two
+  // hundred names ten times a second for the whole of every drag, to feed a dialog that is
+  // shut for all but a few seconds of a session — and while it *is* open, a background drag
+  // would hand it a fresh array identity on every tick and re-run its own naming memo with
+  // it.
+  const names = useMemo(
+    () => (duplicating === null ? NO_NAMES : board.tokens.map((token) => token.name)),
+    [board.tokens, duplicating],
+  )
+
   const deleteToken = useMemo(
-    () => tokens.find((token) => token._id === deleting) ?? null,
+    () => (deleting === null ? null : (tokens.find((token) => token._id === deleting) ?? null)),
     [tokens, deleting],
   )
 
@@ -369,6 +385,21 @@ export function Board({
     [],
   )
   const closeMenu = useCallback(() => setMenu(null), [])
+
+  // ⚠️ **Every prop the menu takes is stable, which is what makes its `memo` mean
+  // anything.** It is deliberately `modal={false}` so the board keeps zooming underneath
+  // it — and this component re-renders on every frame of that zoom, so a fresh object or a
+  // fresh arrow here would reconcile the whole portalled subtree, seventeen checkbox items
+  // included, sixty times a second. Two numbers rather than a point, for the same reason
+  // `ZoomControls` takes a scale rather than a camera.
+  const openDuplicate = useCallback((tokenId: Id<'tokens'>) => {
+    setMenu(null)
+    setDuplicating(tokenId)
+  }, [])
+  const openDelete = useCallback((tokenId: Id<'tokens'>) => {
+    setMenu(null)
+    setDeleting(tokenId)
+  }, [])
 
   // Selecting the coin *and* leaving this pane is the point of both: the panels that edit
   // a coin and open a sheet live in the other one, and the shell's selection is what tells
@@ -561,18 +592,13 @@ export function Board({
               playerId={playerId}
               token={menuToken}
               scene={scene}
-              at={{ x: menu?.x ?? 0, y: menu?.y ?? 0 }}
+              atX={menu?.x ?? 0}
+              atY={menu?.y ?? 0}
               onClose={closeMenu}
               onEdit={onMenuEdit}
               onOpenSheet={onMenuEdit}
-              onDuplicate={(tokenId) => {
-                setMenu(null)
-                setDuplicating(tokenId)
-              }}
-              onDelete={(tokenId) => {
-                setMenu(null)
-                setDeleting(tokenId)
-              }}
+              onDuplicate={openDuplicate}
+              onDelete={openDelete}
             />
           ) : null}
           {dm.dmCode !== null && duplicateToken ? (

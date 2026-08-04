@@ -10,7 +10,7 @@ import { PIP_INK, TOKEN_MARKER_PIPS } from '@/lib/markers'
 import { api } from '@convex/_generated/api'
 import type { PublicToken } from '@convex/lib/board'
 import type { TokenMarker } from '@convex/lib/markers'
-import { TOKEN_MARKERS, TOKEN_MARKER_LABELS } from '@convex/lib/markers'
+import { TOKEN_MARKERS, TOKEN_MARKER_LABELS, toggleMarker } from '@convex/lib/markers'
 
 export type TokenMarkerControlProps = {
   code: string
@@ -80,7 +80,10 @@ export function TokenMarkerControl({
   const busy = action.pending !== null || rows === undefined
 
   function toggle(marker: TokenMarker) {
-    const next = on.has(marker) ? current.filter((held) => held !== marker) : [...current, marker]
+    // `toggleMarker`, not an append: the write is absolute, so the array a client sends is
+    // the one it wants stored, and canonical order is what makes an optimistic value and the
+    // stored value the same bytes. See its docblock.
+    const next = toggleMarker(current, marker)
 
     void action.run(
       `marker:${marker}`,
