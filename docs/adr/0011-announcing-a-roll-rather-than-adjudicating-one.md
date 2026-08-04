@@ -1,7 +1,12 @@
 # 11. Announcing a roll rather than adjudicating one
 
-- **Status:** Accepted
+- **Status:** Accepted — **decisions 1 and 4 of the five below are SUPERSEDED** by the
+  character-resources milestone (spell slots, limited uses and the short rest) in
+  [roadmap.md](../roadmap.md); ADR 0015 will carry the reasoning once that milestone is built.
+  **Decisions 2, 3 and 5 stand, and so does everything else in this record.** The superseded text is
+  struck through below rather than removed — see *What was superseded, and what was not*.
 - **Date:** 2026-08-02
+- **Superseded in part:** 2026-08-04
 
 ## Context
 
@@ -31,9 +36,11 @@ reading `Ancient Red Dragon attacks with their Bite` has exactly the shape of a 
 The same answer to all five, and the same answer this project has given every previous time —
 CR scaling, the advisory lock, the per-rest tick.
 
-1. **There are no spell slots and there will be none.** No table, no field, no counter. Clicking a
+1. 🚫 **SUPERSEDED — do not implement this.** The application **does** count spell slots; see the
+   character-resources milestone in [roadmap.md](../roadmap.md).
+   ~~**There are no spell slots and there will be none.** No table, no field, no counter. Clicking a
    spell rolls its dice and says *casts Cure Wounds*. The spell level stays on the sheet because it
-   is a **label**, and nothing anywhere implies a resource was spent.
+   is a **label**, and nothing anywhere implies a resource was spent.~~
 2. **A hero gets no spell save DC, and needed no spell attack bonus.** The attack bonus turned out
    to exist already and per entry: `toHit: '1d20+INT+PROF'` is written into the corpus, so there
    was nothing to derive. The save DC is declined, and cheaply — a resolved `PcSheet` stores
@@ -46,9 +53,11 @@ CR scaling, the advisory lock, the per-rest tick.
    sheet.** `initiativeBonusOf` returns `abilityModifier(dex)` for a hero and the stored
    `initiativeBonus` for a creature. One function, both shapes, no new field — this one only had to
    be *found*.
-4. **Limited-use resources stay exactly as coarse as they are.** No count per key, no short rest.
+4. 🚫 **SUPERSEDED — do not implement this.** Limited-use resources **are** counted per key, and
+   there **is** a short rest; see the character-resources milestone in [roadmap.md](../roadmap.md).
+   ~~**Limited-use resources stay exactly as coarse as they are.** No count per key, no short rest.
    `spentPerRest` continues to cover the two race traits it covers and nothing else. Rage twice a
-   day is the table's to count.
+   day is the table's to count.~~
 5. **Concentration and the action economy are the table's, said out loud.** No field, no check,
    and — the part the review actually asked for — nothing on the sheet implies otherwise.
 
@@ -56,6 +65,34 @@ CR scaling, the advisory lock, the per-rest tick.
 bonus action and 1 reaction"* is in the spec's **Included** list, which makes it the one place the
 requirements name something this application deliberately will not adjudicate. That is recorded in
 [requirements.md](../requirements.md)'s amendments section. The other four were never promised.
+
+### 🚫 What was superseded, and what was not
+
+**Decisions 1 and 4 were reversed on 2026-08-04**, on the maintainer's instruction, and the
+character-resources milestone in [roadmap.md](../roadmap.md) is where the replacement is specified.
+ADR 0015 will record the reasoning when that milestone is built. Read this section before acting on
+anything above it.
+
+| Decision | Now |
+| --- | --- |
+| 1 — no spell slots | 🚫 **Superseded.** Slots exist, per class and level, and a roll spends one |
+| 2 — no spell save DC for a hero | ✅ **Stands** |
+| 3 — initiative is one function over a stored number and a derived one | ✅ **Stands** |
+| 4 — no count per key, no short rest | 🚫 **Superseded.** Counts per key, and a short rest exists |
+| 5 — concentration and the action economy are the table's | ✅ **Stands** |
+
+⚠️ **The reversal is narrower than it looks, and the sentence that survives it is the one that
+matters.** The test this record applied — *does the app decide anything, or does it announce what a
+person decided?* — is **unchanged and still passes.** Counting a slot adjudicates nothing: no roll is
+compared to an armour class or a save DC, no cast is ever refused, and casting at a higher slot level
+does not change a single die of damage. A person still presses the button that says what it will
+spend. What changed is that the application now *counts* two things this record declined to count.
+
+⚠️ **The text above is struck through rather than deleted**, because
+[the ADR convention](README.md) is that the reasoning trail survives instead of being overwritten —
+and because the argument in decisions 1 and 4 is still the right argument for the four *neighbouring*
+gaps it was defending. Do not read the strikethrough as *this reasoning was wrong*; read it as *this
+conclusion was overruled and the next four are still load-bearing.*
 
 ### Evaluation is server-side, and a test enforces it rather than a comment
 
@@ -280,13 +317,21 @@ browser found all three.** That is now true of every milestone in this project.
 
 ## Alternatives considered
 
-### Spell slots, a save DC, per-use counts — rejected, and this is the milestone that had to say so
+### ~~Spell slots,~~ a save DC, ~~per-use counts~~ — rejected, and this is the milestone that had to say so
+
+🚫 **Two thirds of this heading are superseded** — spell slots and per-use counts are both built by
+the character-resources milestone. **The save DC is still rejected**, and so is the test below.
 
 Each is a small, reasonable feature, and each is a rules engine arriving one feature at a time. The
 test applied throughout: does the app *decide* anything, or does it announce what a person decided?
 Nothing here compares a roll to an armour class or a DC, applies damage, or knows whose turn it is.
 The moment one of those changes a number a player rolls against without somebody asking it to, it
 needs an amendment and an ADR of its own.
+
+⚠️ **That last sentence is the part of this record that did the work, and it is why the reversal is
+recorded rather than resented.** Slots and per-use counts came back through exactly the door it
+describes — an amendment and an ADR — instead of arriving quietly inside a feature branch. The test
+is unchanged and still the one to apply to the next small, reasonable feature.
 
 ### One mutation for ad-hoc and sheet rolls — rejected
 

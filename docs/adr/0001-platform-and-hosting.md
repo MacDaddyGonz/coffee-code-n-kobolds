@@ -28,7 +28,7 @@ desktop-browser only, so there is no need for SSR, SEO, or mobile layouts.
 | Frontend | React + TypeScript + Vite — a static SPA, **hash routing** |
 | Backend, database, realtime, file storage | **Convex** |
 | Map canvas | **react-konva** |
-| 3D dice | **@3d-dice/dice-box** |
+| 3D dice | ~~**@3d-dice/dice-box**~~ — **SUPERSEDED** by [ADR 0011](0011-announcing-a-roll-rather-than-adjudicating-one.md). The library is **`@3d-dice/dice-box-threejs`** |
 | Styling / components | Tailwind + shadcn/ui |
 | Hosting | **GitHub Pages**, deployed by GitHub Actions |
 
