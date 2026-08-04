@@ -313,6 +313,50 @@ milestones in a row now. A layer is a permission, a rectangle is a region, a han
 a track is a file — none of them is a rule, none is adjudicated, and nothing here changes a number a
 player rolls against.
 
+#### Tokens: copying, placing and labelling a coin — 2026-08-04 — [ADR 0013](adr/0013-a-coin-you-can-copy-place-and-label.md)
+
+**One amendment, and it lifts nothing.** It is written down only because the exclusion it comes
+closest to **names the words this milestone puts on screen**, and an entry that looked like a
+lifting and was never recorded would be indistinguishable from one that quietly happened.
+
+**"No movement-detriment status effects (prone, stand up, difficult terrain, etc.)" — stands exactly
+as written.** A coin can now carry a fixed vocabulary of D&D conditions, drawn as small pips, set by
+the DM or by whoever may drag that coin. Four of them — `prone`, `grappled`, `restrained` and
+`paralyzed` — are named or implied by that exclusion, which is precisely why this paragraph exists.
+
+What the exclusion rules out is the **effect**, and none of it is built:
+
+- No speed is halved and no speed is read when a coin is marked. `speedOf` does not know markers
+  exist.
+- No advantage or disadvantage is granted, and no roll consults a condition. `lib/dice.ts` does not
+  import the vocabulary and is forbidden from doing so.
+- No drag is refused because of one. `requireMovableToken` gates *writing* a marker and never reads
+  one.
+- No health band, no save, no armour class and no sheet changes because a creature is prone.
+
+What ships is the **word on the coin** — the same register as a bestiary creature's loot being a line
+of text rather than an inventory, and as a spell's level being a label rather than a resource. It is
+a note the table keeps for itself, in the place everybody is already looking.
+
+⚠️ **That promise is held by a guard test rather than by this paragraph.** `markerGuard.test.ts`
+greps `convex/` for a quoted import of the condition vocabulary and allows exactly three modules —
+the schema that stores it, the one module that reads the table, and the two public functions. It
+sweeps the helper names as well, because a module could import nothing and still reach the row
+through the choke point. The reason it is a test and not a comment is that the way this exclusion
+gets broken is somebody writing three reasonable lines in the dice module.
+
+**`concentrating` is on that list too, and it touches a different declined decision.** The rolls
+amendment above records concentration as **still declined** — *no field and no check, and nothing on
+the sheet implies otherwise* — and that is unchanged: nothing records what a character is
+concentrating on, nothing drops it when they take damage, and no spell knows the word. What exists is
+a pip a person ticks and unticks, on a coin, for the same reason they might put a die on the table
+next to a miniature. Named here so it is not later mistaken for the rule arriving.
+
+**Nothing else moved.** A copy of a coin is a coin, a placement is a row saying which map something
+stands on, and deleting a coin deletes a coin — the creature's sheet survives, and is deleted from
+the Sheets tab. Nothing was added to the *Included* list, nothing was lifted from the *Excluded* one,
+and nothing here changes a number a player rolls against. **Five milestones in a row.**
+
 ## Accounts and games
 
 - Users create an account by providing an email address.

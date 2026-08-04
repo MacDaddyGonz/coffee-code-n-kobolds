@@ -33,3 +33,4 @@ about half the time and has no way to know which.
 | [0010](0010-the-way-in-and-the-dms-coins.md) | The way in, and the DM's coins | Accepted |
 | [0011](0011-announcing-a-roll-rather-than-adjudicating-one.md) | Announcing a roll rather than adjudicating one | Accepted — 🚫 decisions **1** (no spell slots) and **4** (no per-key counts, no short rest) superseded by the character-resources milestone; decisions 2, 3, 5 and the rest of the record stand |
 | [0012](0012-three-layers-and-a-fog-that-is-honest-about-itself.md) | Three layers, and a fog that is honest about itself | Accepted |
+| [0013](0013-a-coin-you-can-copy-place-and-label.md) | A coin you can copy, place and label | Accepted |
