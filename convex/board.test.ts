@@ -11,6 +11,7 @@ import { MAX_CHARACTERS_PER_GAME, MAX_TOKENS_PER_GAME } from './lib/games'
 import { cellOf, snapToGrid } from './lib/grid'
 import type { Grid, Point } from './lib/grid'
 import { MAX_DUPLICATE_COUNT, MAX_TOKEN_BYTES } from './lib/limits'
+import { TOKEN_MARKERS } from './lib/markers'
 import schema from './schema'
 
 const modules = import.meta.glob('./**/*.ts')
@@ -238,6 +239,19 @@ async function boardFixture(t: Harness) {
     imageId: secretArt,
     x: 900,
     y: 700,
+  })
+
+  // ⚠️ **The hidden coin carries a condition, so the enumeration sweep below is not
+  // vacuous for `board.markers`.** That test asks every public query of these five modules
+  // for the DM-layer id and name; a fixture with no marker rows would hand it an empty
+  // array from that query and it would pass having proved nothing. The row names a
+  // `tokenId`, which is exactly the leak — a marker for a coin nobody has been told about
+  // says a hidden coin exists.
+  await t.mutation(api.board.setMarkers, {
+    code: game.code,
+    dmCode: game.dmCode,
+    tokenId: secretToken,
+    markers: ['poisoned'],
   })
 
   const dmTokens = await t.query(api.board.tokens, { code: game.code, dmCode: game.dmCode })
@@ -2127,6 +2141,242 @@ describe('board.removeToken', () => {
       tokenId: first,
     })
     expect(await t.query(api.board.tokens, { code: game.code })).toEqual([])
+  })
+})
+
+/**
+ * CONDITIONS ON A COIN — labels, and the one write in this application a non-DM can make
+ * to the board that is not a drag.
+ */
+describe('conditions on a coin', () => {
+  async function marked(t: Harness) {
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    const hero = await makeCharacter(t, game, 'Thorin')
+    const open = await addToken(t, game.code, game.dmCode, sceneId, {
+      name: 'Thorin',
+      characterId: hero,
+    })
+    const secret = await addToken(t, game.code, game.dmCode, sceneId, {
+      name: 'Ambush Skeleton',
+      layer: 'gm',
+    })
+    const scenery = await addToken(t, game.code, game.dmCode, sceneId, {
+      name: 'Brazier',
+      layer: 'background',
+    })
+    return { ...game, sceneId, hero, open, secret, scenery }
+  }
+
+  const markerRow = async (t: Harness, tokenId: Id<'tokens'>) =>
+    await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query('tokenMarkers')
+          .withIndex('by_tokenId', (q) => q.eq('tokenId', tokenId))
+          .unique(),
+    )
+
+  test('the row’s existence is the fact: clearing the last one deletes it', async () => {
+    const t = harness()
+    const f = await marked(t)
+
+    await t.mutation(api.board.setMarkers, {
+      code: f.code,
+      dmCode: f.dmCode,
+      tokenId: f.open,
+      markers: ['poisoned', 'prone'],
+    })
+    expect((await markerRow(t, f.open))?.markers).toEqual(['poisoned', 'prone'])
+
+    await t.mutation(api.board.setMarkers, {
+      code: f.code,
+      dmCode: f.dmCode,
+      tokenId: f.open,
+      markers: [],
+    })
+    // Not a row holding an empty array — no row at all. A game with two hundred coins and
+    // one poisoned goblin holds one row.
+    expect(await markerRow(t, f.open)).toBeNull()
+  })
+
+  test('what is stored is canonical: deduped, and in the vocabulary’s own order', async () => {
+    const t = harness()
+    const f = await marked(t)
+
+    await t.mutation(api.board.setMarkers, {
+      code: f.code,
+      dmCode: f.dmCode,
+      tokenId: f.open,
+      markers: ['prone', 'concentrating', 'poisoned', 'prone'],
+    })
+
+    // Alphabetical, which is `TOKEN_MARKERS`' order — so the browser's optimistic value
+    // and the stored one are the same bytes, and the pips do not reshuffle on the round
+    // trip.
+    expect((await markerRow(t, f.open))?.markers).toEqual([
+      'concentrating',
+      'poisoned',
+      'prone',
+    ])
+  })
+
+  /**
+   * ⚠️ **A marker row names a `tokenId`, so a row for a GM-layer coin says a hidden coin
+   * exists** — which is the oracle `TOKEN_NOT_FOUND` is written to close. The scan is the
+   * suite's usual one, and the positive control is what stops it passing on a payload that
+   * carries nothing at all.
+   */
+  test('no marker row for a GM-layer coin reaches a player, and the DM gets it', async () => {
+    const t = harness()
+    const f = await marked(t)
+    for (const tokenId of [f.open, f.secret]) {
+      await t.mutation(api.board.setMarkers, {
+        code: f.code,
+        dmCode: f.dmCode,
+        tokenId,
+        markers: ['poisoned'],
+      })
+    }
+
+    const asPlayer = JSON.stringify(await t.query(api.board.markers, { code: f.code }))
+    expect(asPlayer).not.toContain(f.secret)
+    expect(asPlayer).toContain(f.open)
+
+    // The control. Without it the absence above is satisfied by an empty array.
+    const asDm = JSON.stringify(
+      await t.query(api.board.markers, { code: f.code, dmCode: f.dmCode }),
+    )
+    expect(asDm).toContain(f.secret)
+    expect(asDm).toContain(f.open)
+  })
+
+  /**
+   * The gate is `requireMovableToken` and not a third layer predicate, so the three
+   * refusals fall out of the rule that already exists — and their *shapes* are what say
+   * so. A GM coin is indistinguishable from a coin that never existed; a Background coin
+   * is deliberately distinguishable, because the player is looking at it and there is no
+   * existence to oracle (ADR 0012).
+   */
+  test('three refusals, and the scenery one is deliberately not the missing one', async () => {
+    const t = harness()
+    const f = await marked(t)
+    const seat = await makeSeat(t, f.code, 'Priya')
+    const ask = (tokenId: Id<'tokens'>) =>
+      t.mutation(api.board.setMarkers, {
+        code: f.code,
+        playerId: seat,
+        tokenId,
+        markers: ['poisoned'],
+      })
+
+    const ghost = await refusalOf(ask(await vanishedTokenId(t)))
+    expect(ghost.kind).toBe('TokenNotFound')
+    expect(await refusalOf(ask(f.secret))).toEqual(ghost)
+
+    const scenery = await refusalOf(ask(f.scenery))
+    expect(scenery.kind).toBe('TokenNotMovable')
+    expect(scenery).not.toEqual(ghost)
+
+    expect((await refusalOf(ask(f.open))).kind).toBe('TokenNotYours')
+  })
+
+  test('the seat playing the character may mark its own coin', async () => {
+    const t = harness()
+    const f = await marked(t)
+    const seat = await makeSeat(t, f.code, 'Priya')
+    await t.mutation(api.characters.claim, { code: f.code, playerId: seat, characterId: f.hero })
+
+    await t.mutation(api.board.setMarkers, {
+      code: f.code,
+      playerId: seat,
+      tokenId: f.open,
+      markers: ['concentrating'],
+    })
+
+    expect((await markerRow(t, f.open))?.markers).toEqual(['concentrating'])
+  })
+
+  test('refuses more conditions than the vocabulary holds, before any read', async () => {
+    const t = harness()
+    const f = await marked(t)
+    const tooMany = Array.from({ length: TOKEN_MARKERS.length + 1 }, () => 'poisoned' as const)
+
+    expect(
+      (
+        await refusalOf(
+          t.mutation(api.board.setMarkers, {
+            code: f.code,
+            dmCode: f.dmCode,
+            tokenId: f.open,
+            markers: tooMany,
+          }),
+        )
+      ).kind,
+    ).toBe('BadInput')
+  })
+
+  test('deleting a coin takes its conditions with it, and so does purging the game', async () => {
+    const t = harness()
+    const f = await marked(t)
+    for (const tokenId of [f.open, f.secret]) {
+      await t.mutation(api.board.setMarkers, {
+        code: f.code,
+        dmCode: f.dmCode,
+        tokenId,
+        markers: ['stunned'],
+      })
+    }
+
+    await t.mutation(api.board.removeToken, {
+      code: f.code,
+      dmCode: f.dmCode,
+      tokenId: f.open,
+    })
+    expect(await markerRow(t, f.open)).toBeNull()
+    expect(await markerRow(t, f.secret)).not.toBeNull()
+
+    await t.mutation(internal.admin.purgeGame, {
+      gameId: await t.run(async (ctx) => (await ctx.db.query('games').first())!._id),
+    })
+    expect(
+      await t.run(async (ctx) => await ctx.db.query('tokenMarkers').collect()),
+    ).toEqual([])
+  })
+
+  /**
+   * ⚠️ **Fog does not hide a coin's conditions**, and this pins it as a decision rather
+   * than leaving it to be read as an oversight. Filtering them would mean a
+   * `tokenPositions` read in a query whose whole virtue is being off the drag path — and
+   * what it would buy is closing a devtools leak of exactly the kind ADR 0012 already
+   * accepted for a fogged coin's *name*.
+   */
+  test('a fogged coin keeps its conditions, which is the decision rather than a gap', async () => {
+    const t = harness()
+    const f = await marked(t)
+    const goblin = await addToken(t, f.code, f.dmCode, f.sceneId, { name: 'Goblin', x: 300, y: 300 })
+    await t.mutation(api.board.setMarkers, {
+      code: f.code,
+      dmCode: f.dmCode,
+      tokenId: goblin,
+      markers: ['poisoned'],
+    })
+    await t.mutation(api.fog.draw, {
+      code: f.code,
+      dmCode: f.dmCode,
+      sceneId: f.sceneId,
+      x: 0,
+      y: 0,
+      width: 2000,
+      height: 2000,
+    })
+
+    // Its placement is gone from the player's payload — that is fog working …
+    const positions = await t.query(api.board.positions, { code: f.code, sceneId: f.sceneId })
+    expect(positions.map((row) => row.tokenId)).not.toContain(goblin)
+    // … and its conditions are not, which is what the Hides table in ADR 0012 now says.
+    const markers = await t.query(api.board.markers, { code: f.code })
+    expect(markers.map((row) => row.tokenId)).toContain(goblin)
   })
 })
 

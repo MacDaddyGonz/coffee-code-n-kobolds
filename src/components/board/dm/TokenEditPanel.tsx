@@ -13,6 +13,7 @@ import {
 import { TokenControlPanel } from '@/components/board/dm/TokenControlPanel'
 import { TokenDeleteDialog } from '@/components/board/dm/TokenDeleteDialog'
 import { TokenDuplicateDialog } from '@/components/board/dm/TokenDuplicateDialog'
+import { TokenMarkerControl } from '@/components/board/dm/TokenMarkerControl'
 import { TokenPlacementControl } from '@/components/board/dm/TokenPlacementControl'
 import { TokenSwatch } from '@/components/board/dm/TokenSwatch'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
@@ -111,8 +112,13 @@ export type TokenEditPanelProps = {
  * the same statements in the DM's words, on screen, at the control that causes them.
  *
  * **The order of the sections is what the DM is asking, in the order they ask it.** What
- * is this coin, who can see it, which maps it stands on, what does it look like, what is
- * its picture, who may drag it — and, past all of that, how to get rid of it. The two
+ * is this coin, who can see it, which maps it stands on, what is happening to it right
+ * now, what does it look like, what is its picture, who may drag it — and, past all of
+ * that, how to get rid of it. Conditions sit where they do because they are the one thing
+ * on this panel that changes *during* a fight: the DM reaching for it has just watched a
+ * goblin fail a save, and asking them to scroll past a colour picker to say so is the
+ * arrangement where nobody bothers. It is also the last section that is about the coin as
+ * a thing on the board rather than about its appearance. The two
  * consequential writes are first because they are the reason the tab exists — a coin
  * bound to nothing on a layer nobody is shown is what nothing else in the app can reach —
  * and *Controlled by* is last of the edits for the reason `SheetsTab` puts it last: it is
@@ -181,6 +187,17 @@ export function TokenEditPanel({
       <EditorSection title="Which maps it is on">
         <TokenPlacementControl code={code} dmCode={dmCode} token={token} />
         <DuplicateControl code={code} dmCode={dmCode} token={token} />
+      </EditorSection>
+
+      <Separator />
+
+      {/* Verbatim, like `TokenControlPanel` below and for the same reason: it is the one
+          client writer of `board.setMarkers`, it reads the conditions off the query rather
+          than from anything this panel holds, and nothing here derives or filters a marker.
+          Wrapped in a section because — unlike that panel — it brings no heading of its
+          own. */}
+      <EditorSection title="What is happening to it">
+        <TokenMarkerControl code={code} dmCode={dmCode} token={token} />
       </EditorSection>
 
       <Separator />

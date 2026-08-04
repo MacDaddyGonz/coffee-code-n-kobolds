@@ -6,6 +6,7 @@ import { mutation, query } from './_generated/server'
 import {
   copyTokenRow,
   countTokensInGame,
+  deleteTokenMarkers,
   deleteTokenPlacements,
   freeCellNear,
   freeCellsNear,
@@ -14,6 +15,7 @@ import {
   placeToken,
   placementOf,
   publicPositionValidator,
+  publicTokenMarkersValidator,
   publicTokenValidator,
   publicTokens,
   removeTokenFromScene,
@@ -24,7 +26,9 @@ import {
   setTokenCharacter,
   setTokenControllers,
   setTokenLayer,
+  setTokenMarkers,
   tokenPlacementScenes,
+  visibleMarkers,
   visiblePositions,
 } from './lib/board'
 import { copyCharacter, countCharactersInGame, getCharacterInGame } from './lib/characters'
@@ -45,6 +49,9 @@ import {
 // reader beside it: a *stored* layer may still be the legacy `dm`, so every comparison
 // against `'gm'` in this file goes through it rather than against the raw field.
 import { layerOf, tokenLayerValidator } from './lib/layers'
+// The condition vocabulary. One of the three modules inside `convex/` allowed to import
+// it — the schema, the choke point, and this file. See `markerGuard.test.ts`.
+import { TOKEN_MARKERS, normaliseMarkers, tokenMarkerValidator } from './lib/markers'
 import { getSeatInGame, listSeats } from './lib/players'
 import type { Point } from './lib/grid'
 import { isUsableTokenSize, snapToGrid } from './lib/grid'
@@ -992,6 +999,101 @@ export const placements = query({
 })
 
 /**
+ * Every coin's conditions, for whoever may see that coin.
+ *
+ * Ungated beyond `resolveDmAccess`, because the pips are drawn on everybody's board — a
+ * player has to be able to see that the goblin they are fighting is prone. `maySee` in
+ * lib/board.ts decides which rows travel, so a GM-layer coin's conditions are **absent**
+ * from a player's payload rather than hidden in it (invariant 1).
+ *
+ * ⚠️ **Game-scoped rather than scene-scoped**, because a marker hangs off a coin and not
+ * off a placement, and the coin may stand on several boards. That is also what keeps this
+ * query off the drag path entirely: it reads no `tokenPositions` row, ever, which is what
+ * makes *fog does not hide a coin's conditions* affordable rather than merely decided.
+ * See `visibleMarkers` for the full cost model, including the free case — a game where
+ * nobody has ticked anything reads one empty range and stops.
+ *
+ * Reached by the existing argument shapes in `board.test.ts`'s sweep with no new entry,
+ * so the DM-layer scan covers it for free — which is the enumeration working as designed.
+ */
+export const markers = query({
+  args: { code: v.string(), dmCode: v.optional(v.string()) },
+  returns: v.array(publicTokenMarkersValidator),
+  handler: async (ctx, args) => {
+    const game = await findGameByCode(ctx, args.code)
+    if (!game) return []
+
+    const { isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
+    return await visibleMarkers(ctx, game._id, isDm)
+  },
+})
+
+/**
+ * Set the conditions on one coin, absolutely.
+ *
+ * ⚠️ **Labels, and nothing else.** No roll consults a marker, no health band is computed
+ * from one, and no drag is refused because of one. `markerGuard.test.ts` is what makes
+ * that a promise rather than an intention: it greps `convex/` for a quoted specifier
+ * reaching the vocabulary and allows exactly three importers — the schema, the choke
+ * point, and this file.
+ *
+ * ⚠️ **The gate is `requireMovableToken`, and reusing it is a decision rather than a
+ * shortcut.** [ADR 0012] separated `maySeeLayer` from `mayPlayersMove` because sight and
+ * interaction genuinely differ. Marking is not a third question: a player may mark the
+ * coins they may drag, and must not mark scenery they can see and cannot touch. Because it
+ * is the same question it gets the same function, and three correct refusals fall out with
+ * no new constants and no new existence oracles — a Background coin refuses
+ * `TokenNotMovable` (right: the player is looking at it, so there is nothing to oracle), a
+ * GM-layer coin `TokenNotFound` (right: parity preserved), an ungranted player-layer coin
+ * `TokenNotYours`.
+ *
+ * ⚠️ **The tripwire:** the day *may mark* and *may move* differ is the day `lib/layers.ts`
+ * gains a third predicate, and it will look exactly like the pair ADR 0012 describes.
+ * Widening this call site instead is how one predicate comes to do two jobs, which is the
+ * failure that ADR was written about.
+ *
+ * **Absolute rather than add/remove**, which is `setControllers`' argument verbatim: the
+ * picker holds a checkbox per condition and sends the state of all of them, so two clients
+ * racing on one coin end with one of the two intentions rather than an interleaving of
+ * both — and clearing everything is expressible as `[]`, which is what deletes the row.
+ *
+ * **No `stampReveal`, and the absence is stated rather than left to be noticed.** Marking
+ * widens nobody's audience: it publishes no character, moves no coin between layers and
+ * releases no reservation. `feed.test.ts`'s reveal section says coverage of that stamp is
+ * discipline rather than construction, so a mutation that deliberately does not stamp says
+ * so where the next person will look for it.
+ */
+export const setMarkers = mutation({
+  args: {
+    code: v.string(),
+    tokenId: v.id('tokens'),
+    markers: v.array(tokenMarkerValidator),
+    dmCode: v.optional(v.string()),
+    playerId: v.optional(v.id('players')),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    // Argument-only, so a call that will be refused on its arguments alone costs no I/O to
+    // refuse — `moveToken`'s rule and `setControllers`' bounded-before-the-loop one. With a
+    // union validator the only way past the vocabulary's own size is repetition, which the
+    // normaliser would squeeze out anyway; what this stops is a caller buying an unbounded
+    // array with one argument.
+    if (args.markers.length > TOKEN_MARKERS.length) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message: `A coin cannot carry more than ${TOKEN_MARKERS.length} conditions.`,
+      })
+    }
+
+    const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
+    const token = await requireMovableToken(ctx, game, args.tokenId, isDm, args.playerId)
+
+    await setTokenMarkers(ctx, game._id, token._id, normaliseMarkers(args.markers))
+    return null
+  },
+})
+
+/**
  * DM-gated: this destroys durable data, and it is the only thing on the board
  * that does.
  */
@@ -1006,6 +1108,9 @@ export const removeToken = mutation({
     // what points at the token, so removing them first means no order of
     // failures can leave a scene holding a position for a document that has gone.
     await deleteTokenPlacements(ctx, token._id)
+    // And its conditions, which are a fact about this coin and have nowhere else to
+    // belong — the third residue path beside the placements and the blob.
+    await deleteTokenMarkers(ctx, token._id)
     // The blob goes too, or a table's worth of deleted NPCs quietly keeps its
     // share of the 1 GB the free tier allows (CLAUDE.md invariant 6).
     //

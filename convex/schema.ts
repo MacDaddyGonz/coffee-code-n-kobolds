@@ -17,6 +17,10 @@ import { v } from 'convex/values'
 // import and the fourth member go away once the relabel has run — see `layerOf`.
 import { storedTokenLayerValidator } from './lib/layers'
 import { gameStatusValidator } from './lib/games'
+// The condition vocabulary. Imported here for the table's validator and nowhere else in
+// this file — `markerGuard.test.ts` allows exactly three importers inside `convex/`, and
+// this is one of them.
+import { tokenMarkerValidator } from './lib/markers'
 import { feedSubjectValidator, rollResultValidator } from './lib/roll'
 import { storedSheetValidator } from './lib/sheet'
 
@@ -305,6 +309,54 @@ export default defineSchema({
     .index('by_sceneId', ['sceneId'])
     .index('by_tokenId', ['tokenId'])
     .index('by_sceneId_and_tokenId', ['sceneId', 'tokenId']),
+
+  // CONDITIONS ON A COIN — poisoned, prone, concentrating, and the rest.
+  //
+  // ⚠️ **Labels, and nothing else.** Nothing in `convex/` reads one: no roll consults a
+  // marker, no health band is computed from one, and no drag is refused because of one.
+  // That is not an omission to be filled in later — it is the whole design, and
+  // `markerGuard.test.ts` is what makes it a promise rather than an intention, by greping
+  // for a quoted module specifier and failing if anything outside this file, the choke
+  // point and the board's public functions imports the vocabulary.
+  //
+  // ⚠️ **Their own table rather than a field on `tokens`, and the reason is who writes
+  // it.** All six writers of that document are DM-gated, so *what can a player cause to be
+  // written to the table that holds `layer`?* answers **nothing**, and that emptiness is
+  // worth a table to keep: a marker is the first row a non-DM may cause to exist on the
+  // board. The second reason is invariant 2 read from the other side — `board.tokens`
+  // resolves a signed storage URL per token, so a marker living on that document would
+  // re-mint up to two hundred URLs every time somebody ticked *poisoned*, which is exactly
+  // the cost ADR 0004 split the two board queries to avoid.
+  //
+  // **The row's EXISTENCE means "this coin has conditions"**, the way a placement row's
+  // existence means "this coin is on that board". Clearing the last marker deletes the row
+  // rather than storing an empty array, so a game with two hundred coins and one poisoned
+  // goblin holds one row.
+  //
+  // ⚠️ **THE SECRET IS HERE, one step removed.** A marker row names a `tokenId`, so a row
+  // belonging to a GM-layer coin says that a hidden coin exists — which is the oracle
+  // `TOKEN_NOT_FOUND` exists to close — and it is indistinguishable in type from a row
+  // about a hero. So this table joins `tokens` and `tokenPositions` under `lib/board.ts`
+  // in `leakGuard.test.ts`, and it needed **no new predicate and no fourth reader**:
+  // `maySee(token, isDm)` already decides it, in the module that already holds it.
+  //
+  // `gameId` is carried for `characterVitals`' stated reason verbatim: a token never
+  // changes game, so the pointer cannot go stale, and it buys one bounded range read where
+  // the alternative is a point lookup per token in the query that paints every board.
+  //
+  // Every field required with no optionals — `fogRects`' inversion argument applies word
+  // for word, because the pressure that makes a field optional in this schema is *rows
+  // that already exist*, and this table is new.
+  tokenMarkers: defineTable({
+    gameId: v.id('games'),
+    tokenId: v.id('tokens'),
+    // Never empty: the writer deletes the row instead. Normalised to the vocabulary's own
+    // order by `normaliseMarkers`, so what is stored is canonical and the browser's
+    // optimistic value and the server's are the same string of bytes.
+    markers: v.array(tokenMarkerValidator),
+  })
+    .index('by_gameId', ['gameId'])
+    .index('by_tokenId', ['tokenId']),
 
   // FOG OF WAR — the rectangles the DM has blacked out on one scene.
   //

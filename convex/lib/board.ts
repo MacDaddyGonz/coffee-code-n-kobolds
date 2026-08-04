@@ -21,6 +21,9 @@ import {
   MAX_SCENES_PER_GAME,
   MAX_TOKENS_PER_GAME,
 } from './games'
+// The condition vocabulary, and the normaliser that runs on both sides of the wire. One of
+// the three modules inside `convex/` allowed to import it — see `markerGuard.test.ts`.
+import { normaliseMarkers, tokenMarkerValidator, type TokenMarker } from './markers'
 import { duplicateNames } from './names'
 import { findClaimHolder, holderByCharacter, listSeats } from './players'
 import type { Grid, Point, Rect } from './grid'
@@ -1505,6 +1508,7 @@ export async function deleteTokensInGame(
     // so no ordering of failures can leave a scene holding a position for a document
     // that has gone.
     await deleteTokenPlacements(ctx, token._id)
+    await deleteTokenMarkers(ctx, token._id)
     if (token.imageId) blobs.add(token.imageId)
     await ctx.db.delete('tokens', token._id)
   }
@@ -1515,6 +1519,147 @@ export async function deleteTokensInGame(
 
   return tokens.length
 }
+
+/** The conditions on one coin, for a client that may see that coin. */
+export const publicTokenMarkersValidator = v.object({
+  tokenId: v.id('tokens'),
+  markers: v.array(tokenMarkerValidator),
+})
+export type PublicTokenMarkers = Infer<typeof publicTokenMarkersValidator>
+
+/**
+ * Every coin's conditions, for a caller who may see that coin.
+ *
+ * ⚠️ **Filters first and projects second**, exactly as `publicTokens` does: a marker row
+ * naming a GM-layer coin says a hidden coin exists, which is the oracle `TOKEN_NOT_FOUND`
+ * exists to close, and it is indistinguishable in type from a row about a hero. So the
+ * predicate is `maySee` — the same one, in the same module — and this needed **no new
+ * choke point**.
+ *
+ * ⚠️ **`normaliseMarkers` runs here as well as in the renderer, and the two catch
+ * different failures.** The renderer's copy stops an unknown value crashing a `Record`
+ * lookup in JSX; this one stops it reaching `publicTokenMarkersValidator`, which is
+ * `v.array(tokenMarkerValidator)` — so a row written by a newer deployment during a
+ * non-atomic push would make this query **throw for every caller** and take the whole
+ * table's conditions subscription down, rather than costing one pip. That is precisely
+ * the composition `maySeeLayer`'s docblock calls load-bearing: because the value is
+ * dropped, the `returns:` validator never sees it.
+ *
+ * ⚠️ **No `tokenPositions` read, ever, which is what makes "fog does not hide a coin's
+ * conditions" affordable rather than merely decided.** A fog test here would join every
+ * drag's invalidation set on a subscription that is open all session — `board.tokens`'
+ * argument reached by a second route. ADR 0012's Hides table gains the clause: fog takes
+ * where a coin is, how hurt it is and what it just rolled, **not that a coin by that name
+ * exists and not what condition it is in**.
+ *
+ * **A game where nobody has ticked anything reads one empty range and stops**, so its read
+ * sets are byte-identical to what they were before the feature existed — the free case
+ * `foggedTokenIds`' middle early return has. And the token read is one point get **per
+ * marked coin** rather than per coin, so renaming an unmarked coin does not invalidate
+ * this subscription.
+ *
+ * No `listSeats` either: nothing here is per-seat, so unlike `board.tokens` this does not
+ * re-run on a join, a rename or a claim.
+ */
+export async function visibleMarkers(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+  isDm: boolean,
+): Promise<PublicTokenMarkers[]> {
+  const rows = await ctx.db
+    .query('tokenMarkers')
+    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  const visible: PublicTokenMarkers[] = []
+  for (const row of rows) {
+    const token = await ctx.db.get('tokens', row.tokenId)
+    // The `gameId` test is `visiblePositions`' verbatim: a marker row pointing at a token
+    // in another game is data that should not exist, and dropping it here means a stray
+    // row can never become a pip on somebody else's coin.
+    if (!token || token.gameId !== gameId || !maySee(token, isDm)) continue
+
+    const markers = normaliseMarkers(row.markers)
+    if (markers.length === 0) continue
+    visible.push({ tokenId: row.tokenId, markers })
+  }
+  return visible
+}
+
+/** The marker row for one token, or null. At most one exists, by the writer's construction. */
+async function markerRowOf(
+  ctx: QueryCtx,
+  tokenId: Id<'tokens'>,
+): Promise<Doc<'tokenMarkers'> | null> {
+  return await ctx.db
+    .query('tokenMarkers')
+    .withIndex('by_tokenId', (q) => q.eq('tokenId', tokenId))
+    .unique()
+}
+
+/**
+ * Write one coin's conditions. **The only writer of `tokenMarkers`.**
+ *
+ * ⚠️ **An empty list deletes the row rather than storing `[]`**, because the row's
+ * existence *is* the fact — the way a placement row's existence is what puts a coin on a
+ * board. A game with two hundred coins and one poisoned goblin holds one row.
+ *
+ * The no-op guard is `setTokenAppearance`'s and `setTokenLayer`'s, and it matters more
+ * here than it does for either: a patch that changed nothing would still invalidate
+ * `board.markers` for **every client at the table**, and this is the one write in the
+ * application a non-DM can make ten times in a row by tapping a checkbox.
+ *
+ * The caller normalises before calling — `board.setMarkers` does — so this can compare
+ * element by element and trust that equal contents means equal arrays. Ordering and
+ * deduplication are `normaliseMarkers`' job precisely so that the browser's optimistic
+ * value and the stored value are the same bytes.
+ */
+export async function setTokenMarkers(
+  ctx: MutationCtx,
+  gameId: Id<'games'>,
+  tokenId: Id<'tokens'>,
+  markers: TokenMarker[],
+): Promise<void> {
+  const existing = await markerRowOf(ctx, tokenId)
+
+  if (markers.length === 0) {
+    if (existing) await ctx.db.delete('tokenMarkers', existing._id)
+    return
+  }
+
+  if (!existing) {
+    await ctx.db.insert('tokenMarkers', { gameId, tokenId, markers })
+    return
+  }
+
+  const same =
+    existing.markers.length === markers.length &&
+    existing.markers.every((marker, index) => marker === markers[index])
+  if (same) return
+
+  await ctx.db.patch('tokenMarkers', existing._id, { markers })
+}
+
+/**
+ * Take a deleted coin's conditions with it.
+ *
+ * The third residue path beside `deleteTokenPlacements` and the art blob, and it has to be
+ * called from both `board.removeToken` and `deleteTokensInGame` or a purged game leaves
+ * rows pointing at nothing.
+ *
+ * ⚠️ **`characters.remove` deliberately does not call this**, and the asymmetry is the
+ * point: `detachCharacterFromTokens` unbinds the coin and leaves it standing, and the
+ * conditions were on the *coin* rather than on the creature. A goblin whose sheet the DM
+ * deleted is still a coin lying prone on the floor.
+ */
+export async function deleteTokenMarkers(
+  ctx: MutationCtx,
+  tokenId: Id<'tokens'>,
+): Promise<void> {
+  const existing = await markerRowOf(ctx, tokenId)
+  if (existing) await ctx.db.delete('tokenMarkers', existing._id)
+}
+
 
 /**
  * The names the next `count` coins should take, given a source name and everything
