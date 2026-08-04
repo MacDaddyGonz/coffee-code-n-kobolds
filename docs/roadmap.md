@@ -2080,7 +2080,43 @@ an argument and a projected field, and compares a duplicated coin against its so
 
 ---
 
-## Milestone 12 — Board polishing
+## ✅ Milestone 12 — Board polishing
+
+**Done.** The decisions are in [ADR 0014](adr/0014-what-a-coin-says-about-itself.md). Five things it
+settled differently from the section below, or found out by building it:
+
+- ⚠️ **The name clamp was reversed rather than tuned, and the *box* stayed.** The section below says
+  the name renders at its natural width; dropping the `width` outright would have left every label
+  left-aligned against the coin's centre, because Konva's `align` means nothing without one. Keeping
+  the box and deleting only `ellipsis` is the whole change: Konva measures the line, centres it in
+  the box, and a line wider than the box overflows *symmetrically*. Two characters, not a
+  measurement problem.
+- **The coin's annotation scheme survived being extended and then had to be corrected by looking at
+  a coin.** `TokenCoin` has claimed since the pips landed that its marks are *disjoint by
+  construction*, and the two new badges were placed by consulting that sentence — upper-left and
+  lower-left at 45°, mirroring the hidden-from-party pip. That is six distinct *positions* and it is
+  **not** a proof that no two touch: a disc centred on the rim has half of itself outside it, and
+  the health bar spans the coin's full width, so at 45° the armour-class badge grazed the bar's left
+  end. Flattened to 30°. Visible in a browser and in nothing else, which is the entry that most
+  earns this list.
+- ⚠️ **Fifty dice in the physics engine works, and that was genuinely unknown.** The renderer has no
+  count cap of its own, so the grammar is the rigid-body count — and the section below says that if
+  it turned out to be unusable the fix was a *renderer* cap and never a second grammar. It did not:
+  50d20 settles in about eight seconds and every face is readable. The dice do cover most of a
+  fitted map on the way down, which is a thing to know rather than a thing to fix.
+- **The `RollProvider` hoist was safe for a reason the warning against it already named.**
+  `useRoll.ts` said a context whose value is a fresh object per render must not cross `RightPane`'s
+  memo boundary. Both of its values are memoised on human-action dependencies and its senders are
+  session-stable, so it satisfies that condition rather than being an exception to it — and the
+  warning is kept, because it is still right about the general case.
+- ⚠️ **A duplicate React key, introduced by this milestone and caught only in a browser.** The grid
+  calibrator and the new background picker are siblings, and both were keyed on `active._id` so that
+  switching maps remounts them — which is two children with the same key, whose documented
+  behaviour is that a child may be *duplicated or omitted*. Nothing looked wrong on screen; it was a
+  console warning during a scripted run. A key only has to be unique among siblings, so a word each
+  fixed it. Worth recording because the tests could not have found it and neither could the eye.
+
+**The original plan follows.**
 
 **Inserted after Milestone 11 shipped**, and after twenty minutes of using it. The decisions go in
 **ADR 0014**.

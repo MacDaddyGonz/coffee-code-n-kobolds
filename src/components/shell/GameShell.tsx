@@ -9,6 +9,7 @@ import type { TabValue } from '@/components/shell/RightPane'
 import { RightPane } from '@/components/shell/RightPane'
 import type { Dm } from '@/hooks/useDm'
 import { usePaneWidth } from '@/hooks/usePaneWidth'
+import { RollProvider } from '@/hooks/useRoll'
 import type { PublicGame } from '@/hooks/useSeat'
 import type { Id } from '@convex/_generated/dataModel'
 
@@ -222,82 +223,105 @@ export function GameShell({
   )
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden">
-      <GameHeader
-        name={game.name}
-        runBy={game.createdByName}
-        code={game.code}
-        displayName={displayName}
-        characterName={characterName}
-      />
+    /*
+      ⚠️ **THE ROLL PROVIDER IS HERE AND USED TO BE INSIDE `RightPane`, WHICH `useRoll.ts`
+      EXPLICITLY WARNS AGAINST. Read that note before moving it again.**
 
-      {/* `min-h-0`: without it this row is at least as tall as the taller of its two
-          panes, the column above grows past the viewport, and the bottom of the
-          right-hand panel becomes unreachable — the Save button included, on a screen
-          that has `overflow-hidden` and so cannot be scrolled to it. */}
-      <div ref={bodyRef} className="flex min-h-0 flex-1">
-        <MapPane
-          code={code}
-          game={game}
-          dm={dm}
-          playerId={playerId}
-          characterId={characterId}
-          selectedTokenId={selectedTokenId}
-          onSelectToken={selectToken}
-          onClearSelection={clearSelection}
-          onTokenGone={forgetToken}
-          onEditToken={editToken}
-          onOpenTokenSheet={openTokenSheet}
+      It has to wrap everything that sends a roll. That used to be "two of the six tabs in
+      one pane", so the pane was the right home; the roll modes are on the *map* now, so
+      both panes need it and it belongs to the thing that owns both — the same reason the
+      selection and the tab live here.
+
+      What makes it safe is the property that warning names, and it holds by construction
+      rather than by luck: both context values are `useMemo`'d on dependencies that move only
+      on a human action, and the two senders are stable for the whole session because the
+      provider reads the mode from refs. So the divider re-rendering this component sixty
+      times a second produces the same two objects and re-renders no consumer; and a mode
+      flip re-renders the provider with an unchanged `children` element reference, which
+      React bails out of. Both panes' memos keep doing their job either way.
+
+      The warning is still right about the general case and is still there. What changed is
+      that this value satisfies the condition it names — a different sentence from the
+      warning having been wrong.
+    */
+    <RollProvider code={code} playerId={playerId} dmCode={dm.dmCode}>
+      <div className="flex h-dvh flex-col overflow-hidden">
+        <GameHeader
+          name={game.name}
+          runBy={game.createdByName}
+          code={game.code}
+          displayName={displayName}
+          characterName={characterName}
         />
 
-        {/* ⚠️ A sibling of the map pane, never a child of it. `useBoardKeys` gates its
-            shortcuts on the board container holding focus, so a resizer inside that
-            container would have every arrow press pan the map *and* move the divider.
-            See `PaneResizer`. */}
-        <PaneResizer
-          width={pane.width}
-          min={pane.min}
-          max={pane.max}
-          controls={paneId}
-          onResize={pane.setWidth}
-          onReset={pane.reset}
-        />
-
-        {/* `min-h-0` again, for the sharpest version of the failure: this is the
-            column `CharacterSheetEditor` pins its footer to the bottom of, so without
-            it the fields stop scrolling, the column grows to fit them and Save goes
-            below the fold — which is precisely what the pinned footer exists to
-            prevent. `shrink-0` because the width is the divider's to decide; letting
-            flex negotiate it would make a wide map quietly overrule the drag. */}
-        <aside
-          id={paneId}
-          style={{ width: pane.width }}
-          className="flex min-h-0 shrink-0 flex-col border-l"
-        >
-          <RightPane
+        {/* `min-h-0`: without it this row is at least as tall as the taller of its two
+            panes, the column above grows past the viewport, and the bottom of the
+            right-hand panel becomes unreachable — the Save button included, on a screen
+            that has `overflow-hidden` and so cannot be scrolled to it. */}
+        <div ref={bodyRef} className="flex min-h-0 flex-1">
+          <MapPane
             code={code}
             game={game}
             dm={dm}
             playerId={playerId}
             characterId={characterId}
-            tab={tab}
-            onTabChange={setTab}
             selectedTokenId={selectedTokenId}
-            selectedCharacterId={selectedCharacterId}
             onSelectToken={selectToken}
-            onSelectCharacter={selectCharacter}
             onClearSelection={clearSelection}
             onTokenGone={forgetToken}
-            onRenameSeat={onRenameSeat}
-            onLeaveSeat={onLeaveSeat}
+            onEditToken={editToken}
+            onOpenTokenSheet={openTokenSheet}
           />
-        </aside>
-      </div>
 
-      {/* Here rather than in a panel, because nothing on this screen opens it: the DM's
-          click happens on another machine and arrives as a change to `modalImages.open`.
-          One mount for the whole route, so a handout cannot be shown twice at once. */}
-      <ModalImageViewer code={code} dmCode={dm.dmCode} />
-    </div>
+          {/* ⚠️ A sibling of the map pane, never a child of it. `useBoardKeys` gates its
+              shortcuts on the board container holding focus, so a resizer inside that
+              container would have every arrow press pan the map *and* move the divider.
+              See `PaneResizer`. */}
+          <PaneResizer
+            width={pane.width}
+            min={pane.min}
+            max={pane.max}
+            controls={paneId}
+            onResize={pane.setWidth}
+            onReset={pane.reset}
+          />
+
+          {/* `min-h-0` again, for the sharpest version of the failure: this is the
+              column `CharacterSheetEditor` pins its footer to the bottom of, so without
+              it the fields stop scrolling, the column grows to fit them and Save goes
+              below the fold — which is precisely what the pinned footer exists to
+              prevent. `shrink-0` because the width is the divider's to decide; letting
+              flex negotiate it would make a wide map quietly overrule the drag. */}
+          <aside
+            id={paneId}
+            style={{ width: pane.width }}
+            className="flex min-h-0 shrink-0 flex-col border-l"
+          >
+            <RightPane
+              code={code}
+              game={game}
+              dm={dm}
+              playerId={playerId}
+              characterId={characterId}
+              tab={tab}
+              onTabChange={setTab}
+              selectedTokenId={selectedTokenId}
+              selectedCharacterId={selectedCharacterId}
+              onSelectToken={selectToken}
+              onSelectCharacter={selectCharacter}
+              onClearSelection={clearSelection}
+              onTokenGone={forgetToken}
+              onRenameSeat={onRenameSeat}
+              onLeaveSeat={onLeaveSeat}
+            />
+          </aside>
+        </div>
+
+        {/* Here rather than in a panel, because nothing on this screen opens it: the DM's
+            click happens on another machine and arrives as a change to `modalImages.open`.
+            One mount for the whole route, so a handout cannot be shown twice at once. */}
+        <ModalImageViewer code={code} dmCode={dm.dmCode} />
+      </div>
+    </RollProvider>
   )
 }

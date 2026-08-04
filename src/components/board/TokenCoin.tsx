@@ -397,17 +397,18 @@ export const TokenCoin = memo(function TokenCoin({
 
         **The composition of a coin, which is disjoint by construction:** the bar occupies
         the strip above the rim, the name the strip below, the hidden-from-party pip the
-        upper-right shoulder at 45°, the two stat badges the two *left* shoulders at 45°,
+        upper-right shoulder at 45°, the two stat badges the two *left* shoulders at 30°,
         and this row the strip between the rim and the name — which is why `nameTop` above
-        exists and why it is the *name* that yields. **Six annotations, six places**, and no
-        two of them can ever be asked to share one.
+        exists and why it is the *name* that yields. **Six annotations, six places.**
 
-        ⚠️ **It was four, and the badges were placed by consulting this sentence.** The
-        scheme is only worth anything if the next person adding a mark reads it first and
-        takes a place nothing else has, rather than putting a badge where it happens to look
-        right on the coin in front of them. The left shoulders were what was left; there is
-        no seventh obvious place, so a seventh annotation is a layout decision rather than a
-        position.
+        ⚠️ **It was four, and the badges were placed by consulting this sentence — then the
+        angle was corrected by looking at a coin, which is the part worth carrying
+        forward.** The scheme gives each mark a distinct *position*; it does not prove that
+        no two ever touch. A disc centred on the rim has half of itself outside it, and the
+        health bar spans the coin's full width, so the upper badge at 45° grazed the bar's
+        left end — visible in a browser and in nothing else. `TokenStatBadges` flattens to
+        30° for that reason. There is no seventh obvious place, so a seventh annotation is a
+        layout decision rather than a position to pick.
       */}
       {/*
         ⚠️ **Gated on `hasMarkers` as well as `showDetail`, and the second test is not

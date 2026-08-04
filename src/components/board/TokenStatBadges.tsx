@@ -5,19 +5,26 @@ import { PIP_DIAMETER, PIP_INK, PIP_STROKE } from '@/lib/markers'
 import type { PublicVitals } from '@convex/lib/characters'
 
 /**
- * Where the two badges sit on the rim: down and to the left, and up and to the left, at
- * 45° — mirroring `HIDDEN_ANGLE`'s upper-right shoulder in `TokenCoin`.
+ * Where the two badges sit on the rim: up-and-left and down-and-left, at **30° above and
+ * below the horizontal** rather than at 45°.
  *
- * ⚠️ **The left side and not the right, because the right is taken and the coin's four
- * annotations are disjoint by construction.** `TokenCoin`'s own note states the scheme:
- * the health bar owns the strip above the rim, the name the strip below, the
- * hidden-from-party pip the upper-right shoulder, and the condition row the strip between
- * the rim and the name. These are the fifth and sixth, and the left shoulders were the
- * space left. A badge placed anywhere else on that list is a badge that overlaps something
- * on some coin at some zoom, which is the failure the scheme exists to make impossible
- * rather than unlikely.
+ * ⚠️ **The left side and not the right, because the right is taken.** `TokenCoin`'s own
+ * note states the scheme: the health bar owns the strip above the rim, the name the strip
+ * below, the hidden-from-party pip the upper-right shoulder, and the condition row the
+ * strip between the rim and the name. These are the fifth and sixth, and the left shoulders
+ * were the space left.
+ *
+ * ⚠️ **30° and not 45°, and that is a correction made by looking at a coin rather than at
+ * the geometry.** `HIDDEN_ANGLE` is 45° and gets away with it because there is one of it;
+ * a badge centred on the rim at 45° has half its disc *above* the rim, which is the health
+ * bar's strip, and the bar spans the coin's full width — so at 45° the upper badge grazed
+ * the bar's left end. Flattening to 30° drops the vertical offset from `0.707r` to `0.5r`
+ * and moves both clear, of the bar above and of the condition row below. **The scheme is
+ * six distinct positions; it is not a proof that no two ever touch**, and this is the pair
+ * that showed the difference.
  */
-const BADGE_ANGLE = Math.SQRT1_2
+const BADGE_X = Math.cos(Math.PI / 6)
+const BADGE_Y = Math.sin(Math.PI / 6)
 
 /** Armour class: red, the colour of the thing you are trying to beat. */
 const AC_FILL = '#b91c1c'
@@ -81,22 +88,16 @@ export function TokenStatBadges({
   // the conditions to be *"bigger, like the AC example"*, so one constant is what makes
   // that literally true rather than approximately. `PIP_DIAMETER` moving moves both.
   const badgeRadius = PIP_DIAMETER / 2 / scale
-  const offset = radius * BADGE_ANGLE
+  const x = -radius * BADGE_X
+  const y = radius * BADGE_Y
 
   return (
     <>
       {armourClass === null ? null : (
-        <Badge x={-offset} y={-offset} fill={AC_FILL} value={armourClass} r={badgeRadius} s={scale} />
+        <Badge x={x} y={-y} fill={AC_FILL} value={armourClass} r={badgeRadius} s={scale} />
       )}
       {passivePerception === null ? null : (
-        <Badge
-          x={-offset}
-          y={offset}
-          fill={PP_FILL}
-          value={passivePerception}
-          r={badgeRadius}
-          s={scale}
-        />
+        <Badge x={x} y={y} fill={PP_FILL} value={passivePerception} r={badgeRadius} s={scale} />
       )}
     </>
   )

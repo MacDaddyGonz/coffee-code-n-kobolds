@@ -2,7 +2,6 @@ import type { ReactElement } from 'react'
 import { memo, useMemo } from 'react'
 import { useQuery } from 'convex/react'
 
-import { RollModeBar } from '@/components/feed/RollModeBar'
 import { TabPane } from '@/components/shell/TabPane'
 import { DmToolsTab } from '@/components/shell/tabs/DmToolsTab'
 import { FeedTab } from '@/components/shell/tabs/FeedTab'
@@ -15,7 +14,6 @@ import { TokensTab } from '@/components/shell/tabs/TokensTab'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { tokensArgs } from '@/hooks/useBoard'
 import type { Dm } from '@/hooks/useDm'
-import { RollProvider } from '@/hooks/useRoll'
 import type { PublicGame } from '@/hooks/useSeat'
 import { sheetFocusOf } from '@/lib/sheetFocus'
 import { api } from '@convex/_generated/api'
@@ -319,23 +317,22 @@ export const RightPane = memo(function RightPane({
   const active: TabValue = onStrip(tab) ? tab : 'settings'
 
   return (
-    /* ⚠️ **The roll provider wraps the tabs rather than living inside one of them**, and
-       the reason is that two of the six send rolls: the sheet's rows and the feed's dice
-       tray. State held in either would be lost when the other was opened — and the mode
-       is *sticky*, so losing it silently is worse than not having it. It is mounted here,
-       inside this component's memo boundary, which is what keeps a fresh context value
-       off the divider's sixty-frames-a-second path; `useRoll.ts` carries that argument in
-       full. Nothing crosses *into* the memo to make it work: the three arguments are the
-       same primitives this pane already takes. */
-    <RollProvider code={code} playerId={playerId} dmCode={dm.dmCode}>
-      {/* `min-h-0` on the tabs root, one of six links in the chain: this is a flex item
-          of the aside *and* a flex column of its own, so without it the tab bodies push
-          it taller than the pane instead of scrolling inside it. */}
-      <Tabs
-        value={active}
-        onValueChange={(next) => onTabChange(next as TabValue)}
-        className="min-h-0 flex-1 gap-0"
-      >
+    /* ⚠️ **The roll provider used to be mounted here and is now in `GameShell`.** It has to
+       wrap everything that sends a roll, and that stopped being "two of these six tabs" the
+       moment the roll modes moved onto the map — the two panes both need it, so it belongs
+       to the thing that owns both. `useRoll.ts` carries the argument for why crossing this
+       component's memo boundary is safe, which is not obvious and used to be warned against.
+       Nothing here changed except the mounting point: the three arguments it takes are the
+       same primitives this pane still receives.
+
+       `min-h-0` on the tabs root, one of six links in the chain: this is a flex item of the
+       aside *and* a flex column of its own, so without it the tab bodies push it taller than
+       the pane instead of scrolling inside it. */
+    <Tabs
+      value={active}
+      onValueChange={(next) => onTabChange(next as TabValue)}
+      className="min-h-0 flex-1 gap-0"
+    >
         {/* `w-full` rather than the primitive's `w-fit`, so the strip is the top edge
             of the pane and not a pill floating in it — and `shrink-0`, because a strip
             that gave up height to a long tab body would be the first thing to vanish. */}
@@ -361,14 +358,14 @@ export const RightPane = memo(function RightPane({
 
         {/* Every `TabsContent` below is `min-h-0` and block-level, and every body is
             wrapped in a `TabPane`. Both halves of that are explained above. */}
-        {/* ⚠️ **Above the bodies rather than inside the two tabs that send rolls, and the
-            stickiness is exactly why.** Advantage stays set until it is changed, so a bar
-            that only appeared on the Feed and Character tabs would let somebody set it,
-            glance at the Table, come back and roll with a modifier they can no longer see
-            they chose. Always on screen is the mitigation for a sticky control, not a
-            failure to scope it — and `rollModeNote` on the feed line is the second half,
-            because a row records whether the toggle actually did anything. */}
-        <RollModeBar />
+        {/* ⚠️ **`RollModeBar` was here, above the bodies, and has moved onto the map.** The
+            reason it sat above the six tabs rather than inside the two that send rolls is
+            that the mode is *sticky* — somebody sets advantage, glances at the Table, comes
+            back an hour later and rolls with a modifier they can no longer see they chose —
+            so it had to be visible from wherever the reader was. On the board it is visible
+            from wherever the reader is *and* from where their eyes already are, which is the
+            same argument arriving at a better answer. `BoardToolbar` carries it now, and the
+            height it gives up here goes to the feed. */}
 
         <TabsContent value="feed" className="min-h-0">
           <TabPane>
@@ -514,7 +511,6 @@ export const RightPane = memo(function RightPane({
             <SettingsTab code={code} dm={dm} />
           </TabPane>
         </TabsContent>
-      </Tabs>
-    </RollProvider>
+    </Tabs>
   )
 })

@@ -79,13 +79,31 @@ export function MapSetupPanel({ code, dmCode }: MapSetupPanelProps) {
               <>
                 <Separator />
                 {/* Keyed on the scene, so switching maps remounts the calibrator with
-                    that map's stored numbers instead of carrying the last one's. */}
-                <GridCalibrator key={active._id} code={code} dmCode={dmCode} scene={active} />
+                    that map's stored numbers instead of carrying the last one's.
+
+                    ⚠️ **Prefixed, and the bare id was a bug found in a browser.** These two
+                    are siblings in one children array, so `key={active._id}` on both is two
+                    children with the same key — React warns, and its documented behaviour
+                    for the case is that a child may be *duplicated or omitted*. Nothing
+                    looked wrong on screen, which is exactly why it needed the console rather
+                    than the eye. A key only has to be unique among siblings, so a word each
+                    is the whole fix. */}
+                <GridCalibrator
+                  key={`grid-${active._id}`}
+                  code={code}
+                  dmCode={dmCode}
+                  scene={active}
+                />
                 <Separator />
                 {/* Keyed like the calibrator, and for the same reason: the picker holds the
                     colour it is showing, so switching maps must start it on that map's
                     stored value rather than on the last one's. */}
-                <SceneBackground key={active._id} code={code} dmCode={dmCode} scene={active} />
+                <SceneBackground
+                  key={`background-${active._id}`}
+                  code={code}
+                  dmCode={dmCode}
+                  scene={active}
+                />
                 <Separator />
                 <BoardView code={code} />
                 <p className="text-muted-foreground text-xs">

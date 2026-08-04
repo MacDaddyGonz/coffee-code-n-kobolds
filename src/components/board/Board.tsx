@@ -4,11 +4,11 @@ import { toast } from 'sonner'
 import { BoardEmpty } from '@/components/board/BoardEmpty'
 import { BoardStage } from '@/components/board/BoardStage'
 import { BoardTokenMenu } from '@/components/board/BoardTokenMenu'
+import { BoardToolbar } from '@/components/board/BoardToolbar'
 import { FogLayer } from '@/components/board/FogLayer'
 import { TokenHpPopover } from '@/components/board/TokenHpPopover'
 import { TokenLayers } from '@/components/board/TokenLayers'
 import { ZoomControls } from '@/components/board/ZoomControls'
-import { CalibrateToggle } from '@/components/board/dm/CalibrateToggle'
 import { GridHandlesLayer } from '@/components/board/dm/GridHandlesLayer'
 import { TokenDeleteDialog } from '@/components/board/dm/TokenDeleteDialog'
 import { TokenDuplicateDialog } from '@/components/board/dm/TokenDuplicateDialog'
@@ -695,17 +695,19 @@ export function Board({
             className="absolute bottom-3 left-3"
           />
           {/*
-            Top-left, opposite the zoom bar, because it is a mode rather than a nudge and
-            wants to be visible from across the room while it is on. Offered on the
-            strength of the DM code alone, which authorises nothing — see `CalibrateToggle`.
+            Top-left, opposite the zoom bar. This used to be `CalibrateToggle` alone, on the
+            reasoning that a mode wants to be visible from across the room while it is on —
+            and that argument turned out to apply to the roll mode far more strongly, since
+            advantage is sticky and was two panes away. So the corner holds a toolbar now
+            and the calibrate button is one of its three groups. Everything DM-only inside
+            is offered on the strength of the DM code alone, which authorises nothing.
           */}
-          {board.isDm ? (
-            <CalibrateToggle
-              active={calibrating}
-              onToggle={onToggleCalibrate}
-              className="absolute top-3 left-3"
-            />
-          ) : null}
+          <BoardToolbar
+            isDm={board.isDm}
+            calibrating={calibrating}
+            onToggleCalibrate={onToggleCalibrate}
+            className="top-3 left-3"
+          />
         </>
       ) : (
         <BoardEmpty scene={scene} isDm={board.isDm} />
