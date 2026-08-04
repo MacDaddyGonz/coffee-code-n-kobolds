@@ -30,6 +30,7 @@ import type * as lib_board from "../lib/board.js";
 import type * as lib_characters from "../lib/characters.js";
 import type * as lib_classes from "../lib/classes.js";
 import type * as lib_codes from "../lib/codes.js";
+import type * as lib_colour from "../lib/colour.js";
 import type * as lib_creatures from "../lib/creatures.js";
 import type * as lib_dice from "../lib/dice.js";
 import type * as lib_feed from "../lib/feed.js";
@@ -94,6 +95,7 @@ declare const fullApi: ApiFromModules<{
   "lib/characters": typeof lib_characters;
   "lib/classes": typeof lib_classes;
   "lib/codes": typeof lib_codes;
+  "lib/colour": typeof lib_colour;
   "lib/creatures": typeof lib_creatures;
   "lib/dice": typeof lib_dice;
   "lib/feed": typeof lib_feed;

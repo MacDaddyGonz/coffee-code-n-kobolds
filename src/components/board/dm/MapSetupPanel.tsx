@@ -1,6 +1,9 @@
-import { useQuery } from 'convex/react'
+import { useState } from 'react'
+import { useMutation, useQuery } from 'convex/react'
 
+import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { Button } from '@/components/ui/button'
+import { ColourField } from '@/components/ui/colour-field'
 import {
   Card,
   CardAction,
@@ -14,6 +17,7 @@ import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useBoardLayers } from '@/hooks/useBoardLayers'
 import { api } from '@convex/_generated/api'
+import type { PublicScene } from '@convex/lib/scenes'
 import { GridCalibrator } from './GridCalibrator'
 import { SceneSelect } from './SceneSelect'
 import { SceneUploadDialog } from './SceneUploadDialog'
@@ -78,6 +82,11 @@ export function MapSetupPanel({ code, dmCode }: MapSetupPanelProps) {
                     that map's stored numbers instead of carrying the last one's. */}
                 <GridCalibrator key={active._id} code={code} dmCode={dmCode} scene={active} />
                 <Separator />
+                {/* Keyed like the calibrator, and for the same reason: the picker holds the
+                    colour it is showing, so switching maps must start it on that map's
+                    stored value rather than on the last one's. */}
+                <SceneBackground key={active._id} code={code} dmCode={dmCode} scene={active} />
+                <Separator />
                 <BoardView code={code} />
                 <p className="text-muted-foreground text-xs">
                   Coins are added and edited under <span className="font-medium">Tokens</span> —
@@ -94,6 +103,61 @@ export function MapSetupPanel({ code, dmCode }: MapSetupPanelProps) {
         )}
       </CardContent>
     </Card>
+  )
+}
+
+/**
+ * What is painted around this map, where the image does not reach.
+ *
+ * **A map tool and not a secret**, which is the whole reason this needed no design work
+ * beyond the picker: `lib/scenes.ts` says in as many words that *nothing in a scene is a
+ * secret — the background image is what every player is looking at* — so the colour goes to
+ * everybody through the projection every client already reads, and there is no filtering to
+ * do and no predicate to be the home of.
+ *
+ * ⚠️ **Committed on release rather than on every tick of the swatch**, which is the
+ * difference between this and the grid calibrator next door. That one throttles a *drag* —
+ * a run of intermediate values the DM is steering through, where the point is watching the
+ * lines move — and `useGridWrite` exists for exactly that. A colour picker's intermediate
+ * values are whatever the operating system's colour wheel passed under the cursor, and
+ * committing them would push a scene document to every client at the table sixty times a
+ * second for a decision that has not been made yet. `<input type="color">` fires `change`
+ * on release, so the browser already draws that line for us; the local state is what keeps
+ * the swatch showing the DM's choice while the round trip completes.
+ */
+function SceneBackground({
+  code,
+  dmCode,
+  scene,
+}: {
+  code: string
+  dmCode: string
+  scene: PublicScene
+}) {
+  const setBackground = useMutation(api.scenes.setBackground)
+  const action = useLobbyAction()
+
+  // Seeded from the stored colour and keyed on the scene by the caller, so switching maps
+  // starts on that map's value. It leads the server by one round trip deliberately: a
+  // swatch that snapped back to the old colour until the subscription caught up would read
+  // as the press not having worked.
+  const [colour, setColour] = useState(scene.backgroundColour)
+
+  const commit = (next: string) => {
+    setColour(next)
+    void action.run('background', 'Could not change the background colour.', () =>
+      setBackground({ code, dmCode, sceneId: scene._id, backgroundColour: next }),
+    )
+  }
+
+  return (
+    <ColourField
+      label="Background colour"
+      value={colour}
+      onChange={commit}
+      disabled={action.pending !== null}
+      hint="Painted around the map, where the image does not reach. Everybody at the table sees it."
+    />
   )
 }
 

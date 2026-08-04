@@ -500,7 +500,29 @@ export function Board({
   const drawable = scene !== null && scene.imageUrl !== null
 
   return (
-    <div ref={containerRef} className={cn('bg-muted/40 relative overflow-hidden', className)}>
+    /*
+      ⚠️ **The surround is painted here in the DOM rather than as a Konva rectangle**, and
+      the reason is what a full-viewport `<Rect>` would cost. It would have to live in the
+      background layer *in image space*, so covering the whole viewport at any zoom means
+      recomputing its size and position from the camera on every pan and wheel frame — and
+      `TokenHealthBar`'s note about every layer being re-rasterised on each of those frames
+      is the price. This element already exists, already has the right box, and repaints for
+      nothing. The one thing it does not do is appear in a canvas export, which nothing in
+      this application performs.
+
+      `bg-muted/40` was what this used to be: near-white in light mode, so a map floated in
+      a white page and read as one that had failed to load. `backgroundOf` on the server has
+      already turned a scene with no stored colour into a real one, so there is no `??` here
+      and no default in the stylesheet to drift against it.
+
+      Falls back to the class only while there is no scene at all — the loading skeleton and
+      `BoardEmpty`, neither of which is a map with a surround.
+    */
+    <div
+      ref={containerRef}
+      className={cn('relative overflow-hidden', scene === null && 'bg-muted/40', className)}
+      style={scene === null ? undefined : { backgroundColor: scene.backgroundColour }}
+    >
       {board.loading ? (
         <Skeleton className="absolute inset-0" />
       ) : drawable && scene ? (

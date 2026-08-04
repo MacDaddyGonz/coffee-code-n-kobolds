@@ -1,6 +1,7 @@
 import type { ReactElement, ReactNode } from 'react'
 import { useId } from 'react'
 
+import { ColourField } from '@/components/ui/colour-field'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { parseNumber } from '@/lib/utils'
@@ -109,20 +110,17 @@ export function TokenAppearanceFields({
             1 square for a person, 2 for an ogre, up to {MAX_TOKEN_SQUARES}.
           </p>
         </div>
-        <div className="flex flex-col gap-2">
-          <Label htmlFor={`${fieldId}-tint`}>Colour</Label>
-          <Input
-            id={`${fieldId}-tint`}
-            type="color"
-            value={draft.tint}
-            onChange={(event) => onChange({ ...draft, tint: event.target.value })}
-            className="h-8 px-1 py-1"
-            disabled={disabled}
-          />
-          <p className="text-muted-foreground text-xs">
-            The coin's colour, and its ring when it has art.
-          </p>
-        </div>
+        {/* `ColourField` rather than the swatch written out here, now that a scene's
+            background is a second colour somebody picks. The hint stays with this caller
+            because it is a sentence about a *coin* — which is this file's own rule about
+            what belongs to the form and what belongs to the field. */}
+        <ColourField
+          label="Colour"
+          value={draft.tint}
+          onChange={(tint) => onChange({ ...draft, tint })}
+          disabled={disabled}
+          hint="The coin's colour, and its ring when it has art."
+        />
       </div>
     </>
   )

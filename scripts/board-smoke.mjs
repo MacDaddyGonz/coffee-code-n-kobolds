@@ -7141,6 +7141,80 @@ async function main() {
         swarm.tokenId === swarm.tokenIds[0],
       swarmDrift ?? JSON.stringify(swarmNames),
     )
+
+    // 39. THE MAP'S OWN COLOUR: AN OPTIONAL COLUMN THAT NO CLIENT EVER SEES AS OPTIONAL,
+    // AND A STRING THE BROWSER WILL INTERPRET.
+    //
+    // Two things here that convex-test genuinely cannot answer. The first is the **shape of
+    // the projection**: `publicSceneValidator` declares `backgroundColour` as a required
+    // `v.string()` over a column the schema had to make optional, so a deployment that
+    // returned the raw field for a scene nobody has coloured would fail its own `returns:`
+    // validation — and the suite, which does not apply that validation, would pass. This
+    // scene has been on the table for the whole run without ever being coloured, so it is
+    // the real *absent* case rather than one arranged for the assertion.
+    //
+    // The second is the refusal. `<input type="color">` cannot emit any of the strings
+    // below, which is exactly why the check has to be somewhere a client cannot reach — the
+    // value goes to a CSS `background-color` on every screen at the table.
+    const sceneBeforeColour = await client.query('scenes:active', { code })
+    check(
+      'scenes:active carries a background colour for a scene nobody has coloured',
+      sceneBeforeColour !== null &&
+        typeof sceneBeforeColour.backgroundColour === 'string' &&
+        /^#[0-9a-f]{6}$/i.test(sceneBeforeColour.backgroundColour),
+      sceneBeforeColour ? JSON.stringify(sceneBeforeColour.backgroundColour) : 'no active scene',
+    )
+
+    const CHOSEN_BACKGROUND = '#3B0A0A'
+    await client.mutation('scenes:setBackground', {
+      code,
+      dmCode,
+      sceneId,
+      backgroundColour: CHOSEN_BACKGROUND,
+    })
+    // Read back through the **ungated** query, which is the point rather than convenience:
+    // a scene's colour is not a secret, so a caller holding no DM code gets it.
+    const sceneAsPlayer = await client.query('scenes:active', { code })
+    check(
+      'scenes:setBackground round-tripped the colour verbatim, to a caller with no DM code',
+      sceneAsPlayer !== null && sceneAsPlayer.backgroundColour === CHOSEN_BACKGROUND,
+      sceneAsPlayer ? JSON.stringify(sceneAsPlayer.backgroundColour) : 'no active scene',
+    )
+
+    for (const [label, backgroundColour] of [
+      ['a CSS colour function', 'rgb(0,0,0)'],
+      ['a url()', 'url(https://example.test/x.png)'],
+      ['a named colour', 'red'],
+      ['the three-digit shorthand', '#123'],
+      ['an empty string', ''],
+    ]) {
+      const colourRefusal = await refusalOf(() =>
+        client.mutation('scenes:setBackground', { code, dmCode, sceneId, backgroundColour }),
+      )
+      check(
+        `scenes:setBackground refused ${label} as BadInput`,
+        colourRefusal !== null && colourRefusal.kind === 'BadInput',
+        colourRefusal
+          ? JSON.stringify(colourRefusal)
+          : `the deployment stored ${JSON.stringify(backgroundColour)}`,
+      )
+    }
+
+    const sceneAfterRefusals = await client.query('scenes:active', { code })
+    check(
+      'none of the refused colours reached the scene',
+      sceneAfterRefusals !== null && sceneAfterRefusals.backgroundColour === CHOSEN_BACKGROUND,
+      sceneAfterRefusals ? JSON.stringify(sceneAfterRefusals.backgroundColour) : 'no active scene',
+    )
+
+    await refuses('scenes:setBackground refused a well-formed wrong DM code', () =>
+      client.mutation('scenes:setBackground', {
+        code,
+        dmCode: 'not-the-dm-code',
+        sceneId,
+        backgroundColour: '#123456',
+      }),
+    )
   } catch (error) {
     const data = error && error.data ? ` ${JSON.stringify(error.data)}` : ''
     record('the run completed without an unexpected error', false, `${error.message ?? error}${data}`)

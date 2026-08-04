@@ -32,6 +32,7 @@ import {
 } from './lib/board'
 import { copyCharacter, countCharactersInGame, getCharacterInGame } from './lib/characters'
 import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
+import { colourProblem } from './lib/colour'
 import {
   MAX_CHARACTERS_PER_GAME,
   MAX_SEATS_PER_GAME,
@@ -63,15 +64,6 @@ import { findSceneInGame, getSceneInGame } from './lib/scenes'
 // shape as a player-layer one and so no `returns:` validator can catch a leaked
 // row — only a single reader that knows whether the caller holds the DM code can
 // (CLAUDE.md invariant 8). A test greps these sources to keep it that way.
-
-/**
- * `#rrggbb`, and nothing else.
- *
- * The tint is handed straight to a Konva fill, so the strictness is worth having:
- * a CSS colour function or a `url(...)` would be a string the browser interprets
- * on every other player's screen, put there by whoever runs the game.
- */
-const TINT_PATTERN = /^#[0-9a-f]{6}$/i
 
 /**
  * A token whose position is NaN or Infinity has left the board for good — no cell
@@ -123,8 +115,13 @@ function requireTokenAppearance(args: { name: string; sizeSquares: number; tint:
       message: 'A token must be a whole number of squares across, from 1 to 8.',
     })
   }
-  if (!TINT_PATTERN.test(args.tint)) {
-    throw new ConvexError({ kind: 'BadInput', message: 'Pick a colour for the token.' })
+  // `lib/colour.ts` rather than a regex here, and the move is what the paragraph above
+  // asks for one field over: a scene's background is the second colour a person picks in
+  // this application, and the day it got its own copy of this pattern is the day the two
+  // could drift. Same sentence as before — the subject is the argument now.
+  const tintProblem = colourProblem(args.tint, 'colour for the token')
+  if (tintProblem !== null) {
+    throw new ConvexError({ kind: 'BadInput', message: tintProblem })
   }
 
   return { name, sizeSquares: args.sizeSquares, tint: args.tint }
