@@ -849,9 +849,10 @@ const FREE_CELL_RINGS = 8
  * drags needed to undo it. Found by running the app; no test would have noticed,
  * because every individual write was correct.
  *
- * Deliberately only used by `addToken`. Moving a token onto an occupied square is a
- * legitimate thing to want — two figures crowding a doorway — so `moveToken` must
- * never displace anything, and this is not called from there.
+ * Deliberately only used by the mutations that **create** a placement — `addToken`,
+ * `placeOnScene` and `duplicate`. Never `moveToken`: moving a token onto an occupied
+ * square is a legitimate thing to want — two figures crowding a doorway — so that
+ * handler must never displace anything, and this is not called from there.
  *
  * Occupancy compares snapped centres rather than footprints. A 2×2 ogre overlapping
  * a 1×1 goblin's square is not detected, which is the honest limit of one line of
@@ -865,6 +866,35 @@ export async function freeCellNear(
   sizeSquares: number,
   point: Point,
 ): Promise<Point> {
+  return (await freeCellsNear(ctx, sceneId, grid, sizeSquares, point, 1))[0]
+}
+
+/**
+ * The `count` nearest empty squares to `point`, nearest first, for dropping that many
+ * *new* tokens at once.
+ *
+ * **The plural is the real function and `freeCellNear` above is the `count: 1` case**,
+ * so there is one occupancy rule and one terminating condition rather than two that
+ * agreed on the day they were written. Adding five goblins is precisely the gesture
+ * that produced the stacking `freeCellNear` was written to stop, so a duplicate that
+ * called it five times would either read the placements five times or hand back the
+ * same square five times, depending on how the transaction saw its own writes.
+ *
+ * **One placements read for the whole batch.** Each accepted cell joins `taken` before
+ * the walk continues, which is what makes the five copies land in five different
+ * squares from a single scan of the board.
+ *
+ * The ring walk, the snapped-centre key and the fallback are all `freeCellNear`'s and
+ * unchanged — see the note above for why occupancy is a centre and not a footprint.
+ */
+export async function freeCellsNear(
+  ctx: QueryCtx,
+  sceneId: Id<'scenes'>,
+  grid: Grid,
+  sizeSquares: number,
+  point: Point,
+  count: number,
+): Promise<Point[]> {
   const placements = await ctx.db
     .query('tokenPositions')
     .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
@@ -879,10 +909,12 @@ export async function freeCellNear(
     }),
   )
 
+  const found: Point[] = []
   const wanted = cellOf(point, grid, sizeSquares)
-  for (let ring = 0; ring <= FREE_CELL_RINGS; ring += 1) {
-    for (let dCol = -ring; dCol <= ring; dCol += 1) {
-      for (let dRow = -ring; dRow <= ring; dRow += 1) {
+
+  for (let ring = 0; ring <= FREE_CELL_RINGS && found.length < count; ring += 1) {
+    for (let dCol = -ring; dCol <= ring && found.length < count; dCol += 1) {
+      for (let dRow = -ring; dRow <= ring && found.length < count; dRow += 1) {
         // Only the edge of each ring: the inside was covered by a smaller one.
         if (ring > 0 && Math.abs(dCol) !== ring && Math.abs(dRow) !== ring) continue
         const candidate = centreOfCell(
@@ -890,15 +922,21 @@ export async function freeCellNear(
           grid,
           sizeSquares,
         )
-        if (!taken.has(`${candidate.x},${candidate.y}`)) return candidate
+        const key = `${candidate.x},${candidate.y}`
+        if (taken.has(key)) continue
+        taken.add(key)
+        found.push(candidate)
       }
     }
   }
 
   // Every square within the search is occupied, which needs 289 tokens on one
-  // scene and cannot happen under MAX_TOKENS_PER_GAME. Stack rather than refuse:
-  // a token the DM cannot place at all is worse than one they have to drag.
-  return centreOfCell(wanted, grid, sizeSquares)
+  // scene and cannot happen under MAX_TOKENS_PER_GAME and MAX_DUPLICATE_COUNT.
+  // Stack rather than refuse: a token the DM cannot place at all is worse than
+  // one they have to drag.
+  while (found.length < count) found.push(centreOfCell(wanted, grid, sizeSquares))
+
+  return found
 }
 
 /**
@@ -1255,6 +1293,79 @@ export async function revokeControlForSeat(
   }
 }
 
+/**
+ * Where one token stands on one scene, or null if it is not on that board at all.
+ *
+ * Extracted from `placeToken`'s own body, which is why there is one lookup rather than
+ * four: the upsert asks it, `board.placeOnScene` asks it to be idempotent, and
+ * `board.removeFromScene` asks it to be a no-op. The row's **existence** is what puts a
+ * token on a board, so "is it there?" and "where is it?" are one question.
+ */
+export async function placementOf(
+  ctx: QueryCtx,
+  sceneId: Id<'scenes'>,
+  tokenId: Id<'tokens'>,
+): Promise<Doc<'tokenPositions'> | null> {
+  return await ctx.db
+    .query('tokenPositions')
+    .withIndex('by_sceneId_and_tokenId', (q) => q.eq('sceneId', sceneId).eq('tokenId', tokenId))
+    .unique()
+}
+
+/**
+ * Take one token off one board, leaving every other placement alone. Answers whether a
+ * row actually went.
+ *
+ * The single-board sibling of `deleteTokenPlacements` below, which sweeps *every* board
+ * because the token itself is going. Two functions rather than one with a nullable
+ * `sceneId`, for `deleteScenePlacements`' reason: the axis differs, so the bound differs,
+ * and one function taking either would be one function with two bounds.
+ *
+ * The boolean is what lets `board.removeFromScene` be a no-op rather than a throw
+ * without the mutation having to look first.
+ */
+export async function removeTokenFromScene(
+  ctx: MutationCtx,
+  sceneId: Id<'scenes'>,
+  tokenId: Id<'tokens'>,
+): Promise<boolean> {
+  const placement = await placementOf(ctx, sceneId, tokenId)
+  if (!placement) return false
+
+  await ctx.db.delete('tokenPositions', placement._id)
+  return true
+}
+
+/**
+ * Every board this token stands on. **Ids only.**
+ *
+ * The narrow crossing this module always makes — a set of ids leaves and never a row,
+ * the same discipline `boardCharacterAccess` keeps — so the scene *names* are resolved
+ * by the caller through `lib/scenes.ts` and this file never learns one.
+ *
+ * Bounded by the scene count rather than the placement count, verbatim from
+ * `deleteTokenPlacements` below: a token holds at most one row per scene, so this is the
+ * tight bound and `MAX_PLACEMENTS_PER_SCENE` would be the wrong axis.
+ *
+ * ⚠️ **That bound has stopped being unreachable.** Until `board.placeOnScene` existed a
+ * coin could only ever be on the boards `addToken` and `moveToken` had put it on, and the
+ * client only ever names the active scene — so a token on all 25 scenes was not a state
+ * the application could produce. It is now one press per map. The take is still exactly
+ * tight and still cannot truncate, but it is worth knowing it is now approached rather
+ * than theoretical.
+ */
+export async function tokenPlacementScenes(
+  ctx: QueryCtx,
+  tokenId: Id<'tokens'>,
+): Promise<Id<'scenes'>[]> {
+  const placements = await ctx.db
+    .query('tokenPositions')
+    .withIndex('by_tokenId', (q) => q.eq('tokenId', tokenId))
+    .take(MAX_SCENES_PER_GAME)
+
+  return placements.map((placement) => placement.sceneId)
+}
+
 /** Insert or update the placement of a token on a scene. */
 export async function placeToken(
   ctx: MutationCtx,
@@ -1262,10 +1373,7 @@ export async function placeToken(
   tokenId: Id<'tokens'>,
   point: Point,
 ): Promise<void> {
-  const existing = await ctx.db
-    .query('tokenPositions')
-    .withIndex('by_sceneId_and_tokenId', (q) => q.eq('sceneId', sceneId).eq('tokenId', tokenId))
-    .unique()
+  const existing = await placementOf(ctx, sceneId, tokenId)
 
   // Upsert rather than insert, because the row's existence is what puts a token on
   // a board: a drag has to patch the four coordinates it already has, while a token

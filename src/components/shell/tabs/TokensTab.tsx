@@ -170,9 +170,17 @@ export type TokensTabProps = {
  * is joined on **here**, in the browser, against the `characters.list` the shell is already
  * holding. And there is no placement: a token's position lives in `tokenPositions` and is
  * written ten times a second, so folding *where does this coin stand* into the low-churn
- * subscription would invert CLAUDE.md invariant 2 outright. The consequence to know about
- * is that this list cannot say which map a coin is on, or whether it is on one at all —
- * recorded rather than worked around.
+ * subscription would invert CLAUDE.md invariant 2 outright.
+ *
+ * The consequence to know about is that **this list** still cannot say which map a coin is
+ * on, or whether it is on one at all — and that is now a statement about the *list* rather
+ * than about the application. The **selected** coin gets a full answer, from
+ * `board.placements`, which reads by token: it is invalidated by writes to one coin's
+ * placements instead of by every drag on the board, and it is subscribed only while this
+ * tab has a coin selected, because `TokenEditPanel` is where it is mounted. The game-wide
+ * version — one map of coin → boards, so every row could carry the badge — puts every
+ * placement on every scene into the read set of a panel that is open all session, and it is
+ * **refused** here rather than merely absent.
  *
  * Rendered only when this browser holds a DM code, and that is a display decision rather
  * than the guard: `board.tokens` returns the DM layer only to a request carrying a code it

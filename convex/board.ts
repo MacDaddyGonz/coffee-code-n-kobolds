@@ -9,9 +9,11 @@ import {
   freeCellNear,
   otherTokenReferencesImage,
   placeToken,
+  placementOf,
   publicPositionValidator,
   publicTokenValidator,
   publicTokens,
+  removeTokenFromScene,
   replaceTokenArt,
   requireDmToken,
   requireMovableToken,
@@ -19,6 +21,7 @@ import {
   setTokenCharacter,
   setTokenControllers,
   setTokenLayer,
+  tokenPlacementScenes,
   visiblePositions,
 } from './lib/board'
 import { getCharacterInGame } from './lib/characters'
@@ -653,6 +656,144 @@ export const setControllers = mutation({
 
     await setTokenControllers(ctx, token._id, args.playerIds)
     return null
+  },
+})
+
+/**
+ * Put a coin on a board it is not standing on, without taking it off any other.
+ *
+ * `MapSetupPanel` has told the DM since the board existed that *tokens belong to the
+ * game, not to this map, so one villain can stand on several* — **true of the schema and
+ * false of the application** until this existed. `addToken` was the only thing that
+ * created a placement and `moveToken` is only ever called with the active scene, so a
+ * coin made on map A could never reach map B and could never leave A without being
+ * destroyed. This is `addToken`'s placement decision made a second time.
+ *
+ * DM-gated for that reason: deciding which board a creature stands on is the same call
+ * as deciding to put it on one at all. A player has no route to another scene's id in
+ * any case — `scenes.list` is DM-only, because a list of scene names is a spoiler.
+ *
+ * ⚠️ **Idempotent, and the value is in not writing.** If the row is already there this
+ * returns having touched nothing, so pressing the button twice does not teleport a coin
+ * the DM had already dragged into position. Leaning on `placeToken`'s upsert instead
+ * would patch the coordinates back to the middle of the map, which is the bug this early
+ * return exists to prevent rather than an optimisation of it.
+ *
+ * **No `x` and no `y`, deliberately.** The DM is choosing a *board*, not a square: they
+ * have never looked at this map, so there is no square they picked and no client
+ * coordinate worth trusting. The centre is the one point guaranteed to be on the map,
+ * and it goes through `freeCellNear` for `addToken`'s reason — every coin sent to a map
+ * would otherwise land in the identical square with its name overprinted into mush.
+ * Adding coordinates here would make this `moveToken` with a different gate.
+ *
+ * ⚠️ **Still no `MAX_PLACEMENTS_PER_SCENE` write check, and the structural argument
+ * survives this.** A token holds at most one placement per scene — enforced twice here,
+ * by the early return and by `placeToken`'s upsert on `by_sceneId_and_tokenId` — so
+ * placements on one scene still cannot outnumber the tokens in the game, and that count
+ * is already capped. What changed is that the ceiling is now *attainable*: a DM may
+ * deliberately put all 200 coins on all 25 boards. See the note on the constant in
+ * lib/games.ts.
+ */
+export const placeOnScene = mutation({
+  args: {
+    code: v.string(),
+    dmCode: v.string(),
+    sceneId: v.id('scenes'),
+    tokenId: v.id('tokens'),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const game = await requireDm(ctx, args.code, args.dmCode)
+    const scene = await getSceneInGame(ctx, game._id, args.sceneId)
+    const token = await requireDmToken(ctx, game, args.tokenId)
+
+    if (await placementOf(ctx, scene._id, token._id)) return null
+
+    await placeToken(
+      ctx,
+      scene._id,
+      token._id,
+      await freeCellNear(ctx, scene._id, scene, token.sizeSquares, {
+        x: scene.imageWidth / 2,
+        y: scene.imageHeight / 2,
+      }),
+    )
+    return null
+  },
+})
+
+/**
+ * Take a coin off one board and leave it on every other, and leave the coin itself alone.
+ *
+ * The other half of `placeOnScene`, and the reversible sibling of `removeToken` below:
+ * this destroys a placement, that destroys a creature's whole coin and its picture.
+ * Which is why the board's menu confirms one and not the other.
+ *
+ * ⚠️ **A no-op rather than a throw when the coin is not there**, for `files.discard`'s
+ * reason: the client calls this from a menu and a panel that may each be a frame stale,
+ * and a second removal should be nothing rather than a second error on top of the first.
+ *
+ * Deliberately **no** refusal for removing the last one. A coin on no board at all is a
+ * legitimate state — it is what the schema means by "tokens belong to the game, not to
+ * this map" — and it is the state the Tokens tab exists to be able to reach. The client
+ * renders the intersection of the two board subscriptions, so such a coin is simply not
+ * drawn; it keeps its row, its sheet and its grants, and one press puts it back.
+ */
+export const removeFromScene = mutation({
+  args: {
+    code: v.string(),
+    dmCode: v.string(),
+    sceneId: v.id('scenes'),
+    tokenId: v.id('tokens'),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const game = await requireDm(ctx, args.code, args.dmCode)
+    const scene = await getSceneInGame(ctx, game._id, args.sceneId)
+    const token = await requireDmToken(ctx, game, args.tokenId)
+
+    await removeTokenFromScene(ctx, scene._id, token._id)
+    return null
+  },
+})
+
+/**
+ * Which boards this one coin stands on. Ids, which the client joins against the
+ * `scenes.list` it is already holding.
+ *
+ * ⚠️ **Per token, and that is its whole cost model.** It reads by `by_tokenId`, so it is
+ * invalidated by writes to *one* coin's placements rather than by every drag on the
+ * board, and the panel that holds it is mounted only while the Tokens tab has a coin
+ * selected. The obvious alternative — one game-wide map of coin → boards, so every row
+ * in the list could carry a badge — puts every placement on every scene into the read
+ * set of a panel that is open all session, which is exactly the read CLAUDE.md
+ * invariant 2's read-side rule exists to refuse. `TokensTab`'s own ⚠️ says the list
+ * cannot answer this; that comment is narrowed rather than deleted, because the *list*
+ * still cannot and the *selected coin* now can.
+ *
+ * ⚠️ **Ids and not names, even though a name is what the panel prints.** Scene names are
+ * DM-only — `scenes.list` requires the code because a list of them is a spoiler — and a
+ * projection carrying them here would be a second door onto that list. It costs nothing:
+ * the panel needs the maps the coin is **not** on as well, to offer *Put it here*, so it
+ * is holding `scenes.list` regardless.
+ *
+ * `requireDm` and then `requireDmToken`, so a foreign or vanished token refuses with the
+ * same `TokenNotFound` every other board function gives rather than answering with an
+ * empty array — the parity ADR 0004 argues for, applied to a query whose empty answer
+ * would otherwise be indistinguishable from *this coin is on no board*.
+ */
+export const placements = query({
+  args: {
+    code: v.string(),
+    dmCode: v.string(),
+    tokenId: v.id('tokens'),
+  },
+  returns: v.array(v.id('scenes')),
+  handler: async (ctx, args) => {
+    const game = await requireDm(ctx, args.code, args.dmCode)
+    const token = await requireDmToken(ctx, game, args.tokenId)
+
+    return await tokenPlacementScenes(ctx, token._id)
   },
 })
 

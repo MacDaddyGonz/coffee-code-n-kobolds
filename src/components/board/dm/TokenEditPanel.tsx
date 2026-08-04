@@ -12,6 +12,7 @@ import {
 } from '@/components/board/dm/TokenAppearanceFields'
 import { TokenControlPanel } from '@/components/board/dm/TokenControlPanel'
 import { TokenDeleteDialog } from '@/components/board/dm/TokenDeleteDialog'
+import { TokenPlacementControl } from '@/components/board/dm/TokenPlacementControl'
 import { TokenSwatch } from '@/components/board/dm/TokenSwatch'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -108,12 +109,17 @@ export type TokenEditPanelProps = {
  * the same statements in the DM's words, on screen, at the control that causes them.
  *
  * **The order of the sections is what the DM is asking, in the order they ask it.** What
- * is this coin, who can see it, what does it look like, what is its picture, who may drag
- * it — and, past all of that, how to get rid of it. The two consequential writes are first
- * because they are the reason the tab exists — a coin bound to nothing on a layer nobody
- * is shown is what nothing else in the app can reach — and *Controlled by* is last of the
- * edits for the reason `SheetsTab` puts it last: it is what the DM does after they have
- * decided what the thing is.
+ * is this coin, who can see it, which maps it stands on, what does it look like, what is
+ * its picture, who may drag it — and, past all of that, how to get rid of it. The two
+ * consequential writes are first because they are the reason the tab exists — a coin
+ * bound to nothing on a layer nobody is shown is what nothing else in the app can reach —
+ * and *Controlled by* is last of the edits for the reason `SheetsTab` puts it last: it is
+ * what the DM does after they have decided what the thing is.
+ *
+ * **Placement is third rather than filed with the cosmetics**, because it is the same
+ * register as the two above it: a coin standing on no board at all is the third of the
+ * three kinds this tab exists to reach, beside one bound to nothing and one on a layer
+ * that is not being drawn.
  *
  * ⚠️ **Delete is last, and that is the roadmap's own argument scaled down one level.** A
  * destructive control on a row in a two-hundred-row list was refused because it is one
@@ -163,6 +169,12 @@ export function TokenEditPanel({
 
       <EditorSection title="Who can see it">
         <LayerControl code={code} dmCode={dmCode} token={token} />
+      </EditorSection>
+
+      <Separator />
+
+      <EditorSection title="Which maps it is on">
+        <TokenPlacementControl code={code} dmCode={dmCode} token={token} />
       </EditorSection>
 
       <Separator />

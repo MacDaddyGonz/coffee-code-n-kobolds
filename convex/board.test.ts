@@ -453,6 +453,12 @@ describe('the DM layer never reaches a player', () => {
     // raising a `ConvexError`. The loop below only records `reached` for a resolved value or
     // a `ConvexError`, so such a shape asserts nothing at all while reading like coverage.
     // Two of them were here and are gone.
+    // ⚠️ **The last shape is the first to carry a token id, and it exists because
+    // `board.placements` is the first public query keyed on one coin.** With a wrong DM
+    // code the handler refuses at `requireDm` before it reads a token, so *which* id is
+    // passed changes nothing about the coverage — the open coin is named rather than the
+    // secret one to keep the shape readable as what a player's client could actually
+    // send, which is what this whole list is.
     const argSets: Record<string, unknown>[] = [
       { code: fixture.code },
       { code: fixture.code, dmCode: wrongDmCode },
@@ -460,6 +466,7 @@ describe('the DM layer never reaches a player', () => {
       { code: fixture.code, sceneId: fixture.sceneId, dmCode: wrongDmCode },
       { code: fixture.code, dmCode: wrongDmCode, key: 'dire-wolf' },
       { code: fixture.code, dmCode: wrongDmCode, key: 'dire-wolf', cr: 4 },
+      { code: fixture.code, dmCode: wrongDmCode, tokenId: fixture.openToken },
     ]
 
     const swept: string[] = []
@@ -509,6 +516,7 @@ describe('the DM layer never reaches a player', () => {
     // The sweep really did run over the queries this milestone ships.
     expect(swept).toContain('board.tokens')
     expect(swept).toContain('board.positions')
+    expect(swept).toContain('board.placements')
     expect(swept).toContain('scenes.active')
     expect(swept).toContain('bestiary.index')
     expect(swept).toContain('bestiary.entry')
@@ -2119,6 +2127,242 @@ describe('board.removeToken', () => {
       tokenId: first,
     })
     expect(await t.query(api.board.tokens, { code: game.code })).toEqual([])
+  })
+})
+
+/**
+ * PLACEMENT AS SOMETHING THE DM CAN PERFORM.
+ *
+ * `MapSetupPanel` has told the DM since the board existed that a coin belongs to the
+ * game rather than to a map, so one villain can stand on several — true of the schema
+ * and, until these three functions, false of the application: `addToken` was the only
+ * thing that made a placement and the client only ever hands `moveToken` the active
+ * scene.
+ */
+describe('putting a coin on a second board and taking it off one', () => {
+  async function twoMaps(t: Harness) {
+    const game = await makeGame(t)
+    const cellar = await makeScene(t, game.code, game.dmCode, 'Cellar')
+    const courtyard = await makeScene(t, game.code, game.dmCode, 'Courtyard')
+    await calibrate(t, game.code, game.dmCode, cellar)
+    await calibrate(t, game.code, game.dmCode, courtyard)
+    const tokenId = await addToken(t, game.code, game.dmCode, cellar, { name: 'Recurring Villain' })
+    return { ...game, cellar, courtyard, tokenId }
+  }
+
+  test('placeOnScene adds a board without taking the coin off the one it was on', async () => {
+    const t = harness()
+    const f = await twoMaps(t)
+    expect(await t.query(api.board.placements, { code: f.code, dmCode: f.dmCode, tokenId: f.tokenId })).toEqual([
+      f.cellar,
+    ])
+
+    await t.mutation(api.board.placeOnScene, {
+      code: f.code,
+      dmCode: f.dmCode,
+      sceneId: f.courtyard,
+      tokenId: f.tokenId,
+    })
+
+    const on = await t.query(api.board.placements, {
+      code: f.code,
+      dmCode: f.dmCode,
+      tokenId: f.tokenId,
+    })
+    expect([...on].sort()).toEqual([f.cellar, f.courtyard].sort())
+  })
+
+  /**
+   * The early return earning its keep. Leaning on `placeToken`'s upsert instead would
+   * patch the coordinates back to the middle of the map, so a DM who had already dragged
+   * the coin into the doorway and pressed the button again would find it back in the
+   * centre — which is why the idempotence is a `return` and not a comment.
+   */
+  test('placeOnScene twice does not move a coin the DM had already positioned', async () => {
+    const t = harness()
+    const f = await twoMaps(t)
+    await t.mutation(api.board.placeOnScene, {
+      code: f.code,
+      dmCode: f.dmCode,
+      sceneId: f.courtyard,
+      tokenId: f.tokenId,
+    })
+
+    await t.mutation(api.board.moveToken, {
+      code: f.code,
+      dmCode: f.dmCode,
+      sceneId: f.courtyard,
+      tokenId: f.tokenId,
+      x: 1820,
+      y: 1400,
+      settle: true,
+    })
+    const settled = await placement(t, f.courtyard, f.tokenId)
+
+    await t.mutation(api.board.placeOnScene, {
+      code: f.code,
+      dmCode: f.dmCode,
+      sceneId: f.courtyard,
+      tokenId: f.tokenId,
+    })
+
+    expect(await placement(t, f.courtyard, f.tokenId)).toEqual(settled)
+    expect(await placementsOf(t, f.tokenId)).toHaveLength(2)
+  })
+
+  /** Every coin sent to a map would otherwise land in the identical square. */
+  test('placeOnScene lands on an empty square rather than stacking', async () => {
+    const t = harness()
+    const f = await twoMaps(t)
+    const second = await addToken(t, f.code, f.dmCode, f.cellar, { name: 'Understudy' })
+
+    for (const tokenId of [f.tokenId, second]) {
+      await t.mutation(api.board.placeOnScene, {
+        code: f.code,
+        dmCode: f.dmCode,
+        sceneId: f.courtyard,
+        tokenId,
+      })
+    }
+
+    const a = await placement(t, f.courtyard, f.tokenId)
+    const b = await placement(t, f.courtyard, second)
+    expect(a).not.toBeNull()
+    expect(b).not.toBeNull()
+    expect({ x: a?.x, y: a?.y }).not.toEqual({ x: b?.x, y: b?.y })
+  })
+
+  test('removeFromScene leaves the coin, its other boards and its row alone', async () => {
+    const t = harness()
+    const f = await twoMaps(t)
+    await t.mutation(api.board.placeOnScene, {
+      code: f.code,
+      dmCode: f.dmCode,
+      sceneId: f.courtyard,
+      tokenId: f.tokenId,
+    })
+
+    await t.mutation(api.board.removeFromScene, {
+      code: f.code,
+      dmCode: f.dmCode,
+      sceneId: f.cellar,
+      tokenId: f.tokenId,
+    })
+
+    expect(
+      await t.query(api.board.placements, { code: f.code, dmCode: f.dmCode, tokenId: f.tokenId }),
+    ).toEqual([f.courtyard])
+    expect(await tokenRow(t, f.tokenId)).not.toBeNull()
+  })
+
+  /**
+   * `files.discard`'s reason: the client calls this from a menu and a panel that may each
+   * be a frame stale, and a second removal should be nothing rather than a second error
+   * on top of the first. Taking the *last* one is not refused either — a coin on no board
+   * is a legitimate state and is one of the three kinds the Tokens tab exists to reach.
+   */
+  test('removeFromScene is a no-op when the coin is not there, and may take the last board', async () => {
+    const t = harness()
+    const f = await twoMaps(t)
+
+    await t.mutation(api.board.removeFromScene, {
+      code: f.code,
+      dmCode: f.dmCode,
+      sceneId: f.courtyard,
+      tokenId: f.tokenId,
+    })
+    expect(
+      await t.query(api.board.placements, { code: f.code, dmCode: f.dmCode, tokenId: f.tokenId }),
+    ).toEqual([f.cellar])
+
+    await t.mutation(api.board.removeFromScene, {
+      code: f.code,
+      dmCode: f.dmCode,
+      sceneId: f.cellar,
+      tokenId: f.tokenId,
+    })
+    await t.mutation(api.board.removeFromScene, {
+      code: f.code,
+      dmCode: f.dmCode,
+      sceneId: f.cellar,
+      tokenId: f.tokenId,
+    })
+
+    expect(
+      await t.query(api.board.placements, { code: f.code, dmCode: f.dmCode, tokenId: f.tokenId }),
+    ).toEqual([])
+    expect(await tokenRow(t, f.tokenId)).not.toBeNull()
+  })
+
+  /**
+   * All three are the DM's, and all three refuse a foreign or vanished coin with the
+   * *same* `TokenNotFound` every other board function gives — the parity ADR 0004 argues
+   * for. `placements` needs it more than the other two: an empty array would otherwise be
+   * indistinguishable from *this coin is on no board*, which is a real answer.
+   */
+  test('all three refuse without the DM code, and refuse a vanished coin identically', async () => {
+    const t = harness()
+    const f = await twoMaps(t)
+    const wrong = twiddle(f.dmCode)
+    const ghost = await vanishedTokenId(t)
+
+    await expectKind(
+      t.query(api.board.placements, { code: f.code, dmCode: wrong, tokenId: f.tokenId }),
+      'NotDm',
+    )
+    await expectKind(
+      t.mutation(api.board.placeOnScene, {
+        code: f.code,
+        dmCode: wrong,
+        sceneId: f.courtyard,
+        tokenId: f.tokenId,
+      }),
+      'NotDm',
+    )
+    await expectKind(
+      t.mutation(api.board.removeFromScene, {
+        code: f.code,
+        dmCode: wrong,
+        sceneId: f.cellar,
+        tokenId: f.tokenId,
+      }),
+      'NotDm',
+    )
+
+    const missing = await refusalOf(
+      t.query(api.board.placements, { code: f.code, dmCode: f.dmCode, tokenId: ghost }),
+    )
+    expect(missing.kind).toBe('TokenNotFound')
+    // Byte-identical to what a coin in another game gets, which is the whole of the
+    // parity argument — a distinct refusal is an existence oracle.
+    const other = await makeGame(t, 'Another Table', 'Someone Else')
+    const otherScene = await makeScene(t, other.code, other.dmCode)
+    const theirs = await addToken(t, other.code, other.dmCode, otherScene)
+    expect(
+      await refusalOf(
+        t.query(api.board.placements, { code: f.code, dmCode: f.dmCode, tokenId: theirs }),
+      ),
+    ).toEqual(missing)
+  })
+
+  /** Deleting a coin takes every placement with it, which `placements` then reports. */
+  test('deleting the coin empties its placements', async () => {
+    const t = harness()
+    const f = await twoMaps(t)
+    await t.mutation(api.board.placeOnScene, {
+      code: f.code,
+      dmCode: f.dmCode,
+      sceneId: f.courtyard,
+      tokenId: f.tokenId,
+    })
+
+    await t.mutation(api.board.removeToken, {
+      code: f.code,
+      dmCode: f.dmCode,
+      tokenId: f.tokenId,
+    })
+
+    expect(await placementsOf(t, f.tokenId)).toEqual([])
   })
 })
 
