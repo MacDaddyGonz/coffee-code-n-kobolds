@@ -11,6 +11,7 @@ import {
   isUsableAppearance,
 } from '@/components/board/dm/TokenAppearanceFields'
 import { TokenControlPanel } from '@/components/board/dm/TokenControlPanel'
+import { TokenDeleteDialog } from '@/components/board/dm/TokenDeleteDialog'
 import { TokenSwatch } from '@/components/board/dm/TokenSwatch'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -87,6 +88,11 @@ export type TokenEditPanelProps = {
   bound: PublicCharacter | null
   /** True until that list has arrived. The select is a skeleton in the meantime. */
   loading: boolean
+  /**
+   * After the coin has been deleted. The shell's `forgetToken`, which drops the
+   * selection so this panel is not left editing a row that has gone.
+   */
+  onRemoved?: (tokenId: Id<'tokens'>) => void
 }
 
 /**
@@ -103,10 +109,19 @@ export type TokenEditPanelProps = {
  *
  * **The order of the sections is what the DM is asking, in the order they ask it.** What
  * is this coin, who can see it, what does it look like, what is its picture, who may drag
- * it. The two consequential writes are first because they are the reason the tab exists —
- * a coin bound to nothing on a layer nobody is shown is what nothing else in the app can
- * reach — and *Controlled by* is last for the reason `SheetsTab` puts it last: it is what
- * the DM does after they have decided what the thing is.
+ * it — and, past all of that, how to get rid of it. The two consequential writes are first
+ * because they are the reason the tab exists — a coin bound to nothing on a layer nobody
+ * is shown is what nothing else in the app can reach — and *Controlled by* is last of the
+ * edits for the reason `SheetsTab` puts it last: it is what the DM does after they have
+ * decided what the thing is.
+ *
+ * ⚠️ **Delete is last, and that is the roadmap's own argument scaled down one level.** A
+ * destructive control on a row in a two-hundred-row list was refused because it is one
+ * mis-click from deleting the ambush; a destructive control at the *top of the panel* is
+ * the same mis-click moved four inches. Everything above it is undone in one press —
+ * the layer goes back, the binding goes back, the old name is still typed in the field —
+ * and this is the one control here that nothing takes back. `SceneSelect` already puts
+ * Delete at the far end of a row for the same reason.
  *
  * ⚠️ **`TokenControlPanel` is mounted verbatim and nothing here computes who controls
  * anything.** It is the one client writer of `board.setControllers`, it reads
@@ -129,6 +144,7 @@ export function TokenEditPanel({
   byGroup,
   bound,
   loading,
+  onRemoved,
 }: TokenEditPanelProps): ReactElement {
   return (
     <div className="flex flex-col">
@@ -171,6 +187,18 @@ export function TokenEditPanel({
       <div className="p-3">
         <TokenControlPanel code={code} dmCode={dmCode} token={token} />
       </div>
+
+      <Separator />
+
+      <EditorSection title="Get rid of it">
+        <RemoveControl
+          code={code}
+          dmCode={dmCode}
+          token={token}
+          bound={bound}
+          onRemoved={onRemoved}
+        />
+      </EditorSection>
     </div>
   )
 }
@@ -683,6 +711,63 @@ function ArtControl({
             Clear the art
           </Button>
         )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The one irreversible control on this panel, and the copy that says what it spares.
+ *
+ * ⚠️ **The prose here is the feature, not decoration.** A coin and a creature are
+ * different things and this application keeps them apart on purpose: `characters.remove`
+ * already exists, already detaches every token pointing at what it deletes, and lives on
+ * the Sheets tab. A *board* mutation reaching into the characters choke point to destroy
+ * a sheet is the coupling `TokenAddDialog` refuses in the other direction, so nothing
+ * here is going to grow a "and the sheet too" checkbox. What that costs is a DM who
+ * presses this expecting both — which is exactly what these two sentences are for.
+ *
+ * The confirmation itself is `TokenDeleteDialog`, shared with the board's right-click
+ * menu, so the wording cannot come apart between the two ways in.
+ */
+function RemoveControl({
+  code,
+  dmCode,
+  token,
+  bound,
+  onRemoved,
+}: {
+  code: string
+  dmCode: string
+  token: PublicToken
+  bound: PublicCharacter | null
+  onRemoved?: (tokenId: Id<'tokens'>) => void
+}): ReactElement {
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-muted-foreground text-xs">
+        Deleting the coin takes it off every map it is standing on and deletes its picture.
+        There is no undo.
+      </p>
+      <p className="text-muted-foreground text-xs">
+        <strong className="text-foreground font-medium">The creature is not deleted.</strong>{' '}
+        {bound === null
+          ? 'This coin stands for nobody, so there is no sheet to worry about.'
+          : `${bound.name}'s sheet, hit points and everything written on them stay in the game — delete those from the Sheets tab.`}
+      </p>
+      <div>
+        <TokenDeleteDialog
+          code={code}
+          dmCode={dmCode}
+          token={token}
+          bound={bound}
+          onDeleted={onRemoved}
+          trigger={
+            <Button type="button" size="sm" variant="destructive">
+              Delete this coin
+            </Button>
+          }
+        />
       </div>
     </div>
   )

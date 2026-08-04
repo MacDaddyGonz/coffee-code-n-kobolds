@@ -115,6 +115,15 @@ export type TokensTabProps = {
    * disagree with the board the moment the DM clicked a second coin on the same sheet.
    */
   onSelectToken: (tokenId: Id<'tokens'>) => void
+  /**
+   * A coin the DM has just deleted. Handed to the editor's delete control.
+   *
+   * ⚠️ **Not `onClearSelection`.** That clears the character pick as well, and a DM who
+   * reached this coin from the Sheets selector is still looking at that creature's sheet.
+   * `GameShell.forgetToken` carries the full argument, including the `sheetFocusOf` rule
+   * that makes a lingering id actively wrong rather than merely untidy.
+   */
+  onTokenGone: (tokenId: Id<'tokens'>) => void
 }
 
 /**
@@ -177,6 +186,7 @@ export function TokensTab({
   tokenList,
   selectedToken,
   onSelectToken,
+  onTokenGone,
 }: TokensTabProps): ReactElement {
   /**
    * The creature list, for the three things this tab asks of it: the caption on each row,
@@ -350,6 +360,7 @@ export function TokensTab({
             // note on `boundTo` and the ⚠️ on the panel's own prop.
             bound={boundTo(selectedToken)}
             loading={roster.loading}
+            onRemoved={onTokenGone}
           />
         )}
       </div>

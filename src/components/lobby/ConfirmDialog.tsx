@@ -13,7 +13,24 @@ import {
 } from '@/components/ui/dialog'
 
 type ConfirmDialogProps = {
-  trigger: ReactNode
+  /**
+   * The thing that opens it. Optional, because a caller may open this from something
+   * that is not a button of its own — see the controlled pair below.
+   */
+  trigger?: ReactNode
+  /**
+   * Controlled open state, for a caller that has to open this from somewhere the
+   * trigger cannot live.
+   *
+   * ⚠️ **The board's right-click menu is the case, and it is a real constraint rather
+   * than a preference.** A Radix `DialogTrigger` rendered inside a `DropdownMenuItem`
+   * is unmounted by the menu closing on select, so the dialog it was going to open
+   * never appears. The menu therefore asks its parent to open a dialog mounted
+   * *beside* it. Both props or neither; passing one is a controlled component with no
+   * way to close.
+   */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   title: string
   description: string
   confirmLabel: string
@@ -32,6 +49,8 @@ type ConfirmDialogProps = {
 /** Second click for the lobby actions that are worth confirming. */
 export function ConfirmDialog({
   trigger,
+  open,
+  onOpenChange,
   title,
   description,
   confirmLabel,
@@ -40,11 +59,15 @@ export function ConfirmDialog({
   busy = false,
   onConfirm,
 }: ConfirmDialogProps) {
-  const [open, setOpen] = useState(false)
+  // Uncontrolled unless the caller supplies both halves, so the six existing callers
+  // that pass a trigger and nothing else are unchanged.
+  const [uncontrolled, setUncontrolled] = useState(false)
+  const isOpen = open ?? uncontrolled
+  const setOpen = onOpenChange ?? setUncontrolled
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
+    <Dialog open={isOpen} onOpenChange={setOpen}>
+      {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
