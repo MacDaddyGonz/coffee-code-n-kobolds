@@ -5,6 +5,7 @@ import { ModalImageViewer } from '@/components/ModalImageViewer'
 import { GameHeader } from '@/components/shell/GameHeader'
 import { MapPane } from '@/components/shell/MapPane'
 import { PaneResizer } from '@/components/shell/PaneResizer'
+import type { TabValue } from '@/components/shell/RightPane'
 import { RightPane } from '@/components/shell/RightPane'
 import type { Dm } from '@/hooks/useDm'
 import { usePaneWidth } from '@/hooks/usePaneWidth'
@@ -162,6 +163,64 @@ export function GameShell({
     setSelectedTokenId((current) => (current === tokenId ? null : current))
   }, [])
 
+  /**
+   * WHICH TAB THE RIGHT-HAND PANE IS SHOWING — the third piece of shell state, and it
+   * arrived the same way the selection did: because two panes needed to agree about it.
+   *
+   * ⚠️ **It was `useState` inside `RightPane`, and that is why the board's right-click
+   * menu had two entries that did nothing.** *Edit this coin* and *Open the sheet* name
+   * two panels under two different tabs; with the value held in the pane, `Board` could
+   * reach neither, so both selected a coin and left the reader exactly where they were.
+   * The two menu entries were literally the same function. Nothing caught it: the wiring
+   * compiles, no mutation is involved, and the symptom is a tab that stays put.
+   *
+   * The default is the **sheet** rather than the feed, because the feed is empty until the
+   * dice land and opening a game on an empty panel reads as a broken app.
+   *
+   * ⚠️ **And the sheet rather than the *table*, which is the improvement somebody will
+   * reasonably try to make.** A brand-new player has no character, so this opens on the
+   * Character tab's empty state — which looks like the wrong tab to have chosen and is the
+   * right one: that empty state is one click from the list, and the claim comes straight
+   * back to the sheet, so the whole route is *one* click away from what the reader wants.
+   * Defaulting to Table makes it two, and does it by putting every returning player — who
+   * has a character and came to look at it — on a roster they did not ask for.
+   *
+   * **What is deliberately not here is which tabs exist.** A DM who stands down loses two
+   * of the six, and `RightPane`'s `onStrip` still answers that against its own
+   * `DM_ONLY_TABS`. This holds an intention; the pane decides what is reachable. So a tab
+   * asked for that this caller does not have falls back exactly as it did before.
+   */
+  const [tab, setTab] = useState<TabValue>('sheet')
+
+  /**
+   * The two board gestures that mean *take me to a panel*, and the whole of what they add
+   * over `selectToken` is naming a tab.
+   *
+   * ⚠️ **Two functions rather than one with an argument**, because the call sites are two
+   * menu entries with two labels and the failure being fixed is precisely that they were
+   * one function. A `showToken(id, tab)` would compile with both call sites passing the
+   * same second argument, which is the bug in a shape that still type-checks.
+   *
+   * Both compose `selectToken` rather than repeating its body — clearing the direct
+   * character pick matters here for the same reason it matters there — and both stay
+   * `useCallback` on stable deps, so neither pane's memo notices them.
+   */
+  const editToken = useCallback(
+    (tokenId: Id<'tokens'>) => {
+      selectToken(tokenId)
+      setTab('tokens')
+    },
+    [selectToken],
+  )
+
+  const openTokenSheet = useCallback(
+    (tokenId: Id<'tokens'>) => {
+      selectToken(tokenId)
+      setTab('sheet')
+    },
+    [selectToken],
+  )
+
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       <GameHeader
@@ -187,6 +246,8 @@ export function GameShell({
           onSelectToken={selectToken}
           onClearSelection={clearSelection}
           onTokenGone={forgetToken}
+          onEditToken={editToken}
+          onOpenTokenSheet={openTokenSheet}
         />
 
         {/* ⚠️ A sibling of the map pane, never a child of it. `useBoardKeys` gates its
@@ -219,6 +280,8 @@ export function GameShell({
             dm={dm}
             playerId={playerId}
             characterId={characterId}
+            tab={tab}
+            onTabChange={setTab}
             selectedTokenId={selectedTokenId}
             selectedCharacterId={selectedCharacterId}
             onSelectToken={selectToken}

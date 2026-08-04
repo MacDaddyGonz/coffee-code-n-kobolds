@@ -54,9 +54,19 @@ export type BoardTokenMenuProps = {
   atX: number
   atY: number
   onClose: () => void
-  /** Select the coin and send the reader to the panel that edits it. */
+  /**
+   * Select the coin and send the reader to the panel that edits it.
+   *
+   * ⚠️ **These two were the same function, and both docblocks said this anyway.** The tab
+   * was `useState` inside `RightPane`, so nothing on the board could move it; `Board`
+   * passed one handler to both props, and it selected the coin and stopped. Two entries
+   * with two labels did one thing, and the thing neither of them did is the half these
+   * sentences describe. `GameShell` owns the tab now. Kept as two props rather than
+   * collapsed into one, because two menu items that mean two things is the fact — and a
+   * single prop is how they came to be one function in the first place.
+   */
   onEdit: (tokenId: Id<'tokens'>) => void
-  /** Select the coin and send the reader to the sheet behind it. */
+  /** Select the coin and send the reader to the sheet behind it. See the ⚠️ above. */
   onOpenSheet: (tokenId: Id<'tokens'>) => void
   /** Ask the board to open the duplicate dialog. See the ⚠️ below. */
   onDuplicate: (tokenId: Id<'tokens'>) => void
@@ -67,9 +77,17 @@ export type BoardTokenMenuProps = {
 /**
  * Right-click a coin.
  *
- * **A surface over five things that already work**, which is why it is the last thing this
+ * **A surface over five things that already work**, which is why it is the last thing that
  * milestone built: every entry here routes to a mutation or a panel that has its own tests
  * and its own copy. Nothing is decided in this file.
+ *
+ * ⚠️ **That was true of five of the six, and the sixth shipped broken for a whole
+ * milestone.** *Edit this coin* routed to a panel that exists, on a tab nothing here could
+ * reach — see the ⚠️ on `onEdit`. Worth leaving as a note on the sentence rather than
+ * quietly correcting it: *a surface over things that already work* is only a safe thing to
+ * say once somebody has checked that the surface can actually reach them, and the shape of
+ * bug it hides is invisible to every guard in this repo. Those prove what a server will not
+ * send; this was a client asking for nothing at all.
  *
  * ⚠️ **The label naming the coin is not decoration — it is what makes leaving the selection
  * alone possible.** Right-clicking deliberately does not select: hijacking the selection

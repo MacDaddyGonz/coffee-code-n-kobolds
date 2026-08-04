@@ -27,6 +27,13 @@ export type MapPaneProps = {
   onClearSelection: () => void
   /** A coin the DM has deleted from the board menu. See `GameShell.forgetToken`. */
   onTokenGone: (tokenId: Id<'tokens'>) => void
+  /**
+   * The board's two *take me to a panel* gestures. Stable like the rest — see the memo
+   * note below — and passed straight through, because which tab each one means is the
+   * shell's decision and this pane holds no tab.
+   */
+  onEditToken: (tokenId: Id<'tokens'>) => void
+  onOpenTokenSheet: (tokenId: Id<'tokens'>) => void
 }
 
 /**
@@ -82,6 +89,8 @@ export const MapPane = memo(function MapPane({
   onSelectToken,
   onClearSelection,
   onTokenGone,
+  onEditToken,
+  onOpenTokenSheet,
 }: MapPaneProps): ReactElement {
   const playing = game.status === 'playing' && game.activeSceneId !== null
 
@@ -118,6 +127,8 @@ export const MapPane = memo(function MapPane({
           onSelectToken={onSelectToken}
           onClearSelection={onClearSelection}
           onTokenGone={onTokenGone}
+          onEditToken={onEditToken}
+          onOpenTokenSheet={onOpenTokenSheet}
           className="min-h-0 flex-1"
         />
       ) : (

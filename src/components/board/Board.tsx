@@ -52,6 +52,20 @@ export type BoardProps = {
   /** A coin deleted from the board menu. See `GameShell.forgetToken`. */
   onTokenGone: (tokenId: Id<'tokens'>) => void
   /**
+   * The two board gestures that ask for a *panel* rather than a selection: the DM's
+   * *Edit this coin* and anybody's *Open the sheet*.
+   *
+   * ⚠️ **Named for what the reader asked for and not for the tab it lands on, which is
+   * the whole of why the bug these replace was possible.** Both entries used to route to
+   * one handler that selected the coin and stopped, because the tab was `useState` inside
+   * `RightPane` and no prop reached it — so two menu items promising two different panels
+   * were the same function, and the panel never changed. The shell owns the tab now and
+   * decides which one each of these means; the board says *what happened*, which is the
+   * only thing it can honestly know.
+   */
+  onEditToken: (tokenId: Id<'tokens'>) => void
+  onOpenTokenSheet: (tokenId: Id<'tokens'>) => void
+  /**
    * Merged over the base classes, which no longer include an edge of their own. The
    * board is the contents of a pane rather than a card floating on a page, so the
    * border and the corner belong to the shell that owns the pane — drawing one here
@@ -98,6 +112,8 @@ export function Board({
   onSelectToken,
   onClearSelection,
   onTokenGone,
+  onEditToken,
+  onOpenTokenSheet,
   className,
 }: BoardProps) {
   // The board's outer element, which is what "does the map have focus?" means for
@@ -401,15 +417,28 @@ export function Board({
     setDeleting(tokenId)
   }, [])
 
-  // Selecting the coin *and* leaving this pane is the point of both: the panels that edit
-  // a coin and open a sheet live in the other one, and the shell's selection is what tells
-  // them which coin is being talked about.
+  /**
+   * The two menu entries that leave this pane, each closing the menu on the way out.
+   *
+   * ⚠️ **Two handlers, and they were one.** The panels that edit a coin and open a sheet
+   * live in the other pane under two different tabs, so a single function could only ever
+   * satisfy one of the two entries — and satisfied neither, because selecting a coin does
+   * not move a tab. The shell is handed the gesture and picks the tab; all that is needed
+   * here is to stop pretending the two are the same act.
+   */
   const onMenuEdit = useCallback(
     (tokenId: Id<'tokens'>) => {
-      onSelectToken(tokenId)
+      onEditToken(tokenId)
       setMenu(null)
     },
-    [onSelectToken],
+    [onEditToken],
+  )
+  const onMenuOpenSheet = useCallback(
+    (tokenId: Id<'tokens'>) => {
+      onOpenTokenSheet(tokenId)
+      setMenu(null)
+    },
+    [onOpenTokenSheet],
   )
 
   // A click on the map closes both. It is the "I am done with this creature"
@@ -596,7 +625,7 @@ export function Board({
               atY={menu?.y ?? 0}
               onClose={closeMenu}
               onEdit={onMenuEdit}
-              onOpenSheet={onMenuEdit}
+              onOpenSheet={onMenuOpenSheet}
               onDuplicate={openDuplicate}
               onDelete={openDelete}
             />

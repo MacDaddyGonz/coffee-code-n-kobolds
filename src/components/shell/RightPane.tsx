@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { memo, useMemo, useState } from 'react'
+import { memo, useMemo } from 'react'
 import { useQuery } from 'convex/react'
 
 import { RollModeBar } from '@/components/feed/RollModeBar'
@@ -21,10 +21,19 @@ import { sheetFocusOf } from '@/lib/sheetFocus'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 
-// `'sheet'` is deliberately one value for two panels — see the ⚠️ on the component — and
-// `'tokens'` and `'dm'` are the two that exist only for a DM. Which of the six a player
-// never sees is not read off this union but off `DM_ONLY_TABS` below.
-type TabValue = 'feed' | 'sheet' | 'tokens' | 'table' | 'dm' | 'settings'
+/**
+ * `'sheet'` is deliberately one value for two panels — see the ⚠️ on the component — and
+ * `'tokens'` and `'dm'` are the two that exist only for a DM. Which of the six a player
+ * never sees is not read off this union but off `DM_ONLY_TABS` below.
+ *
+ * ⚠️ **Exported, because the tab is `GameShell`'s state now and not this pane's.** The
+ * board has two menu entries that mean *show me a panel*, and the whole reason they did
+ * nothing is that the tab was `useState` in here with no prop reaching it. Which tab each
+ * gesture lands on is a question about the shell's two panes, so the shell answers it —
+ * and this union is the vocabulary it answers in. Nothing under `src/components/board/`
+ * imports this: the board hands over the *gesture* and never names a tab.
+ */
+export type TabValue = 'feed' | 'sheet' | 'tokens' | 'table' | 'dm' | 'settings'
 
 /**
  * The tabs that are only on a DM's strip.
@@ -51,6 +60,26 @@ export type RightPaneProps = {
   playerId: Id<'players'>
   /** The character this seat is playing, or null. Not necessarily the one on screen. */
   characterId: Id<'characters'> | null
+  /**
+   * Which tab is showing, and the one way to change it.
+   *
+   * ⚠️ **Controlled from `GameShell` rather than held here, and the reason is a defect
+   * rather than a preference.** The board's right-click menu offers *Edit this coin* and
+   * *Open the sheet*, which are two different panels under two different tabs — and with
+   * the tab as local state in here, neither could be reached: both entries selected a coin
+   * and left the reader wherever they already were. State that two panes have to agree
+   * about belongs to the thing that owns both of them, beside the selection it already
+   * owns for exactly this reason.
+   *
+   * Stable by construction (`useCallback([])` on a `useState` setter), so the memo below
+   * still holds — see its note.
+   *
+   * **What stays here is which tabs *exist*.** `onStrip` and `DM_ONLY_TABS` are a fact
+   * about this strip and a DM standing down, and the shell is not the place to know it: a
+   * tab asked for that this caller does not have falls back exactly as it does today.
+   */
+  tab: TabValue
+  onTabChange: (next: TabValue) => void
   /**
    * The shell's selection and the four ways to change it. ⚠️ **Primitives and
    * stable callbacks, never a selection object** — this component is memoised
@@ -82,15 +111,22 @@ export type RightPaneProps = {
  * a trigger and a body written the same way as these; nothing else has to be remembered,
  * which is what stops a DM who stands down from being left looking at an empty pane.
  *
- * **Controlled rather than uncontrolled**, which costs one `useState` and buys the
- * two things that need it. The Character tab's empty state has a button that sends
- * the reader to the Table tab to pick a character up — a tab body steering the strip
- * above it — and a claim landing sends the reader back. Radix would happily hold this
- * state; the point is that something else needs to be able to set it.
+ * **Controlled rather than uncontrolled**, and the state is now one level up. It began
+ * as a `useState` here, for two readers that Radix could not serve: the Character tab's
+ * empty state has a button sending the reader to the Table tab to pick a character up —
+ * a tab body steering the strip above it — and a claim landing sends the reader back.
  *
- * (The rolls work predicted a third reader here and did not need one: the announcement
+ * ⚠️ **There is a third reader now, and it is in the *other pane*, which is what moved
+ * the state.** The board's right-click menu offers *Edit this coin* and *Open the sheet*,
+ * and with the value held here neither could work: nothing in `Board` could reach it, so
+ * both entries selected a coin and left the reader on whatever tab they were already on.
+ * That shipped. `GameShell` owns the value now, beside the selection it already owns for
+ * the same reason — two panes have to agree about it.
+ *
+ * (The rolls work predicted that third reader and guessed the wrong one: the announcement
  * plays over the *map*, precisely so that the person looking at their own sheet does not
- * have to be moved off it to learn their click landed.)
+ * have to be moved off it to learn their click landed. It was still right that a third
+ * would come.)
  *
  * ⚠️ **The second tab is split by role, and it is *instead of* rather than *as well
  * as*.** A player gets **Character** — their own sheet, and whatever they have been
@@ -156,6 +192,8 @@ export const RightPane = memo(function RightPane({
   dm,
   playerId,
   characterId,
+  tab,
+  onTabChange,
   selectedTokenId,
   selectedCharacterId,
   // ⚠️ **`onSelectToken` is read now, and the reader is the one this door was left open
@@ -176,20 +214,6 @@ export const RightPane = memo(function RightPane({
   onRenameSeat,
   onLeaveSeat,
 }: RightPaneProps): ReactElement {
-  // The sheet rather than the feed, because the feed is empty until the dice land and
-  // opening a game on an empty panel reads as a broken app.
-  //
-  // ⚠️ **And the sheet rather than the *table*, which is the improvement somebody will
-  // reasonably try to make.** A brand-new player has no character, so this opens on the
-  // Character tab's empty state — which looks like the wrong tab to have chosen and is
-  // the right one: that empty state is one click from the list (`onGoToTable`), and the
-  // claim comes straight back here (`onClaimed` below), so the whole route is *one* click
-  // away from the sheet the reader wants. Defaulting to Table makes it two, and does it
-  // by putting every returning player — who has a character and came to look at it — on a
-  // roster they did not ask for. The first-run case is not the common case, and it is
-  // already the shorter path.
-  const [tab, setTab] = useState<TabValue>('sheet')
-
   /**
    * The board's tokens. Two readers now, and they are the two shapes of question this
    * pane asks about a coin: *what is the selected one bound to*, which decides the focus
@@ -309,7 +333,7 @@ export const RightPane = memo(function RightPane({
           it taller than the pane instead of scrolling inside it. */}
       <Tabs
         value={active}
-        onValueChange={(next) => setTab(next as TabValue)}
+        onValueChange={(next) => onTabChange(next as TabValue)}
         className="min-h-0 flex-1 gap-0"
       >
         {/* `w-full` rather than the primitive's `w-fit`, so the strip is the top edge
@@ -399,7 +423,7 @@ export const RightPane = memo(function RightPane({
                 // playing a character yet" — and for nothing else.
                 characterId={characterId}
                 selectedTokenName={selectedToken?.name ?? null}
-                onGoToTable={() => setTab('table')}
+                onGoToTable={() => onTabChange('table')}
               />
             )}
           </TabPane>
@@ -468,7 +492,7 @@ export const RightPane = memo(function RightPane({
               // forbids — lands on their own panel rather than on a value with no trigger.
               // Branching on `dm.dmCode` would be a second answer to a question the shared
               // value already answers.
-              onClaimed={() => setTab('sheet')}
+              onClaimed={() => onTabChange('sheet')}
             />
           </TabPane>
         </TabsContent>
