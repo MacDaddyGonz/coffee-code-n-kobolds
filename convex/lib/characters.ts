@@ -39,10 +39,10 @@ import { MAX_CHARACTERS_PER_GAME } from './games'
 // belongs to lib/players.ts and the claim pointer with it, so the map that turns
 // seat → character back into character → seat is built there and imported here.
 import { holderByCharacter } from './players'
-// The one accessor that answers passive perception for either sheet variant. It lives in
-// lib/skills.ts rather than lib/sheet.ts because it needs values from both and only that
-// direction has no cycle — its own docblock carries the argument.
-import { passivePerceptionFor } from './skills'
+// The pair of published sheet numbers a coin carries, derived together. It lives in
+// lib/skills.ts rather than lib/sheet.ts because passive perception needs values from both
+// and only that direction has no cycle — its own docblock carries the argument.
+import { coinStatsOf } from './skills'
 import type { BestiarySheet, CharacterSheet, StoredSheet } from './sheet'
 // `resolveSheet` rather than `characterSheet`, and that one substitution is the
 // whole of what Milestone 4 changed in this file. Everything below still asks for a
@@ -1034,14 +1034,18 @@ export async function visibleVitals(
     // inside either arm: two copies of one expression is how a badge comes to mean
     // something different on a monster than on a hero.
     //
+    // ⚠️ **One call for the pair**, and it was two — `passivePerceptionFor` for one of them
+    // and a hand-written finite check for the other, which is one decision at two altitudes
+    // and re-implemented lib/sheet.ts's module-private `finiteOrNull`. `coinStatsOf` owns
+    // both, so *absent* means the same thing for both.
+    //
     // ⚠️ **Free.** `resolveSheet` ran at the top of this loop already, for the kind test
     // and for `maxHp`, so neither of these is a read — which is what made publishing them
     // a decision about secrecy rather than about cost. They are *sheet* facts on a
     // *vitals* channel that re-runs on every point of damage, which is the honest thing
     // to know: a hit re-pushes two constants. The alternative is a sixth subscription
     // that idles, and that is not worth a socket.
-    const armourClass = Number.isFinite(sheet.armourClass) ? sheet.armourClass : null
-    const passivePerception = passivePerceptionFor(sheet)
+    const stats = coinStatsOf(sheet)
 
     // The one branch that decides what leaves the server. Note that the exact
     // numbers are never even assembled on the losing side of it: the band is
@@ -1058,8 +1062,7 @@ export async function visibleVitals(
         kind: 'band',
         characterId: character._id,
         band: healthBand(current, sheet.maxHp),
-        armourClass,
-        passivePerception,
+        ...stats,
       })
     } else {
       const isPc = sheet.kind === 'pc'
@@ -1075,8 +1078,7 @@ export async function visibleVitals(
         // absent value means none have been spent, for the same reason a missing
         // row means undamaged.
         hitDiceRemaining: isPc ? hitDiceRemainingOf(vitals, sheet) : null,
-        armourClass,
-        passivePerception,
+        ...stats,
       })
     }
   }

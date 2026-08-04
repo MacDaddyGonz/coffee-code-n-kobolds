@@ -13,6 +13,7 @@
 import type { AbilityKey, AbilityScores, CharacterSheet } from './sheet'
 import {
   abilityModifier,
+  armourClassOf,
   passivePerceptionOf,
   proficiencyBonus,
   skillProficienciesOf,
@@ -141,4 +142,33 @@ export function passivePerception(
 export function passivePerceptionFor(sheet: CharacterSheet): number | null {
   if (sheet.kind !== 'pc') return passivePerceptionOf(sheet)
   return passivePerception(sheet.abilities, sheet.level, skillProficienciesOf(sheet))
+}
+
+/**
+ * THE TWO NUMBERS A COIN SAYS ABOUT ITSELF — armour class and passive perception, derived
+ * together because they are published together.
+ *
+ * ⚠️ **One function rather than two calls at the call site, and that is a correction.**
+ * `visibleVitals` reached for `passivePerceptionFor` for one of them and wrote
+ * `Number.isFinite(sheet.armourClass) ? … : null` inline for the other — two altitudes for
+ * one decision, and the inline half quietly re-implemented `finiteOrNull` because that
+ * helper is module-private to lib/sheet.ts. The pair is what
+ * [ADR 0014](../../docs/adr/0014-what-a-coin-says-about-itself.md) publishes, so the pair
+ * is what gets derived, and *absent* means the same thing for both by construction.
+ *
+ * Returns the exact shape both members of `publicVitalsValidator` carry, so the caller
+ * spreads it rather than naming the two fields twice.
+ *
+ * ⚠️ **This is the door a third published stat would come through, and it should not open
+ * quietly.** Adding one here is adding it to a payload whose union exists to discriminate
+ * *hit points* — the argument for the first two is that `resolveSheet` had already run so
+ * they cost no read, and that argument will be just as available for a third. The shape
+ * that survives a third is `{ characterId, vitals, stats }`, with the discriminator left
+ * single-purpose. Ship that before shipping the third stat, not after.
+ */
+export function coinStatsOf(sheet: CharacterSheet): {
+  armourClass: number | null
+  passivePerception: number | null
+} {
+  return { armourClass: armourClassOf(sheet), passivePerception: passivePerceptionFor(sheet) }
 }

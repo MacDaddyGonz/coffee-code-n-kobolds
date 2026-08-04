@@ -2,7 +2,9 @@ import { memo } from 'react'
 
 import { DiceBar } from '@/components/board/DiceBar'
 import { CalibrateToggle } from '@/components/board/dm/CalibrateToggle'
+import { BOARD_OVERLAY_SURFACE } from '@/components/board/overlay'
 import { RollModeBar } from '@/components/feed/RollModeBar'
+import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 
 export type BoardToolbarProps = {
@@ -60,25 +62,31 @@ export const BoardToolbar = memo(function BoardToolbar({
 }: BoardToolbarProps) {
   return (
     <div className={cn('pointer-events-none absolute', className)}>
-      <div className="bg-background/90 pointer-events-auto flex max-w-[min(46rem,calc(100%-1.5rem))] flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border p-1.5 shadow-sm backdrop-blur">
+      <div
+        className={cn(
+          BOARD_OVERLAY_SURFACE,
+          'pointer-events-auto flex max-w-[min(46rem,calc(100%-1.5rem))] flex-wrap items-center gap-x-2 gap-y-1 p-1.5',
+        )}
+      >
         <RollModeBar />
 
-        <span aria-hidden className="bg-border h-4 w-px" />
+        <Separator orientation="vertical" className="h-4" />
 
         <DiceBar />
 
-        {/* Last, and only for the DM. `CalibrateToggle` brings its own surface — it was a
-            standalone overlay before this bar existed and still is one everywhere else it
-            could be mounted — so it is given a transparent one here rather than being
-            rewritten to know whether it is inside a toolbar. */}
+        {/* Last, and only for the DM.
+
+            ⚠️ **`CalibrateToggle` used to draw its own surface and was handed four
+            utilities here to cancel it** — `border-none bg-transparent p-0 shadow-none
+            backdrop-blur-none`, on the reasoning that it was a standalone overlay elsewhere.
+            It is not: after this bar existed it had exactly one mount, and a negation that
+            goes stale when the toolbar's chrome changes is invisible. So it gave up its
+            wrapper, `BOARD_OVERLAY_SURFACE` names the surface once, and the bar owns it for
+            all three groups — the same correction `RollModeBar` took on the way here. */}
         {isDm ? (
           <>
-            <span aria-hidden className="bg-border h-4 w-px" />
-            <CalibrateToggle
-              active={calibrating}
-              onToggle={onToggleCalibrate}
-              className="border-none bg-transparent p-0 shadow-none backdrop-blur-none"
-            />
+            <Separator orientation="vertical" className="h-4" />
+            <CalibrateToggle active={calibrating} onToggle={onToggleCalibrate} />
           </>
         ) : null}
       </div>

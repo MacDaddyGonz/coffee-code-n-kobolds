@@ -118,8 +118,9 @@ function requireTokenAppearance(args: { name: string; sizeSquares: number; tint:
   // `lib/colour.ts` rather than a regex here, and the move is what the paragraph above
   // asks for one field over: a scene's background is the second colour a person picks in
   // this application, and the day it got its own copy of this pattern is the day the two
-  // could drift. Same sentence as before — the subject is the argument now.
-  const tintProblem = colourProblem(args.tint, 'colour for the token')
+  // could drift. The refusal *sentence* lives there too — this passes which thing it is
+  // asking about and nothing else, so the two call sites cannot word it differently.
+  const tintProblem = colourProblem(args.tint, 'token')
   if (tintProblem !== null) {
     throw new ConvexError({ kind: 'BadInput', message: tintProblem })
   }

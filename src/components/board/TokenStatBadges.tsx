@@ -1,7 +1,8 @@
 import type { ReactElement } from 'react'
-import { Circle, Group, Text } from 'react-konva'
+import { Group } from 'react-konva'
 
-import { PIP_DIAMETER, PIP_INK, PIP_STROKE } from '@/lib/markers'
+import { TokenPip } from '@/components/board/TokenPip'
+import { PIP_BADGE_FONT_SIZE, PIP_DIAMETER, PIP_STROKE } from '@/lib/markers'
 import type { PublicVitals } from '@convex/lib/characters'
 
 /**
@@ -30,23 +31,21 @@ const BADGE_Y = Math.sin(Math.PI / 6)
 const AC_FILL = '#b91c1c'
 /** Passive perception: blue, and distinguishable from every condition family. */
 const PP_FILL = '#1d4ed8'
-const BADGE_STROKE_INK = 'rgba(2, 6, 23, 0.85)'
-
-/**
- * The glyph size. Smaller than the condition pips' relative to the disc, because these
- * hold **two digits** where a pip holds one letter — an armour class of 22 has to fit
- * inside the same circle as a `P`.
- */
-const BADGE_FONT_SIZE = 8
 
 export type TokenStatBadgesProps = {
   /**
-   * The coin's vitals row, or null. **Both numbers ride here** — see the ⚠️ on
+   * The coin's vitals row. **Both numbers ride here** — see the ⚠️ on
    * `publicVitalsValidator`: they are on both variants of the union, so this component
    * needs no branch on `kind` and must not grow one. A band row and an exact row answer
    * this question identically, which is the whole point of publishing them.
+   *
+   * Non-nullable, because the caller gates on it: `TokenCoin` renders this only for
+   * `showDetail && token.vitals`, which is the same gate the health bar and the condition
+   * row have and exists for the same reason — during a wheel-zoom `scale` busts the coin's
+   * memo every frame, so an ungated component is two hundred mounts a frame to reach an
+   * early return.
    */
-  vitals: PublicVitals | null
+  vitals: PublicVitals
   /** The coin's radius in image space. Same contract as every other annotation. */
   radius: number
   /** The camera's scale, so screen-pixel sizes stay screen-pixel sizes. */
@@ -60,103 +59,56 @@ export type TokenStatBadgesProps = {
  * creature's armour class reached no player before ADR 0014; it does now, for every coin a
  * player can already see. What keeps that bounded is entirely server-side —
  * `visibleVitals` drops a creature the caller may not see before it builds a row at all, so
- * a GM-layer or fogged creature arrives as no `vitals` and this component draws nothing
- * because there was nothing to draw. **There is no `isDm` here and adding one would be a
- * bug rather than a feature**, exactly as `TokenHealthBar`'s docblock says of the band: a
- * renderer that could decide what to show would already have been handed the secret.
+ * a GM-layer or fogged creature arrives with no `vitals` and this component is never
+ * mounted. **There is no `isDm` here and adding one would be a bug rather than a feature**,
+ * exactly as `TokenHealthBar`'s docblock says of the band: a renderer that could decide what
+ * to show would already have been handed the secret.
  *
- * **Each badge is omitted when its number is `null`, and `null` is a real answer.** An
- * unbound coin has no vitals at all. A hand-built goblin whose DM never recorded a passive
- * perception has no blue circle — and drawing 10 there would be inventing a statistic the
- * table would then act on, which `passivePerceptionOf` refuses on the server for the same
- * reason.
+ * **Each badge is omitted when its number is `null`, and `null` is a real answer.** A
+ * hand-built goblin whose DM never recorded a passive perception has no blue circle — and
+ * drawing 10 there would be inventing a statistic the table would then act on, which
+ * `passivePerceptionOf` refuses on the server for the same reason.
  *
- * `listening={false}` throughout: these are annotations, and anything over the canvas that
- * eats a click is a token the DM cannot pick up.
+ * The disc is `TokenPip`, the same one the condition row draws, which is what makes the
+ * request that prompted all this — *the conditions should be bigger, like the AC example* —
+ * literally true rather than approximately: one constant sizes both.
  */
 export function TokenStatBadges({
   vitals,
   radius,
   scale,
 }: TokenStatBadgesProps): ReactElement | null {
-  if (vitals === null) return null
-
-  const { armourClass, passivePerception } = vitals
-  if (armourClass === null && passivePerception === null) return null
-
-  // The same disc as a condition pip, deliberately: the request that added these asked for
-  // the conditions to be *"bigger, like the AC example"*, so one constant is what makes
-  // that literally true rather than approximately. `PIP_DIAMETER` moving moves both.
-  const badgeRadius = PIP_DIAMETER / 2 / scale
+  // Every screen-pixel constant divided once, here, so the child does no arithmetic — the
+  // property that made `TokenPip` worth sharing rather than copying.
+  const pipRadius = PIP_DIAMETER / 2 / scale
+  const stroke = PIP_STROKE / scale
+  const fontSize = PIP_BADGE_FONT_SIZE / scale
   const x = -radius * BADGE_X
   const y = radius * BADGE_Y
 
-  return (
-    <>
-      {armourClass === null ? null : (
-        <Badge x={x} y={-y} fill={AC_FILL} value={armourClass} r={badgeRadius} s={scale} />
-      )}
-      {passivePerception === null ? null : (
-        <Badge x={x} y={y} fill={PP_FILL} value={passivePerception} r={badgeRadius} s={scale} />
-      )}
-    </>
-  )
-}
+  // An array rather than two near-identical conditionals: a third badge would otherwise be
+  // a third copy of the same call, and the `null` filter is what the two ternaries were.
+  const badges = [
+    { key: 'ac', fill: AC_FILL, value: vitals.armourClass, y: -y },
+    { key: 'pp', fill: PP_FILL, value: vitals.passivePerception, y },
+  ].filter((badge) => badge.value !== null)
 
-/**
- * One filled disc with a number in it.
- *
- * A local component rather than the markup twice: the two differ by a colour, a number and
- * a sign on `y`, and three of the six props on the `Text` below are the fiddly centring
- * that a second copy gets subtly wrong. `TokenMarkerPips` makes the same call for the same
- * reason.
- */
-function Badge({
-  x,
-  y,
-  fill,
-  value,
-  r,
-  s,
-}: {
-  x: number
-  y: number
-  fill: string
-  value: number
-  r: number
-  s: number
-}) {
-  const fontSize = BADGE_FONT_SIZE / s
+  if (badges.length === 0) return null
 
   return (
-    <Group x={x} y={y} listening={false}>
-      <Circle
-        radius={r}
-        fill={fill}
-        stroke={BADGE_STROKE_INK}
-        strokeWidth={PIP_STROKE / s}
-        perfectDrawEnabled={false}
-      />
-      {/*
-        Centred by giving the text a box the width of the disc and letting Konva place the
-        line inside it — the arrangement `TokenMarkerPips` uses, and the reason it is worth
-        stating is that the vertical half is not symmetric with the horizontal: `y` is the
-        text's *top*, so it is offset by half the line height rather than by half the box.
-        `fontSize * 0.5` is that half for the default line height of 1.
-      */}
-      <Text
-        text={String(value)}
-        x={-r}
-        y={-fontSize * 0.5}
-        width={r * 2}
-        align="center"
-        fontSize={fontSize}
-        fontStyle="bold"
-        fill={PIP_INK}
-        wrap="none"
-        listening={false}
-        perfectDrawEnabled={false}
-      />
+    <Group listening={false}>
+      {badges.map((badge) => (
+        <TokenPip
+          key={badge.key}
+          x={x}
+          y={badge.y}
+          radius={pipRadius}
+          stroke={stroke}
+          fontSize={fontSize}
+          fill={badge.fill}
+          glyph={String(badge.value)}
+        />
+      ))}
     </Group>
   )
 }

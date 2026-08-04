@@ -329,188 +329,188 @@ export const RightPane = memo(function RightPane({
        aside *and* a flex column of its own, so without it the tab bodies push it taller than
        the pane instead of scrolling inside it. */
     <Tabs
-      value={active}
-      onValueChange={(next) => onTabChange(next as TabValue)}
-      className="min-h-0 flex-1 gap-0"
-    >
-        {/* `w-full` rather than the primitive's `w-fit`, so the strip is the top edge
-            of the pane and not a pill floating in it — and `shrink-0`, because a strip
-            that gave up height to a long tab body would be the first thing to vanish. */}
-        <TabsList className="w-full shrink-0 rounded-none border-b">
-          <TabsTrigger value="feed">Feed</TabsTrigger>
-          {/* One trigger, two names. See the ⚠️ above: the value is shared so that the
-              force-mounted body below stays one panel, and the label is the only thing
-              that says which of the two people at this table is reading it. */}
-          <TabsTrigger value="sheet">{dm.dmCode !== null ? 'Sheets' : 'Character'}</TabsTrigger>
-          {/* **Beside Sheets, and that placement is the point rather than an accident.** The
-              two are the same list read from opposite ends — Sheets reaches every creature and
-              asks which coin it stands on, this reaches every coin and asks which creature it
-              stands for — so a DM who cannot find something in one looks in the other. Sitting
-              them next to each other is what makes that the obvious move. Through `onStrip`
-              for the same reason *DM tools* is: a trigger that is not rendered is not a
-              permission either way, and every call behind it re-verifies the code
-              server-side. */}
-          {onStrip('tokens') ? <TabsTrigger value="tokens">Tokens</TabsTrigger> : null}
-          <TabsTrigger value="table">Table</TabsTrigger>
-          {onStrip('dm') ? <TabsTrigger value="dm">DM tools</TabsTrigger> : null}
-          <TabsTrigger value="settings">Settings</TabsTrigger>
-        </TabsList>
+    value={active}
+    onValueChange={(next) => onTabChange(next as TabValue)}
+    className="min-h-0 flex-1 gap-0"
+  >
+      {/* `w-full` rather than the primitive's `w-fit`, so the strip is the top edge
+          of the pane and not a pill floating in it — and `shrink-0`, because a strip
+          that gave up height to a long tab body would be the first thing to vanish. */}
+      <TabsList className="w-full shrink-0 rounded-none border-b">
+        <TabsTrigger value="feed">Feed</TabsTrigger>
+        {/* One trigger, two names. See the ⚠️ above: the value is shared so that the
+            force-mounted body below stays one panel, and the label is the only thing
+            that says which of the two people at this table is reading it. */}
+        <TabsTrigger value="sheet">{dm.dmCode !== null ? 'Sheets' : 'Character'}</TabsTrigger>
+        {/* **Beside Sheets, and that placement is the point rather than an accident.** The
+            two are the same list read from opposite ends — Sheets reaches every creature and
+            asks which coin it stands on, this reaches every coin and asks which creature it
+            stands for — so a DM who cannot find something in one looks in the other. Sitting
+            them next to each other is what makes that the obvious move. Through `onStrip`
+            for the same reason *DM tools* is: a trigger that is not rendered is not a
+            permission either way, and every call behind it re-verifies the code
+            server-side. */}
+        {onStrip('tokens') ? <TabsTrigger value="tokens">Tokens</TabsTrigger> : null}
+        <TabsTrigger value="table">Table</TabsTrigger>
+        {onStrip('dm') ? <TabsTrigger value="dm">DM tools</TabsTrigger> : null}
+        <TabsTrigger value="settings">Settings</TabsTrigger>
+      </TabsList>
 
-        {/* Every `TabsContent` below is `min-h-0` and block-level, and every body is
-            wrapped in a `TabPane`. Both halves of that are explained above. */}
-        {/* ⚠️ **`RollModeBar` was here, above the bodies, and has moved onto the map.** The
-            reason it sat above the six tabs rather than inside the two that send rolls is
-            that the mode is *sticky* — somebody sets advantage, glances at the Table, comes
-            back an hour later and rolls with a modifier they can no longer see they chose —
-            so it had to be visible from wherever the reader was. On the board it is visible
-            from wherever the reader is *and* from where their eyes already are, which is the
-            same argument arriving at a better answer. `BoardToolbar` carries it now, and the
-            height it gives up here goes to the feed. */}
+      {/* Every `TabsContent` below is `min-h-0` and block-level, and every body is
+          wrapped in a `TabPane`. Both halves of that are explained above. */}
+      {/* ⚠️ **`RollModeBar` was here, above the bodies, and has moved onto the map.** The
+          reason it sat above the six tabs rather than inside the two that send rolls is
+          that the mode is *sticky* — somebody sets advantage, glances at the Table, comes
+          back an hour later and rolls with a modifier they can no longer see they chose —
+          so it had to be visible from wherever the reader was. On the board it is visible
+          from wherever the reader is *and* from where their eyes already are, which is the
+          same argument arriving at a better answer. `BoardToolbar` carries it now, and the
+          height it gives up here goes to the feed. */}
 
-        <TabsContent value="feed" className="min-h-0">
-          <TabPane>
-            <FeedTab code={code} dm={dm} />
-          </TabPane>
-        </TabsContent>
+      <TabsContent value="feed" className="min-h-0">
+        <TabPane>
+          <FeedTab code={code} dm={dm} />
+        </TabPane>
+      </TabsContent>
 
-        {/* `data-[state=inactive]:hidden` is what actually takes this off screen —
-            `forceMount` only keeps it mounted. See the note above. */}
-        <TabsContent
-          value="sheet"
-          forceMount
-          className="min-h-0 data-[state=inactive]:hidden"
-        >
-          <TabPane>
-            {/* ⚠️ **Whose sheet the roll buttons aim at is *not* decided here, and it used
-                to be.** `RollTargetProvider` sat around both panels below, taking
-                `focus.kind === 'character' ? focus.characterId : null` — a narrowing each of
-                those panels performs anyway, to decide whether to render a sheet at all, and
-                then hands to `CharacterSheetView` as a prop. That component is the sole
-                ancestor of every `RollButton` in the application, so the provider belongs
-                there and now lives there; this pane is back to knowing only which sheet is on
-                screen, which `sheetFocusOf` above answers once for both roles. */}
-            {/* The role split, and the only branch it costs. `SheetFocus` is computed
-                once above and handed to whichever of the two is mounted, so the two
-                panels cannot come to disagree about whose sheet is on screen — which
-                is the whole reason `sheetFocusOf` is a function rather than three
-                expressions (see its ⚠️ on the four readers).
+      {/* `data-[state=inactive]:hidden` is what actually takes this off screen —
+          `forceMount` only keeps it mounted. See the note above. */}
+      <TabsContent
+        value="sheet"
+        forceMount
+        className="min-h-0 data-[state=inactive]:hidden"
+      >
+        <TabPane>
+          {/* ⚠️ **Whose sheet the roll buttons aim at is *not* decided here, and it used
+              to be.** `RollTargetProvider` sat around both panels below, taking
+              `focus.kind === 'character' ? focus.characterId : null` — a narrowing each of
+              those panels performs anyway, to decide whether to render a sheet at all, and
+              then hands to `CharacterSheetView` as a prop. That component is the sole
+              ancestor of every `RollButton` in the application, so the provider belongs
+              there and now lives there; this pane is back to knowing only which sheet is on
+              screen, which `sheetFocusOf` above answers once for both roles. */}
+          {/* The role split, and the only branch it costs. `SheetFocus` is computed
+              once above and handed to whichever of the two is mounted, so the two
+              panels cannot come to disagree about whose sheet is on screen — which
+              is the whole reason `sheetFocusOf` is a function rather than three
+              expressions (see its ⚠️ on the four readers).
 
-                Narrowed on the code rather than on a boolean so the DM's panel takes
-                the value its queries need. Rendering it is a display decision and not
-                a permission: every call inside re-verifies the code server-side
-                (invariant 7). */}
-            {dm.dmCode !== null ? (
-              <SheetsTab
-                code={code}
-                dmCode={dm.dmCode}
-                focus={focus}
-                tokens={tokens}
-                selectedToken={selectedToken}
-                onSelectCharacter={onSelectCharacter}
-                onClearSelection={onClearSelection}
-              />
-            ) : (
-              <SheetTab
-                code={code}
-                playerId={playerId}
-                focus={focus}
-                // The seat's *own* character, which is not necessarily the one on
-                // screen: `focus` may be pointing at a creature the DM has granted
-                // them. This is only for the empty state's copy — "you are not
-                // playing a character yet" — and for nothing else.
-                characterId={characterId}
-                selectedTokenName={selectedToken?.name ?? null}
-                onGoToTable={() => onTabChange('table')}
-              />
-            )}
-          </TabPane>
-        </TabsContent>
-
-        {/* Through `onStrip`, exactly as *DM tools* below is, so the Set is what decides which
-            tabs are the DM's in all three places. The `&& dm.dmCode !== null` beside it is the
-            *compiler's* rather than the decision's: it is what hands the panel a `string`
-            instead of a `string | null`, and it is the same condition by construction.
-
-            Not force-mounted, unlike the sheet above: the appearance form inside holds a
-            draft, but it is one field per coin rather than a whole sheet, and the panel is
-            deliberately remounted per selection anyway — so keeping it alive across a glance
-            at the feed would preserve a draft the next click was going to discard. */}
-        {onStrip('tokens') && dm.dmCode !== null ? (
-          <TabsContent value="tokens" className="min-h-0">
-            <TabPane>
-              <TokensTab
-                code={code}
-                dmCode={dm.dmCode}
-                // ⚠️ **The pane's own array, not a second subscription** — as the state it
-                // represents, so that *never asked* and *not arrived* are two values rather
-                // than one `undefined` and a second reading of `game.status`. `board.tokens`
-                // resolves a signed storage URL per token server-side, and `{ code, dmCode:
-                // undefined }` beside `{ code }` would be a second cache entry for the same
-                // rows — the note on the query above is the long version. Handing an object
-                // across this boundary is free because it is built *inside* the memo: what
-                // must stay primitive is what crosses into this component from `GameShell`,
-                // not what leaves it for a child.
-                tokenList={tokenList}
-                selectedToken={selectedToken}
-                // The map's own gesture, threaded through at last — see the note at the
-                // destructuring above. A row in this list is a coin, so picking one writes a
-                // token id and clears the direct character pick, which is what makes this tab,
-                // the board and the sheet panel agree about what is being talked about.
-                onSelectToken={onSelectToken}
-                // And the way out. A deleted coin is the one case where the shell's id has
-                // to be dropped rather than left to resolve against the live board — see
-                // `GameShell.forgetToken`.
-                onTokenGone={onTokenGone}
-              />
-            </TabPane>
-          </TabsContent>
-        ) : null}
-
-        <TabsContent value="table" className="min-h-0">
-          <TabPane>
-            <TableTab
+              Narrowed on the code rather than on a boolean so the DM's panel takes
+              the value its queries need. Rendering it is a display decision and not
+              a permission: every call inside re-verifies the code server-side
+              (invariant 7). */}
+          {dm.dmCode !== null ? (
+            <SheetsTab
+              code={code}
+              dmCode={dm.dmCode}
+              focus={focus}
+              tokens={tokens}
+              selectedToken={selectedToken}
+              onSelectCharacter={onSelectCharacter}
+              onClearSelection={onClearSelection}
+            />
+          ) : (
+            <SheetTab
               code={code}
               playerId={playerId}
-              dm={dm}
-              onRenameSeat={onRenameSeat}
-              onLeaveSeat={onLeaveSeat}
-              // The other half of the route the empty state above starts, and **the second
-              // reason this tab strip is controlled state**: the docblock's own words are
-              // that "Radix would happily hold this state; the point is that something else
-              // needs to be able to set it". `onGoToTable` was the first thing that needed
-              // to; a claim landing is the return leg, and it closes the loop rather than
-              // opening a new one. A new player picks up a character and is put in front of
-              // the two dropdowns that finish it, instead of being left on a list whose job
-              // is done.
-              //
-              // Unbranched, and the shared tab value is why that is fine: `'sheet'` is the
-              // DM's Sheets tab as well as a player's Character tab, so a DM who picks up a
-              // character from here — something the model says they do not do, and nothing
-              // forbids — lands on their own panel rather than on a value with no trigger.
-              // Branching on `dm.dmCode` would be a second answer to a question the shared
-              // value already answers.
-              onClaimed={() => onTabChange('sheet')}
+              focus={focus}
+              // The seat's *own* character, which is not necessarily the one on
+              // screen: `focus` may be pointing at a creature the DM has granted
+              // them. This is only for the empty state's copy — "you are not
+              // playing a character yet" — and for nothing else.
+              characterId={characterId}
+              selectedTokenName={selectedToken?.name ?? null}
+              onGoToTable={() => onTabChange('table')}
+            />
+          )}
+        </TabPane>
+      </TabsContent>
+
+      {/* Through `onStrip`, exactly as *DM tools* below is, so the Set is what decides which
+          tabs are the DM's in all three places. The `&& dm.dmCode !== null` beside it is the
+          *compiler's* rather than the decision's: it is what hands the panel a `string`
+          instead of a `string | null`, and it is the same condition by construction.
+
+          Not force-mounted, unlike the sheet above: the appearance form inside holds a
+          draft, but it is one field per coin rather than a whole sheet, and the panel is
+          deliberately remounted per selection anyway — so keeping it alive across a glance
+          at the feed would preserve a draft the next click was going to discard. */}
+      {onStrip('tokens') && dm.dmCode !== null ? (
+        <TabsContent value="tokens" className="min-h-0">
+          <TabPane>
+            <TokensTab
+              code={code}
+              dmCode={dm.dmCode}
+              // ⚠️ **The pane's own array, not a second subscription** — as the state it
+              // represents, so that *never asked* and *not arrived* are two values rather
+              // than one `undefined` and a second reading of `game.status`. `board.tokens`
+              // resolves a signed storage URL per token server-side, and `{ code, dmCode:
+              // undefined }` beside `{ code }` would be a second cache entry for the same
+              // rows — the note on the query above is the long version. Handing an object
+              // across this boundary is free because it is built *inside* the memo: what
+              // must stay primitive is what crosses into this component from `GameShell`,
+              // not what leaves it for a child.
+              tokenList={tokenList}
+              selectedToken={selectedToken}
+              // The map's own gesture, threaded through at last — see the note at the
+              // destructuring above. A row in this list is a coin, so picking one writes a
+              // token id and clears the direct character pick, which is what makes this tab,
+              // the board and the sheet panel agree about what is being talked about.
+              onSelectToken={onSelectToken}
+              // And the way out. A deleted coin is the one case where the shell's id has
+              // to be dropped rather than left to resolve against the live board — see
+              // `GameShell.forgetToken`.
+              onTokenGone={onTokenGone}
             />
           </TabPane>
         </TabsContent>
+      ) : null}
 
-        {/* Through `onStrip` for the decision and `dm.dmCode !== null` for the type, exactly
-            as the Tokens body above — see the note there. A trigger that is not rendered is
-            not a permission either way: invariant 7 is settled server-side on every call
-            inside. */}
-        {onStrip('dm') && dm.dmCode !== null ? (
-          <TabsContent value="dm" className="min-h-0">
-            <TabPane>
-              <DmToolsTab code={code} dmCode={dm.dmCode} game={game} />
-            </TabPane>
-          </TabsContent>
-        ) : null}
+      <TabsContent value="table" className="min-h-0">
+        <TabPane>
+          <TableTab
+            code={code}
+            playerId={playerId}
+            dm={dm}
+            onRenameSeat={onRenameSeat}
+            onLeaveSeat={onLeaveSeat}
+            // The other half of the route the empty state above starts, and **the second
+            // reason this tab strip is controlled state**: the docblock's own words are
+            // that "Radix would happily hold this state; the point is that something else
+            // needs to be able to set it". `onGoToTable` was the first thing that needed
+            // to; a claim landing is the return leg, and it closes the loop rather than
+            // opening a new one. A new player picks up a character and is put in front of
+            // the two dropdowns that finish it, instead of being left on a list whose job
+            // is done.
+            //
+            // Unbranched, and the shared tab value is why that is fine: `'sheet'` is the
+            // DM's Sheets tab as well as a player's Character tab, so a DM who picks up a
+            // character from here — something the model says they do not do, and nothing
+            // forbids — lands on their own panel rather than on a value with no trigger.
+            // Branching on `dm.dmCode` would be a second answer to a question the shared
+            // value already answers.
+            onClaimed={() => onTabChange('sheet')}
+          />
+        </TabPane>
+      </TabsContent>
 
-        <TabsContent value="settings" className="min-h-0">
+      {/* Through `onStrip` for the decision and `dm.dmCode !== null` for the type, exactly
+          as the Tokens body above — see the note there. A trigger that is not rendered is
+          not a permission either way: invariant 7 is settled server-side on every call
+          inside. */}
+      {onStrip('dm') && dm.dmCode !== null ? (
+        <TabsContent value="dm" className="min-h-0">
           <TabPane>
-            <SettingsTab code={code} dm={dm} />
+            <DmToolsTab code={code} dmCode={dm.dmCode} game={game} />
           </TabPane>
         </TabsContent>
+      ) : null}
+
+      <TabsContent value="settings" className="min-h-0">
+        <TabPane>
+          <SettingsTab code={code} dm={dm} />
+        </TabPane>
+      </TabsContent>
     </Tabs>
   )
 })

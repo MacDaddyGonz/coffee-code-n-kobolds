@@ -220,20 +220,6 @@ export function TokensTab({
   const roster = useCharactersByGroup(code, dmCode)
 
   /**
-   * The map on the table, for the add dialog — which needs a scene because a new coin has
-   * to land on one.
-   *
-   * ⚠️ **`{ code }` and nothing else, which is the whole cost of this subscription.**
-   * `useQuery` keys its memo on the serialised arguments, so this is byte-identical to the
-   * entry `useBoard` and `MapSetupPanel` already hold: one cache entry, one socket, one
-   * server-side execution, and this is a third reader of it rather than a second
-   * subscription. That is what made moving the button here free — the alternative, passing
-   * the scene down from `RightPane`, would have put a board fact into the props of a pane
-   * memoised against a divider that moves sixty times a second.
-   */
-  const scene = useQuery(api.scenes.active, { code })
-
-  /**
    * Which of these coins the party has lost sight of, for the badge on the row.
    *
    * ⚠️ **The ⚠️ above says this tab is not told where a coin stands, and this does not
@@ -305,49 +291,12 @@ export function TokensTab({
         looked here first and found a sentence pointing three clicks away. Nothing was
         re-implemented — both components moved whole.
 
-        `shrink-0` for the header's reason: this is the answer to "how do I add one", and a
-        long list must not be able to squeeze it off the top.
+        A local component for `NewTokenLayer`'s reason, one function down: this is a third
+        region owning a subscription of its own, and inline it was a `useQuery` at the top of
+        the file, a three-way branch two hundred lines below it, and a *second* test of
+        `scene === null` for the sentence underneath.
       */}
-      <div className="flex shrink-0 flex-col gap-2 border-b p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-muted-foreground text-xs">
-            A coin belongs to the game rather than to a map, so one villain can stand on several.
-          </p>
-          {/* ⚠️ **Three states here rather than a nullable prop on the dialog**, which is
-              what keeps `TokenAddDialog` unchanged: it needs a scene for the middle square a
-              coin lands on and for its own title, and threading a null through it would put
-              four guards inside a component that has a scene in every case it can actually
-              run. *Waiting* and *there is no map* are the caller's to tell apart anyway —
-              printing "add a map first" for a frame while the answer is in flight is the
-              same mistake `TokenPlacementControl` refuses next door. */}
-          {scene === undefined ? (
-            <Skeleton className="h-8 w-28" />
-          ) : scene === null ? (
-            <Button size="sm" variant="outline" disabled>
-              Add a token
-            </Button>
-          ) : (
-            <TokenAddDialog code={code} dmCode={dmCode} scene={scene} />
-          )}
-        </div>
-
-        {scene === null ? (
-          <p className="text-muted-foreground text-xs">
-            No map on the table, and a coin has to land on one. Put one there under{' '}
-            <span className="font-medium">DM tools → Map setup</span> and this button wakes up.
-          </p>
-        ) : null}
-
-        <div className="flex flex-col gap-2">
-          <Label>New tokens land on</Label>
-          {/* The add dialog's own picker, so the layers a DM may create on are described in
-              the same three sentences wherever the question is asked — and both read the one
-              `useBoardLayers` cell, so this and the copy inside the dialog are one setting
-              shown twice rather than two to keep in step. Never disabled: nothing here writes
-              to the server, so there is never a call in flight to wait out. */}
-          <NewTokenLayer code={code} />
-        </div>
-      </div>
+      <AddCoin code={code} dmCode={dmCode} />
 
       {/* The bounded region, and the four utilities are the whole of the vertical argument —
           the same four the Sheets tab's selector carries, for the reasons written out at
@@ -447,6 +396,74 @@ export function TokensTab({
         )}
       </div>
     </>
+  )
+}
+
+/**
+ * ADDING A COIN — the button, the three states of the map it needs, and the layer picker.
+ *
+ * ⚠️ **`{ code }` and nothing else, which is the whole cost of this subscription.**
+ * `useQuery` keys its memo on the serialised arguments, so this is byte-identical to the
+ * entry `useBoard` and `MapSetupPanel` already hold: one cache entry, one socket, one
+ * server-side execution, and this is one more reader of it rather than a second
+ * subscription. That is what made moving the button here free — the alternative, passing the
+ * scene down from `RightPane`, would have put a board fact into the props of a pane memoised
+ * against a divider that moves sixty times a second.
+ *
+ * ⚠️ **Three states rather than a nullable prop on the dialog**, which is what keeps
+ * `TokenAddDialog` unchanged: it needs a scene for the middle square a coin lands on and for
+ * its own title, and threading a null through it would put four guards inside a component
+ * that has a scene in every case it can actually run. *Waiting* and *there is no map* are
+ * this caller's to tell apart anyway — printing "add a map first" for a frame while the
+ * answer is in flight is the same mistake `TokenPlacementControl` refuses next door.
+ *
+ * **One branch decides the control and the sentence together.** They were two tests of
+ * `scene === null` at different depths, which is one fact asked twice and the shape where a
+ * button and the note under it come to describe different states.
+ *
+ * `shrink-0` for the header's reason: this is the answer to *how do I add one*, and a long
+ * list must not be able to squeeze it off the top.
+ */
+function AddCoin({ code, dmCode }: { code: string; dmCode: string }) {
+  const scene = useQuery(api.scenes.active, { code })
+
+  const [control, note] =
+    scene === undefined
+      ? ([<Skeleton key="loading" className="h-8 w-28" />, null] as const)
+      : scene === null
+        ? ([
+            <Button key="none" size="sm" variant="outline" disabled>
+              Add a token
+            </Button>,
+            <>
+              No map on the table, and a coin has to land on one. Put one there under{' '}
+              <span className="font-medium">DM tools → Map setup</span> and this button wakes
+              up.
+            </>,
+          ] as const)
+        : ([<TokenAddDialog key="add" code={code} dmCode={dmCode} scene={scene} />, null] as const)
+
+  return (
+    <div className="flex shrink-0 flex-col gap-2 border-b p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-muted-foreground text-xs">
+          A coin belongs to the game rather than to a map, so one villain can stand on several.
+        </p>
+        {control}
+      </div>
+
+      {note === null ? null : <p className="text-muted-foreground text-xs">{note}</p>}
+
+      <div className="flex flex-col gap-2">
+        <Label>New tokens land on</Label>
+        {/* The add dialog's own picker, so the layers a DM may create on are described in the
+            same three sentences wherever the question is asked — and both read the one
+            `useBoardLayers` cell, so this and the copy inside the dialog are one setting shown
+            twice rather than two to keep in step. Never disabled: nothing here writes to the
+            server, so there is never a call in flight to wait out. */}
+        <NewTokenLayer code={code} />
+      </div>
+    </div>
   )
 }
 

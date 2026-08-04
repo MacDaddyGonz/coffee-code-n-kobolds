@@ -3,12 +3,10 @@ import { Grid3x3Icon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
 
 export type CalibrateToggleProps = {
   active: boolean
   onToggle: () => void
-  className?: string
 }
 
 /**
@@ -31,34 +29,26 @@ export type CalibrateToggleProps = {
 export const CalibrateToggle = memo(function CalibrateToggle({
   active,
   onToggle,
-  className,
 }: CalibrateToggleProps) {
   return (
-    <div
-      className={cn(
-        'bg-background/90 flex items-center gap-1 rounded-lg border p-1 shadow-sm backdrop-blur',
-        className,
-      )}
-    >
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant={active ? 'default' : 'ghost'}
-            size="icon-sm"
-            aria-label="Calibrate the grid on the map"
-            aria-pressed={active}
-            onClick={onToggle}
-          >
-            <Grid3x3Icon aria-hidden />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>
-          {active
-            ? 'Done calibrating (Esc). Tokens are locked while this is on.'
-            : 'Drag a four-square box onto the map to line the grid up'}
-        </TooltipContent>
-      </Tooltip>
-    </div>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant={active ? 'default' : 'ghost'}
+          size="icon-sm"
+          aria-label="Calibrate the grid on the map"
+          aria-pressed={active}
+          onClick={onToggle}
+        >
+          <Grid3x3Icon aria-hidden />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {active
+          ? 'Done calibrating (Esc). Tokens are locked while this is on.'
+          : 'Drag a four-square box onto the map to line the grid up'}
+      </TooltipContent>
+    </Tooltip>
   )
 })

@@ -23,6 +23,7 @@ import {
   MIN_MAX_HP,
   MIN_PASSIVE_PERCEPTION,
   MIN_SAVE_DC,
+  ROLL_FACES,
   bestiarySheetValidator,
   clampHp,
   isValidRoll,
@@ -1023,7 +1024,19 @@ describe('the bounds are a tripwire rather than a repair', () => {
 // 5. scaleRoll — the exhaustive sweep
 // ---------------------------------------------------------------------------
 
-const FACES = [4, 6, 8, 10, 12, 20, 100] as const
+/**
+ * ⚠️ **`ROLL_FACES` rather than a hand-written list, and the hand-written one had already
+ * gone stale inside the commit that widened the grammar.** This sweep exists to prove
+ * `scaleRoll` can never emit a string `isValidRoll` refuses — so a face the grammar admits
+ * and this array omits is a hole in exactly the guard, silently. `d2` was that face for one
+ * commit. The count beside it never had the problem, because every reader of the cap reads
+ * `MAX_ROLL_DICE`.
+ *
+ * This is the one place in this file that imports the thing it is testing against, and it
+ * is the right call here: the claim is *the scaler agrees with the grammar*, which a second
+ * copy of the grammar cannot check.
+ */
+const FACES = ROLL_FACES
 const MODS = [-99, -1, 0, 1, 2, 99] as const
 
 /** The canonical spelling: no `+0` suffix, because no stat block has ever had one. */

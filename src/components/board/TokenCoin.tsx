@@ -376,8 +376,15 @@ export const TokenCoin = memo(function TokenCoin({
 
         Behind `showDetail` with everything else, so a zoom-out drops the coin's annotations
         together. The disc is the size of a condition pip on purpose — see the component.
+
+        ⚠️ **Gated on `token.vitals` as well as `showDetail`, which is the health bar's gate
+        and the pips' gate for the reason written out on theirs.** `scale` is a prop, so a
+        wheel-zoom busts this memo every frame; without the second test every scenery coin
+        and every unbound coin on the board would mount this component sixty times a second
+        to reach an early return. It renders nothing either way — the gate is about not
+        asking. `token.vitals` is read three elements up, so it costs nothing.
       */}
-      {showDetail ? (
+      {showDetail && token.vitals ? (
         <TokenStatBadges vitals={token.vitals} radius={radius} scale={scale} />
       ) : null}
 

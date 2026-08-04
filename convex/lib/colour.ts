@@ -30,18 +30,36 @@
  * Six digits rather than also accepting the three-digit shorthand: `<input type="color">`
  * emits the long form, so the short one would be a spelling nothing in this application
  * produces and every reader would then have to normalise before comparing two colours.
+ *
+ * Module-private, deliberately. `colourProblem` below is the whole interface — a caller
+ * with the pattern in hand is a caller that can write its own refusal message, and the
+ * message is the half that has to stay in one place.
  */
-export const COLOUR_PATTERN = /^#[0-9a-f]{6}$/i
+const COLOUR_PATTERN = /^#[0-9a-f]{6}$/i
+
+/** What the colour is for, which is the only part of the sentence a caller chooses. */
+export type ColourSubject = 'token' | 'map background'
 
 /**
  * What is wrong with this colour, or `null`.
  *
  * A *problem* function rather than a boolean predicate, which is `rollProblem`'s shape and
- * is what lets a form print the same sentence the mutation would have refused with. The
- * caller supplies the subject, because "Pick a colour for the token" and "Pick a
- * background colour for the map" are the two sentences that exist and neither is a good
- * default for the other.
+ * is what lets a form print the same sentence the mutation would have refused with.
+ *
+ * ⚠️ **A two-member union rather than a free string, and this module owns the sentence.**
+ * The first version took the subject as a fragment — callers passed
+ * `'colour for the token'` and `'background colour for the map'` to be interpolated into
+ * `Pick a ${subject}.` — which put the user-facing copy in `convex/board.ts` and
+ * `convex/scenes.ts` rather than in the module that decided the refusal. Two consequences:
+ * the wording could be reworded per call site and drift, and a caller passing something
+ * capitalised or plural produced ungrammatical output with nothing to object.
+ *
+ * **The message names the format**, which the fragment version never did. `rollProblem`
+ * quotes the offending string and shows an accepted shape; a refusal that says only *pick a
+ * colour* tells somebody debugging a hand-written client nothing at all.
  */
-export function colourProblem(value: string, subject: string): string | null {
-  return COLOUR_PATTERN.test(value) ? null : `Pick a ${subject}.`
+export function colourProblem(value: string, subject: ColourSubject): string | null {
+  if (COLOUR_PATTERN.test(value)) return null
+  const what = subject === 'token' ? 'the token' : 'the map background'
+  return `Pick a colour for ${what}, written like #4f46e5.`
 }

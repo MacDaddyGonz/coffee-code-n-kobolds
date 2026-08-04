@@ -237,7 +237,7 @@ export const setBackground = mutation({
   handler: async (ctx, args) => {
     // Argument-first, so a bad colour costs no reads — `moveToken`'s ordering, and the
     // one this file's other write checks keep.
-    const problem = colourProblem(args.backgroundColour, 'background colour for the map')
+    const problem = colourProblem(args.backgroundColour, 'map background')
     if (problem !== null) {
       throw new ConvexError({ kind: 'BadInput', message: problem })
     }

@@ -1,21 +1,12 @@
 import type { ReactElement } from 'react'
 import { memo, useState } from 'react'
 
-import { Button } from '@/components/ui/button'
-import { useRollControls, useRollPending } from '@/hooks/useRoll'
-import { MAX_ROLL_DICE, normaliseRoll, rollProblem } from '@convex/lib/sheet'
+import { MinusIcon, PlusIcon } from 'lucide-react'
 
-/**
- * The eight faces, in the order a person reaches for them.
- *
- * ⚠️ **A subset of `ROLL_PATTERN`'s allow-list and never a source of truth.** The grammar
- * decides what is rollable (CLAUDE.md invariant 10); this decides what has a button. They
- * happen to be the same eight today and a ninth face admitted by the regex would simply
- * not have a button here, which is the harmless direction. The other direction — a face
- * here that the grammar refuses — is caught by `send` below, which validates before
- * sending exactly as `DiceComposer` does.
- */
-const FACES: readonly number[] = [2, 4, 6, 8, 10, 12, 20, 100]
+import { Button } from '@/components/ui/button'
+import { Separator } from '@/components/ui/separator'
+import { useRollControls } from '@/hooks/useRoll'
+import { MAX_ROLL_DICE, ROLL_FACES, normaliseRoll, rollProblem } from '@convex/lib/sheet'
 
 /**
  * The counts offered, which is not one through fifty.
@@ -58,14 +49,25 @@ const COUNT_SHORTCUTS: readonly number[] = [1, 2, 4, 8, 20, MAX_ROLL_DICE]
  */
 export const DiceBar = memo(function DiceBar(): ReactElement {
   const { rollDice } = useRollControls()
-  /** Flips twice per roll, and this is one of its two readers. See `useRoll.ts`. */
-  const pending = useRollPending()
 
   const [count, setCount] = useState(1)
 
+  /**
+   * ⚠️ **No `useRollPending` here, and its absence is the point.** That flag counts *every*
+   * roll in flight, and its own docblock says in as many words not to reach for it to
+   * disable a roll button — a sheet that did greys out thirty controls for one round trip.
+   * Eight dice on a toolbar is the same mistake at a smaller size, and it would also
+   * subscribe this bar to a context that flips twice on every roll anybody at the table
+   * makes. `DiceComposer` is the one intended reader, for its submit button.
+   *
+   * Validated before sending for `DiceComposer`'s reason: it buys a round trip and
+   * authorises nothing, since `feed.rollDice` runs the same `rollProblem` on what arrives.
+   * It is worth doing rather than asserting because a legal string here depends on two
+   * constants agreeing with the regex, and checking is cheaper than proving.
+   */
   const send = (faces: number) => {
     const expression = normaliseRoll(`${count}d${faces}`)
-    if (rollProblem(expression) !== null || pending) return
+    if (rollProblem(expression) !== null) return
     rollDice(expression)
   }
 
@@ -81,10 +83,13 @@ export const DiceBar = memo(function DiceBar(): ReactElement {
           size="xs"
           variant="ghost"
           aria-label="One fewer die"
+          // The `disabled` attributes are the whole bound, and the accessible signal as
+          // well — a `Math.max` beside them would be a second guard on a press that cannot
+          // happen, and two bounds is how one of them comes to disagree with the other.
           disabled={count <= 1}
-          onClick={() => setCount((n) => Math.max(1, n - 1))}
+          onClick={() => setCount((n) => n - 1)}
         >
-          −
+          <MinusIcon aria-hidden />
         </Button>
         {/* `tabular-nums` so the strip does not shift width between 9× and 10×, which on a
             control this small reads as the toolbar twitching. */}
@@ -97,9 +102,9 @@ export const DiceBar = memo(function DiceBar(): ReactElement {
           variant="ghost"
           aria-label="One more die"
           disabled={count >= MAX_ROLL_DICE}
-          onClick={() => setCount((n) => Math.min(MAX_ROLL_DICE, n + 1))}
+          onClick={() => setCount((n) => n + 1)}
         >
-          +
+          <PlusIcon aria-hidden />
         </Button>
       </div>
 
@@ -119,10 +124,10 @@ export const DiceBar = memo(function DiceBar(): ReactElement {
         ))}
       </div>
 
-      <span aria-hidden className="bg-border mx-0.5 h-4 w-px" />
+      <Separator orientation="vertical" className="mx-0.5 h-4" />
 
       <div className="flex flex-wrap items-center gap-0.5">
-        {FACES.map((faces) => (
+        {ROLL_FACES.map((faces) => (
           <Button
             key={faces}
             type="button"
@@ -133,7 +138,6 @@ export const DiceBar = memo(function DiceBar(): ReactElement {
             // grammar requires a count and nobody at a table says "one d twenty". The `n×`
             // beside it is what says how many, so repeating it on eight buttons would be
             // the same fact twice and would double their width.
-            disabled={pending}
             onClick={() => send(faces)}
           >
             d{faces}

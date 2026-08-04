@@ -133,15 +133,20 @@ export function MapSetupPanel({ code, dmCode }: MapSetupPanelProps) {
  * everybody through the projection every client already reads, and there is no filtering to
  * do and no predicate to be the home of.
  *
- * ⚠️ **Committed on release rather than on every tick of the swatch**, which is the
- * difference between this and the grid calibrator next door. That one throttles a *drag* —
- * a run of intermediate values the DM is steering through, where the point is watching the
- * lines move — and `useGridWrite` exists for exactly that. A colour picker's intermediate
- * values are whatever the operating system's colour wheel passed under the cursor, and
- * committing them would push a scene document to every client at the table sixty times a
- * second for a decision that has not been made yet. `<input type="color">` fires `change`
- * on release, so the browser already draws that line for us; the local state is what keeps
- * the swatch showing the DM's choice while the round trip completes.
+ * ⚠️ **Committed on release rather than on every tick of the swatch, through `onCommit`
+ * — and the first version of this said so while doing the opposite.** That is the
+ * difference between this and the grid calibrator next door: that one throttles a *drag*, a
+ * run of intermediate values the DM is steering through where the point is watching the
+ * lines move, and `useGridWrite` exists for exactly that. A colour picker's intermediate
+ * values are whatever the OS colour wheel passed under the cursor, and writing them pushes a
+ * scene document to every client at the table for a decision nobody has made yet.
+ *
+ * The trap is that **React's `onChange` on an input is the `input` event**, which for a
+ * colour picker fires continuously during the drag — so `onChange` alone was a write per
+ * pointer move, throttled only by `useLobbyAction`'s in-flight ref into one write per round
+ * trip for the whole duration. `ColourField` grew a real DOM `change` listener for this;
+ * `onChange` now only moves the local swatch, which is what keeps it showing the DM's choice
+ * while the round trip completes.
  */
 function SceneBackground({
   code,
@@ -172,7 +177,9 @@ function SceneBackground({
     <ColourField
       label="Background colour"
       value={colour}
-      onChange={commit}
+      // The live swatch, and nothing else. See the ⚠️ above: this is the `input` event.
+      onChange={setColour}
+      onCommit={commit}
       disabled={action.pending !== null}
       hint="Painted around the map, where the image does not reach. Everybody at the table sees it."
     />

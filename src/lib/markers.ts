@@ -141,6 +141,18 @@ export const PIP_FONT_SIZE = 9
 export const PIP_STROKE = 1
 
 /**
+ * The glyph size on a **stat badge** — the same disc carrying a *number* instead of a
+ * letter.
+ *
+ * Smaller than `PIP_FONT_SIZE` because an armour class of 22 has to fit inside the circle
+ * a `P` sits in, and two digits at nine pixels clip. Here rather than in the component for
+ * the reason every other dimension on this list is here: `TokenStatBadges` and
+ * `TokenMarkerPips` draw the same disc, and a size living beside only one of them is the
+ * half that gets tuned when somebody adjusts the other.
+ */
+export const PIP_BADGE_FONT_SIZE = 8
+
+/**
  * How much vertical room a row of pips takes, in screen pixels.
  *
  * Exported so `TokenCoin` can push the name down by exactly this, and the coupling

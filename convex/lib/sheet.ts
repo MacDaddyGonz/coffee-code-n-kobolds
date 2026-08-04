@@ -172,6 +172,27 @@ export const ROLL_PATTERN =
   /^(?:[1-9]|[1-4]\d|50)d(?:2|4|6|8|10|12|20|100)(?:[+-](?:\d{1,3}|STR|DEX|CON|INT|WIS|CHA|PROF))*$/
 
 /**
+ * The eight faces the pattern above admits, as a list — the same relationship
+ * `MAX_ROLL_DICE` has to the count in front of it: **one fact spelled twice, and the regex
+ * is the copy that decides.**
+ *
+ * ⚠️ **It exists because the count had this and the faces did not, and the gap bit inside
+ * one commit.** Widening the grammar to admit `d2` left four hand-maintained face lists —
+ * the alternation above, the renderer's `ORDINARY_FACES`, the dice tray's buttons and
+ * `scaling.test.ts`'s exhaustive sweep — and the sweep was the one that silently stopped
+ * covering the new face, in the very change that added it. `MAX_ROLL_DICE` had no such
+ * problem, because every reader of the cap reads the constant.
+ *
+ * **The regex is still written out rather than built from this**, deliberately: a grammar
+ * assembled by string concatenation is one nobody can read in a grep, and this is the
+ * expression that decides what a client may ask the server to roll. `sheet.test.ts` pins
+ * the two against each other instead — every member is accepted and the neighbours either
+ * side of each are refused — which is the direction a shared constant cannot check anyway.
+ */
+export const ROLL_FACES = [2, 4, 6, 8, 10, 12, 20, 100] as const
+export type RollFaces = (typeof ROLL_FACES)[number]
+
+/**
  * The die-count cap the pattern above enforces, named — the `(?:[1-9]|[1-4]\d|50)` at the
  * front of it and this constant are **one fact spelled twice**, and the regex is the
  * copy that decides.
@@ -1171,6 +1192,26 @@ export function skillProficienciesOf(sheet: CharacterSheet): SkillProficiencies 
 export function speedOf(sheet: CharacterSheet): number {
   const stored = sheet.speed
   return stored === undefined || !Number.isFinite(stored) ? SPEED_FEET : stored
+}
+
+/**
+ * A creature's armour class, or `null` when the number stored is not one.
+ *
+ * ⚠️ **An accessor because this is a *resolved* sheet's field and the resolution can fail
+ * open.** `armourClass` is required on both members of `sheetValidator`, so on the face of
+ * it this needs no helper — but it is `v.optional(v.number())` on `bestiarySheetValidator`'s
+ * overrides and on a preset's, so the value that lands here has been through `resolveSheet`
+ * and can be whatever a stale corpus entry or a half-written override left behind.
+ * `finiteOrNull` is module-private, which is the tell: the first call site to want it wrote
+ * `Number.isFinite(sheet.armourClass) ? … : null` inline, and the second would have written
+ * it again somewhere else.
+ *
+ * Sits beside `passivePerceptionOf` because the two are published together — see
+ * `visibleVitals` — and a pair derived in two different ways is a pair that comes to
+ * disagree about what *absent* means.
+ */
+export function armourClassOf(sheet: CharacterSheet): number | null {
+  return finiteOrNull(sheet.armourClass)
 }
 
 /**

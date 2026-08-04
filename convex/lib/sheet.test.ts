@@ -37,6 +37,7 @@ import {
   CREATURE_GROUP_CHOICES,
   characterGroupValidator,
   creatureGroupValidator,
+  ROLL_FACES,
   ROLL_MODIFIER_TOKENS,
   ROLL_PATTERN,
   SHEET_ENTRY_CATEGORIES,
@@ -489,6 +490,31 @@ describe('the roll grammar', () => {
     ' 1d8',
     '1d8 ',
   ]
+
+  /**
+   * ⚠️ **The two halves of one fact, pinned against each other.** `ROLL_PATTERN`'s
+   * alternation decides what is rollable and `ROLL_FACES` is that list named, and the regex
+   * is deliberately written out rather than built from the array — a grammar assembled by
+   * string concatenation is one nobody can read in a grep, and this is the expression that
+   * decides what a client may ask the server to roll.
+   *
+   * So the agreement is asserted instead, in **both** directions: every member is admitted,
+   * and the integer either side of every member is refused. The second half is what catches
+   * a widening — `d3` and `d21` are the shapes a regex loosened by one character accepts,
+   * and a test that only checked the members would pass through it.
+   */
+  test('the pattern admits exactly ROLL_FACES, and nothing on either side of them', () => {
+    for (const faces of ROLL_FACES) {
+      expect(isValidRoll(`1d${faces}`), `d${faces}`).toBe(true)
+    }
+    const admitted = new Set<number>(ROLL_FACES)
+    for (const faces of ROLL_FACES) {
+      for (const near of [faces - 1, faces + 1]) {
+        if (near < 1 || admitted.has(near)) continue
+        expect(isValidRoll(`1d${near}`), `d${near}`).toBe(false)
+      }
+    }
+  })
 
   test('accepts the shapes the picker and the custom field produce', () => {
     for (const roll of VALID) {

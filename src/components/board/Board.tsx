@@ -499,6 +499,15 @@ export function Board({
   // no explanation of what went wrong.
   const drawable = scene !== null && scene.imageUrl !== null
 
+  // Memoised because this component re-renders on every frame of a pan and a zoom, and a
+  // fresh object literal in the JSX below would be an allocation and a style key-walk per
+  // frame for a value that changes only when the DM picks a colour. `ZoomControls` takes a
+  // scale rather than a camera for the same reason, one element down.
+  const surround = useMemo(
+    () => (scene === null ? undefined : { backgroundColor: scene.backgroundColour }),
+    [scene],
+  )
+
   return (
     /*
       ⚠️ **The surround is painted here in the DOM rather than as a Konva rectangle**, and
@@ -512,16 +521,19 @@ export function Board({
 
       `bg-muted/40` was what this used to be: near-white in light mode, so a map floated in
       a white page and read as one that had failed to load. `backgroundOf` on the server has
-      already turned a scene with no stored colour into a real one, so there is no `??` here
-      and no default in the stylesheet to drift against it.
+      already turned a scene with no stored colour into a real one, so there is no `??` here.
 
-      Falls back to the class only while there is no scene at all — the loading skeleton and
-      `BoardEmpty`, neither of which is a map with a surround.
+      ⚠️ **The class is unconditional and the style is what overrides it**, which is one
+      condition rather than two. An inline `background-color` always beats a class, so the
+      pair needs no proof of mutual exclusivity — the class is simply what shows while there
+      is no scene to ask, which is the loading skeleton and `BoardEmpty`, neither of them a
+      map with a surround. (It was written as a conditional class *and* a conditional style,
+      which is the same fact tested twice and a reader having to check they agree.)
     */
     <div
       ref={containerRef}
-      className={cn('relative overflow-hidden', scene === null && 'bg-muted/40', className)}
-      style={scene === null ? undefined : { backgroundColor: scene.backgroundColour }}
+      className={cn('bg-muted/40 relative overflow-hidden', className)}
+      style={surround}
     >
       {board.loading ? (
         <Skeleton className="absolute inset-0" />
