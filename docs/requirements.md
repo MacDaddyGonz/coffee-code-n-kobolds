@@ -212,6 +212,95 @@ on the sheet, which they may do for as long as it is unlocked. Nothing about who
 changed, `characters.create` still demands the DM code on every path, and no ADR was superseded to
 make this work — the permission to choose a race and a class on an unlocked sheet was already there.
 
+#### Rolls, the feed and the dice — 2026-08-02 — [ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md)
+
+**One amendment, and it is to the *Included* list rather than the Excluded one** — which makes it the
+first entry in this section that narrows what the application does with a rule the spec asked for,
+rather than lifting one it had ruled out. Everything else the dice work touched needed no amendment,
+and the reason is worth stating: nothing new is adjudicated. A roll is evaluated and announced; no
+result is compared to an Armour Class or a save DC, no damage is applied, and nothing decides whether
+an attack hit. That is the same discipline the last three entries here record, for the fourth time.
+
+**"Turns consist only of 1 action, 1 bonus action and 1 reaction" — the rule is played and the app
+does not enforce it.** The *DnD Lite rule set* list above includes the turn structure, and it is the
+one inclusion this application deliberately declines to adjudicate. Nothing stores whose turn it is,
+nothing counts what a character has spent, and clicking two things in a round is refused by nobody.
+The table keeps the turn, exactly as it keeps who is standing where before a map is loaded.
+
+Stated here rather than left as an absence, because an absence reads as an oversight and this is a
+decision: enforcing an action economy means knowing whose turn it is, which means an initiative
+tracker that owns the round, which means the app adjudicating the one thing D&D Lite exists to leave
+to the people at the table. The same reasoning covers **concentration**, which the lists never named
+— no spell records it and nothing drops it.
+
+⚠️ **Four neighbouring gaps were closed the same way and needed no amendment, because the lists never
+promised them.** There are no **spell slots** anywhere — clicking a spell rolls its dice and says so,
+and the level printed beside it is a label rather than a resource. A hero has no **spell save DC**; a
+creature has one because the bestiary wrote one, and nothing in this application compares a roll to
+either. **Limited-use abilities** stay as coarse as they were: the app remembers whether a per-long-rest
+trait has been spent, which is the part a table forgets, and counts nothing else. And **initiative**
+turned out to need nothing new at all — a hero's bonus comes from Dexterity and a creature's is stored,
+through one accessor that already existed.
+
+**Two smaller notes on the *screen*, neither a rule.** *"When a clicked sheet item involves a dice
+roll, that character's token appears on screen for everyone and a 3D dice roll plays"* is met as
+written — the announcement over the map carries the character's token art where the viewer can see
+that token, and a deterministic tinted disc otherwise, because a roll can come from a creature with no
+token or one this viewer may not see, and an announcement must never be the thing that reveals a coin
+exists. And **"a red warning alarm"** on a critical failure is rendered as a red pulse and a screen
+shake with no sound: audio would be the first asset this application serves itself, and it needs a
+mute control and the browser autoplay dance to go with it.
+
+#### DM tooling, layers and fog of war — 2026-08-02 — [ADR 0012](adr/0012-three-layers-and-a-fog-that-is-honest-about-itself.md)
+
+**The first amendment in this section that *adds* a feature rather than lifting an exclusion**, and
+that inversion is the reason it is here at all. Every entry above records a rule the build stopped
+following. This one records a thing the build does that the specification never asked for, which is
+the same hazard pointing the other way: a feature nobody wrote down is a feature nobody agreed to.
+
+**Fog of war — added, and it appears nowhere above.** The DM blacks out rectangles of the map, and
+what that hides is deliberately partial:
+
+- **Real for tokens.** A creature standing inside a fogged rectangle is filtered out *server-side*,
+  so a player is not sent its position, not sent its health band, and not sent the feed line saying
+  what it just rolled. It is absent from their payload rather than hidden in their client, exactly as
+  the GM layer already is.
+- **Polite for the map.** The background image stays fully downloaded, so somebody reading devtools
+  can recover the unfogged floor plan. Hiding that too means tiling or masking the map server-side,
+  which multiplies storage against the 1 GB ceiling
+  [ADR 0001](adr/0001-platform-and-hosting.md) accepts and complicates both zoom and calibration.
+  The monsters were the secret, not the floor plan.
+- **And it does not hide that a coin exists.** A player's token payload still carries a fogged
+  creature's name and art; what fog takes is *where it is, how hurt it is and what it did*. That is a
+  cost decision rather than an oversight, and it is why **the GM layer remains the tool for "must not
+  be known about"** — that one is absolute, and fog is not.
+
+⚠️ **This is the first guard this project has knowingly shipped incomplete**, so it is recorded in the
+register the threat model in [CLAUDE.md](../CLAUDE.md) uses rather than described as finished. A
+partial guard described as a whole one is worse than no guard, because somebody plans around it.
+
+**The map layers are now built as written — with one word changed.** The *Map layers* section above
+asks for Background, Player and DM, and until now only two of them existed; the third layer is built,
+and a token on Background is seen by every player and movable by none of them. The stored value for
+the third is `gm` rather than `dm`, Roll20's name for the same thing, because "DM" is the name of a
+*person holding a code* everywhere else in this codebase and a layer sharing that word reads as one
+only the DM may **see** rather than one only the DM may **touch**. Both are true of it; only one is
+what the field decides. Nothing about the layer's behaviour differs from the section above.
+
+**Two DM-mode bullets are now met and needed no amendment**, noted here only because their absence
+from this entry would look like an omission: *"toggle an image from the game library into the modal
+image pop-up… and close it for everyone"* and *"Background music — select from the game music
+library"* are both in the specification already. The *libraries* they name are still the game-editor
+milestone's, so an upload goes straight to use — which is what maps and token art have done since the
+board existed. **The music selector broadcasts which track and nothing else:** no play, no pause, no
+position, and nothing that records whether anybody is listening. Shared play state is a later
+milestone, and a browser will not start audio without a gesture in any case.
+
+**Nothing was lifted from the Excluded list, and nothing was added to the Included one.** Four
+milestones in a row now. A layer is a permission, a rectangle is a region, a handout is a picture and
+a track is a file — none of them is a rule, none is adjudicated, and nothing here changes a number a
+player rolls against.
+
 ## Accounts and games
 
 - Users create an account by providing an email address.

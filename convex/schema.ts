@@ -1,12 +1,23 @@
 import { defineSchema, defineTable } from 'convex/server'
 import { v } from 'convex/values'
 
-// The two literal unions this schema shares with the queries that project them and
-// the mutations that take them as arguments. Imported rather than re-spelled so the
-// table definition and the public payload cannot end up disagreeing about which
-// members exist — see the notes beside each field below.
-import { tokenLayerValidator } from './lib/board'
+// The shapes this schema shares with the queries that project them and the mutations
+// that take them as arguments. Imported rather than re-spelled so the table definition
+// and the public payload cannot end up disagreeing about which members exist — see the
+// notes beside each field below.
+//
+// The two from lib/roll.ts are the same arrangement for a document a client never
+// projects field by field: a feed row's subject and its result travel whole, so the
+// stored shape and the public one are one definition rather than two that agree.
+// ⚠️ **The *stored* layer union, which is wider than the one every other module uses.**
+// It carries the legacy `dm` spelling of the GM layer across the rename, so a row written
+// before it still validates. The public projection, `board.addToken` and `board.setLayer`
+// all take the narrow three-member `tokenLayerValidator` from the same file, so nothing
+// can create a `dm` row from here forward and nothing can send one to a client. Both this
+// import and the fourth member go away once the relabel has run — see `layerOf`.
+import { storedTokenLayerValidator } from './lib/layers'
 import { gameStatusValidator } from './lib/games'
+import { feedSubjectValidator, rollResultValidator } from './lib/roll'
 import { storedSheetValidator } from './lib/sheet'
 
 export default defineSchema({
@@ -22,15 +33,52 @@ export default defineSchema({
     // The recovery phrase is never stored; only a salted SHA-256 of it.
     dmRecoverySalt: v.string(),
     dmRecoveryHash: v.string(),
-    // The board everyone is looking at. Optional because a game has no scene until
-    // the DM uploads a map. Scene *switching* for the whole group is the DM-tooling
-    // milestone; this field is the data it will drive.
+    // The board everyone is looking at. Read through `activeSceneId` in lib/games.ts,
+    // never directly — fog of war made this field load-bearing for secrecy rather than
+    // merely for display, because the fogged-token set is a question about *this* scene
+    // and four `?? null`s at four call sites is four places to get it wrong.
     activeSceneId: v.optional(v.id('scenes')),
     // 'lobby' until the DM presses Start, then 'playing' and every client flips to
     // the board. Optional only because adding a required field to a table that
     // already has rows fails the schema push — read it through `gameStatus` in
     // lib/games.ts, never directly, so the default lives in exactly one place.
     status: v.optional(gameStatusValidator),
+    // WHEN THE AUDIENCE LAST WIDENED — the server's clock at the moment somebody was
+    // let in on something they could not previously hear about: a coin moved off the GM
+    // layer, a reserved character released, a fog rectangle erased.
+    //
+    // It exists so that `predatesReveal` on a feed row can be computed **server-side**,
+    // which is the only way that comparison can be made honestly. A feed row can arrive
+    // at a client because the audience widened rather than because somebody rolled, and
+    // announcing it over the map replays a roll from minutes ago as though it just
+    // happened. The obvious fix is an age test in the browser, and it is wrong: it would
+    // compare this timestamp against the *client's* clock, so a browser a minute out of
+    // step would silently announce nothing for the rest of the session. Both operands
+    // have to come from the same clock, and the clock a query may not read is precisely
+    // this one — so a *mutation* writes it down and the query subtracts.
+    //
+    // Coarse on purpose: one stamp per game, not one per token. A genuinely fresh roll
+    // made in the second before an unrelated reveal loses its flourish, which is a
+    // missing animation rather than a wrong one. A per-token stamp would be exact at the
+    // price of a character → timestamp map crossing lib/board.ts's boundary.
+    //
+    // Optional for the reason every field added to this table is. Read through
+    // `gameRevealedAt`, written only through `stampReveal`.
+    revealedAt: v.optional(v.number()),
+    // The handout the DM is currently holding up to the group, or absent for none.
+    //
+    // A pointer, so it gets `activeSceneId`'s treatment rather than `status`'s: absent
+    // means nothing is open, which the projection spells `?? null` at the one place it
+    // reads it. There is no default to centralise in an accessor because there is no
+    // value that means "none" other than the absence itself.
+    openImageId: v.optional(v.id('modalImages')),
+    // The track the DM has put on the table. ⚠️ **A pointer, and deliberately not a
+    // transport.** Nothing here says whether it is playing, where the playhead is, or
+    // when it started — synced play state is the tools-and-polish milestone, and the
+    // absence of those three fields is what stops this becoming half of it. Each client
+    // presses play for itself, because a browser will not start audio without a gesture
+    // anyway.
+    activeTrackId: v.optional(v.id('tracks')),
   }).index('by_code', ['code']),
 
   // A seat at the table, not a user. Identified within a game by nameKey, so a
@@ -186,14 +234,27 @@ export default defineSchema({
   tokens: defineTable({
     gameId: v.id('games'),
     name: v.string(),
-    // Two members, not the three layers in requirements.md: the background layer is
-    // the scene image itself, and no token ever lives on it. Images on layers are the
-    // DM-tooling milestone.
+    // The three layers requirements.md asks for, bottom to top: `background`, `player`,
+    // `gm`. This comment used to say there were two, on the reasoning that the background
+    // layer *is* the scene image and no token ever lives on it — which was wrong in the
+    // same way the union was, and both were corrected together. A token on `background` is
+    // scenery: every client is sent it and no player may move it.
     //
-    // THE SECRET IS HERE. A 'dm' token must never reach a player client, and it has
+    // ⚠️ **Widening this was the one union in this schema where "additive and safe" was
+    // false, and it is worth knowing why.** Sight and interaction gave the same answer
+    // while there were two layers, so one two-way test served both — `isDm || layer ===
+    // 'player'`. Background separates them: seen by everybody, moved by nobody but the DM.
+    // So the widening needed a *second* predicate rather than a wider first one, and every
+    // read path in lib/board.ts had to be revisited rather than extended. See
+    // `maySeeLayer` and `mayPlayersMove` in lib/layers.ts, which have a `never` arm each.
+    //
+    // THE SECRET IS HERE. A 'gm' token must never reach a player client, and it has
     // the same shape as a 'player' one — so a `returns:` validator cannot catch a
     // leak of it. Every read goes through lib/board.ts. See invariant 8.
-    layer: tokenLayerValidator,
+    //
+    // The stored union is one member wider than the canonical one while the rename of
+    // `dm` → `gm` is in flight; see the import at the top of this file.
+    layer: storedTokenLayerValidator,
     // Diameter in grid squares. 1 = one square, 2 = a 2×2 ogre.
     sizeSquares: v.number(),
     // Absent → drawn as a coloured coin with the name's initials, which is enough
@@ -244,4 +305,153 @@ export default defineSchema({
     .index('by_sceneId', ['sceneId'])
     .index('by_tokenId', ['tokenId'])
     .index('by_sceneId_and_tokenId', ['sceneId', 'tokenId']),
+
+  // FOG OF WAR — the rectangles the DM has blacked out on one scene.
+  //
+  // ⚠️ **These rows are not the secret, and that is the unusual thing about this table.**
+  // Every rectangle is sent to every client verbatim, because a blacked-out map is the
+  // whole user interface — a player has to be able to see that a corridor is dark. What is
+  // secret is what happens to be *standing* in one, and that is decided in lib/board.ts by
+  // crossing these rows against `tokenPositions`. So this table has no `leakGuard` entry of
+  // its own and needs none; the read that turns a rectangle into a withheld token id is a
+  // `tokenPositions` read, which is already confined.
+  //
+  // ⚠️ **What would change that:** per-player fog, revealed-as-you-walk, or line of sight.
+  // Any of those makes a rectangle a statement about what *one caller* may know, at which
+  // point these rows become secrets of the same shape as non-secrets and this table needs a
+  // reader and a predicate like every other table in this file. Today it is symmetric, and
+  // the guard would be one that cannot fail.
+  //
+  // Keyed on the scene alone, with no `gameId`, exactly as `tokenPositions` is: a scene
+  // belongs to one game, and every reader already holds a scene that the caller's game has
+  // vouched for through `findSceneInGame`.
+  //
+  // Every field required with no optionals — `feed`'s inversion argument below applies
+  // verbatim, because the pressure that makes a field optional in this schema is *rows that
+  // already exist*, and this table is new.
+  fogRects: defineTable({
+    sceneId: v.id('scenes'),
+    // Image-space pixel floats, top-left corner plus extent — the same coordinate space
+    // `tokenPositions` and every grid number use, so whatever the upload downscaler decided
+    // is invisible here too.
+    //
+    // ⚠️ **Normalised to a non-negative extent on the write path**, by `normaliseFogRect`
+    // in lib/fog.ts. A rubber-band drag produces a rectangle in any of four directions, and
+    // a stored row with a negative width silently fails every containment test — fog that
+    // looks drawn and hides nothing, which is the worst failure this feature has and the
+    // one a DM would never think to check for.
+    x: v.number(),
+    y: v.number(),
+    width: v.number(),
+    height: v.number(),
+  }).index('by_sceneId', ['sceneId']),
+
+  // WHAT HAPPENED, AND WHO MAY HEAR ABOUT IT — the game feed.
+  //
+  // THE SECRET IS `characterId`. A line reading `Ancient Red Dragon attacks with their
+  // Bite` publishes a name the DM has not revealed, and it has precisely the shape of a
+  // line about a hero — so no `returns:` validator can tell the two apart, and the guard
+  // has to be structural for the third time in this schema. `lib/feed.ts` is the only
+  // module in `convex/` allowed to read *or write* this table, and `leakGuard.test.ts`
+  // greps the sources to keep it that way (invariant 8).
+  //
+  // Note that the question it is filtered by is a **new** one rather than the sheet rule
+  // reused: `mayHearOf` in lib/characters.ts decides whose name may appear in a line
+  // saying they did something, which is not `maySeeCharacter`'s question about whose
+  // sheet may be opened. A player watching a goblin's coin may hear that it attacked and
+  // still may not read its armour class.
+  //
+  // ⚠️ **Every field here is required, and "none" is spelled `null` rather than absent —
+  // a decision, not an oversight.** Read against the tables above, where nearly every
+  // added field carries the opposite comment, that inversion needs saying out loud. The
+  // rule those comments record is that a field is optional *because adding a required one
+  // to a populated table fails the schema push*; the pressure is the rows that already
+  // exist. This table is new and has none, so nothing forces the weaker spelling, and
+  // required-with-`null` is one state per meaning instead of two — which is the
+  // convention ADR 0008 settled after `SheetEntry` came to spell "none" both ways.
+  //
+  // It is also why the field-by-field rebuild trap that ADR settled does not bite here:
+  // this milestone adds no field to any *populated* table, so there is nothing for
+  // `board-smoke.mjs` to report as `present on one side only`.
+  feed: defineTable({
+    gameId: v.id('games'),
+    // THE VISIBILITY KEY, and the only field `lib/feed.ts` filters a row on. Whose line
+    // this is, so `mayHearOf` can decide whether this caller may be told it exists.
+    //
+    // `null` is an **ad-hoc roll** — somebody typed `2d6` into the dice tray. It names
+    // nobody, so there is no secret in it and the whole table sees it.
+    characterId: v.union(v.id('characters'), v.null()),
+    // A BREADCRUMB, NOT A FOREIGN KEY: the character's name as it stood when the roll
+    // happened, copied rather than looked up. The same reasoning `catalogueKey` and
+    // `FeedSubject`'s `entry` are written with — a feed row is *what happened*, so it is
+    // written down, and a rename an hour later must not rewrite history.
+    //
+    // It is not a second spelling of the secret either. A row this caller may not hear
+    // about is dropped whole, so a name here only ever reaches somebody `characterId`
+    // has already admitted.
+    actorName: v.string(),
+    // The facts the sentence is generated from, never the English itself — see the header
+    // of lib/roll.ts, which is where that argument lives.
+    subject: feedSubjectValidator,
+    // What the dice did, or `null` for a line with no dice in it at all: a passive being
+    // declared, or an alt-clicked description.
+    roll: v.union(rollResultValidator, v.null()),
+    // The DM's "just for me". A second, unrelated reason to withhold a row, `&&`-ed with
+    // the visibility question in `visibleFeed` rather than folded into it — the same
+    // arrangement `isReservedCharacter` keeps beside `maySeeCharacter`.
+    dmOnly: v.boolean(),
+  })
+    .index('by_gameId', ['gameId'])
+    // For `deleteFeedForCharacter`, which runs when the DM deletes a character. One line
+    // here against a scan of a table that grows all evening, on a delete path — which is
+    // the trade this codebase argues against making the other way round.
+    .index('by_characterId', ['characterId']),
+
+  // HANDOUTS — the images the DM holds up to the group. `games.openImageId` says which one
+  // is on screen right now; these are the ones available to open.
+  //
+  // Not a secret table, and worth saying so given how much of this schema is. An image
+  // reaches a player only when the DM has opened it, and the *list* is DM-only for
+  // `scenes.list`'s reason — a row called "The Duke's Real Face" is a spoiler — but that is
+  // a gate on one query, not a row-shaped secret needing a choke point. Nothing here has a
+  // non-secret twin it could be confused with.
+  //
+  // The upload-backed *library* with browsing and reuse is the game-editor milestone; this
+  // is the pop-up requirements.md asks for, and uploads go straight to use exactly as a map
+  // and a token's art have since the board existed.
+  modalImages: defineTable({
+    gameId: v.id('games'),
+    // ONE STRING DOING THREE JOBS, deliberately: the DM's label in the list, the dialog's
+    // accessible title (Radix will not render one without it) and the image's alt text. A
+    // second player-facing caption beside it would be two strings to keep in step for one
+    // purpose, and the reason to publish this one is already settled — `publicSceneValidator`
+    // publishes the active board's name to every player on the same argument.
+    name: v.string(),
+    imageId: v.id('_storage'),
+    // Dimensions of the STORED image, as `scenes` keeps them and for the same reason: the
+    // viewer sizes itself without waiting for the bytes, so a handout does not reflow the
+    // moment it decodes.
+    imageWidth: v.number(),
+    imageHeight: v.number(),
+  }).index('by_gameId', ['gameId']),
+
+  // BACKGROUND MUSIC — the tracks the DM has loaded for this game.
+  //
+  // ⚠️ **`files.discard` has to know about this table and about `modalImages`**, and that is
+  // the one thing to remember when adding either. It refuses to delete a blob a live scene
+  // or token still points at, so a fourth and fifth `v.id('_storage')` in this schema means
+  // a fourth and fifth predicate there — otherwise a good-citizen discard deletes the bytes
+  // out from under a handout somebody is looking at. A test greps this file for
+  // `v.id('_storage')` and asserts a matching predicate is imported there, because the real
+  // invariant — *every table holding a storage id is asked* — is otherwise invisible.
+  tracks: defineTable({
+    gameId: v.id('games'),
+    name: v.string(),
+    // ⚠️ Named `fileId` rather than `imageId`, which is not fussiness: it is the one field
+    // in this schema pointing at a blob that is not an image, and the upload path forks on
+    // exactly that fact. Audio cannot be downscaled, so the browser's shrink step — the
+    // courtesy that makes an oversized map impossible in practice — has no equivalent here
+    // and the server's byte check is the whole of the enforcement. See MAX_MUSIC_BYTES.
+    fileId: v.id('_storage'),
+  }).index('by_gameId', ['gameId']),
 })

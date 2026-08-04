@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useMutation, useQuery } from 'convex/react'
 
 import { FieldError } from '@/components/FieldError'
@@ -8,6 +9,58 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicToken } from '@convex/lib/board'
+import type { TokenLayer } from '@convex/lib/layers'
+
+/**
+ * The resting state of a grant on a layer players cannot move. Exhaustive by construction
+ * — see CLAUDE.md invariant 9.
+ *
+ * ⚠️ **Two layers make a grant inert now, for two different reasons, and collapsing them
+ * would be wrong in both directions.** On the GM layer a granted seat is sent nothing at
+ * all — not the coin, not the sheet, not the hit points — because `maySee` dropped the row
+ * before controllers were computed. On Background the seat is sent all of it and drawn all
+ * of it, and only the *drag* is refused, by `mayPlayersMove` above the grant read in
+ * `requireMovableToken`. "Nothing happens when you tick this" is true of both; *what* is
+ * not happening is not the same thing twice.
+ *
+ * `null` for the player layer, where a grant does exactly what the tick says.
+ *
+ * A function of the coin rather than a plain string, because what is named depends on
+ * whether it carries a sheet — "and its exact hit points" against an unbound coin is a
+ * consequence the DM cannot cause.
+ */
+const INERT_GRANT_NOTES: Record<TokenLayer, ((token: PublicToken) => ReactNode) | null> = {
+  background: (token) => (
+    <Alert>
+      <AlertTitle>This token is scenery</AlertTitle>
+      <AlertDescription>
+        Every grant below is stored exactly as you leave it and moves nothing while the coin is
+        here. A granted seat still sees it
+        {token.characterId === null
+          ? ', and it stands for nothing, so there is nothing else to read'
+          : ' and still reads the sheet behind it'}
+        — the drag is the only thing refused, and it is refused for everybody but you. Nothing
+        needs re-ticking: move it to the player layer and everything ticked here takes effect
+        in one write.
+      </AlertDescription>
+    </Alert>
+  ),
+  player: null,
+  gm: (token) => (
+    <Alert>
+      <AlertTitle>This token is on the GM layer</AlertTitle>
+      <AlertDescription>
+        Every grant below is stored exactly as you leave it and carries nothing while the coin is
+        here. A granted seat is not sent the token
+        {token.characterId === null
+          ? ', and it stands for nothing, so there is nothing else they are missing'
+          : ', the sheet behind it, or its exact hit points'}
+        . Nothing is revoked and nothing needs re-ticking: move it to the player layer and
+        everything ticked here takes effect in one write.
+      </AlertDescription>
+    </Alert>
+  ),
+}
 
 export type TokenControlPanelProps = {
   code: string
@@ -28,22 +81,23 @@ export type TokenControlPanelProps = {
  * the same creature is a second thing to grant, which is the honest consequence of keying
  * the relation where the DM can see it rather than on a sheet nobody is looking at.
  *
- * ⚠️ **A grant on a DM-layer token reveals nothing, and that is correct rather than
- * broken.** Sight follows the token: `maySee` filters the DM layer out of a player's
- * payload before controllers are computed over what is left, so the player receives
- * neither the coin nor the sheet. The alert below says it because the alternative is a DM
- * ticking a box, watching nothing happen at the other end of the table, and concluding
- * the feature does not work.
+ * ⚠️ **On two of the three layers a grant does nothing, for two different reasons, and both
+ * are correct rather than broken.** On the GM layer sight follows the token: `maySee`
+ * filters it out of a player's payload before controllers are computed over what is left, so
+ * the seat receives neither the coin nor the sheet. On Background the seat receives all of
+ * it and is refused only the drag, because `mayPlayersMove` sits *above* the grant read in
+ * `requireMovableToken` — which is what "a grant cannot open a layer" means. The alerts say
+ * so because the alternative is a DM ticking a box, watching nothing happen at the other end
+ * of the table, and concluding the feature does not work.
  *
- * **That alert is the home of the standing fact, and it says all of it**: what a granted seat
- * is not sent — the coin, and with it the creature's sheet and its exact hit points — and
- * that the grant itself survives untouched rather than being revoked. Here rather than at the
- * layer control, because this panel is the one the DM's *Sheets* tab mounts on its own, where
- * nothing else on screen would ever say it. `TokenEditPanel` mounts this below its own layer
- * buttons and its alert there is deliberately the other half — the *act* of hiding a coin and
- * that the press reverses — so the two are on screen together without either restating the
- * other. Adding the standing half back to that one is how two alerts about one layer start
- * disagreeing.
+ * **`INERT_GRANT_NOTES` is the home of the standing fact, and it says all of it**: what a
+ * granted seat is not sent or not allowed, and that the grant itself survives untouched
+ * rather than being revoked. Here rather than at the layer control, because this panel is the
+ * one the DM's *Sheets* tab mounts on its own, where nothing else on screen would ever say
+ * it. `TokenEditPanel` mounts this below its own layer buttons and its notes there are
+ * deliberately the other half — the *act*, and that the press reverses — so the two are on
+ * screen together without either restating the other. Adding the standing half back to those
+ * is how two alerts about one layer start disagreeing.
  *
  * **Nothing here derives the rule.** `controllerIds` is the effective set and
  * `grantedPlayerIds` is exactly what is stored; the server sends both precisely so this
@@ -106,24 +160,10 @@ export function TokenControlPanel({ code, dmCode, token }: TokenControlPanelProp
         </p>
       </div>
 
-      {token.layer === 'dm' ? (
-        // The *resting state* of a grant on a hidden coin, which is this panel's half of the
-        // DM-layer copy — see the ⚠️ in the header. What is named depends on whether the coin
-        // carries a sheet, for the reason the paragraph above varies: "and its exact hit
-        // points" against an unbound coin is a consequence the DM cannot cause.
-        <Alert>
-          <AlertTitle>This token is on the DM layer</AlertTitle>
-          <AlertDescription>
-            Every grant below is stored exactly as you leave it and carries nothing while the
-            coin is here. A granted seat is not sent the token
-            {token.characterId === null
-              ? ', and it stands for nothing, so there is nothing else they are missing'
-              : ', the sheet behind it, or its exact hit points'}
-            . Nothing is revoked and nothing needs re-ticking: move it to the player layer and
-            everything ticked here takes effect in one write.
-          </AlertDescription>
-        </Alert>
-      ) : null}
+      {/* The *resting state* of a grant on a coin players cannot move, which is this panel's
+          half of the layer copy — see the ⚠️ on `INERT_GRANT_NOTES` and the one in the
+          header. `TokenEditPanel`'s own notes are the other half, about the act. */}
+      {INERT_GRANT_NOTES[token.layer]?.(token) ?? null}
 
       {seats === undefined ? (
         <Skeleton className="h-10 w-full" />

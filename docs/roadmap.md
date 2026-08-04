@@ -52,12 +52,22 @@ against this table:
 | Milestone 7 — [0007](adr/0007-monster-bestiary-and-cr-scaling.md) | DM tooling, layers, fog of war | 10 |
 | Milestone 8 — [0006](adr/0006-premade-character-library.md) | orphaned-blob sweeper | 12 |
 
-[ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md) and
-[ADR 0009](adr/0009-who-plays-what-and-what-control-grants.md) have no rows, and that is the
-discipline working rather than an omission: neither names a milestone number anywhere, so the fourth
-and fifth renumberings cost them nothing. Both say "the dice milestone" and "the DM-tooling
-milestone", which is the formulation that survives. **Two in a row is the convention holding**, and
-the table above stops growing on the day the last numbered ADR is superseded.
+[ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md),
+[ADR 0009](adr/0009-who-plays-what-and-what-control-grants.md),
+[ADR 0010](adr/0010-the-way-in-and-the-dms-coins.md),
+[ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md) and
+[ADR 0012](adr/0012-three-layers-and-a-fog-that-is-honest-about-itself.md) have no rows, and that is
+the discipline working rather than an omission: not one of them names a milestone number anywhere, so
+the fourth and fifth renumberings cost them nothing. They say "the dice milestone" and "the DM-tooling
+milestone", which is the formulation that survives. **Five in a row is the convention holding** —
+which is now long enough that it is simply how an ADR is written here — and the table above stops
+growing on the day the last numbered ADR is superseded.
+
+⚠️ **ADR 0012 is the first one that had to name a *deployment* step rather than a milestone**, and it
+is worth knowing the difference. Renaming the GM layer's stored value is a widen–migrate–narrow across
+two deploys with a manual sweep between them, so the narrowing is a step somebody performs rather than
+a thing a milestone contains. It is recorded in the Done block of the milestone below, not in the ADR,
+because a runbook goes stale the moment it is followed and an ADR must not.
 
 **This file no longer contains a forward reference by number, and that is the fix rather than a
 tidy-up.** Three renumberings taught the lesson [ADR 0006](adr/0006-premade-character-library.md)
@@ -1362,7 +1372,66 @@ its art, and grants it to a second player without going near the map.
 
 ---
 
-## Milestone 9 — Rolls, feed and dice
+## ✅ Milestone 9 — Rolls, feed and dice
+
+**Done.** The decisions are recorded in
+[ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md). Seven things it settled
+differently from the plan below, or found out by building it, so read them together:
+
+- **The plan's own corpus count was wrong, and regenerating it is what caught that.** It says 27
+  distinct roll expressions across the bestiary. `roll:` is used only by creature *abilities* — an
+  attack's damage is in `damage:` — so the real figure at each creature's own rating is **61**, and
+  **194** once every creature is resolved at every rating through the scaler. The union across all
+  three corpora is **227**. An evaluator satisfied against the 27 would have met the other 34 in
+  front of the group. This section's own ⚠️ said to regenerate rather than trust the table; that is
+  what it was for.
+- **`20d6+455` is not reachable, and the extremes are tested synthetically instead.** Challenge
+  ratings only span 0 to 6, so the steepest ratio in play tops out at twelve dice and a `+18`
+  modifier. The scaler *can* emit the wider shape, so the grammar's extremes are exercised with a
+  note saying they are synthetic — leaving them out would leave the evaluator unchecked at exactly
+  the point a wider range first reaches it.
+- **The dice library had to change, and ADR 0001 is superseded on that one row.**
+  `@3d-dice/dice-box` cannot be told what numbers to display — it rolls its own — which is
+  irreconcilable with the server deciding every roll. `@3d-dice/dice-box-threejs` is the same
+  author's fork that exists to keep predetermined rolling. Proven from the bundle's source (it swaps
+  the face's material index *after* the physics settles and reads the value back off the mesh
+  normals) and then in headless Chrome, with an unpinned roll beside it as the control. It uses
+  cannon-es rather than an ammo.js WASM blob, so the risk flagged below largely evaporated — but its
+  **d100 is a tens die**, so a server-decided 47 cannot be rendered at all.
+- **A grant cannot widen the feed, and the parameter that said it could was pure cost.**
+  `boardCharacterAccess` adds to `controlled` only on an iteration that already added to `visible`,
+  so the grant disjunct could admit nothing sight had not. It was still putting `playerId` on
+  `feed.list` and splitting the highest-churn subscription in the app into one cache entry per seat.
+  Found by the agent writing the leak tests — the second time in this milestone that a test found the
+  *reasoning* wrong rather than the code.
+- **`visibleFeed`'s window-before-filter comment argued for the opposite of what the code does.** It
+  claimed filtering first would leak a count; it is the other way round. The bounded read is the real
+  reason and the count inference is a cost, and both now say so — including in the threat model,
+  which gains its first *paid* guard beside all the free ones.
+- **The five open questions all resolved to "announce, do not adjudicate", and one of them was
+  already answered.** A hero's initiative bonus needed no new field: `initiativeBonusOf` has answered
+  for both sheet kinds since the sheets milestone and only had to be found.
+- **Three bugs survived 1,314 green tests, a clean lint and a 187/187 real-deployment smoke run, and
+  a browser found all three.** That is now true of every milestone. The worst was a double-click on a
+  weapon **losing the damage roll every time** — `RollButton` disabled itself on a panel-wide
+  `pending` count, so the first click greyed out the button beside it. To-hit-then-damage is the
+  interaction this milestone exists for, and the identical correction had already been written for
+  the initiative die one file over. The dice canvas also did not follow the pane divider (the engine
+  resizes on a `window` resize and nothing else), and the crit halo lit up **2.5 seconds** before the
+  total — long enough to read the colour and call the crit before the die landed.
+
+**Acceptance, as met:** a player clicks a saving throw and both screens show the same dice faces, the
+same floating announcement and the same feed line, with the roller seeing it **without leaving their
+sheet tab**. A weapon is two clicks and two lines. A passive adds a line and throws no dice. Alt-click
+sends the description. A natural 1 shakes the map pane and flashes red on every screen that received
+the row, a natural 20 celebrates, and both are suppressed under `prefers-reduced-motion` — where a
+*held* wash and the crit in words replace them, rather than nothing. The DM rolls a DM-layer creature
+and the player's window shows **nothing at all**; the coin moves to the player layer and the line
+appears, while its sheet stays refused. `npm run test:smoke` passes 187/187 against the real dev
+deployment, including every subject kind through the union, the exact key set at three depths, and
+`roll: null` coming back as a present key rather than a missing one.
+
+**The original plan follows.**
 
 The bit that makes it feel like a game.
 
@@ -1382,6 +1451,118 @@ The bit that makes it feel like a game.
 - **A weapon rolls twice** — a to-hit and a damage — which is the shape the sheet-taxonomy milestone
   put on `SheetEntry` for exactly this reason. An action rolls once. A passive is declared and rolls nothing,
   so clicking one announces it and pushes to the feed without any dice.
+
+### ⚠️ The list above is a feature list, not a specification — read this before starting
+
+**Reviewed before building, and the review found the section wanting.** Everything above says *what
+will exist*. Almost none of it says **how a sheet behaves when somebody clicks it**, and that is the
+entire milestone. Specifically it never says how an ability check, a saving throw, a skill check, an
+initiative roll, a weapon's to-hit and damage, a spell attack, a spell save DC, a spell slot, a
+limited-use class feature or a passive actually work — nor which of those this app adjudicates and
+which it merely announces.
+
+That gap is not a documentation problem. Three of the things in that list **do not exist in the data
+model at all**, and discovering them at implementation time is how the shape of the roll path gets
+decided by whichever file was open at the time. They are named below so they are decided on the record
+first.
+
+### The rules surface is fixed, and that is the whole reason this is tractable
+
+The sheets are **fixed and cherry-picked** — a deliberate constraint from the character-library and
+bestiary milestones, and the thing that stops this being an implementation of 2024 D&D. Nothing needs
+to work in general; a bounded, countable list needs to work exactly. As it stands:
+
+| The corpus | Count |
+| --- | --- |
+| Premade hero sheets (`convex/lib/library/`) | 72 — eight classes, two archetypes each, levels 1–5 |
+| Creatures (`convex/lib/bestiary/`) | 140 |
+| Catalogue entries (`convex/lib/rules.ts`) | 52, of which the library actually references **29** |
+| **Distinct damage/effect roll expressions in the library** | **32** |
+| **Distinct to-hit expressions in the library** | **7** |
+| Distinct roll expressions across the bestiary | 27 |
+
+So the evaluator has **fewer than sixty distinct expressions** to satisfy, every one of which already
+passes `isValidRoll` and is therefore already in the grammar. The 29 catalogue keys the library leans
+on are the complete set of spells and class features that need behaviour:
+
+> `action-surge` `aid` `bardic-inspiration` `bless` `burning-hands` `counterspell` `cure-wounds`
+> `detect-magic` `dispel-magic` `divine-smite` `fire-bolt` `fireball` `guidance` `guiding-bolt`
+> `healing-word` `hold-person` `lightning-bolt` `lay-on-hands` `mage-hand` `magic-missile`
+> `misty-step` `rage` `revivify` `sacred-flame` `scorching-ray` `second-wind` `shield`
+> `sneak-attack` `spiritual-weapon`
+
+⚠️ **Enumerate before implementing.** Regenerate those counts and that list from the corpus rather
+than trusting this table — it is a snapshot, and the corpus is content. The instruction that matters
+is the shape of the work: *go and read what is actually there, then make exactly that work.* Anything
+built for the general case is built for content this project does not have and will not add.
+
+⚠️ **And the reduced rules stay reduced.** The library is a **modified** 2024 subset — an archetype is
+chosen at **level 2** rather than level 3, for every class; levels stop at 5; backgrounds, inventory,
+multiclassing and experience points are excluded by design. Consult the 2024 rules for how a
+cherry-picked feature *works*, never for what a character *has*. The corpus is the authority on the
+second question, and a rules reference that disagrees with it is describing a different game.
+
+### Five things the data model does not have, and each one is a decision
+
+None of these is a gap to fill quietly on the way past. Each changes what the roll path is.
+
+1. **There are no spell slots anywhere.** No field, no table, no accessor. A `spells` entry is a
+   `SheetEntry` with an optional `level`, and nothing tracks casting. So "clicking a spell casts it"
+   currently cannot mean "and spends a slot". Decide whether slots exist at all — a table of them per
+   class and level is real content, and the alternative (the app announces the cast and the table
+   tracks slots on paper, as it already does for most things) is entirely consistent with a project
+   whose stated purpose is to not be a rules engine.
+2. **A hero has no spell attack bonus and no spell save DC.** A *creature* has both — `attackBonus`
+   and `saveDc` on the reduced sheet — and a hero has neither, because a hero's are derived from the
+   spellcasting ability plus proficiency. So either they get derived at resolution (and the
+   spellcasting ability per class becomes stored content) or they get stored per sheet across 72
+   files.
+3. **A hero has no initiative bonus.** A creature stores one; a hero derives it from DEX. The
+   initiative-from-the-selector feature above rolls for both, so it needs one answer that covers a
+   stored number and a derived one.
+4. **Limited-use resources are coarser than the features need.** `characterVitals` holds
+   `spentPerRest: string[]` — a set of *keys*, so a thing is spent or it is not — plus
+   `hitDiceRemaining`. That cannot express Rage twice a day, Channel Divinity twice a rest, or Second
+   Wind once a *short* rest, and the corpus contains features of all three shapes. A count per key, a
+   short-rest versus long-rest distinction, or a deliberate decision not to track them: pick one, and
+   note that `characters.longRest` currently restores everything.
+5. **Nothing expresses concentration or the action economy.** No field says a spell needs
+   concentration, and nothing knows an action from a bonus action from a reaction. The reduced rule
+   set never promised either. Say so explicitly rather than leaving the absence to be read as an
+   oversight — and if the answer is that the table tracks them, the sheet should not imply otherwise.
+
+**The likely right answer to most of these is "announce, do not adjudicate"** — which is what
+[requirements.md](requirements.md) means by D&D Lite and what the bestiary milestone already decided
+about CR scaling. But it is an answer that has to be given, because the opposite reading builds a
+rules engine by accident, one feature at a time.
+
+### Reference material, and what each is good for
+
+- **[A beginner's guide to playing using D&D Beyond](https://www.anotherdndblog.com/d&d/preparation/session0/dm/lmop/starter/players/d&dbeyond/2020/07/08/a_beginners_guide_to_playing_using_dnd_beyond.html)**
+  — the interaction model this project's sheets should feel like: which numbers are clickable and what
+  each click rolls. Ability scores, saves and skills each roll a d20 plus their modifier; a weapon is
+  **two separate clicks**, a to-hit then a damage; passive scores are printed and never rolled; a
+  spell save DC is a printed number the caster does not roll; advantage rolls twice and takes the
+  higher.
+  ⚠️ **It is a beginner's guide and it is silent on precisely the hard parts** — it does not cover
+  spell-slot consumption, concentration, limited-use resource tracking or action economy, which are
+  four of the five open decisions above. Take the click-to-roll model from it; do not expect it to
+  settle the rest.
+- **2024 rules, per class and archetype** — for how a cherry-picked feature works, never for what a
+  character has:
+
+  | Class | Archetypes | Reference |
+  | --- | --- | --- |
+  | [Barbarian](http://dnd2024.wikidot.com/barbarian:main) | [Berserker](http://dnd2024.wikidot.com/barbarian:path-of-the-berserker) · [Wild Heart](http://dnd2024.wikidot.com/barbarian:path-of-the-wild-heart) | [feats](http://dnd2024.wikidot.com/feat:all) |
+  | [Bard](http://dnd2024.wikidot.com/bard:main) | [Lore](http://dnd2024.wikidot.com/bard:college-of-lore) · [Valour](http://dnd2024.wikidot.com/bard:college-of-valor) | [spells](http://dnd2024.wikidot.com/bard:spell-list) |
+  | [Cleric](http://dnd2024.wikidot.com/cleric:main) | [Life](http://dnd2024.wikidot.com/cleric:life-domain) · [Light](http://dnd2024.wikidot.com/cleric:light-domain) | [spells](http://dnd2024.wikidot.com/cleric:spell-list) |
+  | [Fighter](http://dnd2024.wikidot.com/fighter:main) | [Champion](http://dnd2024.wikidot.com/fighter:champion) · [Battle Master](http://dnd2024.wikidot.com/fighter:battle-master) | [feats](http://dnd2024.wikidot.com/feat:all) |
+  | [Paladin](http://dnd2024.wikidot.com/paladin:main) | [Devotion](http://dnd2024.wikidot.com/paladin:oath-of-devotion) · [Vengeance](http://dnd2024.wikidot.com/paladin:oath-of-vengeance) | [spells](http://dnd2024.wikidot.com/paladin:spell-list) |
+  | [Ranger](http://dnd2024.wikidot.com/ranger:main) | [Hunter](http://dnd2024.wikidot.com/ranger:hunter) · [Beast Master](http://dnd2024.wikidot.com/ranger:beast-master) | [spells](http://dnd2024.wikidot.com/ranger:spell-list) |
+  | [Rogue](http://dnd2024.wikidot.com/rogue:main) | [Thief](http://dnd2024.wikidot.com/rogue:thief) · [Assassin](http://dnd2024.wikidot.com/rogue:assassin) | [feats](http://dnd2024.wikidot.com/feat:all) |
+  | [Wizard](http://dnd2024.wikidot.com/wizard:main) | [Evocation](http://dnd2024.wikidot.com/wizard:evoker) · [Divination](http://dnd2024.wikidot.com/wizard:diviner) | [spells](http://dnd2024.wikidot.com/wizard:spell-list) |
+
+  Plus [all spells](http://dnd2024.wikidot.com/spell:all) and [all feats](http://dnd2024.wikidot.com/feat:all).
 
 ### The roll announcement over the map, and why it is not decoration
 
@@ -1421,7 +1602,79 @@ before building more** — a session will tell you what's genuinely missing fast
 
 ---
 
-## Milestone 10 — DM tooling
+## ✅ Milestone 10 — DM tooling
+
+**Done.** The decisions are recorded in
+[ADR 0012](adr/0012-three-layers-and-a-fog-that-is-honest-about-itself.md). Eight things it settled
+differently from the section below, or found out by building it, so read them together:
+
+- **The third layer was hard for a reason neither this file nor ADR 0004 named**, and both only said
+  *`maySee` is a two-way test and a third layer does not extend it*. The reason is that `isDm || layer
+  === 'player'` was doing **two jobs that merely coincided** — deciding what a client is *sent* and
+  what it may *move*. A player-layer token is both, a GM-layer token neither, and **Background is the
+  first row where those answers differ.** So it needed a *second* predicate rather than a wider first
+  one, and no amount of widening produces two. `maySeeLayer` and `mayPlayersMove` in the new
+  `convex/lib/layers.ts`, a `never` arm each; a fourth member now hits **five** compile-time refusals.
+- **Fog hides a placement, not a row, and that is narrower than "the monsters were the secret"
+  implies.** A fogged creature loses its position, its health band and its feed lines — but its coin's
+  *name and art stay in `board.tokens`*, because filtering that query means reading `tokenPositions`
+  and re-resolving up to two hundred signed URLs on every drag frame, which is exactly the cost
+  ADR 0004 split the two board queries to avoid. **The GM layer stays the tool for "may not be known
+  about"; fog is the tool for "cannot see into that corridor."**
+- **The cascade cost nothing to build.** One `continue` in `boardCharacterAccess`'s existing loop
+  takes the band and the feed line together, because ADR 0009 had already made `controlled ⊆ visible`
+  structural. No fourth predicate, and no `playerId` back on `feed.list`.
+- **Fog is pay-as-you-go, and one early return is the whole cost model.** A scene with no rectangles
+  returns before the positions read, so a game that never draws one has read sets byte-identical to
+  what they were before the feature existed.
+- **Fog must never hide a token the table controls**, or a player who walks their hero into the dark
+  loses their own coin with no way to select it back. That is a correctness requirement rather than a
+  courtesy, and it is also what states plainly that fog hides *what the DM placed*.
+- **The reveal replay was fixed by moving a timestamp, not by a heuristic.** `Date.now()` is
+  forbidden in a Convex query, so a *mutation* stamps `games.revealedAt` and each feed row carries
+  `predatesReveal`. ⚠️ **`characters.assign` was missing its stamp** — the second route by which a
+  reserved hero is released — so the whole backlog would have flown over the map. Found within the
+  milestone that wrote the warning about exactly that.
+- **Two mount points mattered more than the filters did, and both compiled.** The fog test first went
+  into `visibleTokens`, the one private helper everything funnels through, which silently applied it
+  to a consumer with a completely different cost profile. Then the veil first went *above* the player
+  token layer, which would have blacked out the hero the server had gone to trouble to keep sent.
+  Neither was a bug in a predicate.
+- **Non-square grid cells are declined, because the bullet asks for two incompatible things.** "Scale
+  it on X and Y" and "no schema change" cannot both hold — `sizeSquares` stops meaning anything once
+  cells are rectangular. A corner drag that stays square *is* the interface saying so.
+
+**One thing this milestone did that no previous one has: it migrated a stored value.** The GM layer
+is `gm` in the database, not `dm`, through widen → migrate → narrow. Convex refuses a schema push
+that narrows a union while a non-conforming row survives, which makes the sequence self-enforcing: a
+blocked pipeline rather than broken data.
+
+⚠️ **The narrowing commit is deliberately NOT on this branch, and that is the one outstanding step.**
+The widened schema and the relabel tooling are merged; the migration has been run against **dev**
+(6 tokens across 6 games, verified zero remaining). Production has not been migrated, and a push of
+the narrow union would be refused until it is. The sequence for `main`:
+
+1. Merge this work and deploy it. No `dm` value can be created from that deploy forward, and none
+   ever leaves the server — the public projection normalises through `layerOf` — so the browser never
+   sees the transition and the set of legacy rows only shrinks.
+2. `npm run relabel-layers` against production (dry run first; it is the default).
+3. `npx convex run admin:gamesWithLegacyLayers` must report zero.
+4. Then a `chore/` branch deleting `storedTokenLayerValidator`, `layerOf`, `relabelGmLayer`,
+   `countLegacyLayers`, the two `admin` functions and `scripts/relabel-layers.mjs`.
+
+**Acceptance, as met:** the DM switches scenes from a list of thumbnails and every client follows,
+each restoring its own camera rather than jumping. An NPC dragged from the GM layer to the Player
+layer appears for players at that moment and not before. A token placed on Background is visible to a
+player, cannot be picked up by them — `TokenNotMovable`, deliberately *distinguishable* from
+`TokenNotFound` because the coin is on their screen and there is no existence to oracle — and a grant
+on it is inert. A pet granted to the party can be moved by two different players; the monster beside
+it by neither. A player whose corridor is fogged has no position rows for what stands in it, no health
+band for it and no feed lines from it; erasing the fog returns all three and announces none of them.
+`npm test` passes **1399/1399** and `npm run test:smoke` passes against the real dev deployment,
+including the three-member union as both an argument and a projected field, four float64s per
+rectangle, and a negative extent coming back normalised.
+
+**The original plan follows.**
 
 The four bold items at the end were **requested after playing Milestone 2**. The rest was always
 here — except two bullets that moved forward, both for the same kind of reason. The **token-control**
@@ -1437,7 +1690,10 @@ milestone once the sheet selector made it the only thing in the game with no way
   into DM-tools tabs; the seats-and-sheets milestone took the sheets and the creatures back out of it
   into a tab of their own, leaving DM tools holding Map alone. So this is two more tabs inside a
   panel that exists, not a panel.
-- DM can click any sheet item to roll on a player's behalf.
+- ~~DM can click any sheet item to roll on a player's behalf.~~ — **already finished by the rolls
+  milestone**, which gave the DM's Sheets tab roll buttons on every ability, save, skill and entry of
+  whichever creature is selected. Ticked rather than re-planned: the bullet was written before that
+  tab existed and describes what it does.
 - Scene switching — changes the visible board for everyone in the game.
 - Modal image pop-up: DM opens an image for the whole group, and closes it for everyone.
 - DM can move any token on any layer, including player tokens. The mutation already allows this, the

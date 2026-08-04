@@ -2,6 +2,7 @@ import type { ReactElement } from 'react'
 
 import { CopyButton } from '@/components/CopyButton'
 import { ProfileIcon } from '@/components/ProfileIcon'
+import { MusicControl } from '@/components/music/MusicControl'
 
 export type GameHeaderProps = {
   /** The game's name. */
@@ -19,10 +20,18 @@ export type GameHeaderProps = {
  * The bar across the top of a game: which table this is, how to get into it, and who
  * the browser thinks you are.
  *
- * **Presentational, with no subscription of its own.** Everything on it is already
- * held by `useSeat` — the game payload and the seat's own roster row — so a query
- * here would be a second copy of facts the route has resolved, with its own loading
- * state and its own chance to disagree.
+ * **Presentational, with one exception.** Everything printed here is already held by
+ * `useSeat` — the game payload and the seat's own roster row — so a query for any of it
+ * would be a second copy of facts the route has resolved, with its own loading state and
+ * its own chance to disagree.
+ *
+ * ⚠️ **`MusicControl` is the exception, and it is here because of what it owns rather than
+ * what it shows.** It subscribes to `music.current` and holds the game's one audio element,
+ * so it has to live in a component that is mounted for the whole session: `RightPane`
+ * force-mounts only the sheet tab, and the same control in `SettingsTab` would be
+ * unmounted — and the music stopped — the moment anybody looked at the feed. A header that
+ * is always on screen is the only place that element can be, so the subscription comes with
+ * it. It renders nothing when the DM has no track on.
  *
  * The right-hand side is the answer to a question the old lobby answered by being a
  * whole screen: *am I signed in as the right person, and is my character attached?*
@@ -50,6 +59,8 @@ export function GameHeader({
       </div>
 
       <div className="flex items-center gap-4">
+        <MusicControl code={code} />
+
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground text-sm">Join code</span>
           <code className="bg-muted rounded px-2 py-1 font-mono tracking-[0.2em]">{code}</code>

@@ -18,7 +18,6 @@ import {
   setTokenCharacter,
   setTokenControllers,
   setTokenLayer,
-  tokenLayerValidator,
   visiblePositions,
 } from './lib/board'
 import { getCharacterInGame } from './lib/characters'
@@ -26,10 +25,18 @@ import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
 import {
   MAX_SEATS_PER_GAME,
   MAX_TOKENS_PER_GAME,
+  activeSceneId,
   findGameByCode,
   requireDm,
   resolveDmAccess,
+  stampReveal,
 } from './lib/games'
+// The NARROW three-member union, which is the only one anything outside `convex/schema.ts`
+// uses. `addToken` and `setLayer` validate against it, so no `dm` row can be created from
+// this deploy forward however many are still stored. `layerOf` is the transition-only
+// reader beside it: a *stored* layer may still be the legacy `dm`, so every comparison
+// against `'gm'` in this file goes through it rather than against the raw field.
+import { layerOf, tokenLayerValidator } from './lib/layers'
 import { getSeatInGame, listSeats } from './lib/players'
 import type { Point } from './lib/grid'
 import { isUsableTokenSize, snapToGrid } from './lib/grid'
@@ -179,6 +186,11 @@ export const tokens = query({
       resolveDmAccess(ctx, args.code, args.dmCode),
       listSeats(ctx, game._id),
     ])
+    // ⚠️ **No fog here, and the absence is load-bearing.** This query resolves a signed
+    // storage URL per token, so putting the fog question in it would make every drag frame
+    // re-resolve two hundred of them — see the note on `visibleTokens`. A fogged creature
+    // loses its placement, its health band and its feed lines; its coin's *name* stays in
+    // this payload, and the GM layer is the tool for hiding that.
     return await publicTokens(ctx, game._id, isDm, seats)
   },
 })
@@ -212,6 +224,19 @@ export const positions = query({
     // empty answer for a foreign scene leaks nothing — it is the absence of one.
     const scene = await findSceneInGame(ctx, game._id, args.sceneId)
     if (!scene) return []
+
+    // ⚠️ **A non-DM may only ask about the board in front of them**, and this closes a hole
+    // the two scene scopes would otherwise open. Fog is per scene, but the *character*
+    // crossing fogs against `activeSceneId` because that is the only board a player can be
+    // looking at. Without this line a player could name some other scene and receive
+    // placements filtered by that scene's rectangles instead — publishing the coordinates of
+    // exactly what the DM had blacked out, from a map the party has not reached.
+    //
+    // Empty rather than thrown, in this query's own register: everything unknown here paints
+    // an empty board rather than an error screen. It costs nothing in practice — `useBoard`
+    // only ever passes the active scene, and `scenes.list` is DM-only so a player has no
+    // route to another scene's id anyway.
+    if (!isDm && scene._id !== activeSceneId(game)) return []
 
     return await visiblePositions(ctx, game._id, scene._id, isDm)
   },
@@ -292,6 +317,14 @@ export const addToken = mutation({
       tokenId,
       await freeCellNear(ctx, scene._id, scene, args.sizeSquares, { x: args.x, y: args.y }),
     )
+    // A coin created straight onto the player layer with a creature already on it is a
+    // reveal like any other — the DM's usual way of putting a monster the party has been
+    // fighting elsewhere onto this board — and that creature's earlier lines become
+    // audible in this write. Both conditions are needed: an empty coin names nobody, and a
+    // GM-layer one is exactly the encounter being prepared rather than sprung.
+    if (args.layer === 'player' && args.characterId !== undefined) {
+      await stampReveal(ctx, game._id)
+    }
     return { tokenId }
   },
 })
@@ -417,7 +450,21 @@ export const setLayer = mutation({
     const game = await requireDm(ctx, args.code, args.dmCode)
     const token = await requireDmToken(ctx, game, args.tokenId)
 
+    // ⚠️ **A stamp, and only in the widening direction.** Everything this write publishes
+    // was rolled while the coin was hidden, so the lines arrive at the table as *new* rows
+    // minutes after the dice stopped — see `predatesReveal` on `publicFeedValidator`, which
+    // is what stops the map replaying all of them at once. Hiding a coin again must not
+    // stamp: that suppresses the flourish for rolls nobody has been shown yet.
+    //
+    // `layerOf` because the stored value may still be the legacy `dm`, and Background is
+    // deliberately not a source: it is already public, so nothing widens by leaving it.
+    // Coverage here is discipline rather than construction, as that note says at length —
+    // a new widening path that skips this line breaks the flourish and nothing else, with
+    // no type error and nothing failing until somebody writes a case beside it.
+    const widening = layerOf(token.layer) === 'gm' && args.layer === 'player'
+
     await setTokenLayer(ctx, token, args.layer)
+    if (widening) await stampReveal(ctx, game._id)
     return null
   },
 })
@@ -474,6 +521,14 @@ export const setCharacter = mutation({
     }
 
     await setTokenCharacter(ctx, token, args.characterId)
+    // The same stamp `setLayer` makes, for the same widening seen from the other side: the
+    // coin was already on the board and it is the *character* that has just become audible,
+    // so every line that creature rolled elsewhere reaches the table at once. Only on a
+    // bind, and only onto a coin the players can see — unbinding narrows, and binding onto
+    // a Background or GM-layer coin publishes nothing.
+    if (args.characterId !== null && layerOf(token.layer) === 'player') {
+      await stampReveal(ctx, game._id)
+    }
     return null
   },
 })

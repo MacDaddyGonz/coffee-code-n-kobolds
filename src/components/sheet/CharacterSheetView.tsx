@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { CharacterSheetEditor } from '@/components/sheet/CharacterSheetEditor'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCharacterSheet } from '@/hooks/useCharacterSheet'
+import { RollTargetProvider } from '@/hooks/useRoll'
 import { useHpActions, useVitals } from '@/hooks/useVitals'
 import type { Id } from '@convex/_generated/dataModel'
 
@@ -27,6 +28,18 @@ export type CharacterSheetViewProps = {
  *
  * Mounted only while the panel is open — Radix renders no content for a closed
  * dialog — so a table of six is not holding six idle subscriptions each.
+ *
+ * ⚠️ **Whose sheet the roll buttons aim at is declared here, because this is the one
+ * component that both holds the answer and contains every button.** `AbilityTable`,
+ * `SkillList` and `SheetEntryList` are reached only through `CharacterSheetEditor`, which
+ * only this component renders — so `RollTargetProvider` around it reaches every `RollButton`
+ * in the application and nothing else. It used to sit in `RightPane`, wrapped around both
+ * sheet tabs, where it re-derived `focus.kind === 'character' ? focus.characterId : null`
+ * over a `SheetFocus` those tabs had already narrowed the same way to decide whether to
+ * render *this* — three spellings of one fact, in a file that otherwise does not need to know
+ * rolls have a target. `sheetFocusOf` is still the one place the question *whose sheet is on
+ * screen* is answered; this is that answer arriving as a prop and being handed down rather
+ * than asked again.
  */
 export function CharacterSheetView({
   code,
@@ -97,34 +110,38 @@ export function CharacterSheetView({
   }
 
   return (
-    <CharacterSheetEditor
-      // Remounted when the character changes, so a half-typed draft can never carry
-      // across from the last one. `MapSetupPanel` keys its calibrator on the scene
-      // for exactly the same reason.
-      key={sheet._id}
-      code={code}
-      saved={sheet}
-      vitals={vitals.of(characterId)}
-      // The DM code, which decides what the panel offers and nothing more — every mutation
-      // behind those controls re-verifies it server-side (CLAUDE.md invariant 7). The value
-      // rather than a boolean because the creature panel has a query of its own to run, and
-      // a query takes the code rather than a claim about holding one.
-      dmCode={dmCode}
-      onAdjustHp={(delta) => void hp.adjust(characterId, delta)}
-      // Reported through the same `hp.error`, and so through the same toast above.
-      // `useHpActions` clears and sets one error for all of its writes precisely so a
-      // caller wires one message rather than one per mutation.
-      onAdjustHitDice={(delta) => void hp.adjustHitDice(characterId, delta)}
-      onSave={save}
-      onRename={rename}
-      onSetLevel={(level) => announce(setLevel(level))}
-      onSetLocked={(locked) => announce(setLocked(locked))}
-      // Announced the same way and for the same reason: both land the instant the control is
-      // used, so a refusal has no half-filled form left on screen to attach a message to.
-      onSetCreatureCr={(cr) => announce(setCreatureCr(cr))}
-      onResetCreature={() => announce(resetCreature())}
-      onSetPerRest={(key, spent) => void hp.setPerRest(characterId, key, spent)}
-      onLongRest={() => void hp.longRest(characterId)}
-    />
+    // Around the editor rather than around the loading and refusal states above, which have
+    // no buttons in them: a provider is worth exactly the subtree that reads it.
+    <RollTargetProvider characterId={characterId}>
+      <CharacterSheetEditor
+        // Remounted when the character changes, so a half-typed draft can never carry
+        // across from the last one. `MapSetupPanel` keys its calibrator on the scene
+        // for exactly the same reason.
+        key={sheet._id}
+        code={code}
+        saved={sheet}
+        vitals={vitals.of(characterId)}
+        // The DM code, which decides what the panel offers and nothing more — every mutation
+        // behind those controls re-verifies it server-side (CLAUDE.md invariant 7). The value
+        // rather than a boolean because the creature panel has a query of its own to run, and
+        // a query takes the code rather than a claim about holding one.
+        dmCode={dmCode}
+        onAdjustHp={(delta) => void hp.adjust(characterId, delta)}
+        // Reported through the same `hp.error`, and so through the same toast above.
+        // `useHpActions` clears and sets one error for all of its writes precisely so a
+        // caller wires one message rather than one per mutation.
+        onAdjustHitDice={(delta) => void hp.adjustHitDice(characterId, delta)}
+        onSave={save}
+        onRename={rename}
+        onSetLevel={(level) => announce(setLevel(level))}
+        onSetLocked={(locked) => announce(setLocked(locked))}
+        // Announced the same way and for the same reason: both land the instant the control is
+        // used, so a refusal has no half-filled form left on screen to attach a message to.
+        onSetCreatureCr={(cr) => announce(setCreatureCr(cr))}
+        onResetCreature={() => announce(resetCreature())}
+        onSetPerRest={(key, spent) => void hp.setPerRest(characterId, key, spent)}
+        onLongRest={() => void hp.longRest(characterId)}
+      />
+    </RollTargetProvider>
   )
 }

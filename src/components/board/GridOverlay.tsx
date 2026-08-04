@@ -3,6 +3,7 @@ import { Shape } from 'react-konva'
 import type { Context as KonvaContext } from 'konva/lib/Context'
 
 import { gridLines } from '@convex/lib/grid'
+import type { Grid } from '@convex/lib/grid'
 import type { PublicScene } from '@convex/lib/scenes'
 
 /**
@@ -24,6 +25,21 @@ const LINE_WIDTH = 1
 export type GridOverlayProps = {
   scene: PublicScene
   scale: number
+  /**
+   * A calibration in progress, which outranks the scene's stored one while it lasts.
+   *
+   * ⚠️ **Not a nicety.** Without it the interactive handles reproduce exactly the failure
+   * `GridCalibrator`'s docblock records from the first session with the typed fields: the
+   * DM adjusts the grid, looks at an overlay that has not moved, and concludes the app is
+   * broken. A drag pushes ten writes a second, so the stored grid catches up in a tenth
+   * of a second — but a tenth of a second of a grid that does not follow the box is
+   * enough to make the box feel disconnected from the thing it is supposed to be moving.
+   *
+   * Only the three numbers `Grid` carries. `gridVisible` is not among them, so the DM's
+   * switch still decides whether anything is drawn at all: a map that arrived with its own
+   * grid printed on it is calibrated against the *box*, which is drawn regardless.
+   */
+  grid?: Grid
 }
 
 /**
@@ -50,8 +66,14 @@ export type GridOverlayProps = {
  * grid. That included every one of the ten position ticks a second during a drag,
  * which should be touching the token layer's canvas and nothing else.
  */
-export const GridOverlay = memo(function GridOverlay({ scene, scale }: GridOverlayProps) {
-  const { imageWidth, imageHeight, gridSize, gridOffsetX, gridOffsetY } = scene
+export const GridOverlay = memo(function GridOverlay({ scene, scale, grid }: GridOverlayProps) {
+  const { imageWidth, imageHeight } = scene
+  // Destructured to three numbers before either hook below sees them, deliberately. The
+  // draft is a fresh object whenever the caller re-derives it, and the memo above compares
+  // props by reference — so taking the object into a dependency list would rebuild
+  // `sceneFunc` on renders that changed nothing, which is the redraw-on-every-position-tick
+  // the note above is about. Numbers compare equal.
+  const { gridSize, gridOffsetX, gridOffsetY } = grid ?? scene
 
   const lines = useMemo(
     () => gridLines({ gridSize, gridOffsetX, gridOffsetY }, imageWidth, imageHeight),

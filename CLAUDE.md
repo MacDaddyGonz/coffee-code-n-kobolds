@@ -6,20 +6,31 @@ SSR, no SEO.
 Spec: [docs/requirements.md](docs/requirements.md). Build order:
 [docs/roadmap.md](docs/roadmap.md). Decisions: [docs/adr/](docs/adr/).
 
-## Branching — always work on a branch
+## Branching — always work on a branch, and always ask before merging
 
 **Never commit directly to `dev` or `main`.**
 
 ```
 feature/xyz ──┐
-              ├──▶ dev ──(pull request)──▶ main
+              ├──(merge, once asked)──▶ dev ──(pull request)──▶ main
   fix/abc  ───┘
 ```
 
 - Branch from `dev` for every change, however small.
 - Prefixes: `feature/`, `fix/`, `chore/`, `docs/`.
-- Merge the branch into `dev` when it's complete and working.
+- When the work is complete and working, **ask** — then merge the branch into `dev`.
 - `main` only ever receives changes via pull request from `dev`. GitHub rejects direct pushes.
+
+⚠️ **Claude may merge into `dev`, but only after asking, and never into `main`.** The two halves of
+that sentence are separate rules:
+
+- **Into `dev`:** finish the work, say it is ready, and *ask for permission to merge*. Wait for a
+  yes. A green `npm run build`, a passing test run and a diff that looks obviously right are the
+  things that make it worth asking — none of them is the answer. Permission is per merge: a yes on
+  one branch says nothing about the next one, however similar.
+- **Into `main`:** Claude opens a pull request from `dev` and stops there. The review and the merge
+  are the maintainer's — no `gh pr merge`, no squash, no fast-forward, no "just this one is
+  trivial". Deleting the branch afterwards is the maintainer's call too.
 
 Commit messages: short imperative subject (`Add initiative tracker to DM panel`). Use the body to
 explain *why* when the diff doesn't make it obvious.
@@ -27,7 +38,16 @@ explain *why* when the diff doesn't make it obvious.
 ## Stack
 
 React + TypeScript + Vite (static SPA, **hash routing**) · Convex (database, realtime, file storage)
-· react-konva (map canvas) · @3d-dice/dice-box · Tailwind + shadcn/ui · GitHub Pages via Actions.
+· react-konva (map canvas) · **@3d-dice/dice-box-threejs** · Tailwind + shadcn/ui · GitHub Pages via
+Actions.
+
+⚠️ **The dice library is the fork and not `@3d-dice/dice-box`**, which ADR 0001 named and
+[ADR 0011](docs/adr/0011-announcing-a-roll-rather-than-adjudicating-one.md) supersedes. The original
+rolls its own numbers with no way to override them, and this application's rolls are decided on the
+server — so it could only ever show a table numbers that disagreed with the feed, or let the browser
+choose them. The fork exists to keep predetermined rolling (`roll('2d20@18,4')`). It is loaded by
+`await import()` so three.js stays in its own chunk, and its texture is reached through
+`import.meta.env.BASE_URL` — the only reader of it in the codebase, and the place invariant 4 bites.
 
 Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosting.md).
 
@@ -53,6 +73,17 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    alone would not have justified it. The decisive reason is the shape of the *subscription* — the
    board needs live hit points for every visible token, and a health-bar query that read character
    documents would be reading NPC sheets, which are the secret.
+
+   ⚠️ **This invariant has a read side, and fog of war is where it first bites.** `tokenPositions` is
+   written ten times a second, so **any query that reads it joins every drag's invalidation set** —
+   which is the same contention from the other direction. Fog is a fact about a placement, so
+   filtering on it means reading that table, and three early returns in `foggedTokenIds` are what
+   keep that affordable: the DM reads nothing at all, **a scene with no rectangles returns before the
+   positions read**, and a token anybody controls is never fogged. The middle one is the whole cost
+   model — a game that has never drawn a rectangle has read sets byte-identical to what they were
+   before the feature existed. The rule to carry forward: *before adding a read of `tokenPositions`
+   to a query, work out what that query then costs during a drag, and give it a way to not pay.*
+
 3. **Hash routing only** (`/#/game/ABC123`). GitHub Pages has no rewrite rules, so a browser-path
    deep link 404s on refresh.
 4. **Vite needs `base: '/coffee-code-n-kobolds/'`.** The site is served from a subpath; omitting
@@ -82,15 +113,47 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    token, so a validator would happily approve a payload full of them. The real guard is therefore
    structural: **one module reads the secret-bearing tables, and one predicate decides.**
 
-   | Tables | The only module allowed to read them | The predicate |
-   | --- | --- | --- |
-   | `tokens`, `tokenPositions` | `convex/lib/board.ts` | `maySee(token, isDm)` |
-   | `characters`, `characterVitals` | `convex/lib/characters.ts` | `maySeeCharacter(character, isDm, controlled?)` |
+   | Tables | The only module allowed to read them | The predicate | Where the predicate lives |
+   | --- | --- | --- | --- |
+   | `tokens`, `tokenPositions` | `convex/lib/board.ts` | `maySee(token, isDm)` | same module |
+   | `characters`, `characterVitals` | `convex/lib/characters.ts` | `maySeeCharacter(character, isDm, controlled?)` | same module |
+   | `feed` | `convex/lib/feed.ts` | `mayHearOf(character, isDm, visible)` | **`convex/lib/characters.ts`** |
 
-   `isDm` comes from `resolveDmAccess` in `convex/lib/games.ts` in both cases — never `players.isDm`
-   (invariant 7). `leakGuard.test.ts` greps every Convex source and fails on a read outside the
-   declared reader; `board.test.ts` and `vitals.test.ts` scan real player payloads for a secret,
-   each with a positive control so the scan cannot pass on an empty fixture.
+   ⚠️ **The fourth column exists because the third row's predicate is not in its own module, and
+   this table used to imply it was.** `mayHearOf` lives in `convex/lib/characters.ts`, because it is
+   a question about a *character document* — and that is the arrangement rather than an accident:
+   `lib/feed.ts` is handed a `Set` of ids that has already been filtered, so it reads no other
+   guarded table and no other module reads its one. Reader and predicate are separable, and for the
+   feed they are separated deliberately.
+
+   ⚠️ **`fogRects` is a table `lib/fog.ts` reads and is deliberately absent from this list.** Every
+   rectangle goes to every client verbatim — a blacked-out map is the whole interface — so its rows
+   have no non-secret twin to be confused with and there is no predicate for a reader to be the home
+   of. An entry would *pass*, which is exactly why leaving it out is argued in that file rather than
+   assumed; `leakGuard.test.ts` does not keep guards that cannot fail. What is genuinely confined is
+   the `tokenPositions` read that turns a rectangle into a withheld token id, and the existing first
+   row already covers it. **Per-player fog, reveal-as-you-walk or line of sight flips that** — any of
+   them makes a rectangle a statement about one caller, and the table needs a fourth row that day.
+
+   **The third row is the same shape as the first two and needed no new machinery, which is the
+   point of having had the argument twice already.** `Ancient Red Dragon attacks with their Bite` is
+   indistinguishable in type from a line about a hero, so a projection over that table would
+   cheerfully approve an array made entirely of spoilers — one reader, one predicate, and the row is
+   dropped whole. There is deliberately **no redacted variant of a feed row**.
+
+   ⚠️ **`mayHearOf` is a new question and not a widening of `maySeeCharacter`**, and it composes it
+   rather than replacing it. One decides whose *sheet* may be opened; the other decides whose *name
+   may appear in a line saying they rolled something*, and the two genuinely differ: a player who can
+   see a goblin's coin may hear that it attacked and still may not read its stat block. Collapsing
+   them publishes stat blocks in one direction and silences the goblin everybody is watching in the
+   other. `feed`'s two further reasons to withhold — a reserved character, and the DM's `dmOnly` —
+   are `&&`-ed at the call site exactly as `isReservedCharacter` is.
+
+   `isDm` comes from `resolveDmAccess` in `convex/lib/games.ts` in all three cases — never
+   `players.isDm` (invariant 7). `leakGuard.test.ts` greps every Convex source and fails on a read
+   outside the declared reader; `board.test.ts`, `vitals.test.ts` and `feed.test.ts` scan real
+   player payloads for a secret, each with a positive control so the scan cannot pass on an empty
+   fixture.
 
    **`maySeeCharacter` has a third argument now, and it is a second door rather than a hole.** A DM
    who hands the party a pet has decided those players may read its sheet, so `controlled` — the
@@ -206,6 +269,66 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    `isMonsterSheet` defaults to `true` for the opposite reason: getting *that* one wrong publishes a
    dragon. Do not copy this one's tolerance across to that one.
 
+   ⚠️ **`tokens.layer` is a fourth union on this schema, and it is the one this file kept naming as
+   the counter-example — so read what actually made it hard.** It is now `background | player | gm`,
+   and the difficulty was never the extra member. It was that `isDm || layer === 'player'` was doing
+   **two jobs that happened to coincide**: deciding what a client is *sent*, and deciding what a
+   client may *move*. A player-layer token is both; a GM-layer token is neither. **Background is seen
+   by everybody and moved by nobody but the DM**, so it is the first row for which those answers
+   differ — and no amount of widening one predicate produces two.
+
+   So there are two, in `convex/lib/layers.ts`: `maySeeLayer` and `mayPlayersMove`, a `never` arm
+   each, both fail-closed, with `TOKEN_LAYER_LABELS` beside them. **A fourth member hits five
+   compile-time refusals** — those three plus a `Record` on each of the two client surfaces that draw
+   and label a layer — and `lib/layers.test.ts` pins the hand-spelled validator against
+   `TOKEN_LAYERS` for the direction the compiler cannot see: a literal added to the *validator*
+   alone, which the schema would then store and nothing could filter or draw.
+
+   ⚠️ **`maySee` did not move and must not.** What lives in `lib/layers.ts` is a function of a
+   *string*; what stays in `lib/board.ts` is every predicate that takes a `Doc<'tokens'>`, so the
+   table above is still correct and *does this leak?* is still answered by reading one file. The
+   `isDm` short-circuit sits **above** the layer switch rather than inside it, so the `never` arm
+   never has to decide what a DM sees — a second question inside a discriminator is the failure
+   `isReservedCharacter` is written the way it is to avoid.
+
+   **Fog is a second, unrelated reason to withhold, `&&`-ed at the call site** exactly as
+   `isReservedCharacter` is beside `maySeeCharacter`. It is a fact about a *(scene, position)* pair
+   rather than about a row, so folding it into `maySee` would hand that predicate a set it cannot
+   verify was built for the same caller and the same scene. It is applied in `visiblePositions` and
+   in **one `continue`** inside `boardCharacterAccess`'s existing loop — which costs a fogged
+   creature its health band and its feed lines together, by the subset property ADR 0009 already
+   made structural. Deliberately **not** applied in `publicTokens`: see the threat model.
+
+10. **A roll is decided on the server, and a test rather than a comment is what keeps it there.**
+    All the arithmetic and all the randomness live in `convex/lib/dice.ts`, and **nothing under
+    `src/` may import it** — `bundleGuard.test.ts` fails the build on any quoted specifier that
+    tries. That guard *is* the rule: a roll the browser computes is a roll the browser can choose,
+    and an evaluator in the bundle is an evaluator a player can call with a source of their own and
+    a total of their own, on a screen everybody else is reading.
+
+    `convex/lib/roll.ts` is the browser-shared half and holds the vocabulary — the modes, the parts
+    of an entry, the shape of a result, the request a client may send, and the one sentence generated
+    from a row. No arithmetic, no randomness, nothing secret. So a client renders a row it was *sent*
+    and has no way to produce one.
+
+    ⚠️ **A roll request names an identifier and never a number.** `feed.roll` takes an entry *id*, an
+    ability or a skill, and the server reads the name, the category, the spell level, the text and
+    the expression off the stored sheet — which is why the request type and the stored subject type
+    are two types where one would compile. Reusing the subject as the argument would hand the client
+    `name`, `category`, `level` and `text` as *inputs*, and a mutation that writes what it was told
+    has a feed that is whatever the network tab says it is. `feed.rollDice` is the one place an
+    expression legitimately arrives from a person, and it is therefore the only place
+    `ROLL_PATTERN`'s uncapped trailing term group is reachable — so it must go through `rollProblem`
+    and never bare `isValidRoll`, because only the former enforces `MAX_ROLL_LENGTH`.
+
+    Randomness is `crypto.getRandomValues` with rejection sampling, never `Math.random`
+    (ADR 0003's rule, applied to dice). 256 is not divisible by 6, so a naive modulo would make a
+    d6's 1 come up about 2% more often than its 5, forever, on every damage roll in the game.
+
+    The **die-count cap is load-bearing** and is the grammar rather than a separate check:
+    `ROLL_PATTERN` admits 1–20 dice and `MAX_ROLL_DICE` is that fact named, so a client cannot ask
+    the physics engine for 99,999 dice. A scaled creature's damage already goes through it.
+
 ### Threat model — what the invariants above are for, and where the line is
 
 The audience is a small group of trusted colleagues. That **scopes** the invariants rather than
@@ -254,6 +377,46 @@ excused: a game name is not a secret the way a scene name or a creature name is.
 [ADR 0010](docs/adr/0010-the-way-in-and-the-dms-coins.md). **Anything else that would be readable
 with no credential is a new decision and needs one**, because this is the boundary where "the code
 still admits you" either holds or has quietly stopped holding.
+
+⚠️ **The feed adds one residual, and it is a *count* rather than a content leak.** `feed.list` reads
+the newest sixty rows and then filters, because "the newest sixty a player may hear" is not a bounded
+read at all — whether a row is readable is a decision about a *character*, so no index can carry it
+and honouring it first means scanning until sixty survive, over the one table in a game that nothing
+caps. The cost is that a player's window is shortened by the DM's private lines and by a hidden
+creature's, so somebody who has counted the public rolls can learn **how many** lines they are not
+being shown once a game passes sixty. Their content is never reachable and neither is the name of
+whatever made them.
+
+Scoped rather than excused, and worth contrasting with the count leak `boardCharacterAccess`
+*refuses*: that one was a health band per NPC in the game, and scoping it to the creatures already on
+the board cost nothing at all, so it was required by the rule below. This one costs the bound. **A
+free guard is mandatory and a paid one is weighed** — which is the same line, applied where it
+actually bites for the first time.
+
+⚠️ **Fog of war is the first guard this project has knowingly shipped incomplete, and it is a third
+register again — not free, not merely paid, but *partial*.** The two above are whole guards whose
+cost is weighed. This one works completely for the thing it was built for and not at all for the
+thing beside it, and both halves are deliberate:
+
+- **Real for tokens.** A creature standing in a fogged rectangle is filtered server-side, so a
+  player is sent no position row, no health band and no feed line for it. Absent from the payload,
+  the way the GM layer is.
+- **Polite for the map.** The background image is fully downloaded, so devtools recovers the
+  unfogged floor plan. Closing that means tiling or masking the map server-side, which multiplies
+  storage against the 1 GB ceiling and complicates zoom and calibration. The monsters were the
+  secret, not the floor plan.
+- **And it does not hide that a coin exists.** A fogged creature's *name and art stay in
+  `board.tokens`*, because filtering that query would put a `tokenPositions` read into it and make
+  every drag frame re-resolve two hundred signed storage URLs — the cost ADR 0004 split the two
+  board queries to avoid. What fog takes is where something is, how hurt it is, and what it just
+  rolled.
+
+So: **the GM layer is the secrecy tool and fog is a map tool.** A creature that must not be known
+about goes on the GM layer, where no arithmetic decides anything and the guard is whole. Reaching
+for fog to hide the existence of something is using the wrong one, and the interface says so only in
+the copy on the layer picker. **A partial guard described as a whole one is worse than no guard**,
+because somebody plans an ambush around it — which is why this paragraph exists rather than a
+sentence saying fog hides monsters.
 
 The line: **not sending a secret is nearly free, so it is required; proving who is asking is not, so
 it is out of scope.** That still holds exactly as written — a secret the DM has *not* published is
@@ -316,6 +479,27 @@ ADR 0002 rather than a new decision), and about *which tokens a player may move*
 anything the DM has granted them). Nothing was added to the Included list, nothing was lifted from
 the Excluded list, and nothing new is adjudicated, evaluated or rolled. A `CharacterGroup` is a
 heading, and a grant is a permission — neither is a rule.
+
+**The dice lifted nothing either, and its one amendment runs the other way.** Rolls are now
+*evaluated* — the first thing in this project that parses one of the expressions three milestones
+stored — and still nothing is **adjudicated**: no result is compared to an Armour Class or a save DC,
+no damage is applied, and nothing decides whether an attack hit. The sole amendment in
+[docs/requirements.md](docs/requirements.md) is the first in that section to narrow an entry on the
+**Included** list rather than lift one from the Excluded list — *"Turns consist only of 1 action, 1
+bonus action and 1 reaction"* is a rule the table keeps and the app does not enforce, and saying so
+is the point, because an absence reads as an oversight.
+
+⚠️ **Four neighbouring gaps were closed by declining them, and that is the discipline rather than
+laziness.** There are **no spell slots**, anywhere — a spell's level on the sheet is a label and not
+a resource. A hero has **no spell save DC**; a creature has one because the bestiary wrote one, and
+nothing compares a roll to either. **Limited-use abilities** stay as coarse as `spentPerRest` already
+was: the app remembers whether a per-long-rest trait has been spent and counts nothing else, so Rage
+twice a day is the table's to track. **Concentration and the action economy** have no field and no
+check. Each of those is individually small and reasonable, and each is a rules engine arriving one
+feature at a time — which is what D&D Lite exists to not be. The test is unchanged and is the one CR
+scaling already passed: **the moment something changes a number a player rolls against without a
+person asking it to, it needs an amendment and an ADR.** See
+[ADR 0011](docs/adr/0011-announcing-a-roll-rather-than-adjudicating-one.md).
 
 ## Commands
 

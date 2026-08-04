@@ -13,6 +13,19 @@
  */
 
 import type { Camera } from '@/lib/camera'
+import type { TokenLayer } from '@convex/lib/layers'
+import { TOKEN_LAYERS } from '@convex/lib/layers'
+
+/**
+ * Whether the DM is looking at the board the way the table is, or at all of it.
+ *
+ * Declared here rather than in `useBoardLayers` because this is the module that has to
+ * *validate* it, and a hook importing storage while storage imported the hook is a cycle
+ * for a two-member union. `TokenLayer` comes the other way for the opposite reason: it is
+ * the server's union and neither side of the wire may spell it twice.
+ */
+export type LayerView = 'player' | 'all'
+const LAYER_VIEWS: readonly LayerView[] = ['player', 'all']
 
 const KEY = {
   lastDisplayName: 'ccnk.lastDisplayName',
@@ -27,6 +40,20 @@ const KEY = {
   // Per game rather than global, for the same reason the camera is: a game you run
   // wants the tools wide open and a game you play in wants the map.
   paneWidthFor: (code: string) => `ccnk.paneWidth.${code}`,
+  // Per game and deliberately **not** per scene, which is `paneWidthFor`'s reasoning
+  // rather than `cameraFor`'s. A camera is where you were looking at one map, so it
+  // belongs to that map; which layer you are working on and whether you are previewing
+  // the table's view are *tools*, and a tool you set stays set when you change maps —
+  // a DM who is building scenery does not want to be put back on the player layer by
+  // switching to the next room.
+  layerViewFor: (code: string) => `ccnk.layerView.${code}`,
+  activeLayerFor: (code: string) => `ccnk.activeLayer.${code}`,
+  // Per game, and per game for the layer tools' reason rather than the camera's: how loud
+  // you want the music is a *tool setting*, not where you were looking, so it survives
+  // changing scenes and follows the table it belongs to. One game you run with an ambient
+  // loop under everything and another you sit in with headphones on.
+  musicVolumeFor: (code: string) => `ccnk.musicVolume.${code}`,
+  musicMutedFor: (code: string) => `ccnk.musicMuted.${code}`,
 } as const
 
 function read(key: string): string | null {
@@ -66,6 +93,19 @@ function write(key: string, value: string | null): boolean {
     // Storage disabled. The app works; it just forgets.
     return false
   }
+}
+
+/**
+ * A stored string, but only if it is one of the members the union admits.
+ *
+ * The double cast is unavoidable and is confined here rather than written at each
+ * call site: `readonly T[]` has `includes(searchElement: T)`, so a `string | null`
+ * cannot be handed to it without asserting the thing the call is about to decide.
+ * Narrowing it in one place means the assertion is made once, next to the check that
+ * earns it, instead of twice per getter.
+ */
+function readMember<T extends string>(raw: string | null, members: readonly T[]): T | null {
+  return members.includes(raw as T) ? (raw as T) : null
 }
 
 /** Prefill for the display name field on the home screen. */
@@ -196,4 +236,90 @@ export function getPaneWidth(code: string): number | null {
 
 export function rememberPaneWidth(code: string, width: number) {
   write(KEY.paneWidthFor(code), String(width))
+}
+
+/**
+ * Whether this browser was last previewing the table's view of the board, and which layer
+ * it was working on. Two facts, one argument, so they are documented together.
+ *
+ * Both are the same kind of value as the camera and the pane width — a view rather than
+ * shared state, never written to Convex (ADR 0004's reasoning, and the DM working the GM
+ * layer while everybody looks at the map is the point rather than drift) — and losing
+ * either costs one press.
+ *
+ * ⚠️ **Both getters check membership of the union rather than merely parsing a string**,
+ * which is `getCamera`'s NaN-scale check applied to a discriminator: an unrecognised value
+ * that typechecks as `TokenLayer` because a cast said so is a `Record` lookup returning
+ * `undefined` and a layer nothing can label or draw.
+ *
+ * That has a concrete payoff beyond tidiness, and it is why this needed no migration of its
+ * own. The GM layer was stored as `dm` before it was renamed, so a browser still holding
+ * that value reads back as unrecognised, falls through to the default, and is written over
+ * on the DM's next press — which is exactly the right outcome for a preference. The
+ * database's half of the rename is a real widen-migrate-narrow in `convex/lib/layers.ts`;
+ * this half is one line of validation, because nothing here is data.
+ */
+export function getLayerView(code: string): LayerView | null {
+  return readMember(read(KEY.layerViewFor(code)), LAYER_VIEWS)
+}
+
+export function rememberLayerView(code: string, view: LayerView) {
+  write(KEY.layerViewFor(code), view)
+}
+
+/** Which layer the DM's next token lands on. See the note above for the validation. */
+export function getActiveLayer(code: string): TokenLayer | null {
+  return readMember(read(KEY.activeLayerFor(code)), TOKEN_LAYERS)
+}
+
+export function rememberActiveLayer(code: string, layer: TokenLayer) {
+  write(KEY.activeLayerFor(code), layer)
+}
+
+/**
+ * How loud this browser plays the DM's music, and whether it is muted. Two facts, one
+ * argument, so they are documented together the way the two layer tools above are.
+ *
+ * Both belong here by the rule at the top of this file: losing either costs one drag of a
+ * slider. And both are *this browser's alone* — nothing about volume goes to Convex,
+ * because the DM turning their own music down while the table listens is the point of the
+ * control rather than drift to be synchronised away. Which track is on is shared state and
+ * lives in `games.activeTrackId`; how loud it is here is not.
+ *
+ * ⚠️ **`getPaneWidth`'s `> 0` test would be exactly wrong here, and the contrast is worth
+ * a sentence because the two functions otherwise look alike.** There, zero means a
+ * collapsed panel with the Save button inside it, so a key emptied by a half-finished
+ * storage clear — `Number('')` is **0** — has to read as "nothing remembered". Here zero is
+ * a *legitimate* value a person can choose: silence. So the blank is rejected explicitly
+ * and the range is checked at both ends instead, which is `getCamera`'s NaN-scale
+ * discipline rather than a bound.
+ */
+export function getMusicVolume(code: string): number | null {
+  const stored = read(KEY.musicVolumeFor(code))
+  if (stored === null || stored.trim() === '') return null
+  const volume = Number(stored)
+  // Both ends, and not merely finiteness: `HTMLMediaElement.volume` throws outside 0..1,
+  // so a hand-edited key would otherwise take the header down rather than sound wrong.
+  return Number.isFinite(volume) && volume >= 0 && volume <= 1 ? volume : null
+}
+
+export function rememberMusicVolume(code: string, volume: number) {
+  write(KEY.musicVolumeFor(code), String(volume))
+}
+
+/**
+ * Mute is a third state and not the volume being zero, which is why it is a second key.
+ * Somebody who mutes to take a phone call wants their volume back afterwards, and one
+ * number cannot remember both. Checked against the two spellings it is ever written as,
+ * for the reason the layer getters above check union membership.
+ */
+export function getMusicMuted(code: string): boolean | null {
+  const stored = read(KEY.musicMutedFor(code))
+  if (stored === 'true') return true
+  if (stored === 'false') return false
+  return null
+}
+
+export function rememberMusicMuted(code: string, muted: boolean) {
+  write(KEY.musicMutedFor(code), String(muted))
 }

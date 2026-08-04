@@ -37,3 +37,45 @@ export const MAX_SCENE_BYTES = 4 * 1024 * 1024
  * overrun of what a token can legitimately weigh.
  */
 export const MAX_TOKEN_BYTES = 512 * 1024
+
+/**
+ * The largest handout blob the server will accept, checked against the stored file like
+ * the two above.
+ *
+ * Two megabytes at a 1920 px long edge, which is a full-screen illustration on the
+ * desktop browsers this project targets and nothing more — a handout is looked at, not
+ * zoomed into, so it does not need a map's 2560. It keeps the same arithmetic the other
+ * two are tuned to: 25 handouts a game at this ceiling is 50 MB, against 25 scenes at
+ * MAX_SCENE_BYTES being 100 MB and 200 tokens at MAX_TOKEN_BYTES being another 100.
+ */
+export const MAX_MODAL_BYTES = 2 * 1024 * 1024
+
+/**
+ * The largest music blob the server will accept.
+ *
+ * ⚠️ **This is the first upload limit in the application that is genuinely the only
+ * defence, and the difference from the three above is worth stating rather than
+ * inheriting.** An image gets three: the browser downscales it, the browser checks the
+ * result, and the server checks the stored blob. There is no lossless-enough transcode a
+ * browser can do to an audio file, so the first of those does not exist here — the client
+ * contributes a size *check* and nothing else, and it saves the DM only the upload rather
+ * than saving them the refusal. `blob.size > MAX_MUSIC_BYTES` on the server is the whole
+ * of the enforcement.
+ *
+ * That sharpens invariant 6 rather than weakening it. The invariant was always that a
+ * limit only the client applies is a limit a client bug removes; audio is the case where
+ * the client was never applying one in the first place, so nothing is being trusted that
+ * previously was not.
+ *
+ * Ten megabytes is roughly seven minutes at 192 kbps or ten at 128 — an ambient loop for a
+ * tavern or a dungeon, which is what background music at this table is. Ten tracks a game
+ * keeps the same 100 MB per axis the other limits are built around, and it is worth saying
+ * the total out loud: a fully loaded game is about 350 MB across maps, tokens, handouts and
+ * music, so three of them fill the 1 GB free tier ADR 0001 accepts. That is the arithmetic
+ * `npm run prune-games` exists to keep true.
+ *
+ * `contentType` is worth refusing on beside this, but honestly labelled: it is the header
+ * the browser chose at upload, so it catches a DM who picked the wrong file and nothing
+ * else. The byte count is the check.
+ */
+export const MAX_MUSIC_BYTES = 10 * 1024 * 1024

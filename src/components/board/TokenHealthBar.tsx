@@ -2,6 +2,7 @@ import { memo } from 'react'
 import { Rect, Text } from 'react-konva'
 import type Konva from 'konva'
 
+import { setCursor, swallowLeftPress } from './konvaPointer'
 import { BAND_COLOUR, healthFraction, healthLabel } from '@/lib/health'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicVitals } from '@convex/lib/characters'
@@ -33,37 +34,14 @@ const LABEL_FONT_SIZE = 9
 export const COIN_DETAIL_MIN_DIAMETER = 26
 
 /**
- * The three bar handlers that close over nothing, declared once for the module.
+ * The two cursor handlers that close over nothing, declared once for the module.
  *
  * See the note beside the track below for why these are not written inline: every bar
  * re-renders on every step of a zoom, and react-konva answers a changed `on*`
  * reference by detaching and re-attaching the listener.
- *
- * `cursor` is the same container trick `TokenCoin` uses, and the same handover:
- * clearing the inline style gives the cursor back to the class `BoardStage`'s div
- * sets, and the coin's own `mouseenter` reclaims it as the pointer crosses the gap
- * below.
  */
-function cursor(event: Konva.KonvaEventObject<MouseEvent>, style: string) {
-  const container = event.target.getStage()?.container()
-  if (container) container.style.cursor = style
-}
-
-const showPointer = (event: Konva.KonvaEventObject<MouseEvent>) => cursor(event, 'pointer')
-const clearCursor = (event: Konva.KonvaEventObject<MouseEvent>) => cursor(event, '')
-
-function swallowLeftPress(event: Konva.KonvaEventObject<MouseEvent>) {
-  // Left button only, as on the coin: a right-click is not an edit and a middle-drag
-  // belongs to the pan.
-  if (event.evt.button !== 0) return
-  // Konva binds its drag start with a namespaced mousedown listener on the draggable
-  // node — which is the token's `Group`, our parent. Cancelling the bubble here is
-  // what stops a press on the bar picking the creature up by its head. It also means
-  // a press on the bar does not select the token, which is the same separation the
-  // other way round: aiming the arrow keys and adjusting hit points are two different
-  // intentions.
-  event.cancelBubble = true
-}
+const showPointer = (event: Konva.KonvaEventObject<MouseEvent>) => setCursor(event, 'pointer')
+const clearCursor = (event: Konva.KonvaEventObject<MouseEvent>) => setCursor(event, '')
 
 /** Dark enough that the four band colours all read against it on any map art. */
 const TRACK_FILL = 'rgba(15, 23, 42, 0.85)'
@@ -201,7 +179,7 @@ export const TokenHealthBar = memo(function TokenHealthBar({
         // above it. False keeps a bar this client may not edit out of the hit graph
         // rather than making it a target that answers a click with nothing.
         listening={canEditHp}
-        // ⚠️ Three of these four are module-level and only `onClick` is built here,
+        // ⚠️ Three of these four are stable references and only `onClick` is built here,
         // and that split is the point rather than an inconsistency. react-konva
         // compares `on*` by reference and answers a change by unbinding the old
         // listener and binding the new one — and every bar on the board re-renders on

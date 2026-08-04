@@ -36,6 +36,51 @@ export type Size = { width: number; height: number }
 export type Cell = { col: number; row: number }
 
 /**
+ * A rectangle in image space: top-left corner plus extent. What a fog-of-war row holds.
+ *
+ * Distinct from `Size` above rather than composed with it, because the two mean different
+ * things — a `Size` is how big something is, with no position, and is what a viewport and a
+ * scaled fit are. A `Rect` is a region *somewhere*, and only the latter can contain a point.
+ */
+export type Rect = { x: number; y: number; width: number; height: number }
+
+/**
+ * Is this point inside this rectangle?
+ *
+ * **Half-open on the far edges** — inclusive of the top-left, exclusive of the bottom-right
+ * — so that rectangles sharing an edge tile without a seam and without both claiming the
+ * line between them. Two abutting fog rectangles are one continuous dark region rather than
+ * one with a one-pixel-wide double coverage down the middle, and a token standing exactly on
+ * the boundary belongs to exactly one of them.
+ *
+ * ⚠️ **This fails *open* on a non-finite coordinate, and the choice is deliberate.** Every
+ * NaN comparison is false, so a token whose stored `x` is NaN is covered by no rectangle and
+ * is never fogged. `requireFinite` guards every write that could produce one, but
+ * convex-test does not apply Convex's own value validation — so the test suite is precisely
+ * where such a row can exist, and a fog test over it would silently answer "visible".
+ *
+ * Left fail-open rather than clamped to true because a token standing nowhere is not
+ * standing in the fog, and because the secret a DM actually relies on is held by the *layer*
+ * — a creature that must not be known about goes on the GM layer, where no arithmetic
+ * decides anything. This is the only fail-open branch in the fog design, and it is the one
+ * place where fog being a convenience rather than a guarantee is written into the code
+ * instead of into an ADR.
+ */
+export function rectCovers(rect: Rect, point: Point): boolean {
+  return (
+    point.x >= rect.x &&
+    point.x < rect.x + rect.width &&
+    point.y >= rect.y &&
+    point.y < rect.y + rect.height
+  )
+}
+
+/** Is this point inside any of them? The whole of "is this token standing in the dark". */
+export function anyRectCovers(rects: readonly Rect[], point: Point): boolean {
+  return rects.some((rect) => rectCovers(rect, point))
+}
+
+/**
  * Pixels per square from a square count across the image width.
  *
  * This is the calibration entry point, and it exists because the answer is often

@@ -10,9 +10,14 @@ import { cn } from '@/lib/utils'
  * each pasted their own copy of the class string, which had already drifted apart
  * on height and text size. This is the one copy.
  *
- * Deliberately the native element and not a Radix listbox. Milestone 5 owns the
- * real DM panel and will want a proper combobox for scenes; until then a native
- * select is keyboard-accessible, screen-reader-correct and free.
+ * Deliberately the native element and not a Radix listbox, and the combobox this
+ * comment used to promise is **not owed any more**. It was owed to `SceneSelect`,
+ * which has since become a list of rows with a thumbnail, a rename and a delete on
+ * each — because what that control actually needed was to show more than a string
+ * per option, which is the one thing no select of any kind does. The remaining call
+ * sites are picking a layer, a size, an ability or a sheet entry from a short list of
+ * words, and for that a native select is keyboard-accessible, screen-reader-correct
+ * and free.
  *
  * The default height matches `Input` so a select sits level with a text field in
  * the same row. The compact bars pass `h-7` to sit level with their own controls

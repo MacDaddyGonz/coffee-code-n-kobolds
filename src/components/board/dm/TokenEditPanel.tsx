@@ -3,9 +3,8 @@ import { useId, useState } from 'react'
 import { useMutation } from 'convex/react'
 
 import { FieldError } from '@/components/FieldError'
-import { ImagePicker } from '@/components/ImagePicker'
-import type { Layer } from '@/components/board/dm/LayerChoice'
-import { DM_LAYER_ALERT_TITLE, LayerChoice } from '@/components/board/dm/LayerChoice'
+import { UploadPicker } from '@/components/UploadPicker'
+import { LAYER_ALERT_TITLES, LayerChoice } from '@/components/board/dm/LayerChoice'
 import type { TokenAppearanceDraft } from '@/components/board/dm/TokenAppearanceFields'
 import {
   TokenAppearanceFields,
@@ -19,13 +18,14 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Separator } from '@/components/ui/separator'
-import { useImageUpload } from '@/hooks/useImageUpload'
+import { useUpload } from '@/hooks/useUpload'
 import { parseNumber } from '@/lib/utils'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicToken } from '@convex/lib/board'
 import type { PublicCharacter } from '@convex/lib/characters'
 import { MAX_TOKEN_SQUARES, MIN_TOKEN_SQUARES } from '@convex/lib/grid'
+import type { TokenLayer } from '@convex/lib/layers'
 import type { CharacterGroup } from '@convex/lib/sheet'
 import { CHARACTER_GROUPS, CHARACTER_GROUP_LABELS } from '@convex/lib/sheet'
 
@@ -363,37 +363,83 @@ function BindingControl({
 }
 
 /**
+ * What each layer means for a coin that **already exists**, in this panel's words.
+ * Exhaustive by construction — see CLAUDE.md invariant 9.
+ *
+ * ⚠️ **Per screen** — see the ⚠️ on
+ * `LAYER_ALERT_TITLES`, whose titles these borrow. `TokenAddDialog`'s three notes are about
+ * a mistake to catch before saving; these three are about a press that has already
+ * happened and what puts it back, which is a different sentence about the same fact.
+ *
+ * ⚠️ **The three are not symmetrical, and that is the consequence of the split with
+ * `TokenControlPanel` rather than an oversight.** The two withholding arms are short,
+ * because that panel prints the resting state of a grant underneath them at that moment.
+ * The player arm carries the whole consequence, because in *that* state it prints no alert
+ * — there is nothing resting to describe — so this is the only warning before the press.
+ */
+const LAYER_NOTES: Record<TokenLayer, ReactNode> = {
+  background: (
+    <Alert>
+      <AlertTitle>{LAYER_ALERT_TITLES.background}</AlertTitle>
+      <AlertDescription>
+        The coin, its square and the sheet behind it stay on every screen at the table — only
+        the drag is refused, and it is refused for everybody but you. A tick under{' '}
+        <span className="font-medium">Controlled by</span> cannot open that, which is what the
+        alert down there means by inert. One press of{' '}
+        <span className="font-medium">Everyone</span> hands it back.
+      </AlertDescription>
+    </Alert>
+  ),
+  player: (
+    <p className="text-muted-foreground text-xs">
+      Drawn on every screen at the table, and movable by whoever is playing the character it
+      is bound to. Moving it to your own layer takes the coin, its square and — for anybody
+      you have granted it to — the bound creature's sheet and exact hit points off their
+      screens in one write. Moving it to scenery takes only the drag. Both are reversible: the
+      grants survive and go inert, and moving it back brings everything with it.
+    </p>
+  ),
+  gm: (
+    // The *act*, and only the act. What a grant on this coin is doing meanwhile is said once,
+    // under **Controlled by** at the foot of this panel — see the ⚠️ above.
+    <Alert variant="destructive">
+      <AlertTitle>{LAYER_ALERT_TITLES.gm}</AlertTitle>
+      <AlertDescription>
+        It is absent from every player's data rather than merely undrawn, and so is the square
+        it is standing on — so <em>that something is standing there</em> is hidden too, which
+        is most of what an ambush is. Nothing is destroyed and one press of{' '}
+        <span className="font-medium">Everyone</span> puts all of it back, in a single write.
+      </AlertDescription>
+    </Alert>
+  ),
+}
+
+/**
  * Which layer the coin is on. ⚠️ **The other secrecy write, and the broadest one on the
  * board.**
  *
- * Two buttons rather than a select, and they say what happens rather than naming a layer.
+ * Buttons rather than a select, and they say what happens rather than naming a layer.
  * `TokenAddDialog` settled that wording and this **is** that control now rather than a
  * second copy of it — `LayerChoice` — because it is the same question asked about an
- * existing coin, and the app's broadest secrecy write should not have two spellings of
- * either button. Applied on the press rather than behind a Save,
- * for the reason `GridCalibrator`'s grid checkbox is: this is one decision, not a run of
- * typing to wait out, and a DM revealing an ambush wants it revealed now.
+ * existing coin, and the app's broadest secrecy write should not have two spellings of any
+ * of its buttons. Applied on the press rather than behind a Save, for the reason
+ * `GridCalibrator`'s grid checkbox is: this is one decision, not a run of typing to wait
+ * out, and a DM revealing an ambush wants it revealed now.
  *
- * ⚠️ **The copy below and `TokenControlPanel`'s own DM-layer alert are two halves, and the
- * line between them is which question the DM is asking.** This one is about the *act*: what
- * the press takes off every player's screen, and that the press reverses. That one is about
- * the *resting state* of a grant — tick a box on a hidden coin and the player sees nothing,
- * which is correct rather than broken.
+ * ⚠️ **The copy above and `TokenControlPanel`'s own alert are two halves, and the line
+ * between them is which question the DM is asking.** These are about the *act*: what the
+ * press takes off every player's screen, and that the press reverses. That one is about the
+ * *resting state* of a grant — tick a box on a coin nobody else can move and the player sees
+ * no change, which is correct rather than broken.
  *
  * **The standing consequence is written there and not here**, and it used to be written in
- * both. That a granted seat is sent neither the coin nor the bound creature's sheet nor its
- * exact hit points, and that the grant survives untouched rather than being revoked, is a
- * fact about a grant on a hidden coin — so it belongs beside the boxes that make one, for
- * two reasons. `TokenControlPanel` is what the *Sheets* tab mounts on its own, where nothing
- * else would ever say it; and in this tab both panels are on screen at once, four sections
- * apart, which is exactly how two alerts about one layer come to disagree after somebody
- * edits one of them.
- *
- * ⚠️ **The two arms below are not symmetrical, and that is the consequence of the split
- * rather than an oversight.** The DM-layer arm is short, because the grant half is on screen
- * underneath it at that moment. The player-layer arm carries the whole consequence, because
- * in *that* state `TokenControlPanel` prints no alert — there is no resting state to
- * describe yet — so this sentence is the only warning a DM gets before the press.
+ * both. That a granted seat is refused the drag, and on the GM layer is sent neither the coin
+ * nor the bound creature's sheet nor its exact hit points, and that the grant survives
+ * untouched rather than being revoked, is a fact about a grant on a coin players cannot move
+ * — so it belongs beside the boxes that make one, for two reasons. `TokenControlPanel` is
+ * what the *Sheets* tab mounts on its own, where nothing else would ever say it; and in this
+ * tab both panels are on screen at once, four sections apart, which is exactly how two alerts
+ * about one layer come to disagree after somebody edits one of them.
  */
 function LayerControl({
   code,
@@ -409,7 +455,7 @@ function LayerControl({
 
   const busy = action.pending !== null
 
-  function move(layer: Layer) {
+  function move(layer: TokenLayer) {
     void action.run(
       'layer',
       `Could not change who can see ${token.name}.`,
@@ -426,29 +472,7 @@ function LayerControl({
           one decision per gesture, applied on the press. */}
       <LayerChoice layer={token.layer} onChange={move} disabled={busy} />
 
-      {token.layer === 'dm' ? (
-        // The *act*, and only the act. What a grant on this coin is doing meanwhile is said
-        // once, under **Controlled by** at the foot of this panel — see the ⚠️ above. The
-        // title is the dialog's, because it is one sentence about one fact.
-        <Alert variant="destructive">
-          <AlertTitle>{DM_LAYER_ALERT_TITLE}</AlertTitle>
-          <AlertDescription>
-            It is absent from every player's data rather than merely undrawn, and so is the
-            square it is standing on — so <em>that something is standing there</em> is hidden
-            too, which is most of what an ambush is. Nothing is destroyed and one press of{' '}
-            <span className="font-medium">Everyone</span> puts all of it back, in a single
-            write.
-          </AlertDescription>
-        </Alert>
-      ) : (
-        <p className="text-muted-foreground text-xs">
-          Drawn on every screen at the table, and movable by whoever is playing the character it
-          is bound to. Moving it to your own layer takes the coin, its square and — for anybody
-          you have granted it to — the bound creature's sheet and exact hit points off their
-          screens in one write. It is reversible: the grants survive and go inert, and moving it
-          back brings all of it with it.
-        </p>
-      )}
+      {LAYER_NOTES[token.layer]}
 
       <FieldError message={action.error} />
     </div>
@@ -570,7 +594,7 @@ function AppearanceForm({
  *   carries the signed `artUrl` and never the `imageId`, so the old id is not readable from
  *   this bundle at all. That absence is deliberate and this control is the proof it costs
  *   nothing.
- * - The **refused** blob is discarded from here, by `useImageUpload`'s `commit`. Also
+ * - The **refused** blob is discarded from here, by `useUpload`'s `commit`. Also
  *   unavoidable: a mutation is one transaction, so a `setArt` that throws on the byte count
  *   cannot tidy up after itself — the delete rolls back with the throw. The hook's catch is
  *   the call that commits because it is the call that succeeds (ADR 0004), which is why the
@@ -590,7 +614,7 @@ function ArtControl({
   token: PublicToken
 }) {
   const setArt = useMutation(api.board.setArt)
-  const upload = useImageUpload({ code, dmCode, kind: 'token' })
+  const upload = useUpload({ code, dmCode, kind: 'token' })
   const action = useLobbyAction()
   const fieldId = useId()
 
@@ -635,7 +659,7 @@ function ArtControl({
         </p>
       </div>
 
-      <ImagePicker
+      <UploadPicker
         id={`${fieldId}-art`}
         label="New art"
         upload={upload}

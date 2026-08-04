@@ -17,6 +17,7 @@
 // The same `Size` the grid maths and the camera use. A width and a height is a
 // width and a height whichever side of the wire it is on, and a third local copy
 // of the pair is a third thing to keep in step.
+import { MAX_SCENE_NAME_LENGTH, truncateCodePoints } from '@convex/lib/codes'
 import type { Size } from '@convex/lib/grid'
 
 /**
@@ -34,17 +35,29 @@ import type { Size } from '@convex/lib/grid'
  * 256 for a token because a token is drawn a square or two across — around 140
  * px at native zoom on those same maps — so 256 already carries a factor of two
  * for zooming in, and a token is a circle of art with no fine detail to lose.
+ *
+ * 1920 for a handout because it is looked at rather than zoomed into: it fills a
+ * dialog on the desktop browsers ADR 0001 targets and needs none of a map's
+ * headroom for panning around inside it. `MAX_MODAL_BYTES` in
+ * `convex/lib/limits.ts` is tuned against exactly this edge, so the two numbers
+ * are one decision and moving either alone breaks the arithmetic there.
  */
 export const MAP_MAX_EDGE = 2560
 export const TOKEN_MAX_EDGE = 256
+export const MODAL_MAX_EDGE = 1920
 
 /**
  * Lossy quality. Maps are photographic and forgiving, so 0.82 buys most of the
  * saving. Tokens are small enough that the extra bytes at 0.9 are irrelevant,
  * and their hard edges against transparency show artefacts far more readily.
+ *
+ * A handout takes the map's number for the map's reason — it is a picture being
+ * looked at, at a size where 0.82 is invisible — and not the token's, which is
+ * paying for edges a full-screen illustration does not have.
  */
 export const MAP_QUALITY = 0.82
 export const TOKEN_QUALITY = 0.9
+export const MODAL_QUALITY = 0.82
 
 /**
  * The server's own limit, not a copy of it: `convex/lib/limits.ts` holds the one
@@ -56,6 +69,28 @@ export const TOKEN_QUALITY = 0.9
  * module, which is where the check and the resize belong together.
  */
 export { MAX_SCENE_BYTES } from '@convex/lib/limits'
+
+/**
+ * A default name from the file the DM picked, extension dropped — a map arrives
+ * as `Admittance [Gridded 16x12].jpg`, a handout as `The Duke's Letter.png`, a
+ * track as `tavern_ambience_loop.mp3`, and in all three cases the useful part is
+ * the stem.
+ *
+ * ⚠️ **Cut by code point, not by `slice`.** A filename with an emoji straddling
+ * code unit 60 would otherwise yield a lone surrogate that the server's name
+ * check accepts — it is neither blank nor over-length — and that a real
+ * deployment then refuses with a raw `Invalid arguments provided`. That is the
+ * Milestone 1 display-name bug exactly, one milestone later and in a different
+ * file; `npm run test:smoke` found it, because convex-test cannot.
+ *
+ * The scene-name limit governs all three because `requireTrackName` and the
+ * handout's check borrow it server-side. A label on a DM-only row is a label on a
+ * DM-only row, and a sixth number for the client to know about would be a sixth
+ * number to keep in step.
+ */
+export function nameFromFile(fileName: string): string {
+  return truncateCodePoints(fileName.replace(/\.[^./\\]+$/, ''), MAX_SCENE_NAME_LENGTH)
+}
 
 export type Downscaled = {
   blob: Blob
@@ -215,6 +250,10 @@ export function downscaleMap(file: Blob): Promise<Downscaled> {
 
 export function downscaleToken(file: Blob): Promise<Downscaled> {
   return downscaleImage(file, { maxEdge: TOKEN_MAX_EDGE, quality: TOKEN_QUALITY })
+}
+
+export function downscaleModal(file: Blob): Promise<Downscaled> {
+  return downscaleImage(file, { maxEdge: MODAL_MAX_EDGE, quality: MODAL_QUALITY })
 }
 
 const KB = 1024

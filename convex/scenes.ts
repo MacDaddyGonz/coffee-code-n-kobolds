@@ -2,6 +2,7 @@ import { ConvexError, v } from 'convex/values'
 
 import { mutation, query } from './_generated/server'
 import { deleteScenePlacements } from './lib/board'
+import { deleteSceneFog } from './lib/fog'
 import { MAX_SCENES_PER_GAME, findGameByCode, requireDm } from './lib/games'
 import { MIN_GRID_SIZE, gridSizeFor, isUsableGrid } from './lib/grid'
 import { requireSceneName } from './lib/names'
@@ -235,8 +236,8 @@ export const setActive = mutation({
 })
 
 /**
- * Delete a board: its placements, its image and the pointer at it — and not one
- * token.
+ * Delete a board: its placements, its fog, its image and the pointer at it — and
+ * not one token.
  *
  * The pointers here all run one way, exactly as ADR 0003 has them run from a seat
  * to a character. A placement points at a scene and at a token; a token belongs to
@@ -254,6 +255,12 @@ export const remove = mutation({
     const scene = await getSceneInGame(ctx, game._id, args.sceneId)
 
     await deleteScenePlacements(ctx, scene._id)
+    // And the fog with them, for the reason the docblock gives about placements, applied to
+    // rows that point *only* at this scene. A fog rectangle is keyed on the scene and on
+    // nothing else, so unlike a token it has no life beyond this board and no library to be
+    // returned to — leaving it would be leaving a row nothing in the app can name, reach or
+    // delete. `deleteScenesInGame` pairs these two calls the same way.
+    await deleteSceneFog(ctx, scene._id)
 
     // Cleared rather than moved to another scene. Choosing the next board is the
     // DM's decision, and every client would follow this one silently.

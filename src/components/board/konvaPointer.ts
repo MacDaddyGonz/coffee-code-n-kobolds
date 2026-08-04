@@ -1,0 +1,50 @@
+import type Konva from 'konva'
+
+/**
+ * The two things every hit-testable node on the board does with a pointer.
+ *
+ * Written four times before this module existed — on the coin, on the health bar, on the
+ * grid grips and on the fog rectangles — which is three times too many for four lines of
+ * code whose *reasons* are the long part. All four now call these.
+ *
+ * ⚠️ **Two call sites deliberately do not use `swallowLeftPress` and write `cancelBubble`
+ * inline instead**, and that is a difference rather than an oversight: `GridHandlesLayer`'s
+ * `onMouseDown` and `TokenHealthBar`'s `onClick` cancel the bubble for **every** button, not
+ * just the left one. Folding them in here would let a right- or middle-press through to the
+ * Stage, which is a pan starting under a gesture aimed at something else.
+ */
+
+/**
+ * Set the cursor for as long as the pointer is over a node, and hand it back when it
+ * leaves.
+ *
+ * The write goes to **Konva's own container**, which sits inside `BoardStage`'s div. That
+ * div sets the resting cursor with a class and `cursor` is inherited, so an inline style
+ * here overrides it while the pointer is on the node and clearing it — `style: ''` —
+ * hands control straight back rather than hard-coding a guess at what the resting cursor
+ * was. It is also what lets two nodes hand the cursor between them across a gap: the
+ * health bar clears on `mouseleave` and the coin's own `mouseenter` reclaims it.
+ */
+export function setCursor(event: Konva.KonvaEventObject<MouseEvent>, style: string) {
+  const container = event.target.getStage()?.container()
+  if (container) container.style.cursor = style
+}
+
+/**
+ * Keep a left press on this node from reaching the Stage.
+ *
+ * ⚠️ **Cancel the bubble or the draggable Stage pans under the gesture.** Konva binds
+ * both its own drag start and the Stage's pan with a namespaced `mousedown` listener on
+ * the ancestor node, so a press that is allowed to bubble means adjusting hit points
+ * picks the creature up by its head, and erasing fog slides the map instead. It also
+ * stops `stageOf` seeing the click on the way up, which would have `onBackgroundClick`
+ * clear the selection every time somebody touched a bar or a grip — the same separation
+ * the other way round, since aiming the arrow keys and editing a number are two different
+ * intentions.
+ *
+ * Left button only: a right-click is not an edit, and a middle-drag belongs to the pan.
+ */
+export function swallowLeftPress(event: Konva.KonvaEventObject<MouseEvent>) {
+  if (event.evt.button !== 0) return
+  event.cancelBubble = true
+}

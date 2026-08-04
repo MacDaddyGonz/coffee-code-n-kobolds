@@ -230,6 +230,20 @@ export function isValidRoll(roll: string): boolean {
 export const ABILITY_KEYS = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const
 export type AbilityKey = (typeof ABILITY_KEYS)[number]
 
+/**
+ * `str` → `STR`, and **the abbreviation is load-bearing rather than cosmetic.**
+ *
+ * It has to equal the token spellings in `ROLL_MODIFIER_TOKENS` below, because a skill row
+ * prints `(STR)` beside a bonus whose expression the server parses as `+STR` — the same three
+ * letters read by a person and by `parseRoll`. Written once here, beside the keys and beside
+ * the tokens, rather than in the two components that need it: it existed twice, in
+ * `SkillList` and in the roll announcement's wording, which is two spellings of the one
+ * string that has to match a parser.
+ */
+export function abilityAbbreviation(ability: AbilityKey): string {
+  return ability.toUpperCase()
+}
+
 /** Long names for the six, so a form and a tooltip agree on the spelling. */
 export const ABILITY_NAMES: Record<AbilityKey, string> = {
   str: 'Strength',

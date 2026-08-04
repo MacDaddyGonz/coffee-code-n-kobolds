@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'vitest'
 
 /**
- * The structural half of CLAUDE.md invariant 8 — now for both of this
+ * The structural half of CLAUDE.md invariant 8 — now for all three of this
  * application's same-shape secrets rather than one of them.
  *
  * `publicGameValidator` makes a leaked *field* throw, because a DM code does not
@@ -23,10 +23,11 @@ import { describe, expect, test } from 'vitest'
  * the same sweep.
  *
  * Running the sweep per pair buys a second thing that a single merged list would
- * not: each reader is swept against the *other* pair's tables. `lib/board.ts` may
- * not read `characters`, and `lib/characters.ts` may not read `tokens` — the two
- * choke points meet only through the narrow crossing `boardCharacterAccess` makes,
- * two sets of ids and never a `Doc`. (ADR 0005 knows that crossing by the name of
+ * not: each reader is swept against every *other* entry's tables. `lib/board.ts` may
+ * not read `characters`, `lib/characters.ts` may not read `tokens`, and neither of
+ * them may read `feed` — the choke points meet only through narrow crossings, a set
+ * of ids and never a `Doc`, which is what `boardCharacterAccess` hands to
+ * `lib/characters.ts` and what `readableCharacterIds` hands to `lib/feed.ts`. (ADR 0005 knows that crossing by the name of
  * its sight half alone, `visibleCharacterIds`; a grant gave it a second question to
  * answer about the same rows, and answering both in one pass retired the name.)
  *
@@ -51,9 +52,34 @@ type Guard = {
   reader: string
 }
 
+/**
+ * ⚠️ **Milestone 9 adds a third pair, and a feed row is the same shape of secret as the
+ * two above rather than a new one.** `Ancient Red Dragon attacks with their Bite` is a
+ * leaked *row*: it has precisely the shape of a line about a hero, so a projection over
+ * `feed` would approve an array made entirely of spoilers and no `returns:` validator
+ * could tell. Hence the same arrangement — one reader, `lib/feed.ts`, swept by the same
+ * loop.
+ *
+ * Two things about this entry are worth knowing before editing it.
+ *
+ * **It is the first pair whose *writes* matter as much as its reads.** The needles below
+ * only find reads, and that is deliberate rather than an oversight — `lib/board.ts`
+ * already inserts and deletes rows in `tokens` and nothing mechanical stops a second
+ * writer being written next door. The discipline is that the reasoning about what a row
+ * publishes belongs beside the predicate that decides it; the guard is not what is
+ * holding that.
+ *
+ * **`./feed.ts` is deliberately absent from the load check below, and it exists.** The
+ * sweep is a deny-list of every module *but* the declared reader, so that file has been
+ * checked against all seven tables since the moment it was written, with no entry here — which
+ * is the argument the `convex/bestiary.ts` note below makes at length. Naming it would only
+ * add a second assertion that the glob loaded, which `./schema.ts` and `./lib/games.ts`
+ * already provide.
+ */
 const GUARDS: Guard[] = [
   { tables: ['tokens', 'tokenPositions'], reader: './lib/board.ts' },
   { tables: ['characters', 'characterVitals'], reader: './lib/characters.ts' },
+  { tables: ['feed'], reader: './lib/feed.ts' },
 ]
 
 /**
@@ -124,6 +150,26 @@ for (const guard of GUARDS) {
        */
       expect(paths, 'convex/bestiary.ts is not being swept for table reads').toContain(
         './bestiary.ts',
+      )
+      /**
+       * ⚠️ **`convex/lib/fog.ts` is named here for exactly `bestiary.ts`'s reason, and
+       * deliberately gets no `GUARDS` entry of its own.** The argument is written out at
+       * length in that file's header: every `fogRects` row goes to every client verbatim,
+       * because a blacked-out corridor *is* the feature, so those rows have no non-secret
+       * twin to be confused with and there is no predicate for a choke point to be the home
+       * of. An entry below would assert a confinement protecting nothing — it would pass,
+       * which is precisely why omitting it has to be argued rather than left implicit, and
+       * this project does not keep guards that cannot fail.
+       *
+       * What *is* guarded sits one step downstream. Turning a rectangle into a set of
+       * withheld token ids needs `tokenPositions`, and `foggedTokenIds` therefore lives in
+       * `lib/board.ts` under the first entry above, with no edit to it at all. So the one
+       * thing worth asserting is that this module is in the glob: until per-player fog,
+       * reveal-as-you-walk or line of sight flips the argument, it is still swept against
+       * every table it must not read.
+       */
+      expect(paths, 'convex/lib/fog.ts is not being swept for table reads').toContain(
+        './lib/fog.ts',
       )
       for (const [path, text] of scanned) {
         expect(typeof text, `${path} did not load as text`).toBe('string')

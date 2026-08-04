@@ -1,6 +1,9 @@
 # 1. Convex backend, Vite SPA on GitHub Pages
 
-- **Status:** Accepted
+- **Status:** Accepted — one row of the stack table below is superseded by
+  [ADR 0011](0011-announcing-a-roll-rather-than-adjudicating-one.md): the 3D dice library is
+  `@3d-dice/dice-box-threejs`, because the package named here cannot be told what numbers to
+  display and this application's rolls are decided on the server. Everything else stands.
 - **Date:** 2026-07-29
 
 ## Context

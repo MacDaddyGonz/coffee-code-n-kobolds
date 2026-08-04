@@ -1,8 +1,15 @@
 /**
- * How long ago something happened, in words.
+ * When something happened, in words — how long ago, and what the clock said.
  *
- * Written here rather than inline in the row that prints it, for one reason:
- * `now` is an **argument**. A function that reaches for `Date.now()` itself can
+ * ⚠️ **The one place under `src/` that formats a date or a time.** This file used to
+ * say there was no other and that it therefore set the house style; `FeedRow.tsx`
+ * then grew a private `shortTime` of its own, which is the drift that sentence was
+ * written to prevent. `clockTime` below is that function, moved rather than
+ * reimplemented, so the reasoning about locales is stated once and the tests for it
+ * are in `when.test.ts` beside everything else here.
+ *
+ * `whenCreated` is written here rather than inline in the row that prints it, for one
+ * reason: `now` is an **argument**. A function that reaches for `Date.now()` itself can
  * only be tested by faking the clock, which means either a fake-timer harness in
  * a project that has none or a test that quietly asserts nothing because every
  * boundary is minutes away from whenever it happens to run. Passing the instant in
@@ -11,9 +18,6 @@
  * without any machinery at all. The one caller pays for that with a `Date.now()`
  * in its render, which is correct as well as cheap: the string is a rough age, not
  * a clock, and nothing subscribes to it ticking over.
- *
- * There is no date formatting anywhere else under `src/`, so there is no house
- * style to follow and this one sets it.
  */
 
 /**
@@ -75,6 +79,37 @@ export function whenCreated(creationTime: number, now: number): string {
 
 function plural(count: number, unit: string): string {
   return `${count} ${unit}${count === 1 ? '' : 's'}`
+}
+
+/**
+ * Built once at module scope rather than per call, which is not micro-optimisation:
+ * `toLocaleTimeString` constructs a fresh `Intl.DateTimeFormat` on **every** call, and
+ * the caller is a feed row — sixty of them re-rendering together whenever anybody
+ * rolls. One formatter reused is the documented way to pay that cost once, and it is
+ * safe to share because formatting is a pure function of the instant handed in.
+ *
+ * `undefined` as the locale rather than a fixed one, so a table spread across two
+ * countries each reads its own convention. That is the opposite of `MONTHS` above and
+ * deliberately so: a date in a list is compared with other dates and wants one
+ * unambiguous spelling, while a clock time is read on its own and wants to look like
+ * the clock the reader is sitting next to. It is also why the assertions in
+ * `when.test.ts` for this one are written as an equivalence rather than as literals.
+ */
+const CLOCK = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+
+/**
+ * The clock time, short and local — `4:20 pm`.
+ *
+ * **No date, and that is a property of the one caller.** The feed is one evening long
+ * and a scrollback of sixty lines never reaches yesterday, so a date on every row
+ * would be the same date sixty times. `whenCreated` above is the function for
+ * something that might be a week old.
+ *
+ * Takes the epoch milliseconds rather than a `Date`, because `format` accepts them
+ * directly — so a row that only ever prints a time allocates nothing to do it.
+ */
+export function clockTime(at: number): string {
+  return CLOCK.format(at)
 }
 
 /**

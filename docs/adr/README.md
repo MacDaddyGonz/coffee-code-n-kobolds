@@ -8,7 +8,7 @@ being overwritten.
 
 | # | Decision | Status |
 | - | -------- | ------ |
-| [0001](0001-platform-and-hosting.md) | Convex backend, Vite SPA on GitHub Pages | Accepted |
+| [0001](0001-platform-and-hosting.md) | Convex backend, Vite SPA on GitHub Pages | Accepted — dice library superseded by [0011](0011-announcing-a-roll-rather-than-adjudicating-one.md) |
 | [0002](0002-defer-user-accounts.md) | Defer user accounts; characters belong to the game | Accepted |
 | [0003](0003-player-identity-without-accounts.md) | Player identity without accounts: a seat is a name | Accepted |
 | [0004](0004-board-authorisation-and-layers.md) | Board authorisation, layers and where a token's position lives | Accepted |
@@ -17,3 +17,5 @@ being overwritten.
 | [0007](0007-monster-bestiary-and-cr-scaling.md) | A monster bestiary, and scaling a creature to a challenge rating | Accepted |
 | [0008](0008-one-shell-and-what-a-sheet-entry-is.md) | One shell instead of floating panels, and what a sheet entry is | Accepted |
 | [0009](0009-who-plays-what-and-what-control-grants.md) | Who plays what, and what control grants | Accepted |
+| [0010](0010-the-way-in-and-the-dms-coins.md) | The way in, and the DM's coins | Accepted |
+| [0011](0011-announcing-a-roll-rather-than-adjudicating-one.md) | Announcing a roll rather than adjudicating one | Accepted |

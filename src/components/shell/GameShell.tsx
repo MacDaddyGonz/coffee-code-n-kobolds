@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 import { useCallback, useId, useRef, useState } from 'react'
 
+import { ModalImageViewer } from '@/components/ModalImageViewer'
 import { GameHeader } from '@/components/shell/GameHeader'
 import { MapPane } from '@/components/shell/MapPane'
 import { PaneResizer } from '@/components/shell/PaneResizer'
@@ -197,6 +198,11 @@ export function GameShell({
           />
         </aside>
       </div>
+
+      {/* Here rather than in a panel, because nothing on this screen opens it: the DM's
+          click happens on another machine and arrives as a change to `modalImages.open`.
+          One mount for the whole route, so a handout cannot be shown twice at once. */}
+      <ModalImageViewer code={code} dmCode={dm.dmCode} />
     </div>
   )
 }

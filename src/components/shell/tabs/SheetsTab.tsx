@@ -10,6 +10,7 @@ import {
   DeleteCharacterButton,
   DmCharacterRowsSkeleton,
   ReserveCharacterButton,
+  RollInitiativeButton,
   useDmCharacterRows,
 } from '@/components/board/dm/CharacterRows'
 import { CreatureCreateDialog } from '@/components/board/dm/CreatureCreateDialog'
@@ -55,13 +56,9 @@ export type SheetsTabProps = {
  * from `CHARACTER_GROUP_LABELS` beside the union, which is the one copy of those three
  * words.
  *
- * ⚠️ **Still a `Record` over the union rather than three sections written out in JSX**,
- * which is the formulation CLAUDE.md invariant 9 settled on for `SheetEntry.category` and
- * for the same reason: three hand-written sections is the arrangement where a fourth group
- * leaves a character stored, counted and with no heading to find it under. This fails to
- * compile for a fourth member instead, which is the whole of the guard — nothing here
- * guards a secret, because every group but `character` is DM-only anyway and a player is
- * sent none of them.
+ * Exhaustive by construction — see CLAUDE.md invariant 9. Note that nothing here guards a
+ * secret, because every group but `character` is DM-only anyway and a player is sent none
+ * of them.
  *
  * The split between this and the shared record is between *the name of a thing* and *copy
  * about this screen*. A heading is one fact the DM's selector and the token editor's rebind
@@ -98,6 +95,12 @@ const GROUP_EMPTY: Record<CharacterGroup, string> = {
  * half of it — **the sheet has a floor as well**, so that on a short laptop the regions
  * around it are what give up height rather than the Save button; the ⚠️ at each of the
  * three regions below says which way each of them yields.
+ *
+ * **The selector is somewhere a DM now *acts* and not only picks**, which sharpens that
+ * argument rather than complicating it: every row carries a die, so rolling initiative for a
+ * whole encounter is a run down one list instead of six sheets opened and closed. A
+ * collapsed selector could not offer that at all, and it is why the row's buttons live
+ * beside the name — see the `actions` note below for the height that costs.
  *
  * **All three creation routes are here** — a character, the bestiary shelf and a
  * hand-built creature. Two of them used to be inside *DM tools → NPCs*, which is a tab
@@ -234,18 +237,43 @@ export function SheetsTab({
                         tokenByCharacter.get(character._id)?._id ?? null,
                       )
                     }
+                    // Beside the name rather than on a third line under the health bar,
+                    // and the bounded region above is what decides it: `max-h-64` is a
+                    // fixed sixteen rems that shrinks further on a short laptop, so a
+                    // third line costs every row about a quarter of its height and the DM
+                    // sees fewer creatures at once. The whole payoff of rolling from this
+                    // list is that six goblins are six clicks *without scrolling*, so a
+                    // control that shortens the list to make room for itself has spent the
+                    // thing it was for. It also belongs with the other two by kind: the
+                    // die, the eye and the Delete are things done *to* a row, where
+                    // `HpControls` is a value being edited on it.
                     actions={
-                      group === 'character' ? (
-                        // A hero gets the eye and no Delete: the character belongs to
-                        // the player, and the DM's delete lives in the lobby beside the
-                        // rename. Hiding one is the reversible act; deleting it is not.
-                        <ReserveCharacterButton {...rows.reserveProps(character)} />
-                      ) : (
-                        // And a creature gets the Delete and no eye: `setReserved`
-                        // refuses anything that is not a player character, because a
-                        // creature is already hidden from everybody.
-                        <DeleteCharacterButton {...rows.deleteProps(character)} />
-                      )
+                      <>
+                        {/* ⚠️ **Outside the branch below, which is what makes it
+                            impossible for a group to lack it.** The ternary chooses
+                            *which second button* a row gets and never *whether there are
+                            any*, so there is one `actions` expression for all three
+                            sections and initiative is in the part of it no group can miss
+                            — the same reason `CHARACTER_GROUPS` is mapped over above
+                            instead of three sections being written out (invariant 9). It
+                            is also first, so it does not move sideways between groups
+                            when the button beside it changes from an icon to the word
+                            Delete: this is the button pressed once per creature straight
+                            down the list, and it should be under the cursor where it was
+                            a moment ago. */}
+                        <RollInitiativeButton {...rows.initiativeProps(character)} />
+                        {group === 'character' ? (
+                          // A hero gets the eye and no Delete: the character belongs to
+                          // the player, and the DM's delete lives in the lobby beside the
+                          // rename. Hiding one is the reversible act; deleting it is not.
+                          <ReserveCharacterButton {...rows.reserveProps(character)} />
+                        ) : (
+                          // And a creature gets the Delete and no eye: `setReserved`
+                          // refuses anything that is not a player character, because a
+                          // creature is already hidden from everybody.
+                          <DeleteCharacterButton {...rows.deleteProps(character)} />
+                        )}
+                      </>
                     }
                   />
                 ))}

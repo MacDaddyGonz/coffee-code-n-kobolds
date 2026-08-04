@@ -1,23 +1,32 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { BoardEmpty } from '@/components/board/BoardEmpty'
 import { BoardStage } from '@/components/board/BoardStage'
+import { FogLayer } from '@/components/board/FogLayer'
 import { TokenHpPopover } from '@/components/board/TokenHpPopover'
-import { TokenLayer } from '@/components/board/TokenLayer'
+import { TokenLayers } from '@/components/board/TokenLayers'
 import { ZoomControls } from '@/components/board/ZoomControls'
+import { CalibrateToggle } from '@/components/board/dm/CalibrateToggle'
+import { GridHandlesLayer } from '@/components/board/dm/GridHandlesLayer'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BoardToken } from '@/hooks/useBoard'
 import { useBoard } from '@/hooks/useBoard'
 import { useBoardCamera } from '@/hooks/useBoardCamera'
 import { useBoardKeys } from '@/hooks/useBoardKeys'
+import { useBoardLayers } from '@/hooks/useBoardLayers'
 import type { Dm } from '@/hooks/useDm'
+import { useFogMode } from '@/hooks/useFog'
+import { useGridWrite } from '@/hooks/useGridWrite'
 import { useHpTarget } from '@/hooks/useHpTarget'
 import { useSmoothPositions, useTokenMove } from '@/hooks/useTokenMove'
 import { useTokenSelection } from '@/hooks/useTokenSelection'
 import { useHpActions } from '@/hooks/useVitals'
+import type { GridBox, GridHandle } from '@/lib/gridBox'
+import { boxOfGrid, dragBox, gridOfBox } from '@/lib/gridBox'
 import { cn } from '@/lib/utils'
 import type { Id } from '@convex/_generated/dataModel'
+import type { Grid, Point } from '@convex/lib/grid'
 
 export type BoardProps = {
   code: string
@@ -49,7 +58,7 @@ export type BoardProps = {
  *
  * Almost nothing happens in this file, which is the point. Secrecy was settled
  * server-side before any of this data arrived (ADR 0004), the drawing belongs to
- * `BoardStage` and `TokenLayer`, and the movement rules are `useTokenMove`'s. What
+ * `BoardStage` and `TokenLayers`, and the movement rules are `useTokenMove`'s. What
  * is left here is wiring a handful of hooks to each other in the one order that
  * works.
  *
@@ -100,6 +109,35 @@ export function Board({
   // — to fit a map to and to zoom about the centre of — so it takes the element
   // rather than being told, which is one measurement and one piece of state.
   const camera = useBoardCamera({ code, sceneId: scene?._id ?? null, image, containerRef })
+
+  // Which layers this browser is choosing to paint. A view rather than board state, so it
+  // is read here for the same reason the camera is and goes to Convex for none of the same
+  // reasons — see `useBoardLayers`. A player has no control that writes it.
+  const layers = useBoardLayers(code)
+
+  /**
+   * ⚠️ **The second mode that takes the pointer off the coins, and the drag gate below had
+   * only ever heard of the first.**
+   *
+   * `FogTools` tells the DM in as many words that while a tool is armed "pressing the map
+   * draws or rubs out fog instead of picking up a coin", and `FogLayer` is mounted *under*
+   * the token layers for the reason written out at that mount — so without this a press that
+   * landed on a creature picked the creature up, which is the one gesture the panel promises
+   * it will not do.
+   *
+   * Read here rather than threaded down from `FogTools`, which is exactly what the
+   * module-level cell in `useFog` exists for: the control is in the right-hand pane and both
+   * readers of it are in this one.
+   *
+   * ⚠️ **The drag half of the promise and not the whole of it.** The coins sit above the
+   * fog, so a press on one still finds the coin rather than the rectangle underneath it and
+   * selects instead of erasing. Closing that too means giving the veil the pointer over the
+   * party's own figures, which is the trade the mount order already declined. What this
+   * closes is the half that *moves something the DM did not mean to move*.
+   */
+  const { mode: fogMode } = useFogMode(code)
+  const fogArmed = board.isDm && fogMode !== 'off'
+
   const selection = useTokenSelection(
     board.tokens,
     selectedTokenId,
@@ -149,7 +187,114 @@ export function Board({
   const hpTarget = useHpTarget(tokens)
   const hpToken = hpTarget.hpToken
 
-  // Hoisted out of the JSX so `TokenLayer` is handed the same function every render.
+  /**
+   * Grid calibration: whether the handles are out, and the box the DM is dragging.
+   *
+   * Owned here rather than by `GridCalibrator` in the Map panel, because the two live in
+   * different halves of the screen and this is the half the gesture happens in. They are
+   * not two settings to keep in step — the *stored* grid is the single fact, and both
+   * write it through `useGridWrite`. The draft below is the only thing local to a drag,
+   * and it lasts about a tenth of a second.
+   *
+   * `useGridWrite` is called unconditionally with a nullable code and scene, so a player's
+   * board runs the same hooks in the same order as the DM's and simply never sends
+   * anything. Whether the button is offered is display only; `scenes.updateGrid` verifies
+   * the DM code server-side on every write (invariant 7).
+   */
+  const [calibrating, setCalibrating] = useState(false)
+  const [draftGrid, setDraftGrid] = useState<Grid | null>(null)
+
+  const gridWrite = useGridWrite({ code, dmCode: dm.dmCode, sceneId: scene?._id ?? null })
+
+  // The draft outranks the scene for as long as it exists, exactly as a local token
+  // position outranks the server's — see `useTokenMove`. A `PublicScene` is structurally a
+  // `Grid`, so the fallback needs no unpacking.
+  const box = useMemo(
+    () => (scene === null ? null : boxOfGrid(draftGrid ?? scene)),
+    [draftGrid, scene],
+  )
+
+  // Konva holds the handlers below for the length of a gesture, so what they read has to
+  // be a ref and not this render's closure — the same argument `useTokenMove` makes for
+  // keeping its scene in one.
+  const boxRef = useRef<GridBox | null>(box)
+  boxRef.current = box
+  const gridVisibleRef = useRef(true)
+  gridVisibleRef.current = scene?.gridVisible ?? true
+
+  // The box this gesture is measured from, and the grid its last move produced. Neither is
+  // state: nothing renders them, and a re-render per mouse-move is the churn invariant 2
+  // exists to prevent.
+  const grabbed = useRef<GridBox | null>(null)
+  const dragged = useRef<Grid | null>(null)
+
+  const onGrab = useCallback(() => {
+    grabbed.current = boxRef.current
+    dragged.current = null
+  }, [])
+
+  const onHandleMove = useCallback(
+    (handle: GridHandle, delta: Point) => {
+      const from = grabbed.current
+      if (from === null) return
+      // From the box as it was when the grip was taken, never from the current one. The
+      // delta is cumulative, so composing it onto a box that has already moved would
+      // square the gesture and send the grid off the map in two frames.
+      const next = gridOfBox(dragBox(from, handle, delta))
+      dragged.current = next
+      setDraftGrid(next)
+      gridWrite.push(next, gridVisibleRef.current)
+    },
+    [gridWrite.push],
+  )
+
+  const onHandleRelease = useCallback(() => {
+    grabbed.current = null
+    const next = dragged.current
+    dragged.current = null
+    // Off the ref rather than the draft state: `dragend` can arrive before React has
+    // rendered what the last `dragmove` set, and the settling write is the one that must
+    // not be a frame stale.
+    if (next !== null) gridWrite.settle(next, gridVisibleRef.current)
+  }, [gridWrite.settle])
+
+  const onToggleCalibrate = useCallback(() => {
+    setCalibrating((on) => !on)
+    // Cleared in both directions. Leaving drops a draft that has already been written
+    // anyway; entering makes sure the handles start from the stored grid rather than from
+    // a refused write left over from last time.
+    setDraftGrid(null)
+  }, [])
+
+  // Hand the grid back to the subscription once the server agrees, which is the discipline
+  // `useSmoothPositions` applies to a token and is needed for the same reason: a draft that
+  // outlived its write would pin the board to it, and the Map panel's typed changes would
+  // stop appearing.
+  //
+  // ⚠️ **Deliberately not skipped mid-gesture**, which is the guard that looks obviously
+  // necessary and is not. The equality below is the whole of it: a throttled write echoing
+  // back part-way through a drag does *not* match the draft the pointer has since moved on
+  // to, so nothing is cleared under the DM's hand — and when it does match there is by
+  // definition nothing to see, because the two are the same three numbers. Adding the guard
+  // costs the one case it cannot handle: a box dragged back to exactly where it started
+  // produces a write that changes nothing, so no echo ever arrives to release the draft.
+  useEffect(() => {
+    if (scene === null || draftGrid === null) return
+    if (
+      scene.gridSize === draftGrid.gridSize &&
+      scene.gridOffsetX === draftGrid.gridOffsetX &&
+      scene.gridOffsetY === draftGrid.gridOffsetY
+    ) {
+      setDraftGrid(null)
+    }
+  }, [scene, draftGrid])
+
+  // A draft belongs to the map it was dragged on, so switching maps drops it rather than
+  // laying the old map's numbers over the new one's art.
+  const sceneId = scene?._id ?? null
+  useEffect(() => setDraftGrid(null), [sceneId])
+
+  // Hoisted out of the JSX so `TokenLayers` is handed the same function every render.
   // A fresh arrow there would have been a changed prop on every coin on every frame
   // of a pan, and react-konva answers a changed handler by rebinding the listener.
   const onSelect = useCallback(
@@ -170,15 +315,25 @@ export function Board({
     hpTarget.clear()
   }, [selection.clear, hpTarget.clear])
 
-  // Innermost first. Escape closes the editor if it is open and clears the
-  // selection otherwise, so one press undoes one thing and the token you were
-  // moving is still selected afterwards. A dialog or sheet opened from a panel
-  // portals out of this subtree entirely and handles its own Escape before either
-  // of these hears about it, which is why there is no third case here.
+  // Innermost first. Escape leaves calibration if the handles are out, closes the hit
+  // point editor if it is open, and clears the selection otherwise — so one press undoes
+  // one thing and the token you were moving is still selected afterwards.
+  //
+  // ⚠️ **There are three cases and there used to be two, and the sentence that used to
+  // stand here explained why there could never be a third: a dialog or sheet opened from a
+  // panel portals out of this subtree and handles its own Escape before either of these
+  // hears about it.** That is still true of a dialog and is no longer the whole story,
+  // because a Konva layer does not portal. Calibration is a mode of *this* board, drawn
+  // inside this stage, with nothing above it to swallow the key — so it has to be
+  // dismissed here, and it goes first because it is the outermost thing the DM is holding
+  // and the one that has changed what every other gesture on the board does.
   const onEscape = useCallback(() => {
-    if (hpTarget.hpTokenId !== null) hpTarget.clear()
+    if (calibrating) {
+      setCalibrating(false)
+      setDraftGrid(null)
+    } else if (hpTarget.hpTokenId !== null) hpTarget.clear()
     else selection.clear()
-  }, [hpTarget.hpTokenId, hpTarget.clear, selection.clear])
+  }, [calibrating, hpTarget.hpTokenId, hpTarget.clear, selection.clear])
 
   useBoardKeys({
     containerRef,
@@ -216,21 +371,75 @@ export function Board({
         <Skeleton className="absolute inset-0" />
       ) : drawable && scene ? (
         <>
-          <BoardStage scene={scene} camera={camera} onBackgroundClick={onBackgroundClick}>
-            <TokenLayer
+          <BoardStage
+            scene={scene}
+            camera={camera}
+            onBackgroundClick={onBackgroundClick}
+            // Only while a drag is in flight. `undefined` the rest of the time, so the
+            // overlay is drawn from the scene and there is one grid on screen rather than
+            // a stale copy of one.
+            grid={draftGrid ?? undefined}
+          >
+            {/*
+              ⚠️ **Under the coins, not between the player and GM layers — and the plan
+              said between.** The obvious reading of "fog is a layer" puts it above the
+              player tokens, and that is wrong here for a reason that only appears once
+              the server's rule is in front of you.
+
+              `foggedTokenIds` deliberately never fogs a token the table controls, so a
+              player's own hero standing in the dark keeps its position row on purpose —
+              the whole point being that a player who walks into a corridor does not lose
+              their own coin with no way to select it back. An **opaque** rectangle painted
+              over the top would take it away again, visually, having gone to some trouble
+              on the server not to.
+
+              Underneath, nothing leaks: every coin a player could have inside a rectangle
+              is one their table controls, because the server dropped the rest before the
+              payload was built. So the veil is a wash on the map, the party's own figures
+              stand on top of it, and the DM — who sees it at partial opacity — reads their
+              own coins against the dark.
+            */}
+            <FogLayer
+              code={code}
+              dmCode={dm.dmCode}
+              scene={scene}
+              scale={camera.camera.scale}
+            />
+            <TokenLayers
               tokens={tokens}
               scene={scene}
               scale={camera.camera.scale}
               selectedId={selection.selectedTokenId}
+              // What the pointer may pick up and which layers are painted, never what
+              // arrived — the secrecy filter ran on the server. See `TokenLayers`.
+              isDm={board.isDm}
+              shown={layers.shown}
               // Held space turns the whole board into a pan surface, so a press that
-              // lands on a token has to move the view rather than the creature.
-              draggable={!camera.spacePanning}
+              // lands on a token has to move the view rather than the creature. The
+              // calibration handles borrow the same mechanism: while the box is out, a
+              // press anywhere near a coin is aimed at the grid underneath it — and an
+              // armed fog tool is the third of them, for the reason `fogArmed` carries.
+              draggable={!camera.spacePanning && !calibrating && !fogArmed}
               onSelect={onSelect}
               onDragStart={move.onDragStart}
               onDragMove={move.onDragMove}
               onDragEnd={move.onDragEnd}
               onOpenHp={onOpenHp}
             />
+            {/*
+              Last, and that is the whole of how it wins the pointer — see `BoardStage`.
+              Rendered only when the DM has asked for it, so on every other board the
+              stage is exactly the tree it was before.
+            */}
+            {board.isDm && calibrating && box ? (
+              <GridHandlesLayer
+                box={box}
+                scale={camera.camera.scale}
+                onGrab={onGrab}
+                onMove={onHandleMove}
+                onRelease={onHandleRelease}
+              />
+            ) : null}
           </BoardStage>
           {/*
             Hidden while this browser is dragging the token, and only that token.
@@ -266,6 +475,18 @@ export function Board({
             onReset={camera.reset}
             className="absolute bottom-3 left-3"
           />
+          {/*
+            Top-left, opposite the zoom bar, because it is a mode rather than a nudge and
+            wants to be visible from across the room while it is on. Offered on the
+            strength of the DM code alone, which authorises nothing — see `CalibrateToggle`.
+          */}
+          {board.isDm ? (
+            <CalibrateToggle
+              active={calibrating}
+              onToggle={onToggleCalibrate}
+              className="absolute top-3 left-3"
+            />
+          ) : null}
         </>
       ) : (
         <BoardEmpty scene={scene} isDm={board.isDm} />

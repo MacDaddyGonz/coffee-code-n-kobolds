@@ -7,6 +7,10 @@ import type { MutationCtx, QueryCtx } from '../_generated/server'
 // runs one way — lib/board.ts knows nothing about scenes as a table — so there is no
 // cycle here, and `convex/scenes.ts` has paired these two calls since Milestone 2.
 import { deleteScenePlacements } from './board'
+// The fog sweep, paired with the placement sweep everywhere it appears. `fogRects` is
+// keyed on the scene alone, so a scene's rectangles are unreachable the moment its row is
+// gone — an orphaned rectangle is not a leak, it is litter nothing in the app can name.
+import { deleteSceneFog } from './fog'
 import { MAX_SCENES_PER_GAME } from './games'
 
 // Lives in lib/limits.ts, which the browser imports too so there is one definition
@@ -116,6 +120,13 @@ export async function sceneReferencesImage(
  * it — and because the one placement it *would* find is the pathological one: a row
  * whose token had already vanished, which nothing else in the codebase would ever
  * reach again.
+ *
+ * ⚠️ **The fog sweep is not that, and it does real work every time.** Nothing else in a
+ * purge touches `fogRects`: no token owns a rectangle and no character does, so a game
+ * deleted without this line leaves every rectangle its DM ever drew behind, keyed on a
+ * scene id that resolves to nothing. Cheap rows rather than blobs, so this is litter and
+ * not the storage leak the image delete above prevents — but it is litter no query in the
+ * application can ever reach again, which is the same reason `purgeGame` exists at all.
  */
 export async function deleteScenesInGame(
   ctx: MutationCtx,
@@ -124,6 +135,7 @@ export async function deleteScenesInGame(
   const scenes = await listScenes(ctx, gameId)
   for (const scene of scenes) {
     await deleteScenePlacements(ctx, scene._id)
+    await deleteSceneFog(ctx, scene._id)
     await ctx.storage.delete(scene.imageId)
     await ctx.db.delete('scenes', scene._id)
   }
