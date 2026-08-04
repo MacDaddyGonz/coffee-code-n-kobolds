@@ -186,6 +186,7 @@ export function GameShell({
           selectedTokenId={selectedTokenId}
           onSelectToken={selectToken}
           onClearSelection={clearSelection}
+          onTokenGone={forgetToken}
         />
 
         {/* ⚠️ A sibling of the map pane, never a child of it. `useBoardKeys` gates its

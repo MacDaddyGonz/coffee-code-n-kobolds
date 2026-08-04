@@ -1,7 +1,7 @@
 import { memo, useMemo } from 'react'
 import { Circle, Group, Line, Text } from 'react-konva'
 
-import { setCursor } from './konvaPointer'
+import { claimContextMenu, setCursor } from './konvaPointer'
 import { COIN_DETAIL_MIN_DIAMETER, TokenHealthBar } from './TokenHealthBar'
 import { TokenMarkerPips } from './TokenMarkerPips'
 import { useCanvasImage } from '@/hooks/useCanvasImage'
@@ -85,6 +85,19 @@ export type TokenCoinProps = {
    * identities applies the whole way down.
    */
   onOpenHp: (tokenId: Id<'tokens'>) => void
+  /**
+   * A right-click on this coin, in **client** pixels — the board converts them, because it
+   * is the one holding the container's rectangle.
+   *
+   * ⚠️ **Only fired when this caller has a menu to be given**, which is `token.canMove`:
+   * the DM everywhere, a seat on the coins it controls, and nobody else. That test lives
+   * here rather than in the menu because *no menu at all* has to mean the browser's own
+   * menu appears — and suppressing it and then showing nothing is what reads as a broken
+   * application. `canMove` is already the affordance mirroring `requireMovableToken`, which
+   * is also what gates the marker write, so this is one rule on a third surface rather than
+   * a fourth predicate.
+   */
+  onContextMenu?: (token: BoardToken, at: { clientX: number; clientY: number }) => void
 }
 
 /**
@@ -118,6 +131,7 @@ export const TokenCoin = memo(function TokenCoin({
   onDragMove,
   onDragEnd,
   onOpenHp,
+  onContextMenu,
 }: TokenCoinProps) {
   const art = useCanvasImage(token.artUrl)
 
@@ -189,6 +203,16 @@ export const TokenCoin = memo(function TokenCoin({
       }}
       onMouseEnter={(event) => setCursor(event, draggable ? 'grab' : 'pointer')}
       onMouseLeave={(event) => setCursor(event, '')}
+      onContextMenu={(event) => {
+        // ⚠️ **Nothing happens for a caller with no menu, and that is the feature rather
+        // than a missing branch.** The browser's own menu is then left alone, which is what
+        // right-clicking bare map already does; suppressing it and showing nothing is what
+        // reads as the application having frozen. `canMove` is the same affordance the
+        // drag and the marker write use, so this is one rule on a third surface.
+        if (!onContextMenu || !token.canMove) return
+        claimContextMenu(event)
+        onContextMenu(token, { clientX: event.evt.clientX, clientY: event.evt.clientY })
+      }}
       onDragStart={(event) => {
         setCursor(event, 'grabbing')
         onDragStart?.(token)

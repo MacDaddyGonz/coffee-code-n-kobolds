@@ -48,6 +48,7 @@ import type * as lib_library_rogue from "../lib/library/rogue.js";
 import type * as lib_library_types from "../lib/library/types.js";
 import type * as lib_library_wizard from "../lib/library/wizard.js";
 import type * as lib_limits from "../lib/limits.js";
+import type * as lib_markers from "../lib/markers.js";
 import type * as lib_modalImages from "../lib/modalImages.js";
 import type * as lib_music from "../lib/music.js";
 import type * as lib_names from "../lib/names.js";
@@ -111,6 +112,7 @@ declare const fullApi: ApiFromModules<{
   "lib/library/types": typeof lib_library_types;
   "lib/library/wizard": typeof lib_library_wizard;
   "lib/limits": typeof lib_limits;
+  "lib/markers": typeof lib_markers;
   "lib/modalImages": typeof lib_modalImages;
   "lib/music": typeof lib_music;
   "lib/names": typeof lib_names;

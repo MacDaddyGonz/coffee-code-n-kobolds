@@ -48,3 +48,25 @@ export function swallowLeftPress(event: Konva.KonvaEventObject<MouseEvent>) {
   if (event.evt.button !== 0) return
   event.cancelBubble = true
 }
+
+/**
+ * Take a right-press for an application menu of our own.
+ *
+ * Two halves, and both are needed: no native menu over a coin that has one of ours, and no
+ * gesture on the Stage underneath it.
+ *
+ * ⚠️ **Only called when there really is a menu to open**, which is what makes *a player who
+ * controls nothing gets no menu* honest rather than a lie. A right-click that suppresses
+ * the browser's own menu and then produces nothing reads as a frozen application; leaving
+ * the native menu alone is what right-clicking bare map already does, and it says nothing
+ * about the game that the cursor has not said already.
+ *
+ * ⚠️ **`swallowLeftPress`'s left-button-only rule is what lets a right-press reach a coin at
+ * all, and that is now load-bearing rather than incidental.** It returns early for button 2,
+ * so a right-press landing on a health bar bubbles up the Konva node tree to the coin's own
+ * `Group` and this fires with the coin it belongs to rather than with the bar.
+ */
+export function claimContextMenu(event: Konva.KonvaEventObject<PointerEvent>) {
+  event.evt.preventDefault()
+  event.cancelBubble = true
+}
