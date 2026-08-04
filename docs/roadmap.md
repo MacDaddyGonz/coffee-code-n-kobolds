@@ -14,7 +14,7 @@ Two principles drive the ordering:
 Each milestone is a branch (or a few), merged to `dev`, then promoted to `main` when it's worth
 deploying. Acceptance criteria are written so you can tell "done" from "mostly done".
 
-**Numbering note.** Eight milestones have been inserted after the one before them shipped, and each
+**Numbering note.** Nine milestones have been inserted after the one before them shipped, and each
 insertion pushed everything below it down one.
 
 - **Milestone 4, the character library**, inserted after Milestone 3 shipped.
@@ -35,7 +35,7 @@ insertion pushed everything below it down one.
   are written against who is at the table and what they are holding, and **the DM could not reach DM
   mode without being told where to look.** The front door being in the wrong place is not something
   to fix after building three more rooms.
-- **Milestones 11, 12 and 13 — tokens; maps, fog and barriers; character resources** — all three
+- **Milestones 11, 13 and 14 — tokens; maps, fog and barriers; character resources** — all three
   inserted after Milestone 10 shipped, and after reading how Roll20 does the same three jobs. They
   arrive together because they are one review of the board screen rather than three ideas, and they
   are three milestones rather than one because each is a separate decision with its own ADR: what a
@@ -43,10 +43,21 @@ insertion pushed everything below it down one.
   application counts what a roll spends. **This is the first insertion that fixes something already
   shipped rather than something about to be built** — `board.removeToken` has been complete and
   fully tested since Milestone 2, with no button anywhere in the application, which is a gap five
-  milestones of new features walked straight past.
+  milestones of new features walked straight past. (They were 11, 12 and 13 when they were written;
+  the board-polishing milestone below was inserted between the first and the second.)
+- **Milestone 12, board polishing**, inserted after Milestone 11 shipped and after twenty minutes of
+  using it. It is the *second* insertion that fixes something already shipped, and the first that
+  fixes something shipped **one milestone earlier** — the right-click menu's *Edit this coin* was
+  wired to a handler that could not do what its own docblock promised. The rest is the same
+  discovery the milestone before it made: four controls filed where nobody looks for them, three
+  things too small or too clipped to read, and one missing die. ⚠️ **Two of its nine items are not
+  polish at all** and are listed under its own heading as such — one publishes a number this
+  codebase has withheld since Milestone 3, and one widens the dice grammar that CLAUDE.md
+  invariant 10 calls the cap itself.
 
 So rolls and dice went 4 → 5 → 6 → 7 → 8 → **9**, DM tooling 5 → 6 → 7 → 8 → 9 → **10**, tools and
-polish 6 → 7 → 8 → 9 → 10 → 11 → **14**, and the game editor 7 → 8 → 9 → 10 → 11 → 12 → **15**. This
+polish 6 → 7 → 8 → 9 → 10 → 11 → 14 → **15**, and the game editor
+7 → 8 → 9 → 10 → 11 → 12 → 15 → **16**. This
 file is renumbered throughout. **The ADRs are not**, because an ADR is not edited after the fact —
 read them against this table:
 
@@ -57,9 +68,9 @@ read them against this table:
 | Milestone 5 — [0006](adr/0006-premade-character-library.md) | rolls, feed and dice | 9 |
 | Milestone 6 — [0006](adr/0006-premade-character-library.md) | DM tooling, layers, fog of war | 10 |
 | Milestone 6 — [0007](adr/0007-monster-bestiary-and-cr-scaling.md) | rolls, feed and dice | 9 |
-| Milestone 7 — [0004](adr/0004-board-authorisation-and-layers.md) | orphaned-blob sweeper, admin view | 15 |
+| Milestone 7 — [0004](adr/0004-board-authorisation-and-layers.md) | orphaned-blob sweeper, admin view | 16 |
 | Milestone 7 — [0007](adr/0007-monster-bestiary-and-cr-scaling.md) | DM tooling, layers, fog of war | 10 |
-| Milestone 8 — [0006](adr/0006-premade-character-library.md) | orphaned-blob sweeper | 15 |
+| Milestone 8 — [0006](adr/0006-premade-character-library.md) | orphaned-blob sweeper | 16 |
 
 [ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md),
 [ADR 0009](adr/0009-who-plays-what-and-what-control-grants.md),
@@ -73,8 +84,11 @@ which is now long enough that it is simply how an ADR is written here — and th
 growing on the day the last numbered ADR is superseded.
 [ADR 0013](adr/0013-a-coin-you-can-copy-place-and-label.md) has no row either, and was the first
 written *knowing* the rule rather than happening to keep it: it says "the tools-and-polish milestone"
-where it has to name the one that will want the word *marker* for a drawing pen. ADRs 0014 and 0015
-name no number either.
+where it has to name the one that will want the word *marker* for a drawing pen. ADRs 0014, 0015 and
+0016 name no number either — and 0014 is the first written under a renumbering that happened *to it*
+rather than below it, since the milestone it belongs to was inserted above the two that had already
+claimed 0014 and 0015 in this file's prose. That cost two words here and nothing at all in the ADRs,
+which is the whole argument for the convention stated in one sentence.
 
 ⚠️ **ADR 0012 is the first one that had to name a *deployment* step rather than a milestone**, and it
 is worth knowing the difference. Renaming the GM layer's stored value is a widen–migrate–narrow across
@@ -1556,7 +1570,7 @@ rules engine by accident, one feature at a time.
 milestone gave all five answers, and [ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md)
 recorded them: **no slots at all** for the first, and **no count per key and no short rest** for the
 fourth. The character-resources milestone below **reverses both**, at the maintainer's instruction,
-with ADR 0015 superseding those two decisions and leaving the other three standing. This list is left
+with ADR 0016 superseding those two decisions and leaving the other three standing. This list is left
 exactly as it was written — the point of writing a decision down is that it can be found and
 overturned rather than quietly drifted away from, and a list edited to agree with the code can no
 longer catch the code being wrong. **Decisions 2, 3 and 5 are unchanged and still hold:** a hero still
@@ -2066,9 +2080,153 @@ an argument and a projected field, and compares a duplicated coin against its so
 
 ---
 
-## Milestone 12 — Maps, fog and barriers
+## Milestone 12 — Board polishing
 
-**Inserted after Milestone 10 shipped.** The decisions go in **ADR 0014**.
+**Inserted after Milestone 11 shipped**, and after twenty minutes of using it. The decisions go in
+**ADR 0014**.
+
+Nine things, found by opening the board rather than by reading it. Seven are polish in the ordinary
+sense — a control filed where nobody looks for it, a circle too small to read, a name clipped at the
+zoom people actually play at. **Two are not**, and they are named first so nothing further down this
+section reads as though they were:
+
+| Not polish | What it actually is |
+| --- | --- |
+| **Armour class and passive perception on a coin** | The first amendment in this project that **lifts a secrecy guarantee** rather than a rules exclusion. A creature's armour class reaches no player today, and [ADR 0005](adr/0005-character-sheets-and-hit-point-secrecy.md) uses it as *the* worked example of the row-shaped secret. |
+| **d2, and fifty dice** | Widening `ROLL_PATTERN`, which CLAUDE.md invariant 10 calls the cap itself: *"the die-count cap is load-bearing and is the grammar rather than a separate check."* |
+
+Both were put to the maintainer with the cost stated, and both were chosen deliberately. That is the
+door [ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md)'s two reversals came
+through, and it is the only door either of these gets to come through either.
+
+### The defect
+
+**Right-clicking a coin and choosing *Edit this coin* does nothing at all.** Both it and *Open the
+sheet* are wired to the same handler, and that handler only selects — nothing switches the
+right-hand tab, because the tab is local state inside `RightPane` with no way in from outside. Two
+prop docblocks in `BoardTokenMenu` promise a tab switch that cannot happen.
+
+⚠️ **This shipped one milestone ago, in the commit whose own plan called the menu "a surface over
+five things that already work".** Five of the six entries were; this one was a surface over
+something that did not exist, and nothing caught it because there is no test that can — the wiring
+compiles, the mutation is never reached, and the failure is a tab that stays where it was. It is
+worth naming as the shape of bug this project's guard tests are structurally unable to find: they
+prove what a *server* will not send, and this is a client that asks for nothing.
+
+The fix lifts the tab to `GameShell` beside `selectedTokenId`, `clearSelection` and `forgetToken` —
+which is where it should have been the moment the board needed to point at a panel. `showTab` crosses
+`RightPane`'s memo boundary, so it is a stable `useCallback` for the reason that pane's header
+already gives about the divider.
+
+### Where things live
+
+- **The Add Token button and the layer picker move to the Tokens tab.** They are under DM Tools →
+  Map today, which is where you set up a *map*. Nothing is re-implemented: `TokenAddDialog` needs a
+  scene, and `scenes.active` is the **same cache entry** `useBoard` already holds, so this costs one
+  more reader of an existing socket and no server execution.
+- **The roll-mode buttons, the ad-hoc dice and the DM's grid adjuster become one toolbar on the
+  map.** `RollModeBar` and `CalibrateToggle` **move** rather than being copied, and `DiceComposer`
+  gives up its five presets — which have moved and grown to eight faces plus a count — while keeping
+  the typed-expression field pinned under the feed, where typing belongs. The feed gains the height.
+
+  ⚠️ **This is the one item with an architectural cost, and it is worth stating rather than
+  discovering.** A toolbar on the map that sets the roll mode forces `RollProvider` out of
+  `RightPane` and up to `GameShell`, which `useRoll.ts` explicitly warns against: *"a context whose
+  value is a fresh object per render is fine inside that boundary and would be a disaster crossing
+  it."* It is safe here for a reason the docblock has to be rewritten to say rather than left to
+  imply — both values are memoised on deps that move only on a human action, and the senders are
+  stable for the session by construction — and *"it turned out to be fine"* is not the same sentence
+  as *"the warning was wrong"*. The warning is still right about the general case.
+
+### What a coin says about itself
+
+- **A bound coin shows its armour class in a red circle and its passive perception in a blue one.**
+  See the table at the top: this publishes armour class, and the scope is the whole of what makes it
+  defensible. A player receives both **only for coins they already see** — a GM-layer coin is not
+  sent at all and a fogged one is already dropped by `boardCharacterAccess`. Nothing else on the
+  stat block moves, and `maySeeCharacter` is untouched, so `characters.sheet` still refuses an
+  ordinary NPC. The numbers ride on **both** variants of `publicVitalsValidator`, which leaves that
+  union's actual guarantee — *the player-facing variant has nowhere to put a hit point* — true
+  word for word.
+
+  ⚠️ **Passive perception needs a derivation that does not exist yet.** `passivePerceptionOf`
+  returns `null` for every hero, because a hero's is computed from ability scores, level and the
+  Perception flag while a creature's is stored pre-calculated. One accessor answering it for both
+  sheet variants is new code, and `null` must stay `null` — a hand-built goblin has no recorded
+  passive perception, and printing 10 would invent a statistic the DM never gave.
+
+- **The name is no longer clipped to the coin's width.** That clamp was deliberate and its reason —
+  names smearing over each other at low zoom — is real; the maintainer was shown the trade and chose
+  the overlap. The docblock keeps the argument and records which way it went, because the next
+  reader should find a decision rather than an absence.
+
+- **The condition pips get bigger**, to the size of the new circles, which is what makes *"like the
+  AC example"* literally true. ⚠️ They are coupled to `COIN_DETAIL_MIN_DIAMETER` by an assertion in
+  `markers.test.ts` — a pip row must fit two pips at the threshold — so the threshold rises with
+  them and **coin detail now appears at slightly higher zoom.** That is a real behaviour change and
+  it is in the acceptance criteria so it cannot be quietly reverted.
+
+- **The DM gets the conditions submenu too.** It exists already, in the non-DM branch only. One
+  extraction, no new mutation and no new gate: `setMarkers` already admits a DM.
+
+### The map's own colour
+
+A scene gets a background colour, so the area around the map is not always white.
+`convex/lib/scenes.ts` states the licence in as many words — *"Nothing in a scene is a secret"* — so
+this collides with nothing, and it follows `gridVisible`'s pattern step for step with **one
+difference**: `gridVisible` could be required because it shipped with the table, and `scenes` is now
+populated, so the field is optional and read through exactly one accessor.
+
+⚠️ **`TINT_PATTERN` must become shared rather than copied.** It is a module-private `const` in
+`convex/board.ts`, and its own reason — *"a CSS colour function or a `url(...)` would be a string the
+browser interprets on every other player's screen, put there by whoever runs the game"* — applies
+with **more** force to something painting the whole viewport than to a coin. One regex, in
+`convex/lib/`, or this milestone ships the second copy that agreed once.
+
+### The dice
+
+Eight faces — d2, d4, d6, d8, d10, d12, d20, d100 — and a count from 1 to 50. Only **d2** is new to
+the face allow-list, and the count is the part that moves invariant 10.
+
+`MAX_ROLL_DICE`'s own docblock names what has to move with it: *"the regex is the copy that decides…
+when one moves, both move."* Six sites, plus CLAUDE.md. **The consequence to state rather than
+discover** is that the sheet grammar and the ad-hoc grammar are one grammar, so a sheet entry may now
+legitimately say `30d6`. That is the price of not having two caps that agreed once, and it was
+chosen over the alternative with that sentence in front of it.
+
+⚠️ **The renderer has no count cap of its own, so raising the grammar raises the rigid-body count
+directly.** Fifty dice in the physics engine is the one number in this milestone that nothing but a
+browser can answer. If it is unusable the fix is a *renderer* cap that shows a subset and says so —
+**never** a second grammar.
+
+### Deliberately not done here
+
+- **A per-player or per-coin choice of which badges show.** Two circles is what was asked for; a
+  preferences model is a whole design and nobody has asked.
+- **Anything else off the stat block on the coin.** Attacks, damage, saves and notes stay where they
+  are. The argument above is specifically about two numbers, and it does not generalise.
+- **A second dice grammar for ad-hoc rolls.** Considered and refused above.
+- **Exporting or screenshotting the board.** The background colour is painted in the DOM rather than
+  in Konva, so it would not appear in a canvas export — which nothing does today, and which is the
+  cheaper trade than putting a full-viewport rectangle into the per-pan-frame rasterisation path.
+
+**Acceptance:** right-clicking a coin and choosing *Edit this coin* selects it and lands on the
+Tokens tab, and *Open the sheet* lands on the sheet — they are no longer the same handler. Add Token
+and the layer picker are on the Tokens tab and DM Tools → Map carries neither. The DM sets a map's
+background colour and every player sees it after a reload. A bound coin shows a red AC circle and a
+blue passive-perception circle; an unbound coin shows neither; a hand-built goblin with no recorded
+passive perception shows the red one **and no blue one**. A player sees **no AC badge on a GM-layer
+or fogged creature**, asserted with a positive control, because the whole defence of publishing it is
+that the scope did not widen. `Venerable Sapphire Dragon` reads in full at the zoom where the board
+fits. Roll modes, all eight dice, the 1×–50× count and the grid adjuster are on the map, and the mode
+still tints loudly when it is not Normal. `1d2` rolls and shows a d2, `50d6` rolls, and `51d6` is
+refused with the grammar's own message.
+
+---
+
+## Milestone 13 — Maps, fog and barriers
+
+**Inserted after Milestone 10 shipped.** The decisions go in **ADR 0015**.
 
 [ADR 0012](adr/0012-three-layers-and-a-fog-that-is-honest-about-itself.md) shipped a fog that is
 honest about itself: real for tokens, polite for the map, and a map tool rather than a secrecy tool.
@@ -2159,7 +2317,7 @@ it is the keystone of the milestone's geometry.
 ⚠️ And the one documented soft spot changes meaning. The containment test fails open on a non-finite
 coordinate, which ADR 0012 calls "the only fail-open branch in the fog design". **Under a covered base
 that fail-open inverts to fail-closed** — a token with a broken position is withheld rather than
-published — so ADR 0014 has to say so rather than leaving a reader to trust ADR 0012's sentence.
+published — so ADR 0015 has to say so rather than leaving a reader to trust ADR 0012's sentence.
 
 The draw mutation takes a **discriminated union** of the two shapes rather than flat numbers plus an
 optional point list. It costs three call-site edits and it buys a `never` arm; the additive
@@ -2332,9 +2490,9 @@ needs editing, the absent-base default is wrong.
 
 ---
 
-## Milestone 13 — Spell slots, limited uses and the short rest
+## Milestone 14 — Spell slots, limited uses and the short rest
 
-**Inserted after Milestone 10 shipped.** The decisions go in **ADR 0015**, which
+**Inserted after Milestone 10 shipped.** The decisions go in **ADR 0016**, which
 **supersedes [ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md)'s first and fourth
 decisions and leaves its second, third and fifth standing.**
 
@@ -2575,7 +2733,7 @@ real deployment, because it is the only thing that has ever caught the rebuild t
 
 ---
 
-## Milestone 14 — Tools and polish
+## Milestone 15 — Tools and polish
 
 - Ruler tool, measuring in squares (1 square = 5 feet).
 - Multi-colour marker + eraser on the board. **DM only** — players must not have this. ⚠️ **The word
@@ -2593,7 +2751,7 @@ marker tool available.
 
 ---
 
-## Milestone 15 — Game editor and admin
+## Milestone 16 — Game editor and admin
 
 - Libraries: maps/boards, modal images, tokens and music. **NPC sheets are no longer on this list** —
   the bestiary moved forward to Milestone 5, because a monster's sheet feeds the roll path as much as a
