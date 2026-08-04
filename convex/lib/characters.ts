@@ -61,6 +61,7 @@ import {
   characterKindValidator,
   clampHitDice,
   clampHp,
+  defaultSheetFor,
   healthBand,
   presetSheetValidator,
   reconcileHp,
@@ -1228,6 +1229,63 @@ export async function insertCharacter(
     currentHp: resolved.maxHp,
     ...(resolved.kind === 'pc' ? { hitDiceRemaining: resolved.hitDice.count } : {}),
   })
+  return characterId
+}
+
+/**
+ * A second creature exactly like this one, at full hit points.
+ *
+ * **The whole of what stops five goblins sharing a hit-point pool.** Roll20's own
+ * documentation tells a GM that eight identical goblins must have their bars *manually
+ * unlinked* from the character sheet or damaging one damages all eight, and the community
+ * wrote a script to work around it. A copy that makes its own character document costs
+ * this function, so that trap is one this project simply does not build.
+ *
+ * It lives here because it writes both of the tables `lib/characters.ts` is the sole
+ * reader of, and it is `insertCharacter` plus one line rather than a second insert path —
+ * which is what guarantees the copy gets its `characterVitals` row in the same transaction
+ * and gets it through the **spread** that keeps `hitDiceRemaining` absent rather than
+ * `undefined`.
+ *
+ * ⚠️ **Full hit points is `insertCharacter`'s decision and not duplication's.** Creating a
+ * character means starting it whole; the copy inherits that by reuse rather than by
+ * restating it. Note the consequence, which is the point of the feature: the source's
+ * *current* hit points are not copied, so duplicating a goblin on 3 hp gives a fresh one
+ * at full. `spentPerRest` is absent for the same reason — a copy is a fresh creature, not
+ * a resumed one.
+ *
+ * ⚠️ **The stored sheet passes through verbatim**, without `requireUsableSheet` and
+ * without `normaliseStoredSheet`. Re-validating would let a bestiary key retired since the
+ * source was stored refuse a duplication of a coin the DM is looking at — the same
+ * asymmetry `librarySheet` already keeps, where choosing a retired archetype is refused on
+ * write and reading one is tolerated. Re-normalising would be a write to a shape the DM
+ * did not ask to change, which is *the source is never renamed* reached from the other
+ * side. `?? defaultSheetFor('pc')` mirrors `characters.create`'s own line so the legacy-row
+ * default lives in one shape.
+ *
+ * ⚠️ **`reserved` is carried, and it is fail-closed.** A hero the DM has withheld from the
+ * table must not become visible by being copied. It is a second write rather than an
+ * argument on `insertCharacter` because `reserved` is deliberately not part of the sheet
+ * union — see the schema — and adding it to that signature would put the question in front
+ * of every other caller.
+ *
+ * Nothing else is carried because there is nothing else: a claim lives on `players` and
+ * not on `characters`, so a copy is unclaimed by construction. That is the same answer as
+ * *a copy does not inherit granted controllers*, arrived at from the other table.
+ */
+export async function copyCharacter(
+  ctx: MutationCtx,
+  gameId: Id<'games'>,
+  name: string,
+  source: Doc<'characters'>,
+): Promise<Id<'characters'>> {
+  const characterId = await insertCharacter(
+    ctx,
+    gameId,
+    name,
+    source.sheet ?? defaultSheetFor('pc'),
+  )
+  if (isReservedCharacter(source)) await setReserved(ctx, characterId, true)
   return characterId
 }
 

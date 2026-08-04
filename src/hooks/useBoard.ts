@@ -7,9 +7,20 @@ import type { PublicToken } from '@convex/lib/board'
 import type { PublicVitals } from '@convex/lib/characters'
 import type { Point } from '@convex/lib/grid'
 import { mayPlayersMove } from '@convex/lib/layers'
+import type { TokenMarker } from '@convex/lib/markers'
 import type { PublicScene } from '@convex/lib/scenes'
 import { hiddenFromParty, useFog } from '@/hooks/useFog'
 import { useVitals } from '@/hooks/useVitals'
+
+/**
+ * Held still so a board with nothing marked hands every coin the same array.
+ *
+ * `NO_TOKENS`/`NONE_HIDDEN`'s idiom, and here it is what keeps `TokenCoin`'s memo
+ * skipping: the field below is an array, so a fresh `[]` per unmarked coin per render
+ * would be a changed prop on two hundred coins that nobody has ticked anything on —
+ * which is every coin in almost every game.
+ */
+const NO_MARKERS: readonly TokenMarker[] = []
 
 /** A token joined to where it stands on the active scene, or null if it stands nowhere. */
 export type BoardToken = PublicToken & {
@@ -67,6 +78,27 @@ export type BoardToken = PublicToken & {
    * fogged.
    */
   hiddenFromParty: boolean
+  /**
+   * The conditions written on this coin — poisoned, prone, concentrating — in the
+   * vocabulary's own alphabetical order, as `visibleMarkers` normalised them.
+   *
+   * ⚠️ **Labels and nothing else, and that sentence is the whole design.** Nothing in
+   * `convex/` reads one: no roll consults it, no health band is computed from it, no
+   * drag is refused because of it, and `markerGuard.test.ts` is what makes that a
+   * promise rather than an intention — it greps `convex/` for a quoted specifier
+   * reaching the vocabulary and allows three importers. So nothing downstream of this
+   * field may branch on a marker either; a pip is drawn and that is all it does.
+   *
+   * ⚠️ **Fog does not hide these, and that is `board.tokens`' argument rather than an
+   * omission.** Filtering them would put a `tokenPositions` read into a subscription
+   * that is open all session, which is precisely the read-side cost CLAUDE.md invariant
+   * 2 exists to refuse — and what it would buy is closing a devtools leak of exactly the
+   * kind ADR 0012 already accepts for a fogged coin's *name*. Fog takes where a coin is,
+   * how hurt it is and what it just rolled; it does not take that a coin by that name
+   * exists or what condition it is in. A creature that must not be known about goes on
+   * the GM layer, where the row never travels at all.
+   */
+  markers: readonly TokenMarker[]
 }
 
 export type Board = {
@@ -102,10 +134,29 @@ export function positionsArgs(code: string, sceneId: Id<'scenes'>, dmCode: strin
 }
 
 /**
+ * The arguments `board.markers` is subscribed with. `tokensArgs`' argument, and the
+ * reason the builder is shared rather than the shape being written twice.
+ *
+ * Convex keys a query by its arguments, so the DM's `TokenMarkerControl` — which reads
+ * this to tick the boxes — and the board drawing the pips must *name the same entry* or
+ * they hold two: two socket subscriptions, two server executions, and two answers that
+ * arrive a beat apart while the DM watches their own tick appear on the panel before it
+ * appears on the coin. One builder is what makes the two the same cache entry rather
+ * than two objects that happen to serialise alike today.
+ *
+ * `dmCode` is omitted rather than passed as `undefined` when there is none, for the
+ * reason `tokensArgs` gives: `undefined` is not a Convex value, so the two spellings are
+ * one request on the wire and not necessarily one object here.
+ */
+export function markersArgs(code: string, dmCode: string | null) {
+  return dmCode === null ? { code } : { code, dmCode }
+}
+
+/**
  * Everything on screen for one game: the active board, who is standing on it, and
  * how they are all doing.
  *
- * Four subscriptions rather than one, and the split is deliberate in three
+ * Five subscriptions rather than one, and the split is deliberate in four
  * different ways. `scenes.active` is separate because the background is what the
  * whole table shares and changes about once an hour. `board.tokens` and
  * `board.positions` are separate from each other because positions are written
@@ -121,6 +172,13 @@ export function positionsArgs(code: string, sceneId: Id<'scenes'>, dmCode: strin
  * canvas because a coin and its health bar are one thing to draw, and a component
  * that took the tokens from one hook and the numbers from another would render the
  * two out of step for a frame every time a token appeared.
+ *
+ * `board.markers` is the fourth axis and the cheapest of them: a condition hangs off a
+ * coin rather than off a placement, so the query is game-scoped, reads no
+ * `tokenPositions` row and never re-runs on a drag or a join. Joined here rather than
+ * subscribed by the coin for the reason `hiddenFromParty` gives — `TokenCoin` sits
+ * inside the Konva tree with no game code to subscribe with, so the alternative is a
+ * subscription per coin.
  *
  * `playerId` now appears in the rule below, where it used not to, and the reason
  * it may is worth stating rather than assuming. A seat id is routing and not proof
@@ -159,13 +217,38 @@ export function useBoard(args: {
   // copies of the same rows and patching them separately. See `vitalsArgs`.
   const { of: vitalsOf } = useVitals(code, dmCode, playerId)
 
-  // The rectangles, for the DM's cue and for nothing else this hook does. Not a fifth
-  // subscription in practice: `FogLayer` is drawing the same entry beside this one, and
-  // `fogArgs` is what makes the two of them name it — `fog.list` is ungated and cheap, so
-  // a player holds it too and simply never looks at the answer this file computes from it.
+  // The rectangles, for the DM's cue and for nothing else this hook does. Not a
+  // subscription of its own in practice: `FogLayer` is drawing the same entry beside
+  // this one, and `fogArgs` is what makes the two of them name it — `fog.list` is ungated
+  // and cheap, so a player holds it too and simply never looks at the answer this file
+  // computes from it.
   const fog = useFog(code, scene?._id ?? null, dmCode)
 
+  // The conditions on every coin, for the pips. A fifth subscription and genuinely one
+  // — on a player's screen nothing else reads it — and it is affordable for the reason
+  // `visibleMarkers` states: it reads **no `tokenPositions` row, ever**, so it is off
+  // the drag path entirely, and a game where nobody has ticked anything reads one empty
+  // range and stops. On the DM's screen it is not even that, because `markersArgs` is
+  // what makes `TokenMarkerControl` in the other pane name this same entry.
+  const markers = useQuery(api.board.markers, markersArgs(code, dmCode))
+
   const isDm = dmCode !== null
+
+  /**
+   * Conditions by coin, keyed by token because the query is game-scoped and sends a row
+   * only for a coin that carries something — a marked goblin in a two-hundred-coin game is
+   * one entry here, and every other coin falls through to the shared empty array below.
+   *
+   * ⚠️ **Built out here rather than inside the join, and the reason is invariant 2.** That
+   * memo depends on `positions`, which is re-pushed ten times a second for the whole of
+   * anybody's drag — so a `Map` built in there was rebuilt at that rate for an input that
+   * changes when somebody ticks a checkbox. The join still has to *depend* on this, which
+   * is the accepted widening the note at its foot argues; what this stops is the rebuilding.
+   */
+  const marked = useMemo(
+    () => new Map((markers ?? []).map((row) => [row.tokenId, row.markers])),
+    [markers],
+  )
 
   const joined = useMemo<BoardToken[]>(() => {
     if (!tokens) return []
@@ -259,6 +342,11 @@ export function useBoard(args: {
       // party lost sight of this*, which is not a sentence about your own screen, and a
       // player's payload has already had the fogged rows taken out of it.
       hiddenFromParty: isDm && hiddenFromParty(token, at.get(token._id) ?? null, rects),
+      // Read, never derived, and never filtered here. The server decided which coins'
+      // rows travel — `visibleMarkers` runs `maySee`, so a GM-layer coin's conditions
+      // are absent from a player's payload rather than dropped in this file
+      // (CLAUDE.md invariant 1).
+      markers: marked.get(token._id) ?? NO_MARKERS,
     }))
     // `vitalsOf` is stable until the vitals themselves change, at which point every
     // token object here is rebuilt and every coin reconciles. That is the trade, and
@@ -269,7 +357,13 @@ export function useBoard(args: {
     // times an evening, so rebuilding every token object when one lands costs a
     // reconciliation nobody can perceive — and the cue has to be exact at the moment the
     // fog moves, which is precisely when the DM is looking at it.
-  }, [tokens, positions, fog, isDm, playerId, myCharacterId, vitalsOf])
+    //
+    // `markers` is on the same side of that trade and in its own register: a condition is
+    // ticked a few times a round, where a pan lands sixty times a second and touches none
+    // of these dependencies at all. What it costs when one *is* ticked is every token
+    // object rebuilt and every coin reconciled — the same charge damage already pays, for
+    // an event that happens far less often than damage does.
+  }, [tokens, positions, fog, marked, isDm, playerId, myCharacterId, vitalsOf])
 
   return {
     scene: scene ?? null,
@@ -284,6 +378,13 @@ export function useBoard(args: {
     // drawn before its vitals have arrived is a token whose bar appears a moment
     // later, and holding the whole map behind a skeleton for that would be paying
     // for a health bar with the map.
+    //
+    // ⚠️ **Markers are not awaited either, and it is the same argument one step
+    // smaller.** A coin drawn a frame before its pips is a coin; a coin drawn a frame
+    // before its position is a coin in the wrong room. Holding the map behind a
+    // skeleton for a pip would be paying for a pip with the map — and a marker is a
+    // label that adjudicates nothing, so nothing at the table turns on seeing it in
+    // the first frame rather than the second.
     loading:
       scene === undefined || tokens === undefined || (scene !== null && positions === undefined),
   }

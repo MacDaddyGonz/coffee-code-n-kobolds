@@ -100,8 +100,8 @@ export function GameShell({
   const [selectedCharacterId, setSelectedCharacterId] = useState<Id<'characters'> | null>(null)
 
   /**
-   * The three ways the selection changes. All `useCallback([])` — the setters are
-   * stable, so these are too, and a pane's memo sees the same three functions for
+   * The four ways the selection changes. All `useCallback([])` — the setters are
+   * stable, so these are too, and a pane's memo sees the same four functions for
    * the life of the game.
    */
 
@@ -132,6 +132,36 @@ export function GameShell({
     setSelectedCharacterId(null)
   }, [])
 
+  /**
+   * A coin that no longer exists, because the DM deleted it.
+   *
+   * ⚠️ **Deliberately not `clearSelection`, and the difference is which half stops
+   * being true.** That one is a *gesture* — "I am done with this creature" — so it
+   * clears both, for the reason above. This is a *fact*, and it clears exactly the
+   * half the fact is about. A DM who picked the creature out of the Sheets selector
+   * and then deleted its coin is still looking at that sheet, and
+   * `{ characterId: X, tokenId: null }` is precisely the state `selectCharacter(X,
+   * null)` already produces for a creature with no coin on this board.
+   *
+   * ⚠️ **And this is a genuinely new case rather than one `useTokenSelection` already
+   * covers.** That hook resolves the ring against the live board every render and
+   * gives three reasons a non-matching id is kept — positions arriving a beat late, a
+   * scene switched away from and back, a character claimed and unclaimed — and every
+   * one of them is *it might return*. A deleted coin cannot. Nor is leaving it set
+   * inert: `sheetFocusOf`'s fourth rule fires for a DM holding a `selectedTokenId`
+   * with no binding, so the Sheets panel would print *this token carries no sheet*
+   * about a token that has ceased to exist.
+   *
+   * The functional update is load-bearing rather than stylistic. It is what keeps
+   * this `useCallback([])` like the three above, so neither pane's memo is defeated by
+   * a handler whose identity tracks the current selection — and it is what lets the
+   * board hand this the id of a coin that was never selected, from a menu opened on
+   * one coin while the ring sits on another.
+   */
+  const forgetToken = useCallback((tokenId: Id<'tokens'>) => {
+    setSelectedTokenId((current) => (current === tokenId ? null : current))
+  }, [])
+
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       <GameHeader
@@ -156,6 +186,7 @@ export function GameShell({
           selectedTokenId={selectedTokenId}
           onSelectToken={selectToken}
           onClearSelection={clearSelection}
+          onTokenGone={forgetToken}
         />
 
         {/* ⚠️ A sibling of the map pane, never a child of it. `useBoardKeys` gates its
@@ -193,6 +224,7 @@ export function GameShell({
             onSelectToken={selectToken}
             onSelectCharacter={selectCharacter}
             onClearSelection={clearSelection}
+            onTokenGone={forgetToken}
             onRenameSeat={onRenameSeat}
             onLeaveSeat={onLeaveSeat}
           />

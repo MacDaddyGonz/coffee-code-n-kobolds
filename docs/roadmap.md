@@ -68,10 +68,13 @@ read them against this table:
 [ADR 0012](adr/0012-three-layers-and-a-fog-that-is-honest-about-itself.md) have no rows, and that is
 the discipline working rather than an omission: not one of them names a milestone number anywhere, so
 the last four renumberings cost them nothing. They say "the dice milestone" and "the DM-tooling
-milestone", which is the formulation that survives. **Eight in a row is the convention holding** —
+milestone", which is the formulation that survives. **Nine in a row is the convention holding** —
 which is now long enough that it is simply how an ADR is written here — and the table above stops
-growing on the day the last numbered ADR is superseded. ADRs 0013, 0014 and 0015 name no number
-either.
+growing on the day the last numbered ADR is superseded.
+[ADR 0013](adr/0013-a-coin-you-can-copy-place-and-label.md) has no row either, and was the first
+written *knowing* the rule rather than happening to keep it: it says "the tools-and-polish milestone"
+where it has to name the one that will want the word *marker* for a drawing pen. ADRs 0014 and 0015
+name no number either.
 
 ⚠️ **ADR 0012 is the first one that had to name a *deployment* step rather than a milestone**, and it
 is worth knowing the difference. Renaming the GM layer's stored value is a widen–migrate–narrow across
@@ -1765,7 +1768,84 @@ a corridor is fogged has no position rows for what is standing in it.
 
 ---
 
-## Milestone 11 — Tokens
+## ✅ Milestone 11 — Tokens
+
+**Done.** The decisions are recorded in
+[ADR 0013](adr/0013-a-coin-you-can-copy-place-and-label.md). Seven things it settled differently from
+the section below, or found out by building it, so read them together:
+
+- ⚠️ **The naming rule's third sentence was one word wrong, and it produced two coins with one
+  name.** The section below says the suffix is skipped when one coin is added and *nothing is
+  numbered yet*. Both readings of that agree on the case it describes, which is why the difference
+  is easy to miss — and under the narrow one, duplicating a lone `Goblin` gives a second coin **also
+  called `Goblin`**, then a third, because nothing ever becomes numbered. Asking whether the base is
+  on the board **at all** fixes it and keeps the described case exactly. It is also the honest
+  statement of what separates the two surfaces: the add dialog passes a name it is about to create,
+  the duplicate control passes one already standing there.
+- **"Add five of these" and "duplicate five times" became one code path, and that is what makes the
+  acceptance line reachable.** `Goblin 1 … Goblin 5` falls out of an *add* with nothing numbered
+  yet; a *duplicate* of an existing `Goblin` correctly gives `Goblin 2 …`, because the source is
+  never renamed. The section below reads as though one control had to produce both, and it cannot.
+- ⚠️ **The third blob delete was already broken, not merely waiting.** `deleteTokensInGame` deleted
+  one blob per row, so two coins sharing one meant deleting an id that had already gone — which
+  throws and aborts the whole transaction. Confirmed against the dev deployment
+  (`storage id … not found`). It was unreachable only because nothing could make a twin, and
+  `board.addToken` has always accepted a blob another coin already owns. It is also the one of the
+  three that **must not** ask the new predicate: on a purge the answer is `true` for a twin that is
+  also about to go, and asking per row would be forty thousand document reads in one transaction. It
+  deduplicates instead, which is a stronger statement rather than a weaker one.
+- **A secret-bearing table arrived and cost no new machinery.** `tokenMarkers` joined `tokens` and
+  `tokenPositions` on invariant 8's first row because its predicate is already there — `maySee`, same
+  question, same function, same module. No new choke point and no fourth column. The test for whether
+  a table belongs on that list turns out not to be "is it new?" but *does a row have a non-secret
+  twin, and does a predicate already tell them apart?*
+- ⚠️ **`normaliseMarkers` needed a home the plan did not name.** The roadmap puts the fail-closed
+  intersection in the renderer, which is right and insufficient: `board.markers`' `returns:` validator
+  is `v.array(tokenMarkerValidator)`, so a value from a newer deployment would make the **query throw
+  for every caller** and take the whole table's conditions subscription down, where dropping it costs
+  one undrawn pip. Three call sites, three different failures.
+- **Radix's `ContextMenu` does take an `open` prop**, so "it is uncontrolled" was the wrong reason for
+  the right decision. The real one is that the point it positions at lives in its trigger's own state
+  with no prop supplying it, and its content omits `side`/`align` so it cannot be re-aimed. The
+  canvas half of the argument stands: one `<canvas>`, no DOM node per coin.
+- **A pre-existing bug fell out of building the menu.** `BoardStage`'s space-pan claimed *any* button,
+  so with space held a right-press began a pan and then opened the menu. Nothing could reach it before
+  the board had a right-click gesture, and that handler's own docblock had always described the
+  intended behaviour correctly.
+- ⚠️ **`npm run test:smoke` caught a regression this milestone introduced, and it is the file's own
+  argument arriving from an unexpected direction.** Unifying add and duplicate meant running the
+  DM's *typed* name through `duplicateNames` — and its skip case returns the **base**, so a DM
+  typing `Kobold of the Arch 3` on a board with no kobolds got a coin called `Kobold of the Arch`,
+  with no way to create a trailing number at all. Nothing local saw it: every test asserted the
+  numbering, and the bug was in the typing. The rule that survives is the honest one — **a name
+  somebody typed is not a copy of anything, so nothing rewrites it**; only the coins the DM did not
+  name are numbered. Note what this says about that script: its usual job is values a real
+  deployment refuses, and here it was a *behaviour* nobody had thought to assert.
+- ⚠️ **The browser confirmed rather than corrected, and that is worth recording because it breaks the
+  run.** Every milestone in this file has found at least one thing by opening the app that lint and
+  the suite did not — the layout milestone's `forceMount` panel, the DM-tooling milestone's veil above
+  the player layer. This one found nothing in the application. What it did find was **three bugs in
+  the driver script**: a malformed PNG fixture, a create-game flow that needs *Enter game* pressed on
+  the reveal panel, and a map that has to be put on the table before the board draws anything. Stated
+  plainly rather than dressed up as a finding, because the honest version is the useful one — and
+  because the *reason* is probably that this milestone is five small surfaces over machinery that
+  already existed, where those two were new layout and a new render order. What the browser did earn
+  is the arithmetic, seen rather than asserted: a one-square coin at 100% carrying four conditions
+  draws **two pips and a `+2`**, which is `floor((40 + 2) / 12) = 3` slots with the last spent on the
+  counter.
+
+**Acceptance, as met:** the DM adds five Goblins in one press and gets `Goblin 1 … Goblin 5`, each
+with its own sheet — damaging one moves one health bar and the other four stay full. Duplicating an
+existing `Goblin` continues the run rather than colliding with it, and the source keeps its name. The
+DM puts one on a second map from the Tokens tab without it leaving the first, and pressing the button
+again does not move it. A coin marked *poisoned* draws a pip; four conditions on a coin at the detail
+threshold draw one pip and a `+3`, and zooming in reveals the rest. A player right-clicking a monster
+gets their browser's menu and nothing of ours; a player right-clicking their own hero gets conditions
+and the sheet. A player inspecting network traffic sees no marker row for a GM-layer coin — asserted
+with a positive control, and covered a second time for free by the enumeration sweep, which
+`boardFixture` now marks the hidden coin to keep honest.
+
+**The original plan follows.**
 
 **Inserted after Milestone 10 shipped**, and it is the first insertion in this file that fixes
 something already built rather than clearing the way for something about to be. Whatever gets built
@@ -2498,7 +2578,13 @@ real deployment, because it is the only thing that has ever caught the rebuild t
 ## Milestone 14 — Tools and polish
 
 - Ruler tool, measuring in squares (1 square = 5 feet).
-- Multi-colour marker + eraser on the board. **DM only** — players must not have this.
+- Multi-colour marker + eraser on the board. **DM only** — players must not have this. ⚠️ **The word
+  *marker* is already taken** — the tokens milestone shipped `tokenMarkers`, the condition labels on
+  a coin, and `convex/lib/markers.ts` is their vocabulary. This one is a **pen**, and naming it
+  anything with `marker` in it will collide with a table, a query, a mutation and a guard test. See
+  [ADR 0013](adr/0013-a-coin-you-can-copy-place-and-label.md), which records the collision rather
+  than resolving it, because renaming the condition labels would have made the specification and the
+  code disagree.
 - Background music player, synced play state across the group.
 - Initiative tracker.
 

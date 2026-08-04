@@ -125,9 +125,24 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
 
    | Tables | The only module allowed to read them | The predicate | Where the predicate lives |
    | --- | --- | --- | --- |
-   | `tokens`, `tokenPositions` | `convex/lib/board.ts` | `maySee(token, isDm)` | same module |
+   | `tokens`, `tokenPositions`, `tokenMarkers` | `convex/lib/board.ts` | `maySee(token, isDm)` | same module |
    | `characters`, `characterVitals` | `convex/lib/characters.ts` | `maySeeCharacter(character, isDm, controlled?)` | same module |
    | `feed` | `convex/lib/feed.ts` | `mayHearOf(character, isDm, visible)` | **`convex/lib/characters.ts`** |
+
+   ⚠️ **`tokenMarkers` joined the first row rather than becoming a fourth, and that is the most
+   useful thing this table has said in a while: a secret-bearing table arrived and cost no new
+   machinery at all.** A marker row — the conditions on a coin — names a `tokenId`, so a row
+   belonging to a GM-layer coin says a hidden coin exists, which is the oracle `TOKEN_NOT_FOUND` is
+   written to close; and it is indistinguishable in type from a row about a hero, so no `returns:`
+   validator can tell them apart. It is a leaked *row* of the first row's exact shape.
+
+   What made it the **same** entry rather than a new one is that its predicate is already there:
+   `maySee(token, isDm)`, the same question, answered by the same function, in the same module. So
+   there is **no new predicate, no new reader and no fourth column** — one table name in one cell,
+   and `leakGuard.test.ts` then sweeps `lib/characters.ts` and `lib/feed.ts` against it for free.
+   **Contrast `fogRects`, below, which is absent for the opposite reason.** The test for which
+   applies is not "is this table new?" but *does a row of it have a non-secret twin, and is there
+   already a predicate that tells them apart?*
 
    ⚠️ **The fourth column exists because the third row's predicate is not in its own module, and
    this table used to imply it was.** `mayHearOf` lives in `convex/lib/characters.ts`, because it is
@@ -300,6 +315,36 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    `isDm` short-circuit sits **above** the layer switch rather than inside it, so the `never` arm
    never has to decide what a DM sees — a second question inside a discriminator is the failure
    `isReservedCharacter` is written the way it is to avoid.
+
+   ⚠️ **There is now a union on this schema with NO `never`-arm switch, and reading why is the
+   point of this paragraph — it is the exception that says what the rule is actually for.**
+   `TokenMarker` is the seventeen conditions a coin can carry, in `convex/lib/markers.ts`, and
+   nothing switches on it anywhere. That is not an oversight to be corrected: **there is no
+   predicate**, because nothing in `convex/` decides anything from a marker — no roll consults one,
+   no health band is computed from one, no drag is refused because of one. A switch written to
+   satisfy this invariant would be a guard that cannot fail, which is exactly what
+   [ADR 0012](docs/adr/0012-three-layers-and-a-fog-that-is-honest-about-itself.md) argued out of
+   `fogRects`' leak-guard entry, and this project does not keep those.
+
+   What the invariant protects is met three other ways that *can* fail: `TOKEN_MARKER_LABELS` on the
+   server, a `Record` of pip glyphs on the client, and `lib/markers.test.ts` pinning the validator's
+   members **and their order** against the `as const` list — the direction the compiler cannot see,
+   which is the one `lib/layers.ts` already exists to cover. Order, because the renderer iterates
+   the vocabulary, so the array *is* the pip order.
+
+   **The fail-closed runtime behaviour is real and has a home, in three places rather than one.**
+   `normaliseMarkers` iterates the vocabulary and intersects with the stored array — never maps over
+   it — on the write path, in the **server projection**, and in the renderer. The middle one is the
+   one that would be missed and matters most: `board.markers`' `returns:` is
+   `v.array(tokenMarkerValidator)`, so a row written by a newer deployment during a non-atomic push
+   would make that query **throw for every caller** and take the whole table's conditions
+   subscription down, where dropping it costs one undrawn pip. That is `maySeeLayer`'s composition
+   argument reaching a second union.
+
+   **So the rule to carry forward is not "every union gets a `never` arm".** It is: *find the place
+   a wrong answer does damage, and make the compiler refuse there.* For `isMonsterSheet` that is a
+   predicate and the arm is the guard. For `TokenMarker` there is no such place, and two `Record`s
+   and an order-pinning test are the whole of it.
 
    **Fog is a second, unrelated reason to withhold, `&&`-ed at the call site** exactly as
    `isReservedCharacter` is beside `maySeeCharacter`. It is a fact about a *(scene, position)* pair
@@ -524,6 +569,23 @@ trips it: counting a slot compares nothing, refuses nothing, and changes no die 
 
 See [ADR 0011](docs/adr/0011-announcing-a-roll-rather-than-adjudicating-one.md) — whose decisions 1
 and 4 are **struck through in place** for this reason, and whose 2, 3 and 5 stand.
+
+**Conditions on a coin lifted nothing either, and this is the first entry where a guard *test* is
+what makes that true rather than a promise.** A coin carries a fixed vocabulary of seventeen D&D
+conditions — `prone`, `grappled`, `restrained` and `paralyzed` among them, all four named or implied
+by requirements.md's *no movement-detriment status effects*. What ships is the **word on the coin**:
+no speed is halved, no advantage is granted, no drag is refused, no band is recomputed, and nothing
+on a sheet changes. The same register as loot being a line of text.
+
+The difference from every previous "we declined to adjudicate it" entry is that this one is
+**enforced**. `markerGuard.test.ts` greps `convex/` for a quoted import of the vocabulary and allows
+exactly three modules — the schema, the choke point and the board's public functions — plus a second
+sweep for the helper names, because a module could import nothing and still reach the row through
+`lib/board.ts`. It is a test rather than a comment because the way this exclusion gets broken is
+somebody adding three reasonable lines to `convex/lib/dice.ts`, and a comment there would not stop
+them. See [ADR 0013](docs/adr/0013-a-coin-you-can-copy-place-and-label.md), and the amendment in
+[docs/requirements.md](docs/requirements.md) — which is written down precisely because the exclusion
+names the words now on screen, and an unrecorded near-miss is indistinguishable from a quiet lifting.
 
 ## Commands
 

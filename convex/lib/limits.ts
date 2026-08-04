@@ -79,3 +79,30 @@ export const MAX_MODAL_BYTES = 2 * 1024 * 1024
  * else. The byte count is the check.
  */
 export const MAX_MUSIC_BYTES = 10 * 1024 * 1024
+
+/**
+ * How many coins one press of *duplicate* — or of *add five of these* — may create.
+ *
+ * Ten, because one press is not one document. Every copy gets its own token, its own
+ * character and its own vitals row, plus a placement on the scene it lands on: at ten that
+ * is **forty writes in one transaction**, and the copies not sharing a hit-point pool is
+ * the entire feature rather than an implementation detail to be economised on. A DM who
+ * wants twenty presses the button twice, which costs them a click and costs the transaction
+ * nothing.
+ *
+ * ⚠️ **Why it lives here rather than in lib/games.ts beside `MAX_TOKENS_PER_GAME`, which is
+ * where a reader will look for it first.** Every constant in that file bounds a **game** —
+ * how many seats, scenes, tokens or fog rectangles one may hold — and this bounds a single
+ * **call**. That is not taxonomy, because it has a consequence: this is the first cap a
+ * **browser control** has to agree with, since the stepper in the add/duplicate dialog must
+ * stop at the number the mutation refuses past. `src/` value-imports this file and never
+ * lib/games.ts — that one is the authorisation choke point, and dragging `requireDm` and
+ * the games projection into the bundle to read an integer is not a trade worth making — so
+ * a constant declared there could not be reached by the control that needs it, and the two
+ * sides would each end up declaring their own. The header above already says what that is:
+ * a limit the two sides each declare for themselves is two limits.
+ *
+ * It is the first **row count** in a file of byte ceilings, which is the same rule applied
+ * to a different unit rather than a new kind of thing living here.
+ */
+export const MAX_DUPLICATE_COUNT = 10

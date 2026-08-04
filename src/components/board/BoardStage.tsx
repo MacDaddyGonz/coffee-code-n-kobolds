@@ -105,7 +105,15 @@ export function BoardStage({
     let release: (() => void) | null = null
 
     const beginPan = (event: MouseEvent) => {
-      if (event.button !== 1 && !spacePanning) return
+      // ⚠️ **Space-panning claims the LEFT button only, and the missing clause was a real
+      // bug rather than a tidy-up.** This used to read `!spacePanning`, which claims *any*
+      // button while the bar is held — button 2 included. The order a browser fires them
+      // in is `pointerdown → mousedown → contextmenu`, so with space held a right-press
+      // began a pan and *then* opened the coin's menu, leaving the map sliding under an
+      // open menu. Nothing reached it before the board had a right-click gesture at all,
+      // which is why it survived: the docblock above has always described the intended
+      // behaviour correctly.
+      if (event.button !== 1 && !(spacePanning && event.button === 0)) return
       // Also stops the browser's middle-click autoscroll, which would otherwise
       // fight the pan with a scroll of its own.
       event.preventDefault()

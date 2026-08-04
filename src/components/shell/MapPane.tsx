@@ -25,6 +25,8 @@ export type MapPaneProps = {
   selectedTokenId: Id<'tokens'> | null
   onSelectToken: (tokenId: Id<'tokens'>) => void
   onClearSelection: () => void
+  /** A coin the DM has deleted from the board menu. See `GameShell.forgetToken`. */
+  onTokenGone: (tokenId: Id<'tokens'>) => void
 }
 
 /**
@@ -79,6 +81,7 @@ export const MapPane = memo(function MapPane({
   selectedTokenId,
   onSelectToken,
   onClearSelection,
+  onTokenGone,
 }: MapPaneProps): ReactElement {
   const playing = game.status === 'playing' && game.activeSceneId !== null
 
@@ -114,6 +117,7 @@ export const MapPane = memo(function MapPane({
           selectedTokenId={selectedTokenId}
           onSelectToken={onSelectToken}
           onClearSelection={onClearSelection}
+          onTokenGone={onTokenGone}
           className="min-h-0 flex-1"
         />
       ) : (

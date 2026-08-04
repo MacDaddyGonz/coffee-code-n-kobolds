@@ -4,13 +4,20 @@ import type { Id } from './_generated/dataModel'
 import type { MutationCtx } from './_generated/server'
 import { mutation, query } from './_generated/server'
 import {
-  countTokensInGame,
+  copyTokenRow,
+  deleteTokenMarkers,
   deleteTokenPlacements,
   freeCellNear,
+  freeCellsNear,
+  nextTokenNames,
+  otherTokenReferencesImage,
   placeToken,
+  placementOf,
   publicPositionValidator,
+  publicTokenMarkersValidator,
   publicTokenValidator,
   publicTokens,
+  removeTokenFromScene,
   replaceTokenArt,
   requireDmToken,
   requireMovableToken,
@@ -18,11 +25,15 @@ import {
   setTokenCharacter,
   setTokenControllers,
   setTokenLayer,
+  setTokenMarkers,
+  tokenPlacementScenes,
+  visibleMarkers,
   visiblePositions,
 } from './lib/board'
-import { getCharacterInGame } from './lib/characters'
+import { copyCharacter, countCharactersInGame, getCharacterInGame } from './lib/characters'
 import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
 import {
+  MAX_CHARACTERS_PER_GAME,
   MAX_SEATS_PER_GAME,
   MAX_TOKENS_PER_GAME,
   activeSceneId,
@@ -37,11 +48,14 @@ import {
 // reader beside it: a *stored* layer may still be the legacy `dm`, so every comparison
 // against `'gm'` in this file goes through it rather than against the raw field.
 import { layerOf, tokenLayerValidator } from './lib/layers'
+// The condition vocabulary. One of the three modules inside `convex/` allowed to import
+// it — the schema, the choke point, and this file. See `markerGuard.test.ts`.
+import { TOKEN_MARKERS, normaliseMarkers, tokenMarkerValidator } from './lib/markers'
 import { getSeatInGame, listSeats } from './lib/players'
 import type { Point } from './lib/grid'
 import { isUsableTokenSize, snapToGrid } from './lib/grid'
-import { MAX_TOKEN_BYTES } from './lib/limits'
-import { requireText } from './lib/names'
+import { MAX_DUPLICATE_COUNT, MAX_TOKEN_BYTES } from './lib/limits'
+import { duplicateNamesProblem, requireText } from './lib/names'
 import { findSceneInGame, getSceneInGame } from './lib/scenes'
 
 // Not one row of the `tokens` or `tokenPositions` tables is read in this file.
@@ -254,6 +268,21 @@ export const positions = query({
  * `requireTokenArt` — shared with the edit mutations further down, so that the names,
  * sizes, tints and blobs a DM may *create* stay the same set as the ones they may
  * *change to*.
+ *
+ * ⚠️ **`count` is optional and absent means one, which is what keeps every existing
+ * caller unchanged** — and it is here rather than only on `duplicateToken` because *add
+ * five of these* and *duplicate this five times* are the same act with a different source
+ * of the fields. Adding five `Goblin`s to a board with none gets `Goblin 1 … Goblin 5`;
+ * duplicating a `Goblin` already standing there gets `Goblin 2 …`, because the source is
+ * never renamed. Both come out of `duplicateNames` in lib/names.ts, so the dialog's live
+ * preview and this write are one function.
+ *
+ * Note what the count does **not** change: one `imageId`, so the five copies share a blob
+ * — which is exactly the state `otherTokenReferencesImage` exists for — and one
+ * `characterId` when the DM attached an existing creature, because attaching a *named*
+ * character to five coins is the DM asking for five coins of that creature rather than
+ * five creatures. `duplicateToken` is where a copy gets a sheet of its own; here the DM
+ * either picked one creature or picked none.
  */
 export const addToken = mutation({
   args: {
@@ -268,10 +297,14 @@ export const addToken = mutation({
     characterId: v.optional(v.id('characters')),
     x: v.number(),
     y: v.number(),
+    count: v.optional(v.number()),
   },
-  returns: v.object({ tokenId: v.id('tokens') }),
+  returns: v.object({ tokenId: v.id('tokens'), tokenIds: v.array(v.id('tokens')) }),
   handler: async (ctx, args) => {
     const game = await requireDm(ctx, args.code, args.dmCode)
+    const count = args.count ?? 1
+    requireCount(count)
+
     const scene = await getSceneInGame(ctx, game._id, args.sceneId)
     const { name, sizeSquares, tint } = requireTokenAppearance(args)
     requireFinite(args)
@@ -288,35 +321,46 @@ export const addToken = mutation({
     // against nothing, while never appearing on anybody's board. Counted across
     // both layers, as the DM sees them: a limit that only counted the visible half
     // would let the DM layer push player tokens off the end of that window.
-    if ((await countTokensInGame(ctx, game._id)) >= MAX_TOKENS_PER_GAME) {
-      throw new ConvexError({
-        kind: 'GameFull',
-        message: `This game already has ${MAX_TOKENS_PER_GAME} tokens.`,
-      })
-    }
+    //
+    // No character cap is asked, and the asymmetry with `duplicateToken` is the point:
+    // this mutation writes no sheets. The DM either attached a creature that already
+    // exists or attached none.
+    //
+    // ⚠️ **`typed`, so one coin keeps the name the DM wrote and only a batch is numbered —
+    // and that rule lives in `addedNames` rather than in a branch here.** It was a
+    // `count === 1` branch in this handler at first, which is one wire's worth of the
+    // truth: `duplicateNames` claims to be the one function the preview and the write
+    // share, and a branch on only the server side made that false — the dialog went on
+    // previewing `Goblin 2` for an add this would store as `Goblin`, and could disable a
+    // submit for a batch this would have accepted.
+    //
+    // The count comes back with the names from one read of the same rows, which is what
+    // stops this asking the two-hundred-row question twice.
+    const { names, total } = await requireBatchNames(ctx, game._id, name, count, true)
+    requireTokenRoom(total, count)
     // And that is the only cap needed here. There is deliberately no second check
     // against MAX_PLACEMENTS_PER_SCENE: a token holds at most one placement per
     // scene, so the cap above already bounds one scene's placements structurally.
     // See the note on the constant in lib/games.ts.
+    const cells = await freeCellsNear(ctx, scene._id, scene, sizeSquares, { x: args.x, y: args.y }, count)
 
-    const tokenId = await ctx.db.insert('tokens', {
-      gameId: game._id,
-      name,
-      layer: args.layer,
-      sizeSquares,
-      imageId: args.imageId,
-      tint,
-      characterId: args.characterId,
-    })
-    // On a square from the moment it exists rather than from its first drag — and on
-    // an *empty* one. Every token is added at the same default point, so snapping
-    // alone dropped each new one into the square the last one is already in.
-    await placeToken(
-      ctx,
-      scene._id,
-      tokenId,
-      await freeCellNear(ctx, scene._id, scene, args.sizeSquares, { x: args.x, y: args.y }),
-    )
+    const tokenIds: Id<'tokens'>[] = []
+    for (let index = 0; index < count; index += 1) {
+      const tokenId = await ctx.db.insert('tokens', {
+        gameId: game._id,
+        name: names[index],
+        layer: args.layer,
+        sizeSquares,
+        imageId: args.imageId,
+        tint,
+        characterId: args.characterId,
+      })
+      // On a square from the moment it exists rather than from its first drag — and on
+      // an *empty* one. Every token is added at the same default point, so snapping
+      // alone dropped each new one into the square the last one is already in.
+      await placeToken(ctx, scene._id, tokenId, cells[index])
+      tokenIds.push(tokenId)
+    }
     // A coin created straight onto the player layer with a creature already on it is a
     // reveal like any other — the DM's usual way of putting a monster the party has been
     // fighting elsewhere onto this board — and that creature's earlier lines become
@@ -325,7 +369,10 @@ export const addToken = mutation({
     if (args.layer === 'player' && args.characterId !== undefined) {
       await stampReveal(ctx, game._id)
     }
-    return { tokenId }
+    // `tokenId` is the first of them, kept so every existing caller and test reads the
+    // same field it always did. `tokenIds` is the whole batch, for a client that asked
+    // for more than one.
+    return { tokenId: tokenIds[0], tokenIds }
   },
 })
 
@@ -656,6 +703,424 @@ export const setControllers = mutation({
 })
 
 /**
+ * How many coins one call may create, argument-checked before any read.
+ *
+ * Shared by `addToken`'s optional `count` and by `duplicateToken`, so the two ways of
+ * asking for five goblins are refused by one rule. Argument-only, so a bad call costs no
+ * I/O to refuse — `moveToken`'s ordering, applied to the mutation that writes the most.
+ */
+function requireCount(count: number): void {
+  if (!Number.isInteger(count) || count < 1 || count > MAX_DUPLICATE_COUNT) {
+    throw new ConvexError({
+      kind: 'BadInput',
+      message: `Add between 1 and ${MAX_DUPLICATE_COUNT} coins at a time.`,
+    })
+  }
+}
+
+/**
+ * Both caps, checked before **anything** is written, with two messages.
+ *
+ * ⚠️ **Two messages and not one, because "too many coins" and "too many sheets" are two
+ * different reasons the DM is stuck and the fix is in two different tabs.** Same `kind`,
+ * which both `addToken` and `characters.create` already use for their own single-row
+ * versions: a client acts on the message, and inventing a second kind for one category of
+ * refusal would be a distinction nothing consumes.
+ *
+ * `>` on `existing + count` rather than `>=` on `existing`, which is arithmetic the
+ * single-row checks never had to do. The character cap is asked only when there are sheets
+ * to write, so a game at two hundred sheets can still make more barrels.
+ */
+function requireTokenRoom(total: number, count: number): void {
+  if (total + count > MAX_TOKENS_PER_GAME) {
+    throw new ConvexError({
+      kind: 'GameFull',
+      message: `That would take this game past ${MAX_TOKENS_PER_GAME} tokens. Delete some coins, or add fewer.`,
+    })
+  }
+}
+
+/**
+ * The other half, asked **only when there are sheets to write** — which is why it is a
+ * second function rather than a `sheets: boolean` on the first.
+ *
+ * A flag whose one caller always passes a constant is the shape `otherTokenReferencesImage`
+ * argues against a thousand lines away in lib/board.ts: `addToken` writes no sheets and
+ * would have passed `false` for ever. Two names for two questions, and the asymmetry — a
+ * game with no room for another sheet can still make more barrels — reads off the call
+ * sites instead of off an argument.
+ */
+async function requireSheetRoom(
+  ctx: MutationCtx,
+  gameId: Id<'games'>,
+  count: number,
+): Promise<void> {
+  if ((await countCharactersInGame(ctx, gameId)) + count > MAX_CHARACTERS_PER_GAME) {
+    throw new ConvexError({
+      kind: 'GameFull',
+      message: `That would take this game past ${MAX_CHARACTERS_PER_GAME} character sheets. Delete some sheets, or add fewer.`,
+    })
+  }
+}
+
+/**
+ * The names a batch will take and how many coins the game already holds, from **one** read
+ * of the token rows — refused rather than truncated when numbering would overrun.
+ *
+ * Milestone 1 shipped exactly the bug a truncation causes — a `slice` on a UTF-16
+ * boundary leaving a lone surrogate that convex-test stored happily and the cloud
+ * refused — and `npm run test:smoke` exists because of it. `duplicateNamesProblem` is the
+ * browser-shared half, so the dialog refuses the same batch this does and its message
+ * names the fix rather than being a dead end mid-session.
+ *
+ * `typed` picks which of the two naming rules applies: a name somebody wrote in a field, or
+ * a name derived from a coin already on the board. See `addedNames` beside `duplicateNames`.
+ */
+async function requireBatchNames(
+  ctx: MutationCtx,
+  gameId: Id<'games'>,
+  sourceName: string,
+  count: number,
+  typed = false,
+): Promise<{ names: string[]; total: number }> {
+  const batch = await nextTokenNames(ctx, gameId, sourceName, count, typed)
+  const problem = duplicateNamesProblem(batch.names)
+  if (problem) throw new ConvexError({ kind: 'BadInput', message: problem })
+  return batch
+}
+
+/**
+ * Copy a coin, N times, each copy with **its own character document and its own vitals
+ * row**.
+ *
+ * That is the whole feature and it is the thing Roll20 needs a community script for: its
+ * own documentation tells a GM that eight identical goblins must have their hit-point bars
+ * manually unlinked, or damaging one damages all eight. Five goblins sharing one pool is a
+ * bug that looks like a feature until the second one takes damage.
+ *
+ * ⚠️ **One transaction, and `TokenAddDialog`'s argument for two does not transfer.** There
+ * the *client* owns the sequence — create a character, then a token — and a refused token
+ * leaves a sheet the Sheets tab deletes in two clicks. Here the server owns both halves,
+ * so N coins and N sheets arrive together or not at all. Twelve half-created goblins is
+ * not a state anybody should have to clean up.
+ *
+ * **The copies land on the board named in the arguments, and only that one.** A coin that
+ * appeared on all five of the source's maps at once is a surprise; `placeOnScene` is the
+ * deliberate way to reach the other four.
+ *
+ * **The character takes the coin's name**, which is `TokenAddDialog`'s own rule — a coin
+ * reading `Goblin 4` over a sheet called something else is a confusion nobody asked for —
+ * and here there is nobody typing a different one.
+ *
+ * ⚠️ **The reveal stamp mirrors `addToken`'s condition exactly**, with one spelling
+ * difference that is required rather than stylistic: `addToken` compares its **narrow**
+ * argument validator and needs no `layerOf`, while this reads a **stored** layer that may
+ * still be the legacy `dm`. Both clauses are needed for `addToken`'s reasons verbatim: an
+ * empty coin names nobody, and a GM-layer one is the encounter being prepared rather than
+ * sprung.
+ *
+ * Worth knowing what that stamp can and cannot do here: the copies' creatures are made in
+ * this transaction and have rolled nothing, so no feed row becomes audible through this
+ * write. What it costs is the flourish on rolls made in the last few minutes. That is the
+ * trade `gameRevealedAt` already states — a stamp too many costs one missing animation and
+ * a stamp too few replays an evening — and it is the right way round. The day this learns
+ * to *reuse* the source's character, the stamp is already correct.
+ */
+export const duplicateToken = mutation({
+  args: {
+    code: v.string(),
+    dmCode: v.string(),
+    sceneId: v.id('scenes'),
+    tokenId: v.id('tokens'),
+    count: v.number(),
+  },
+  returns: v.object({ tokenIds: v.array(v.id('tokens')), names: v.array(v.string()) }),
+  handler: async (ctx, args) => {
+    const game = await requireDm(ctx, args.code, args.dmCode)
+    requireCount(args.count)
+
+    const scene = await getSceneInGame(ctx, game._id, args.sceneId)
+    const source = await requireDmToken(ctx, game, args.tokenId)
+    const sourceCharacter =
+      source.characterId === undefined
+        ? null
+        : await getCharacterInGame(ctx, game._id, source.characterId)
+
+    // Both caps before anything is written, and the token count rides along with the names
+    // out of one read of the same rows. The sheet cap is only asked when there are sheets
+    // to write, which is why it is a call rather than a flag.
+    const { names, total } = await requireBatchNames(ctx, game._id, source.name, args.count)
+    requireTokenRoom(total, args.count)
+    if (sourceCharacter) await requireSheetRoom(ctx, game._id, args.count)
+
+    // Beside the coin the DM pressed on, or the middle of the map when the source is not
+    // standing on *this* board — which is reachable: the Tokens tab can duplicate a coin
+    // that stands only on another map.
+    const anchor = (await placementOf(ctx, scene._id, source._id)) ?? {
+      x: scene.imageWidth / 2,
+      y: scene.imageHeight / 2,
+    }
+    const cells = await freeCellsNear(
+      ctx,
+      scene._id,
+      scene,
+      source.sizeSquares,
+      { x: anchor.x, y: anchor.y },
+      args.count,
+    )
+
+    const tokenIds: Id<'tokens'>[] = []
+    for (let index = 0; index < args.count; index += 1) {
+      const characterId = sourceCharacter
+        ? await copyCharacter(ctx, game._id, names[index], sourceCharacter)
+        : undefined
+      const tokenId = await copyTokenRow(ctx, source, names[index], characterId)
+      await placeToken(ctx, scene._id, tokenId, cells[index])
+      tokenIds.push(tokenId)
+    }
+
+    if (layerOf(source.layer) === 'player' && source.characterId !== undefined) {
+      await stampReveal(ctx, game._id)
+    }
+
+    return { tokenIds, names }
+  },
+})
+
+/**
+ * Put a coin on a board it is not standing on, without taking it off any other.
+ *
+ * `MapSetupPanel` has told the DM since the board existed that *tokens belong to the
+ * game, not to this map, so one villain can stand on several* — **true of the schema and
+ * false of the application** until this existed. `addToken` was the only thing that
+ * created a placement and `moveToken` is only ever called with the active scene, so a
+ * coin made on map A could never reach map B and could never leave A without being
+ * destroyed. This is `addToken`'s placement decision made a second time.
+ *
+ * DM-gated for that reason: deciding which board a creature stands on is the same call
+ * as deciding to put it on one at all. A player has no route to another scene's id in
+ * any case — `scenes.list` is DM-only, because a list of scene names is a spoiler.
+ *
+ * ⚠️ **Idempotent, and the value is in not writing.** If the row is already there this
+ * returns having touched nothing, so pressing the button twice does not teleport a coin
+ * the DM had already dragged into position. Leaning on `placeToken`'s upsert instead
+ * would patch the coordinates back to the middle of the map, which is the bug this early
+ * return exists to prevent rather than an optimisation of it.
+ *
+ * **No `x` and no `y`, deliberately.** The DM is choosing a *board*, not a square: they
+ * have never looked at this map, so there is no square they picked and no client
+ * coordinate worth trusting. The centre is the one point guaranteed to be on the map,
+ * and it goes through `freeCellNear` for `addToken`'s reason — every coin sent to a map
+ * would otherwise land in the identical square with its name overprinted into mush.
+ * Adding coordinates here would make this `moveToken` with a different gate.
+ *
+ * ⚠️ **Still no `MAX_PLACEMENTS_PER_SCENE` write check, and the structural argument
+ * survives this.** A token holds at most one placement per scene — enforced twice here,
+ * by the early return and by `placeToken`'s upsert on `by_sceneId_and_tokenId` — so
+ * placements on one scene still cannot outnumber the tokens in the game, and that count
+ * is already capped. What changed is that the ceiling is now *attainable*: a DM may
+ * deliberately put all 200 coins on all 25 boards. See the note on the constant in
+ * lib/games.ts.
+ */
+export const placeOnScene = mutation({
+  args: {
+    code: v.string(),
+    dmCode: v.string(),
+    sceneId: v.id('scenes'),
+    tokenId: v.id('tokens'),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const game = await requireDm(ctx, args.code, args.dmCode)
+    const scene = await getSceneInGame(ctx, game._id, args.sceneId)
+    const token = await requireDmToken(ctx, game, args.tokenId)
+
+    if (await placementOf(ctx, scene._id, token._id)) return null
+
+    await placeToken(
+      ctx,
+      scene._id,
+      token._id,
+      await freeCellNear(ctx, scene._id, scene, token.sizeSquares, {
+        x: scene.imageWidth / 2,
+        y: scene.imageHeight / 2,
+      }),
+    )
+    return null
+  },
+})
+
+/**
+ * Take a coin off one board and leave it on every other, and leave the coin itself alone.
+ *
+ * The other half of `placeOnScene`, and the reversible sibling of `removeToken` below:
+ * this destroys a placement, that destroys a creature's whole coin and its picture.
+ * Which is why the board's menu confirms one and not the other.
+ *
+ * ⚠️ **A no-op rather than a throw when the coin is not there**, for `files.discard`'s
+ * reason: the client calls this from a menu and a panel that may each be a frame stale,
+ * and a second removal should be nothing rather than a second error on top of the first.
+ *
+ * Deliberately **no** refusal for removing the last one. A coin on no board at all is a
+ * legitimate state — it is what the schema means by "tokens belong to the game, not to
+ * this map" — and it is the state the Tokens tab exists to be able to reach. The client
+ * renders the intersection of the two board subscriptions, so such a coin is simply not
+ * drawn; it keeps its row, its sheet and its grants, and one press puts it back.
+ */
+export const removeFromScene = mutation({
+  args: {
+    code: v.string(),
+    dmCode: v.string(),
+    sceneId: v.id('scenes'),
+    tokenId: v.id('tokens'),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const game = await requireDm(ctx, args.code, args.dmCode)
+    const scene = await getSceneInGame(ctx, game._id, args.sceneId)
+    const token = await requireDmToken(ctx, game, args.tokenId)
+
+    await removeTokenFromScene(ctx, scene._id, token._id)
+    return null
+  },
+})
+
+/**
+ * Which boards this one coin stands on. Ids, which the client joins against the
+ * `scenes.list` it is already holding.
+ *
+ * ⚠️ **Per token, and that is its whole cost model.** It reads by `by_tokenId`, so it is
+ * invalidated by writes to *one* coin's placements rather than by every drag on the
+ * board, and the panel that holds it is mounted only while the Tokens tab has a coin
+ * selected. The obvious alternative — one game-wide map of coin → boards, so every row
+ * in the list could carry a badge — puts every placement on every scene into the read
+ * set of a panel that is open all session, which is exactly the read CLAUDE.md
+ * invariant 2's read-side rule exists to refuse. `TokensTab`'s own ⚠️ says the list
+ * cannot answer this; that comment is narrowed rather than deleted, because the *list*
+ * still cannot and the *selected coin* now can.
+ *
+ * ⚠️ **Ids and not names, even though a name is what the panel prints.** Scene names are
+ * DM-only — `scenes.list` requires the code because a list of them is a spoiler — and a
+ * projection carrying them here would be a second door onto that list. It costs nothing:
+ * the panel needs the maps the coin is **not** on as well, to offer *Put it here*, so it
+ * is holding `scenes.list` regardless.
+ *
+ * `requireDm` and then `requireDmToken`, so a foreign or vanished token refuses with the
+ * same `TokenNotFound` every other board function gives rather than answering with an
+ * empty array — the parity ADR 0004 argues for, applied to a query whose empty answer
+ * would otherwise be indistinguishable from *this coin is on no board*.
+ */
+export const placements = query({
+  args: {
+    code: v.string(),
+    dmCode: v.string(),
+    tokenId: v.id('tokens'),
+  },
+  returns: v.array(v.id('scenes')),
+  handler: async (ctx, args) => {
+    const game = await requireDm(ctx, args.code, args.dmCode)
+    const token = await requireDmToken(ctx, game, args.tokenId)
+
+    return await tokenPlacementScenes(ctx, token._id)
+  },
+})
+
+/**
+ * Every coin's conditions, for whoever may see that coin.
+ *
+ * Ungated beyond `resolveDmAccess`, because the pips are drawn on everybody's board — a
+ * player has to be able to see that the goblin they are fighting is prone. `maySee` in
+ * lib/board.ts decides which rows travel, so a GM-layer coin's conditions are **absent**
+ * from a player's payload rather than hidden in it (invariant 1).
+ *
+ * ⚠️ **Game-scoped rather than scene-scoped**, because a marker hangs off a coin and not
+ * off a placement, and the coin may stand on several boards. That is also what keeps this
+ * query off the drag path entirely: it reads no `tokenPositions` row, ever, which is what
+ * makes *fog does not hide a coin's conditions* affordable rather than merely decided.
+ * See `visibleMarkers` for the full cost model, including the free case — a game where
+ * nobody has ticked anything reads one empty range and stops.
+ *
+ * Reached by the existing argument shapes in `board.test.ts`'s sweep with no new entry,
+ * so the DM-layer scan covers it for free — which is the enumeration working as designed.
+ */
+export const markers = query({
+  args: { code: v.string(), dmCode: v.optional(v.string()) },
+  returns: v.array(publicTokenMarkersValidator),
+  handler: async (ctx, args) => {
+    const game = await findGameByCode(ctx, args.code)
+    if (!game) return []
+
+    const { isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
+    return await visibleMarkers(ctx, game._id, isDm)
+  },
+})
+
+/**
+ * Set the conditions on one coin, absolutely.
+ *
+ * ⚠️ **Labels, and nothing else.** No roll consults a marker, no health band is computed
+ * from one, and no drag is refused because of one. `markerGuard.test.ts` is what makes
+ * that a promise rather than an intention: it greps `convex/` for a quoted specifier
+ * reaching the vocabulary and allows exactly three importers — the schema, the choke
+ * point, and this file.
+ *
+ * ⚠️ **The gate is `requireMovableToken`, and reusing it is a decision rather than a
+ * shortcut.** [ADR 0012] separated `maySeeLayer` from `mayPlayersMove` because sight and
+ * interaction genuinely differ. Marking is not a third question: a player may mark the
+ * coins they may drag, and must not mark scenery they can see and cannot touch. Because it
+ * is the same question it gets the same function, and three correct refusals fall out with
+ * no new constants and no new existence oracles — a Background coin refuses
+ * `TokenNotMovable` (right: the player is looking at it, so there is nothing to oracle), a
+ * GM-layer coin `TokenNotFound` (right: parity preserved), an ungranted player-layer coin
+ * `TokenNotYours`.
+ *
+ * ⚠️ **The tripwire:** the day *may mark* and *may move* differ is the day `lib/layers.ts`
+ * gains a third predicate, and it will look exactly like the pair ADR 0012 describes.
+ * Widening this call site instead is how one predicate comes to do two jobs, which is the
+ * failure that ADR was written about.
+ *
+ * **Absolute rather than add/remove**, which is `setControllers`' argument verbatim: the
+ * picker holds a checkbox per condition and sends the state of all of them, so two clients
+ * racing on one coin end with one of the two intentions rather than an interleaving of
+ * both — and clearing everything is expressible as `[]`, which is what deletes the row.
+ *
+ * **No `stampReveal`, and the absence is stated rather than left to be noticed.** Marking
+ * widens nobody's audience: it publishes no character, moves no coin between layers and
+ * releases no reservation. `feed.test.ts`'s reveal section says coverage of that stamp is
+ * discipline rather than construction, so a mutation that deliberately does not stamp says
+ * so where the next person will look for it.
+ */
+export const setMarkers = mutation({
+  args: {
+    code: v.string(),
+    tokenId: v.id('tokens'),
+    markers: v.array(tokenMarkerValidator),
+    dmCode: v.optional(v.string()),
+    playerId: v.optional(v.id('players')),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    // Argument-only, so a call that will be refused on its arguments alone costs no I/O to
+    // refuse — `moveToken`'s rule and `setControllers`' bounded-before-the-loop one. With a
+    // union validator the only way past the vocabulary's own size is repetition, which the
+    // normaliser would squeeze out anyway; what this stops is a caller buying an unbounded
+    // array with one argument.
+    if (args.markers.length > TOKEN_MARKERS.length) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message: `A coin cannot carry more than ${TOKEN_MARKERS.length} conditions.`,
+      })
+    }
+
+    const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
+    const token = await requireMovableToken(ctx, game, args.tokenId, isDm, args.playerId)
+
+    await setTokenMarkers(ctx, game._id, token._id, normaliseMarkers(args.markers))
+    return null
+  },
+})
+
+/**
  * DM-gated: this destroys durable data, and it is the only thing on the board
  * that does.
  */
@@ -670,22 +1135,34 @@ export const removeToken = mutation({
     // what points at the token, so removing them first means no order of
     // failures can leave a scene holding a position for a document that has gone.
     await deleteTokenPlacements(ctx, token._id)
+    // And its conditions, which are a fact about this coin and have nowhere else to
+    // belong — the third residue path beside the placements and the blob.
+    await deleteTokenMarkers(ctx, token._id)
     // The blob goes too, or a table's worth of deleted NPCs quietly keeps its
     // share of the 1 GB the free tier allows (CLAUDE.md invariant 6).
     //
-    // Unconditional because in Milestone 2 an upload makes exactly one token, so
-    // this `imageId` has no other owner. The game editor's token library breaks that
-    // assumption — reusing one piece of art across several tokens is the point of
-    // it — and then deleting one goblin would strip the art from its twin. Whatever
-    // makes art shareable has to make this conditional at the same time:
-    // reference-count the id, or leave the blob for a sweep.
+    // ⚠️ **Conditional now, and duplication is what made it have to be.** This was
+    // unconditional while an upload made exactly one token and no route existed to
+    // point a second one at the same picture. `board.duplicate` copies the image id,
+    // so deleting one of five goblins would have stripped the art from the other four
+    // and `Goblin 2` would have become a purple disc mid-fight.
     //
-    // There are **three** of these now, and they name each other so that whatever makes
-    // art shareable finds all of them in one pass: this one, `replaceTokenArt` (reached
-    // through `setArt` above), and `deleteTokensInGame` in lib/board.ts. A partially
-    // converted set of three is the state in which somebody believes the problem is
-    // solved.
-    if (token.imageId) await ctx.storage.delete(token.imageId)
+    // The predicate is `otherTokenReferencesImage` and not `tokenReferencesImage`:
+    // this row is about to go, so it must not count itself as an owner. That is the
+    // whole difference between the two, and it is why they are siblings rather than
+    // one function with a flag — `files.discard` needs the answer that *includes* the
+    // row it is asking about.
+    //
+    // There were **three** of these, they named each other so that whatever made art
+    // shareable would find all of them in one pass, and it did. All three are converted
+    // in the commit that first allowed a twin to exist — but not identically, which is
+    // the part worth carrying forward: this one and `replaceTokenArt` ask the predicate,
+    // and `deleteTokensInGame` deduplicates instead, because there the answer is *no*
+    // by construction and asking would be forty thousand reads in one transaction. Its
+    // own note carries that argument.
+    if (token.imageId && !(await otherTokenReferencesImage(ctx, token, token.imageId))) {
+      await ctx.storage.delete(token.imageId)
+    }
     await ctx.db.delete('tokens', token._id)
     return null
   },

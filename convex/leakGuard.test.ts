@@ -76,8 +76,26 @@ type Guard = {
  * add a second assertion that the glob loaded, which `./schema.ts` and `./lib/games.ts`
  * already provide.
  */
+/**
+ * ⚠️ **`tokenMarkers` joins the first pair rather than getting an entry of its own, and
+ * that is the argued call rather than the convenient one.**
+ *
+ * `fogRects` was left out of this table because its rows have no non-secret twin — every
+ * rectangle goes to every client verbatim, so an entry would pass and this project does
+ * not keep guards that cannot fail. A marker row is the opposite: **a marker row for a
+ * GM-layer coin is exactly as much of a leak as a position row for one**, because it names
+ * a `tokenId` and so says that a hidden coin exists — the oracle `TOKEN_NOT_FOUND` is
+ * written to close — and it is indistinguishable in type from a row about a hero, so no
+ * `returns:` validator can tell them apart.
+ *
+ * What makes it the *same* entry rather than a fourth is that its predicate is
+ * `maySee(token, isDm)`: the same question, answered by the same function, in the same
+ * module. A separate entry would claim a separate reader and a separate predicate, and
+ * neither exists. So this milestone added a secret-bearing table and needed **no new
+ * choke point and no fourth column** in CLAUDE.md invariant 8's table.
+ */
 const GUARDS: Guard[] = [
-  { tables: ['tokens', 'tokenPositions'], reader: './lib/board.ts' },
+  { tables: ['tokens', 'tokenPositions', 'tokenMarkers'], reader: './lib/board.ts' },
   { tables: ['characters', 'characterVitals'], reader: './lib/characters.ts' },
   { tables: ['feed'], reader: './lib/feed.ts' },
 ]

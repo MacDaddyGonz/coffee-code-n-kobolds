@@ -52,7 +52,7 @@ export type RightPaneProps = {
   /** The character this seat is playing, or null. Not necessarily the one on screen. */
   characterId: Id<'characters'> | null
   /**
-   * The shell's selection and the three ways to change it. ⚠️ **Primitives and
+   * The shell's selection and the four ways to change it. ⚠️ **Primitives and
    * stable callbacks, never a selection object** — this component is memoised
    * against a pane width that changes sixty times a second; see the memo note below
    * and the longer one in `GameShell`.
@@ -62,6 +62,12 @@ export type RightPaneProps = {
   onSelectToken: (tokenId: Id<'tokens'>) => void
   onSelectCharacter: (characterId: Id<'characters'>, tokenId: Id<'tokens'> | null) => void
   onClearSelection: () => void
+  /**
+   * A coin that has been deleted. **Not `onClearSelection`** — that one is a gesture and
+   * clears both halves; this is a fact about one coin and clears only the half it is
+   * about. `GameShell.forgetToken` carries the argument.
+   */
+  onTokenGone: (tokenId: Id<'tokens'>) => void
   onRenameSeat: (displayName: string) => Promise<void>
   onLeaveSeat: () => Promise<void>
 }
@@ -166,6 +172,7 @@ export const RightPane = memo(function RightPane({
   onSelectToken,
   onSelectCharacter,
   onClearSelection,
+  onTokenGone,
   onRenameSeat,
   onLeaveSeat,
 }: RightPaneProps): ReactElement {
@@ -429,6 +436,10 @@ export const RightPane = memo(function RightPane({
                 // token id and clears the direct character pick, which is what makes this tab,
                 // the board and the sheet panel agree about what is being talked about.
                 onSelectToken={onSelectToken}
+                // And the way out. A deleted coin is the one case where the shell's id has
+                // to be dropped rather than left to resolve against the live board — see
+                // `GameShell.forgetToken`.
+                onTokenGone={onTokenGone}
               />
             </TabPane>
           </TabsContent>
