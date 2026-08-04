@@ -7,6 +7,7 @@ import {
   countTokensInGame,
   deleteTokenPlacements,
   freeCellNear,
+  otherTokenReferencesImage,
   placeToken,
   publicPositionValidator,
   publicTokenValidator,
@@ -673,19 +674,28 @@ export const removeToken = mutation({
     // The blob goes too, or a table's worth of deleted NPCs quietly keeps its
     // share of the 1 GB the free tier allows (CLAUDE.md invariant 6).
     //
-    // Unconditional because in Milestone 2 an upload makes exactly one token, so
-    // this `imageId` has no other owner. The game editor's token library breaks that
-    // assumption — reusing one piece of art across several tokens is the point of
-    // it — and then deleting one goblin would strip the art from its twin. Whatever
-    // makes art shareable has to make this conditional at the same time:
-    // reference-count the id, or leave the blob for a sweep.
+    // ⚠️ **Conditional now, and duplication is what made it have to be.** This was
+    // unconditional while an upload made exactly one token and no route existed to
+    // point a second one at the same picture. `board.duplicate` copies the image id,
+    // so deleting one of five goblins would have stripped the art from the other four
+    // and `Goblin 2` would have become a purple disc mid-fight.
     //
-    // There are **three** of these now, and they name each other so that whatever makes
-    // art shareable finds all of them in one pass: this one, `replaceTokenArt` (reached
-    // through `setArt` above), and `deleteTokensInGame` in lib/board.ts. A partially
-    // converted set of three is the state in which somebody believes the problem is
-    // solved.
-    if (token.imageId) await ctx.storage.delete(token.imageId)
+    // The predicate is `otherTokenReferencesImage` and not `tokenReferencesImage`:
+    // this row is about to go, so it must not count itself as an owner. That is the
+    // whole difference between the two, and it is why they are siblings rather than
+    // one function with a flag — `files.discard` needs the answer that *includes* the
+    // row it is asking about.
+    //
+    // There were **three** of these, they named each other so that whatever made art
+    // shareable would find all of them in one pass, and it did. All three are converted
+    // in the commit that first allowed a twin to exist — but not identically, which is
+    // the part worth carrying forward: this one and `replaceTokenArt` ask the predicate,
+    // and `deleteTokensInGame` deduplicates instead, because there the answer is *no*
+    // by construction and asking would be forty thousand reads in one transaction. Its
+    // own note carries that argument.
+    if (token.imageId && !(await otherTokenReferencesImage(ctx, token, token.imageId))) {
+      await ctx.storage.delete(token.imageId)
+    }
     await ctx.db.delete('tokens', token._id)
     return null
   },

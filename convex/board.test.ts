@@ -4,7 +4,7 @@ import type { FunctionReference } from 'convex/server'
 import { ConvexError } from 'convex/values'
 import { describe, expect, test } from 'vitest'
 
-import { api } from './_generated/api'
+import { api, internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
 import { MAX_TOKENS_PER_GAME } from './lib/games'
@@ -2119,6 +2119,179 @@ describe('board.removeToken', () => {
       tokenId: first,
     })
     expect(await t.query(api.board.tokens, { code: game.code })).toEqual([])
+  })
+})
+
+/**
+ * TWO COINS, ONE PICTURE — the three deletes that could not be conditional until
+ * something could make a twin.
+ *
+ * `board.removeToken`, `replaceTokenArt` and `deleteTokensInGame` each reclaimed a
+ * token's blob with no check, each carrying a comment naming the other two and saying
+ * that whatever made art shareable had to convert all three at once. Duplication is
+ * that thing, and these are the assertions that say the conversion happened.
+ *
+ * ⚠️ **The twins here are made through the public API, and that is the load-bearing
+ * part rather than a convenience.** `board.addToken` reads the blob to check it exists
+ * and fits under `MAX_TOKEN_BYTES` and asks nothing about who else owns it — so two
+ * coins have been able to share one picture since the board existed, and the deletes
+ * have been wrong for exactly that long without anything in the application able to
+ * reach the state. Building the fixture with `t.run` would have proved the predicate
+ * works and left that unsaid. This project does not keep guards that cannot fail, and
+ * the other half of that discipline is not writing tests for states that cannot arise.
+ */
+describe('two tokens sharing one picture', () => {
+  /** Two coins on one blob, the way a duplicate makes them and the way a DM already could. */
+  async function twins(t: Harness) {
+    const game = await makeGame(t)
+    const sceneId = await makeScene(t, game.code, game.dmCode)
+    const shared = await storeImage(t, 'shared-art')
+    const first = await addToken(t, game.code, game.dmCode, sceneId, {
+      name: 'Goblin 1',
+      imageId: shared,
+    })
+    const second = await addToken(t, game.code, game.dmCode, sceneId, {
+      name: 'Goblin 2',
+      imageId: shared,
+    })
+    return { ...game, sceneId, shared, first, second }
+  }
+
+  /**
+   * The acceptance test's own sentence — *and the other four still have their art* —
+   * with the positive control that stops it passing on an implementation that has
+   * simply stopped deleting blobs at all.
+   */
+  test('removeToken keeps the blob while a twin still draws it, and reclaims it with the last', async () => {
+    const t = harness()
+    const fixture = await twins(t)
+
+    await t.mutation(api.board.removeToken, {
+      code: fixture.code,
+      dmCode: fixture.dmCode,
+      tokenId: fixture.first,
+    })
+
+    expect(await tokenRow(t, fixture.first)).toBeNull()
+    expect(await blobExists(t, fixture.shared)).toBe(true)
+    expect((await tokenRow(t, fixture.second))?.imageId).toBe(fixture.shared)
+    // And it is still a *drawable* coin rather than a row with a dangling pointer:
+    // `publicTokens` only mints a URL for a blob storage still holds.
+    const remaining = await t.query(api.board.tokens, {
+      code: fixture.code,
+      dmCode: fixture.dmCode,
+    })
+    expect(remaining).toHaveLength(1)
+    expect(typeof remaining[0].artUrl).toBe('string')
+
+    // The control. Without this the test above is satisfied by never deleting anything.
+    await t.mutation(api.board.removeToken, {
+      code: fixture.code,
+      dmCode: fixture.dmCode,
+      tokenId: fixture.second,
+    })
+    expect(await blobExists(t, fixture.shared)).toBe(false)
+  })
+
+  /**
+   * The same fact through the *edit* path. `replaceTokenArt` is the one of the three
+   * that repoints a row rather than removing it, so the row it is asking about is still
+   * there when the question is asked — which is exactly why the predicate excludes by
+   * `_id` rather than relying on the write having happened first.
+   */
+  test('setArt keeps the blob a twin still draws, and still reclaims a sole owner’s', async () => {
+    const t = harness()
+    const fixture = await twins(t)
+    const replacement = await storeImage(t, 'replacement-art')
+
+    await setArt(t, fixture, fixture.first, replacement)
+
+    expect((await tokenRow(t, fixture.first))?.imageId).toBe(replacement)
+    expect(await blobExists(t, fixture.shared)).toBe(true)
+    expect((await tokenRow(t, fixture.second))?.imageId).toBe(fixture.shared)
+
+    // The control, and it is the assertion the existing setArt suite already makes:
+    // a sole owner giving up its art still reclaims the bytes.
+    const solo = await storeImage(t, 'solo-art')
+    await setArt(t, fixture, fixture.second, solo)
+    expect(await blobExists(t, fixture.shared)).toBe(false)
+    expect(await blobExists(t, solo)).toBe(true)
+  })
+
+  /**
+   * The third site, and the one that was **already broken** rather than merely fragile.
+   *
+   * `deleteTokensInGame` called `ctx.storage.delete` once per row, so two coins sharing
+   * a blob meant deleting an id that had already gone — and that throws, taking the
+   * whole purge transaction with it. **Both runtimes throw**, which is worth knowing
+   * because it is not the usual asymmetry: a real deployment says
+   * `Error: storage id … not found` (confirmed against dev) and convex-test says
+   * `Delete on non-existent doc`. So the first assertion here is simply that the
+   * mutation **resolves at all** — that is the regression, and the byte-counting below
+   * is the feature.
+   *
+   * It is deduplicated rather than asked, because on this path the predicate would
+   * answer about twins that are also about to go — see the note on the function.
+   */
+  test('purging a game with twins resolves, and reclaims each blob exactly once', async () => {
+    const t = harness()
+    const fixture = await twins(t)
+    const lonely = await storeImage(t, 'lonely-art')
+    await addToken(t, fixture.code, fixture.dmCode, fixture.sceneId, {
+      name: 'Ogre',
+      imageId: lonely,
+    })
+
+    const receipt = await t.mutation(internal.admin.purgeGame, {
+      gameId: await t.run(async (ctx) => (await ctx.db.query('games').first())!._id),
+    })
+
+    expect(receipt.counts.tokens).toBe(3)
+    expect(await blobExists(t, fixture.shared)).toBe(false)
+    expect(await blobExists(t, lonely)).toBe(false)
+    expect(await tokenRow(t, fixture.first)).toBeNull()
+    expect(await tokenRow(t, fixture.second)).toBeNull()
+  })
+
+  /**
+   * The other direction, and the reason the predicate is a *sibling* of
+   * `tokenReferencesImage` rather than a flag on it: that one has to keep answering
+   * `true` about the very row being asked about, or `files.discard` stops refusing to
+   * strip the art off a coin somebody is looking at.
+   */
+  test('files.discard still refuses a shared blob, from either twin’s point of view', async () => {
+    const t = harness()
+    const fixture = await twins(t)
+
+    const refusal = await refusalOf(
+      t.mutation(api.files.discard, {
+        code: fixture.code,
+        dmCode: fixture.dmCode,
+        imageId: fixture.shared,
+      }),
+    )
+    expect(refusal.kind).toBe('BadInput')
+    expect(await blobExists(t, fixture.shared)).toBe(true)
+
+    // Still refused with one owner left, which is the state the sibling predicate
+    // answers differently about — and the difference between them, asserted.
+    await t.mutation(api.board.removeToken, {
+      code: fixture.code,
+      dmCode: fixture.dmCode,
+      tokenId: fixture.first,
+    })
+    expect(
+      (
+        await refusalOf(
+          t.mutation(api.files.discard, {
+            code: fixture.code,
+            dmCode: fixture.dmCode,
+            imageId: fixture.shared,
+          }),
+        )
+      ).kind,
+    ).toBe('BadInput')
+    expect(await blobExists(t, fixture.shared)).toBe(true)
   })
 })
 

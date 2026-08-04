@@ -1150,13 +1150,25 @@ export async function setTokenCharacter(
  * no way for anyone looking at it afterwards to explain why. Unlike the suppression on
  * its three siblings, this one is observable and is tested.
  *
- * The delete is **unconditional** on there having been a previous blob, matching
- * `board.removeToken` and `deleteTokensInGame`, and it inherits their caveat unchanged:
- * today an upload makes exactly one token and there is no route to pick an existing blob,
- * so this id has no other owner. The game editor's shared token library breaks that, and
- * whatever makes art shareable has to make all **three** of those deletes conditional at
- * the same time. A *partially* conditional set of three is the state in which somebody
- * believes the problem is solved.
+ * ⚠️ **The delete is conditional on nothing else owning the blob, and duplication is what
+ * made that necessary.** This used to be unconditional, on the reasoning that an upload
+ * made exactly one token — true until `board.duplicate` began copying the image id, at
+ * which point repointing one of five goblins would have blanked the other four. The row
+ * being patched must not count as an owner of the picture it is giving up, which is the
+ * whole reason `otherTokenReferencesImage` exists as a sibling of `tokenReferencesImage`
+ * rather than as a flag on it.
+ *
+ * The question is asked **before** the patch. It is correct either way, because the
+ * predicate excludes this row by `_id` — but computing it first means the answer does not
+ * depend on read-your-writes returning a row whose `imageId` has already moved on, and
+ * this file has already recorded once what it costs to let two adjacent lines carry a
+ * correctness property.
+ *
+ * This is one of the three deletes the shared-art conversion had to reach together, and
+ * the other two are **not** the same shape: `board.removeToken` asks this predicate, and
+ * `deleteTokensInGame` cannot ask it at all — see its own note for why. Naming all three
+ * at each of them is what made them findable in one pass; saying how each one differs is
+ * what stops the next reader assuming they are interchangeable.
  *
  * Checks nothing it cannot know: that the blob exists and is under `MAX_TOKEN_BYTES` is
  * `board.setArt`'s job, through the same `requireTokenArt` that `board.addToken` runs,
@@ -1170,8 +1182,10 @@ export async function replaceTokenArt(
   const previous = token.imageId ?? null
   if (previous === imageId) return
 
+  const shared = previous !== null && (await otherTokenReferencesImage(ctx, token, previous))
+
   await ctx.db.patch('tokens', token._id, { imageId: imageId ?? undefined })
-  if (previous) await ctx.storage.delete(previous)
+  if (previous && !shared) await ctx.storage.delete(previous)
 }
 
 /**
@@ -1327,12 +1341,38 @@ export async function deleteScenePlacements(
  * (CLAUDE.md invariant 6). Rows without their art would be a *worse* leak than the
  * games being cleaned up, because a deleted game's coins are unreachable from every
  * screen in the app and would sit against the 1 GB ceiling for ever with nothing able
- * to name them. Unconditional on the id being present, exactly as `board.removeToken`
- * is, and it inherits that mutation's caveat unchanged: the game editor's token
- * library makes one piece of art shareable between tokens, and whatever makes it
- * shareable has to make **all three** of the unconditional deletes conditional at the
- * same time — `board.removeToken`, `replaceTokenArt` above, and this one. Three sites,
- * named at each of them, because a partially converted set is worse than none.
+ * to name them.
+ *
+ * ⚠️ **Each distinct blob is deleted exactly once, and this is the third of the three
+ * sites the shared-art conversion had to reach — converted differently from the other
+ * two, on purpose.** `board.removeToken` and `replaceTokenArt` ask
+ * `otherTokenReferencesImage`; this one must not, for two reasons that both matter:
+ *
+ * - **It would answer the wrong question.** A purge deletes *every* token in the game,
+ *   so "is any other token using this?" is `true` for a twin that is also about to go.
+ *   Asked per row it would keep the blob for ever, or work only by accident of the order
+ *   the loop happens to run in — which is exactly the fragility `replaceTokenArt`'s early
+ *   return exists to stop this file resting on.
+ * - **It would be O(n²).** Two hundred tokens would mean two hundred range reads of two
+ *   hundred rows — forty thousand document reads in one transaction, on the function that
+ *   has to work on the largest game in the deployment. Today it reads two hundred rows
+ *   once, and it still does.
+ *
+ * So the conversion here is **deduplication**, and it is a stronger statement than the
+ * other two make rather than a weaker one: the question they ask is answered *no* by
+ * construction for every id, because no token survives to own it.
+ *
+ * ⚠️ **This also fixes a live bug rather than merely preparing for one.** The loop used
+ * to call `ctx.storage.delete` once per row, and a second delete of the same id throws —
+ * confirmed against a real deployment: `Error: storage id … not found`, a plain `Error`
+ * and not a `ConvexError`, so it aborts the whole transaction. Before duplication nothing
+ * could produce two tokens sharing a blob, so it never fired; from the moment one press
+ * can make five goblins, a purge of any game containing them would have failed outright
+ * and `admin.purgeGame` would have had no way to clean it up.
+ *
+ * The two deletes are ordered rows-then-blobs, so a failure part-way leaves storage
+ * holding bytes with no row — which the orphaned-blob sweeper is for — rather than rows
+ * pointing at bytes that have gone, which nothing repairs.
  *
  * This does **not** make the orphaned-blob sweeper unnecessary. That sweeper is for
  * blobs a *refused or abandoned upload* left behind — a mutation that throws cannot
@@ -1348,14 +1388,20 @@ export async function deleteTokensInGame(
     .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
     .take(MAX_TOKENS_PER_GAME)
 
+  const blobs = new Set<Id<'_storage'>>()
+
   for (const token of tokens) {
     // Placements first, across every scene rather than the current one, for the same
     // reason `removeToken` does it in this order: they are what points at the token,
     // so no ordering of failures can leave a scene holding a position for a document
     // that has gone.
     await deleteTokenPlacements(ctx, token._id)
-    if (token.imageId) await ctx.storage.delete(token.imageId)
+    if (token.imageId) blobs.add(token.imageId)
     await ctx.db.delete('tokens', token._id)
+  }
+
+  for (const imageId of blobs) {
+    await ctx.storage.delete(imageId)
   }
 
   return tokens.length
@@ -1407,4 +1453,45 @@ export async function tokenReferencesImage(
     .take(MAX_TOKENS_PER_GAME)
 
   return tokens.some((token) => token.imageId === imageId)
+}
+
+/**
+ * Is this blob the art of some **other** token in the same game? So the two delete
+ * paths can stop short of reclaiming a picture a twin is still drawing.
+ *
+ * ⚠️ **A sibling of `tokenReferencesImage` above and deliberately not a parameter on
+ * it**, because the two answer different callers' questions and the difference is
+ * exactly one row. `files.discard` asks *is anything using this?* and needs `true` for
+ * the token being examined — that is what makes it refuse to strip the art off a coin
+ * somebody is looking at. A delete path asks *is anything **else** using this?* and
+ * needs `false` for the row it is about to remove or repoint. Collapsing them into one
+ * function with an optional `exclude` gives the discard guard an argument no caller
+ * ever wants to pass, and which a future caller can get wrong in the one direction that
+ * blanks a live coin.
+ *
+ * **The exclusion is what makes each call site correct, not the ordering.** Two of the
+ * three sites could be made to work by running the check before the row write and
+ * leaning on read-your-writes; a correctness property held by the order of two adjacent
+ * lines is precisely the fragility `replaceTokenArt`'s early return already documents
+ * having nearly shipped. The `_id` comparison holds whichever side of the write it runs.
+ *
+ * Takes the row rather than a `(gameId, tokenId)` pair, so the game comes off the
+ * document and there is no way to ask the question about the wrong one. `imageId` stays
+ * a separate argument because `replaceTokenArt` asks about the **previous** blob, which
+ * is no longer the one the row will hold.
+ *
+ * Counts both layers, for `tokenReferencesImage`'s reason verbatim: a DM-layer
+ * skeleton's portrait is exactly as much in use as a hero's.
+ */
+export async function otherTokenReferencesImage(
+  ctx: QueryCtx,
+  token: Doc<'tokens'>,
+  imageId: Id<'_storage'>,
+): Promise<boolean> {
+  const tokens = await ctx.db
+    .query('tokens')
+    .withIndex('by_gameId', (q) => q.eq('gameId', token.gameId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  return tokens.some((other) => other._id !== token._id && other.imageId === imageId)
 }
