@@ -39,6 +39,10 @@ import { MAX_CHARACTERS_PER_GAME } from './games'
 // belongs to lib/players.ts and the claim pointer with it, so the map that turns
 // seat → character back into character → seat is built there and imported here.
 import { holderByCharacter } from './players'
+// The one accessor that answers passive perception for either sheet variant. It lives in
+// lib/skills.ts rather than lib/sheet.ts because it needs values from both and only that
+// direction has no cycle — its own docblock carries the argument.
+import { passivePerceptionFor } from './skills'
 import type { BestiarySheet, CharacterSheet, StoredSheet } from './sheet'
 // `resolveSheet` rather than `characterSheet`, and that one substitution is the
 // whole of what Milestone 4 changed in this file. Everything below still asks for a
@@ -538,7 +542,7 @@ export const publicSheetValidator = v.object({
 export type PublicSheet = Infer<typeof publicSheetValidator>
 
 /**
- * THE MECHANICAL GUARD FOR THIS MILESTONE'S ACCEPTANCE TEST.
+ * THE MECHANICAL GUARD FOR THE HIT-POINT ACCEPTANCE TEST.
  *
  * A discriminated union, so the variant a player receives for an NPC has **no
  * numeric field to put a hit point in**. This is not a convention anybody has to
@@ -549,6 +553,35 @@ export type PublicSheet = Infer<typeof publicSheetValidator>
  * That is the right tool here and the wrong tool one file over. A DM-layer token is
  * a leaked *row* of identical shape, which a validator can never catch; hit points
  * are a leaked *field*, which is the case a validator catches perfectly.
+ *
+ * ⚠️ **TWO NUMBERS OFF THE SHEET NOW RIDE HERE, AND THE GUARANTEE ABOVE IS UNCHANGED.
+ * Read this before assuming the union has been weakened.** Armour class and passive
+ * perception are on **both** members, deliberately, and that is not the same act as
+ * putting `current` on the `band` member:
+ *
+ * - The guarantee this union exists for is *the player-facing variant has nowhere to put
+ *   a hit point*. `band` still has no `current` and no `max`, so it still holds, word for
+ *   word, and Convex still throws if a projection tries.
+ * - A field present on **both** members is not a discriminator question at all. It is
+ *   published to everyone who receives a row, and the union has nothing to say about it.
+ *
+ * These two are published **on purpose**, which is the part that needed a decision rather
+ * than a design. A creature's armour class reached no player before this — it is ADR 0005's
+ * own worked example of the row-shaped secret — and it now reaches every player who can
+ * already see the coin. The scope is the whole of the defence: `visibleVitals` below drops
+ * a creature a player may not see *before* it builds either variant, so a GM-layer or
+ * fogged creature contributes no row at all and therefore no armour class. Nothing else off
+ * the stat block moves. See ADR 0014.
+ *
+ * ⚠️ **The exact-only alternative was considered and is wrong for what was asked.** Putting
+ * them on `exact` alone would show a granted pet's armour class and hide the goblin's
+ * standing next to it, which is not "the number on the coin" — it is a second, invisible
+ * permission rule expressed as a missing badge.
+ *
+ * ⚠️ **`null` is a real answer for both and must stay reachable.** A hand-built creature
+ * whose DM never recorded a passive perception has none, and a blue circle reading 10 is a
+ * statistic the table would act on that nobody wrote. `passivePerceptionFor` in
+ * lib/skills.ts is the one place that decision is made.
  */
 export const publicVitalsValidator = v.union(
   v.object({
@@ -569,6 +602,9 @@ export const publicVitalsValidator = v.union(
     // *has* comes from their race, which the client can look up itself from
     // lib/races.ts — only which ones are gone has to travel.
     spentPerRest: v.array(v.string()),
+    // Published. See the ⚠️ above — on both members on purpose, and `null` is real.
+    armourClass: v.union(v.number(), v.null()),
+    passivePerception: v.union(v.number(), v.null()),
   }),
   v.object({
     kind: v.literal('band'),
@@ -579,6 +615,8 @@ export const publicVitalsValidator = v.union(
       v.literal('critical'),
       v.literal('down'),
     ),
+    armourClass: v.union(v.number(), v.null()),
+    passivePerception: v.union(v.number(), v.null()),
   }),
 )
 export type PublicVitals = Infer<typeof publicVitalsValidator>
@@ -991,6 +1029,20 @@ export async function visibleVitals(
     const vitals = byCharacter.get(character._id) ?? null
     const current = currentHpOf(vitals, sheet)
 
+    // The two published sheet numbers, computed **above** the branch because both
+    // variants carry them — see the ⚠️ on `publicVitalsValidator`. Deliberately not
+    // inside either arm: two copies of one expression is how a badge comes to mean
+    // something different on a monster than on a hero.
+    //
+    // ⚠️ **Free.** `resolveSheet` ran at the top of this loop already, for the kind test
+    // and for `maxHp`, so neither of these is a read — which is what made publishing them
+    // a decision about secrecy rather than about cost. They are *sheet* facts on a
+    // *vitals* channel that re-runs on every point of damage, which is the honest thing
+    // to know: a hit re-pushes two constants. The alternative is a sixth subscription
+    // that idles, and that is not worth a socket.
+    const armourClass = Number.isFinite(sheet.armourClass) ? sheet.armourClass : null
+    const passivePerception = passivePerceptionFor(sheet)
+
     // The one branch that decides what leaves the server. Note that the exact
     // numbers are never even assembled on the losing side of it: the band is
     // computed from values that stay in this scope, so there is no object holding
@@ -1006,6 +1058,8 @@ export async function visibleVitals(
         kind: 'band',
         characterId: character._id,
         band: healthBand(current, sheet.maxHp),
+        armourClass,
+        passivePerception,
       })
     } else {
       const isPc = sheet.kind === 'pc'
@@ -1021,6 +1075,8 @@ export async function visibleVitals(
         // absent value means none have been spent, for the same reason a missing
         // row means undamaged.
         hitDiceRemaining: isPc ? hitDiceRemainingOf(vitals, sheet) : null,
+        armourClass,
+        passivePerception,
       })
     }
   }

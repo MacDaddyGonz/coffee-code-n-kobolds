@@ -7215,6 +7215,119 @@ async function main() {
         backgroundColour: '#123456',
       }),
     )
+
+    // 40. THE TWO PUBLISHED SHEET NUMBERS, AND THE SCOPE THAT MAKES PUBLISHING THEM
+    // DEFENSIBLE.
+    //
+    // ⚠️ **A creature's armour class used to reach no player and now reaches every player
+    // who can see its coin.** ADR 0014 records the decision; what is checked here is the
+    // *scope*, because the scope is the whole of the argument: the number goes to people
+    // already being told the creature exists, and to nobody else.
+    //
+    // What only a deployment can answer is the **shape**. `publicVitalsValidator` declares
+    // both fields on both members of a union, as `number | null`, and `returns:` validation
+    // is exactly what convex-test does not apply — so a projection that put one on one
+    // member and forgot the other passes the suite and is rejected here.
+    const vitalsToDm = await client.query('characters:vitals', { code, dmCode })
+    const vitalsToPlayer = await client.query('characters:vitals', { code })
+
+    const hasBothFields = (rows) =>
+      rows.length > 0 &&
+      rows.every(
+        (row) =>
+          'armourClass' in row &&
+          'passivePerception' in row &&
+          (row.armourClass === null || typeof row.armourClass === 'number') &&
+          (row.passivePerception === null || typeof row.passivePerception === 'number'),
+      )
+
+    check(
+      'characters:vitals carries armourClass and passivePerception on every row, to both audiences',
+      hasBothFields(vitalsToDm) && hasBothFields(vitalsToPlayer),
+      `${vitalsToDm.length} rows to the DM, ${vitalsToPlayer.length} to a player`,
+    )
+
+    // ⚠️ **Both variants, asserted as variants.** The `band` rows are the player's view of a
+    // creature and the `exact` rows are a hero's — a deployment that had put the two fields
+    // on `exact` only would satisfy the DM's payload entirely and fail here.
+    const playerBands = vitalsToPlayer.filter((row) => row.kind === 'band')
+    check(
+      'a player’s band rows carry an armour class and still carry no hit point',
+      playerBands.length > 0 &&
+        playerBands.every(
+          (row) =>
+            typeof row.armourClass === 'number' &&
+            !('current' in row) &&
+            !('max' in row),
+        ),
+      `${playerBands.length} band rows, keys ${JSON.stringify(Object.keys(playerBands[0] ?? {}).sort())}`,
+    )
+
+    // THE SCOPE. The GM-layer coin created in section 3 stands for no character, so this
+    // section makes its own: a creature on the GM layer with an armour class that appears
+    // nowhere else in the game.
+    const RAFTERS_AC = 29
+    const rafters = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: 'The Thing In The Rafters',
+      sheet: {
+        kind: 'npc',
+        armourClass: RAFTERS_AC,
+        maxHp: 33,
+        initiativeBonus: 0,
+        actions: [],
+        notes: '',
+      },
+    })
+    createdCharacters.push(rafters.characterId)
+    const raftersToken = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      name: 'Rafters',
+      layer: 'gm',
+      sizeSquares: 1,
+      tint: '#1f2937',
+      characterId: rafters.characterId,
+      x: 500,
+      y: 500,
+    })
+    created.push(raftersToken.tokenId)
+
+    // A word-boundary scan, so 29 is not found inside 129 or inside a document id.
+    const containsWholeNumber = (haystack, value) =>
+      new RegExp(`(?<![\\w.])${value}(?![\\w.])`).test(haystack)
+
+    const afterRaftersToPlayer = JSON.stringify(
+      await client.query('characters:vitals', { code }),
+    )
+    const afterRaftersToDm = JSON.stringify(
+      await client.query('characters:vitals', { code, dmCode }),
+    )
+    check(
+      'a GM-layer creature’s armour class is absent from a player’s vitals payload, and present in the DM’s',
+      !containsWholeNumber(afterRaftersToPlayer, RAFTERS_AC) &&
+        !afterRaftersToPlayer.includes(rafters.characterId) &&
+        // The positive control. Without it this passes on a payload that failed to build.
+        containsWholeNumber(afterRaftersToDm, RAFTERS_AC) &&
+        afterRaftersToDm.includes(rafters.characterId),
+      `${RAFTERS_AC} ${containsWholeNumber(afterRaftersToDm, RAFTERS_AC) ? 'reached' : 'did not reach'} the DM and ${containsWholeNumber(afterRaftersToPlayer, RAFTERS_AC) ? 'reached' : 'did not reach'} the player`,
+    )
+
+    // AND THE `null` CASE, which is the one a wrong implementation gets wrong by printing
+    // 10. This creature's sheet records no passive perception, so its row must carry null
+    // rather than a number — for the DM, who is the audience that can see it at all.
+    const raftersRowToDm = (await client.query('characters:vitals', { code, dmCode })).find(
+      (row) => row.characterId === rafters.characterId,
+    )
+    check(
+      'a creature with no recorded passive perception travels as null rather than as 10',
+      raftersRowToDm !== undefined &&
+        raftersRowToDm.passivePerception === null &&
+        raftersRowToDm.armourClass === RAFTERS_AC,
+      raftersRowToDm ? JSON.stringify(raftersRowToDm) : 'no row for the rafters at all',
+    )
   } catch (error) {
     const data = error && error.data ? ` ${JSON.stringify(error.data)}` : ''
     record('the run completed without an unexpected error', false, `${error.message ?? error}${data}`)

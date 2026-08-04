@@ -4,6 +4,7 @@ import { Circle, Group, Line, Text } from 'react-konva'
 import { claimContextMenu, setCursor } from './konvaPointer'
 import { COIN_DETAIL_MIN_DIAMETER, TokenHealthBar } from './TokenHealthBar'
 import { TokenMarkerPips } from './TokenMarkerPips'
+import { TokenStatBadges } from './TokenStatBadges'
 import { useCanvasImage } from '@/hooks/useCanvasImage'
 // How tall a row of pips is, imported rather than re-derived. The coupling between the
 // name's `y` here and the row `TokenMarkerPips` draws is a named constant for the same
@@ -363,6 +364,24 @@ export const TokenCoin = memo(function TokenCoin({
       ) : null}
 
       {/*
+        WHAT THE CREATURE IS: armour class in red, passive perception in blue, on the two
+        left shoulders.
+
+        ⚠️ **These publish a number that was a secret until ADR 0014**, and the reason that
+        is safe is not in this file. `token.vitals` is null for a creature the caller may
+        not see, because `visibleVitals` drops it before assembling a row — so a GM-layer or
+        fogged creature has no numbers here for the same reason it has no health bar. There
+        is no `isDm` in the component below and there must not be, exactly as there is none
+        in `TokenHealthBar`.
+
+        Behind `showDetail` with everything else, so a zoom-out drops the coin's annotations
+        together. The disc is the size of a condition pip on purpose — see the component.
+      */}
+      {showDetail ? (
+        <TokenStatBadges vitals={token.vitals} radius={radius} scale={scale} />
+      ) : null}
+
+      {/*
         THE CONDITIONS, and they are labels and nothing else — no roll consults one, no
         health band is computed from one, no drag is refused because of one, and
         `markerGuard.test.ts` on the server is what makes that a promise rather than a
@@ -378,9 +397,17 @@ export const TokenCoin = memo(function TokenCoin({
 
         **The composition of a coin, which is disjoint by construction:** the bar occupies
         the strip above the rim, the name the strip below, the hidden-from-party pip the
-        upper-right shoulder at 45°, and this row the strip between the rim and the name —
-        which is why `nameTop` above exists and why it is the *name* that yields. Four
-        annotations, four places, and no two of them can ever be asked to share one.
+        upper-right shoulder at 45°, the two stat badges the two *left* shoulders at 45°,
+        and this row the strip between the rim and the name — which is why `nameTop` above
+        exists and why it is the *name* that yields. **Six annotations, six places**, and no
+        two of them can ever be asked to share one.
+
+        ⚠️ **It was four, and the badges were placed by consulting this sentence.** The
+        scheme is only worth anything if the next person adding a mark reads it first and
+        takes a place nothing else has, rather than putting a badge where it happens to look
+        right on the coin in front of them. The left shoulders were what was left; there is
+        no seventh obvious place, so a seventh annotation is a layout decision rather than a
+        position.
       */}
       {/*
         ⚠️ **Gated on `hasMarkers` as well as `showDetail`, and the second test is not

@@ -34,3 +34,4 @@ about half the time and has no way to know which.
 | [0011](0011-announcing-a-roll-rather-than-adjudicating-one.md) | Announcing a roll rather than adjudicating one | Accepted — 🚫 decisions **1** (no spell slots) and **4** (no per-key counts, no short rest) superseded by the character-resources milestone; decisions 2, 3, 5 and the rest of the record stand |
 | [0012](0012-three-layers-and-a-fog-that-is-honest-about-itself.md) | Three layers, and a fog that is honest about itself | Accepted |
 | [0013](0013-a-coin-you-can-copy-place-and-label.md) | A coin you can copy, place and label | Accepted |
+| [0014](0014-what-a-coin-says-about-itself.md) | What a coin says about itself | Accepted — ⚠️ publishes a creature's armour class, which [0005](0005-character-sheets-and-hit-point-secrecy.md) had used as its worked example of the row-shaped secret |
