@@ -234,13 +234,25 @@ to the people at the table. The same reasoning covers **concentration**, which t
 — no spell records it and nothing drops it.
 
 ⚠️ **Four neighbouring gaps were closed the same way and needed no amendment, because the lists never
-promised them.** There are no **spell slots** anywhere — clicking a spell rolls its dice and says so,
-and the level printed beside it is a label rather than a resource. A hero has no **spell save DC**; a
-creature has one because the bestiary wrote one, and nothing in this application compares a roll to
-either. **Limited-use abilities** stay as coarse as they were: the app remembers whether a per-long-rest
-trait has been spent, which is the part a table forgets, and counts nothing else. And **initiative**
-turned out to need nothing new at all — a hero's bonus comes from Dexterity and a creature's is stored,
-through one accessor that already existed.
+promised them. Two of the four have since been reopened deliberately, so read the marks.**
+
+- 🚫 **Spell slots** — *decision reversed; not yet built.* There are none anywhere today, and the
+  level printed beside a spell is still a label rather than a resource. The character-resources
+  milestone in [roadmap.md](roadmap.md) builds slot counting, and it lands with an amendment of its
+  own in this section. **Do not read this bullet as a rule to preserve.**
+- ✅ **Spell save DC** — still declined for a hero. A creature has one because the bestiary wrote
+  one, and nothing in this application compares a roll to either.
+- 🚫 **Limited-use abilities stay as coarse as they were** — *decision reversed; not yet built.*
+  Today the app remembers whether a per-long-rest trait has been spent and counts nothing else, and
+  there is no short rest. Same milestone, same amendment, same instruction.
+- ✅ **Initiative** — needed nothing new at all: a hero's bonus comes from Dexterity and a creature's
+  is stored, through one accessor that already existed.
+
+⚠️ **The two reversals change what the app *counts* and not what it *adjudicates*, which is why they
+are amendments rather than a change of character.** No roll is compared to anything, no cast is
+refused, and casting at a higher slot level changes no die of damage. The turn structure above and
+concentration are **not** reopened, and the reasoning that keeps them out is the reasoning that
+survived: enforcing them means the app owning the round.
 
 **Two smaller notes on the *screen*, neither a rule.** *"When a clicked sheet item involves a dice
 roll, that character's token appears on screen for everyone and a 3D dice roll plays"* is met as

@@ -171,7 +171,7 @@ export const MAX_FEED_ROWS_LISTED = 60
  *
  * The alternative was a delete that loops across transactions, and it is refused here
  * rather than judged unnecessary: that is what a genuine per-game delete path needs, and
- * Milestone 12 owns that decision together with the question of *who may ask for it*
+ * the game-editor milestone owns that decision together with the question of *who may ask for it*
  * (see the header of `convex/admin.ts`). A maintenance script does not get to invent it.
  *
  * ⚠️ **Nothing player-facing may borrow this number.** `MAX_FEED_ROWS_LISTED` above is

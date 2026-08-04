@@ -84,6 +84,16 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    before the feature existed. The rule to carry forward: *before adding a read of `tokenPositions`
    to a query, work out what that query then costs during a drag, and give it a way to not pay.*
 
+   🚫 **The middle early return is about to change meaning, and the sentence above has to change with
+   it — not yet, but in the commit that breaks it.** The maps-and-fog milestone in
+   [docs/roadmap.md](docs/roadmap.md) gives a scene a base: *lit, and you black areas out*, or *dark,
+   and you light areas up*. Under the second one, **no rectangles is the most hidden a map can be**,
+   so the free case stops being "nobody has drawn a rectangle" and becomes "this scene is in the
+   state it shipped in". The *property* survives — every game is still free until somebody uses the
+   feature — and the *reason* does not. Whoever builds it restates this paragraph and adds: **turning
+   a scene to dark buys the positions read for the rest of the session, without drawing anything.**
+   Until then, everything above is true as written.
+
 3. **Hash routing only** (`/#/game/ABC123`). GitHub Pages has no rewrite rules, so a browser-path
    deep link 404s on refresh.
 4. **Vite needs `base: '/coffee-code-n-kobolds/'`.** The site is served from a subpath; omitting
@@ -490,16 +500,30 @@ bonus action and 1 reaction"* is a rule the table keeps and the app does not enf
 is the point, because an absence reads as an oversight.
 
 ⚠️ **Four neighbouring gaps were closed by declining them, and that is the discipline rather than
-laziness.** There are **no spell slots**, anywhere — a spell's level on the sheet is a label and not
-a resource. A hero has **no spell save DC**; a creature has one because the bestiary wrote one, and
-nothing compares a roll to either. **Limited-use abilities** stay as coarse as `spentPerRest` already
-was: the app remembers whether a per-long-rest trait has been spent and counts nothing else, so Rage
-twice a day is the table's to track. **Concentration and the action economy** have no field and no
-check. Each of those is individually small and reasonable, and each is a rules engine arriving one
-feature at a time — which is what D&D Lite exists to not be. The test is unchanged and is the one CR
-scaling already passed: **the moment something changes a number a player rolls against without a
-person asking it to, it needs an amendment and an ADR.** See
-[ADR 0011](docs/adr/0011-announcing-a-roll-rather-than-adjudicating-one.md).
+laziness — but two of the four have since been reopened deliberately, so read the marks.**
+
+- 🚫 **No spell slots** — *decision reversed; not yet built.* There are none in the code today, and
+  a spell's level on the sheet is still only a label. **Do not defend this as a rule**: the
+  character-resources milestone in [docs/roadmap.md](docs/roadmap.md) builds slot counting, and this
+  bullet is deleted on the day it lands.
+- ✅ **No spell save DC for a hero** — still declined. A creature has one because the bestiary wrote
+  one, and nothing compares a roll to either.
+- 🚫 **Limited-use abilities stay as coarse as `spentPerRest`** — *decision reversed; not yet built.*
+  Today the app remembers whether a per-long-rest trait has been spent and counts nothing else, so
+  Rage twice a day is still the table's to track, and there is still no short rest. **Do not defend
+  this either** — same milestone, same deletion.
+- ✅ **Concentration and the action economy** — still declined. No field and no check, and nothing on
+  the sheet implies otherwise.
+
+Each of those was individually small and reasonable, and each is a rules engine arriving one feature
+at a time — which is what D&D Lite exists to not be. **The test that decided all four is unchanged
+and is the one CR scaling already passed: the moment something changes a number a player rolls
+against without a person asking it to, it needs an amendment and an ADR.** The two reversals came
+back through exactly that door rather than arriving inside a feature branch, and neither of them
+trips it: counting a slot compares nothing, refuses nothing, and changes no die of damage.
+
+See [ADR 0011](docs/adr/0011-announcing-a-roll-rather-than-adjudicating-one.md) — whose decisions 1
+and 4 are **struck through in place** for this reason, and whose 2, 3 and 5 stand.
 
 ## Commands
 
