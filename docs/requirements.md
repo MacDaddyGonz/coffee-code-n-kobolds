@@ -357,6 +357,45 @@ stands on, and deleting a coin deletes a coin — the creature's sheet survives,
 the Sheets tab. Nothing was added to the *Included* list, nothing was lifted from the *Excluded* one,
 and nothing here changes a number a player rolls against. **Five milestones in a row.**
 
+#### Milestone 12 — 2026-08-05 — [ADR 0014](adr/0014-what-a-coin-says-about-itself.md)
+
+Two amendments, and the run of five ends here. **Neither of them lifts a rules exclusion**, which is
+the usual shape of an entry in this section — the first lifts something else entirely, and saying so
+plainly is the point.
+
+**⚠️ A creature's armour class and passive perception are shown to every player who can see its
+coin. This is the first amendment in this document that lifts a *secrecy guarantee* rather than a
+rule.** Nothing in the two lists above was withholding it; the *threat model* was. A creature's
+armour class reached no player by any route —
+[ADR 0005](adr/0005-character-sheets-and-hit-point-secrecy.md) used it as its worked example of the
+secret that no validator can catch — and it now travels on the same payload as the health band, in
+a red circle on the coin, with passive perception beside it in a blue one.
+
+State the scope precisely, because the scope is the whole of what makes it defensible:
+
+- It reaches **only players who already have a row for that creature**. A GM-layer creature and a
+  fogged one are dropped before a row is built, so neither publishes anything — *the set of
+  creatures a player hears about did not change*, only what a row says.
+- **Nothing else off the stat block moved.** The attacks, the damage, the notes, the loot, the
+  challenge rating and the exact hit points are exactly as unreachable as they were, and
+  `characters.sheet` still answers *no such character* for an ordinary NPC.
+- **It adjudicates nothing.** No roll is compared to an armour class, nothing decides whether an
+  attack hit, and no creature notices anybody. The number on the coin is a label the DM already
+  typed, printed where the table is already looking — the same register as loot being a line of
+  text. What changed is who may read it, not what the software does with it.
+
+**Ad-hoc dice admit d2 and up to fifty dice at a time.** The eight faces offered are d2, d4, d6, d8,
+d10, d12, d20 and d100, with a 1×–50× count. Only d2 is new to the allow-list; the count raises a
+cap that has been twenty since the dice shipped. It is **one grammar** for a sheet entry and for
+somebody typing in the tray, deliberately — two caps are two things that agree on the day they are
+written — so the price, stated rather than discovered, is that a monster's damage expression may now
+legitimately read `30d6`. Nothing is adjudicated by either change, and the cap still exists: it is a
+different number, in the same place, refusing the same way.
+
+**Nothing else moved.** The other seven items in that milestone are a menu entry that was never
+wired up, four controls filed where nobody looks for them, a name that was clipped and a circle that
+was too small — none of them a rule, and none of them a secret.
+
 ## Accounts and games
 
 - Users create an account by providing an email address.

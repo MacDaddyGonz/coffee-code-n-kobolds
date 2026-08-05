@@ -2,6 +2,7 @@ import { ConvexError, v } from 'convex/values'
 
 import { mutation, query } from './_generated/server'
 import { deleteScenePlacements } from './lib/board'
+import { colourProblem } from './lib/colour'
 import { deleteSceneFog } from './lib/fog'
 import { MAX_SCENES_PER_GAME, findGameByCode, requireDm } from './lib/games'
 import { MIN_GRID_SIZE, gridSizeFor, isUsableGrid } from './lib/grid'
@@ -204,6 +205,46 @@ export const updateGrid = mutation({
     }
 
     await ctx.db.patch('scenes', scene._id, { ...grid, gridVisible: args.gridVisible })
+    return null
+  },
+})
+
+/**
+ * What is painted around the map.
+ *
+ * ⚠️ **Its own mutation rather than a seventh argument on `updateGrid`**, and that
+ * function's own docblock is the reason: the three grid numbers arrive together because
+ * they are *one calibration* and committing them separately would draw a grid nobody
+ * chose. A colour is not part of that calibration and never becomes stale against it —
+ * folding it in would mean every colour press re-committing a grid, and every grid save
+ * re-committing a colour, so a stale copy of either in a client's form could quietly
+ * overwrite the other. `rename` is the shape this follows: one field, one call.
+ *
+ * The check is at the write for `isUsableGrid`'s reason, restated for a string. An
+ * `<input type="color">` cannot produce anything but `#rrggbb` — so this refusal is
+ * unreachable by pointing at the control — and it is still here, because the value is
+ * handed to a CSS `background-color` on every screen at the table and a client is not
+ * what enforces anything (CLAUDE.md invariant 7's rule, and invariant 6's).
+ */
+export const setBackground = mutation({
+  args: {
+    code: v.string(),
+    dmCode: v.string(),
+    sceneId: v.id('scenes'),
+    backgroundColour: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    // Argument-first, so a bad colour costs no reads — `moveToken`'s ordering, and the
+    // one this file's other write checks keep.
+    const problem = colourProblem(args.backgroundColour, 'map background')
+    if (problem !== null) {
+      throw new ConvexError({ kind: 'BadInput', message: problem })
+    }
+
+    const game = await requireDm(ctx, args.code, args.dmCode)
+    const scene = await getSceneInGame(ctx, game._id, args.sceneId)
+    await ctx.db.patch('scenes', scene._id, { backgroundColour: args.backgroundColour })
     return null
   },
 })

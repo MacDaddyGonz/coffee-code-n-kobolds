@@ -25,6 +25,12 @@
  * for a bonus: there is nowhere to put one.
  */
 
+// The grammar's face list — the one place the faces this application rolls are decided.
+// A value import, and safe: `lib/sheet.ts` is browser-shared by design and holds no
+// arithmetic, no randomness and nothing secret. `bundleGuard.test.ts` forbids `lib/dice.ts`
+// and the corpora, which is a different module and a different rule.
+import { ROLL_FACES } from '@convex/lib/sheet'
+
 /**
  * One die on the tray: how many faces it has, and the face the server says is up.
  *
@@ -50,10 +56,18 @@ export type ShownDie = { faces: number; value: number }
  * module exists to prevent. So the support test is a value test and not merely a
  * face-count test.
  *
- * The engine also ships `d1`, `d2`, `d3`, a Fudge die and about a dozen Star Wars and
- * poker dice. Those are absent here on purpose — D&D Lite rolls none of them, and a
- * face count this app cannot produce is better reported as unshowable than quietly
- * mapped onto a novelty die.
+ * The engine also ships `d1`, `d3`, a Fudge die and about a dozen Star Wars and poker
+ * dice. Those are absent here on purpose — D&D Lite rolls none of them, and a face count
+ * this app cannot produce is better reported as unshowable than quietly mapped onto a
+ * novelty die.
+ *
+ * ⚠️ **Derived from `ROLL_FACES` rather than written out, with `d100` subtracted, and that
+ * subtraction is the only interesting thing in the expression.** This began as a literal
+ * list, and `d2` had to be added to it by hand when the grammar grew one — which is the
+ * failure mode: a face the server can decide and this module has never heard of comes back
+ * `unshowable`, quietly and correctly, and nobody notices the die stopped appearing. The
+ * grammar is the one place the faces are decided (CLAUDE.md invariant 10); the tens die is
+ * this module's exception to it and now the *only* thing this line says.
  *
  * ⚠️ **`d100` is a tens die on its own, so it shows 10, 20 … 100 and nothing between.**
  * Its declared triple is `[10, 100, 10]`. There is no percentile *pair* in this engine,
@@ -61,7 +75,7 @@ export type ShownDie = { faces: number; value: number }
  * rounded to 50 — a die displaying a number the feed disagrees with is worse than a die
  * that does not appear.
  */
-const ORDINARY_FACES: readonly number[] = [4, 6, 8, 10, 12, 20]
+const ORDINARY_FACES: readonly number[] = ROLL_FACES.filter((faces) => faces !== 100)
 
 /** An integer in `[min, max]`. Rejects `NaN`, infinities and 3.5 without four tests at each call. */
 function isWhole(value: number, min: number, max: number): boolean {

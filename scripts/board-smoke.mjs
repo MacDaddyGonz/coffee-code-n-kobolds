@@ -970,12 +970,20 @@ const OVERLONG_ROLL = `1d6${'+1'.repeat(20)}`
 /**
  * The die-count ceiling, copied by hand out of `convex/lib/sheet.ts`.
  *
- * Enforced by `ROLL_PATTERN`'s own `(?:[1-9]|1\d|20)` rather than by a comparison, which is
- * why one over it and a wildly-over-it are both worth sending: `21d6` is the shape a regex
- * that had been loosened by one character would accept, and `99d20` is the shape a physics
- * engine is asked to render.
+ * Enforced by `ROLL_PATTERN`'s own `(?:[1-9]|[1-4]\d|50)` rather than by a comparison, which
+ * is why one over it and a wildly-over-it are both worth sending: `51d6` is the shape a
+ * regex that had been loosened by one character would accept, and `99d20` is the shape a
+ * physics engine is asked to render.
+ *
+ * ⚠️ **Twenty until [ADR 0014](../docs/adr/0014-what-a-coin-says-about-itself.md) widened it
+ * for the ad-hoc dice tray, and the hand copy is what caught this file up.** The check
+ * below is written as `MAX_ROLL_DICE + 1` rather than as a literal, so moving the number
+ * here moved the assertion — and the run that failed on `21d6` was this fixture doing
+ * exactly its job: telling a person that the deployment now accepts something the script
+ * still believed was refused. That is the whole argument for copying constants by hand
+ * rather than importing them.
  */
-const MAX_ROLL_DICE = 20
+const MAX_ROLL_DICE = 50
 
 /**
  * THE KEY SETS, hand-spelled out of `publicFeedValidator`, `rollResultValidator`,
@@ -7141,6 +7149,267 @@ async function main() {
         swarm.tokenId === swarm.tokenIds[0],
       swarmDrift ?? JSON.stringify(swarmNames),
     )
+
+    // 39. THE MAP'S OWN COLOUR: AN OPTIONAL COLUMN THAT NO CLIENT EVER SEES AS OPTIONAL,
+    // AND A STRING THE BROWSER WILL INTERPRET.
+    //
+    // Two things here that convex-test genuinely cannot answer. The first is the **shape of
+    // the projection**: `publicSceneValidator` declares `backgroundColour` as a required
+    // `v.string()` over a column the schema had to make optional, so a deployment that
+    // returned the raw field for a scene nobody has coloured would fail its own `returns:`
+    // validation — and the suite, which does not apply that validation, would pass. This
+    // scene has been on the table for the whole run without ever being coloured, so it is
+    // the real *absent* case rather than one arranged for the assertion.
+    //
+    // The second is the refusal. `<input type="color">` cannot emit any of the strings
+    // below, which is exactly why the check has to be somewhere a client cannot reach — the
+    // value goes to a CSS `background-color` on every screen at the table.
+    const sceneBeforeColour = await client.query('scenes:active', { code })
+    check(
+      'scenes:active carries a background colour for a scene nobody has coloured',
+      sceneBeforeColour !== null &&
+        typeof sceneBeforeColour.backgroundColour === 'string' &&
+        /^#[0-9a-f]{6}$/i.test(sceneBeforeColour.backgroundColour),
+      sceneBeforeColour ? JSON.stringify(sceneBeforeColour.backgroundColour) : 'no active scene',
+    )
+
+    const CHOSEN_BACKGROUND = '#3B0A0A'
+    await client.mutation('scenes:setBackground', {
+      code,
+      dmCode,
+      sceneId,
+      backgroundColour: CHOSEN_BACKGROUND,
+    })
+    // Read back through the **ungated** query, which is the point rather than convenience:
+    // a scene's colour is not a secret, so a caller holding no DM code gets it.
+    const sceneAsPlayer = await client.query('scenes:active', { code })
+    check(
+      'scenes:setBackground round-tripped the colour verbatim, to a caller with no DM code',
+      sceneAsPlayer !== null && sceneAsPlayer.backgroundColour === CHOSEN_BACKGROUND,
+      sceneAsPlayer ? JSON.stringify(sceneAsPlayer.backgroundColour) : 'no active scene',
+    )
+
+    for (const [label, backgroundColour] of [
+      ['a CSS colour function', 'rgb(0,0,0)'],
+      ['a url()', 'url(https://example.test/x.png)'],
+      ['a named colour', 'red'],
+      ['the three-digit shorthand', '#123'],
+      ['an empty string', ''],
+    ]) {
+      const colourRefusal = await refusalOf(() =>
+        client.mutation('scenes:setBackground', { code, dmCode, sceneId, backgroundColour }),
+      )
+      check(
+        `scenes:setBackground refused ${label} as BadInput`,
+        colourRefusal !== null && colourRefusal.kind === 'BadInput',
+        colourRefusal
+          ? JSON.stringify(colourRefusal)
+          : `the deployment stored ${JSON.stringify(backgroundColour)}`,
+      )
+    }
+
+    const sceneAfterRefusals = await client.query('scenes:active', { code })
+    check(
+      'none of the refused colours reached the scene',
+      sceneAfterRefusals !== null && sceneAfterRefusals.backgroundColour === CHOSEN_BACKGROUND,
+      sceneAfterRefusals ? JSON.stringify(sceneAfterRefusals.backgroundColour) : 'no active scene',
+    )
+
+    await refuses('scenes:setBackground refused a well-formed wrong DM code', () =>
+      client.mutation('scenes:setBackground', {
+        code,
+        dmCode: 'not-the-dm-code',
+        sceneId,
+        backgroundColour: '#123456',
+      }),
+    )
+
+    // 40. THE TWO PUBLISHED SHEET NUMBERS, AND THE SCOPE THAT MAKES PUBLISHING THEM
+    // DEFENSIBLE.
+    //
+    // ⚠️ **A creature's armour class used to reach no player and now reaches every player
+    // who can see its coin.** ADR 0014 records the decision; what is checked here is the
+    // *scope*, because the scope is the whole of the argument: the number goes to people
+    // already being told the creature exists, and to nobody else.
+    //
+    // What only a deployment can answer is the **shape**. `publicVitalsValidator` declares
+    // both fields on both members of a union, as `number | null`, and `returns:` validation
+    // is exactly what convex-test does not apply — so a projection that put one on one
+    // member and forgot the other passes the suite and is rejected here.
+    const vitalsToDm = await client.query('characters:vitals', { code, dmCode })
+    const vitalsToPlayer = await client.query('characters:vitals', { code })
+
+    const hasBothFields = (rows) =>
+      rows.length > 0 &&
+      rows.every(
+        (row) =>
+          'armourClass' in row &&
+          'passivePerception' in row &&
+          (row.armourClass === null || typeof row.armourClass === 'number') &&
+          (row.passivePerception === null || typeof row.passivePerception === 'number'),
+      )
+
+    check(
+      'characters:vitals carries armourClass and passivePerception on every row, to both audiences',
+      hasBothFields(vitalsToDm) && hasBothFields(vitalsToPlayer),
+      `${vitalsToDm.length} rows to the DM, ${vitalsToPlayer.length} to a player`,
+    )
+
+    // ⚠️ **Both variants, asserted as variants.** The `band` rows are the player's view of a
+    // creature and the `exact` rows are a hero's — a deployment that had put the two fields
+    // on `exact` only would satisfy the DM's payload entirely and fail here.
+    const playerBands = vitalsToPlayer.filter((row) => row.kind === 'band')
+    check(
+      'a player’s band rows carry an armour class and still carry no hit point',
+      playerBands.length > 0 &&
+        playerBands.every(
+          (row) =>
+            typeof row.armourClass === 'number' &&
+            !('current' in row) &&
+            !('max' in row),
+        ),
+      `${playerBands.length} band rows, keys ${JSON.stringify(Object.keys(playerBands[0] ?? {}).sort())}`,
+    )
+
+    // THE SCOPE. The GM-layer coin created in section 3 stands for no character, so this
+    // section makes its own: a creature on the GM layer with an armour class that appears
+    // nowhere else in the game.
+    const RAFTERS_AC = 29
+    const rafters = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: 'The Thing In The Rafters',
+      sheet: {
+        kind: 'npc',
+        armourClass: RAFTERS_AC,
+        maxHp: 33,
+        initiativeBonus: 0,
+        actions: [],
+        notes: '',
+      },
+    })
+    createdCharacters.push(rafters.characterId)
+    const raftersToken = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId,
+      name: 'Rafters',
+      layer: 'gm',
+      sizeSquares: 1,
+      tint: '#1f2937',
+      characterId: rafters.characterId,
+      x: 500,
+      y: 500,
+    })
+    created.push(raftersToken.tokenId)
+
+    // A word-boundary scan, so 29 is not found inside 129 or inside a document id.
+    const containsWholeNumber = (haystack, value) =>
+      new RegExp(`(?<![\\w.])${value}(?![\\w.])`).test(haystack)
+
+    const afterRaftersToPlayer = JSON.stringify(
+      await client.query('characters:vitals', { code }),
+    )
+    const afterRaftersToDm = JSON.stringify(
+      await client.query('characters:vitals', { code, dmCode }),
+    )
+    check(
+      'a GM-layer creature’s armour class is absent from a player’s vitals payload, and present in the DM’s',
+      !containsWholeNumber(afterRaftersToPlayer, RAFTERS_AC) &&
+        !afterRaftersToPlayer.includes(rafters.characterId) &&
+        // The positive control. Without it this passes on a payload that failed to build.
+        containsWholeNumber(afterRaftersToDm, RAFTERS_AC) &&
+        afterRaftersToDm.includes(rafters.characterId),
+      `${RAFTERS_AC} ${containsWholeNumber(afterRaftersToDm, RAFTERS_AC) ? 'reached' : 'did not reach'} the DM and ${containsWholeNumber(afterRaftersToPlayer, RAFTERS_AC) ? 'reached' : 'did not reach'} the player`,
+    )
+
+    // AND THE `null` CASE, which is the one a wrong implementation gets wrong by printing
+    // 10. This creature's sheet records no passive perception, so its row must carry null
+    // rather than a number — for the DM, who is the audience that can see it at all.
+    const raftersRowToDm = (await client.query('characters:vitals', { code, dmCode })).find(
+      (row) => row.characterId === rafters.characterId,
+    )
+    check(
+      'a creature with no recorded passive perception travels as null rather than as 10',
+      raftersRowToDm !== undefined &&
+        raftersRowToDm.passivePerception === null &&
+        raftersRowToDm.armourClass === RAFTERS_AC,
+      raftersRowToDm ? JSON.stringify(raftersRowToDm) : 'no row for the rafters at all',
+    )
+
+    // 41. THE WIDENED DICE GRAMMAR, AT BOTH ITS NEW EDGES.
+    //
+    // `feed:rollDice` is the one place an expression legitimately arrives from a person, so
+    // it is where the grammar is reachable as an *argument* rather than as a stored field.
+    // What a deployment adds over the suite here is the whole round trip: fifty dice have to
+    // be generated, validated on the way out through `feed:list`'s own `returns:` validator,
+    // and come back as fifty entries — a projection that capped the array somewhere would
+    // pass convex-test and fail here.
+    // Any seat this run has already made. An ad-hoc roll is announced as the *person*, so
+    // it needs one — and there is no reason for this section to create a third.
+    const feedRoller = seats[0]
+    if (feedRoller) {
+      const beforeRoll = (await client.query('feed:list', { code })).length
+      await client.mutation('feed:rollDice', {
+        code,
+        playerId: feedRoller,
+        expression: '50d6',
+        mode: 'flat',
+        dmOnly: false,
+      })
+      const afterRoll = await client.query('feed:list', { code })
+      const fiftyRow = afterRoll.find((row) => row.roll && row.roll.expression === '50d6')
+      check(
+        'feed:rollDice accepted fifty dice and the line came back with fifty of them',
+        afterRoll.length === beforeRoll + 1 &&
+          fiftyRow !== undefined &&
+          Array.isArray(fiftyRow.roll.dice) &&
+          fiftyRow.roll.dice.length === 50 &&
+          // Every face in range, so this is fifty real d6 rather than a padded array.
+          fiftyRow.roll.dice.every((die) => die.faces === 6 && die.value >= 1 && die.value <= 6),
+        fiftyRow ? `${fiftyRow.roll.dice.length} dice, total ${fiftyRow.roll.total}` : 'no line',
+      )
+
+      await client.mutation('feed:rollDice', {
+        code,
+        playerId: feedRoller,
+        expression: '1d2',
+        mode: 'flat',
+        dmOnly: false,
+      })
+      const afterD2 = await client.query('feed:list', { code })
+      const d2Row = afterD2.find((row) => row.roll && row.roll.expression === '1d2')
+      check(
+        'feed:rollDice accepted the new d2 and rolled a 1 or a 2',
+        d2Row !== undefined &&
+          d2Row.roll.dice.length === 1 &&
+          d2Row.roll.dice[0].faces === 2 &&
+          [1, 2].includes(d2Row.roll.dice[0].value),
+        d2Row ? JSON.stringify(d2Row.roll.dice) : 'no line',
+      )
+
+      // The far side of both edges. `d3` is the case that says d2 was added to an
+      // allow-list rather than the allow-list being abandoned.
+      for (const [label, expression] of [
+        ['one more die than the cap', '51d6'],
+        ['a die the allow-list still refuses', '1d3'],
+      ]) {
+        const rollRefusal = await refusalOf(() =>
+          client.mutation('feed:rollDice', {
+            code,
+            playerId: feedRoller,
+            expression,
+            mode: 'flat',
+            dmOnly: false,
+          }),
+        )
+        check(
+          `feed:rollDice refused ${label} as BadInput`,
+          rollRefusal !== null && rollRefusal.kind === 'BadInput',
+          rollRefusal ? JSON.stringify(rollRefusal) : `the deployment rolled ${expression}`,
+        )
+      }
+    }
   } catch (error) {
     const data = error && error.data ? ` ${JSON.stringify(error.data)}` : ''
     record('the run completed without an unexpected error', false, `${error.message ?? error}${data}`)

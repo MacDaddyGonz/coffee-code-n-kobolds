@@ -8,6 +8,12 @@ import type { Id } from './_generated/dataModel'
 import { MAX_SCENE_NAME_LENGTH } from './lib/codes'
 import { MAX_SCENES_PER_GAME } from './lib/games'
 import { MAX_GRID_SIZE, MIN_GRID_SIZE } from './lib/grid'
+// Imported rather than re-stated, unlike `MAX_SCENE_BYTES` above, and the difference is
+// what the value is. That one is a *promise* — changing it changes what a DM may upload,
+// so a test that imports it cannot notice the promise moving. This is a default nobody
+// has promised anything about: what the assertions are for is that the projection turns
+// absent into whatever it happens to be, not that it is any particular near-black.
+import { DEFAULT_SCENE_BACKGROUND } from './lib/scenes'
 import schema from './schema'
 
 const modules = import.meta.glob('./**/*.ts')
@@ -554,6 +560,122 @@ describe('scenes.updateGrid', () => {
 
     expect(await sceneRow(t, sceneId)).toEqual(before)
     expect((await sceneRow(t, theirs.sceneId))?.gridSize).toBe(MAP_WIDTH / 20)
+  })
+})
+
+describe('scenes.setBackground', () => {
+  /**
+   * The projection turns absent into a colour, so no client ever sees the optional field.
+   * This is the assertion that keeps `backgroundOf` the only reader of it: a scene created
+   * before the column existed and one created a second ago answer identically, because
+   * `create` writes nothing and the read supplies everything.
+   */
+  test('a scene nobody has coloured reads back the default', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const { sceneId } = await makeScene(t, game.code, game.dmCode)
+
+    expect((await sceneRow(t, sceneId))?.backgroundColour).toBeUndefined()
+
+    const active = await t.query(api.scenes.active, { code: game.code })
+    expect(active?.backgroundColour).toBe(DEFAULT_SCENE_BACKGROUND)
+  })
+
+  test('stores the colour and hands it to every client', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const { sceneId } = await makeScene(t, game.code, game.dmCode)
+
+    await t.mutation(api.scenes.setBackground, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId,
+      backgroundColour: '#3B0A0A',
+    })
+
+    // Stored verbatim: the pattern is case-insensitive, and normalising the case here
+    // would be a second spelling of one colour for `firstDifference` to trip over.
+    expect((await sceneRow(t, sceneId))?.backgroundColour).toBe('#3B0A0A')
+
+    // `scenes.active` is the ungated query, which is the point — the colour is not a
+    // secret and reaches a player who holds no DM code.
+    expect((await t.query(api.scenes.active, { code: game.code }))?.backgroundColour).toBe(
+      '#3B0A0A',
+    )
+  })
+
+  /**
+   * The refusal that makes this worth a server check at all. An `<input type="color">`
+   * cannot emit any of these, which is exactly why the guard cannot live in the browser:
+   * every one of them is a string a hand-written client could send, and the value is
+   * handed to a CSS `background-color` on every screen at the table.
+   */
+  test('refuses anything that is not #rrggbb, and keeps the old colour', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const { sceneId } = await makeScene(t, game.code, game.dmCode)
+
+    await t.mutation(api.scenes.setBackground, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId,
+      backgroundColour: '#123456',
+    })
+
+    const bad = [
+      'rgb(0,0,0)',
+      'url(https://example.test/x.png)',
+      'red',
+      '#123',
+      '#1234567',
+      'image-set("x.png" 1x)',
+      '',
+      '#12345g',
+      ' #123456',
+    ]
+    for (const backgroundColour of bad) {
+      await expectKind(
+        t.mutation(api.scenes.setBackground, {
+          code: game.code,
+          dmCode: game.dmCode,
+          sceneId,
+          backgroundColour,
+        }),
+        'BadInput',
+      )
+    }
+
+    expect((await sceneRow(t, sceneId))?.backgroundColour).toBe('#123456')
+  })
+
+  test("needs the DM code, and refuses another game's scene", async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const { sceneId } = await makeScene(t, game.code, game.dmCode)
+    const other = await makeGame(t, 'Somebody Else', 'Ana')
+    const theirs = await makeScene(t, other.code, other.dmCode)
+
+    await expectKind(
+      t.mutation(api.scenes.setBackground, {
+        code: game.code,
+        dmCode: 'NOTTHEDM',
+        sceneId,
+        backgroundColour: '#123456',
+      }),
+      'NotDm',
+    )
+    await expectKind(
+      t.mutation(api.scenes.setBackground, {
+        code: game.code,
+        dmCode: game.dmCode,
+        sceneId: theirs.sceneId,
+        backgroundColour: '#123456',
+      }),
+      'SceneNotFound',
+    )
+
+    expect((await sceneRow(t, sceneId))?.backgroundColour).toBeUndefined()
+    expect((await sceneRow(t, theirs.sceneId))?.backgroundColour).toBeUndefined()
   })
 })
 

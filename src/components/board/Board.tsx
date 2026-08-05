@@ -4,11 +4,11 @@ import { toast } from 'sonner'
 import { BoardEmpty } from '@/components/board/BoardEmpty'
 import { BoardStage } from '@/components/board/BoardStage'
 import { BoardTokenMenu } from '@/components/board/BoardTokenMenu'
+import { BoardToolbar } from '@/components/board/BoardToolbar'
 import { FogLayer } from '@/components/board/FogLayer'
 import { TokenHpPopover } from '@/components/board/TokenHpPopover'
 import { TokenLayers } from '@/components/board/TokenLayers'
 import { ZoomControls } from '@/components/board/ZoomControls'
-import { CalibrateToggle } from '@/components/board/dm/CalibrateToggle'
 import { GridHandlesLayer } from '@/components/board/dm/GridHandlesLayer'
 import { TokenDeleteDialog } from '@/components/board/dm/TokenDeleteDialog'
 import { TokenDuplicateDialog } from '@/components/board/dm/TokenDuplicateDialog'
@@ -51,6 +51,20 @@ export type BoardProps = {
   onClearSelection: () => void
   /** A coin deleted from the board menu. See `GameShell.forgetToken`. */
   onTokenGone: (tokenId: Id<'tokens'>) => void
+  /**
+   * The two board gestures that ask for a *panel* rather than a selection: the DM's
+   * *Edit this coin* and anybody's *Open the sheet*.
+   *
+   * ⚠️ **Named for what the reader asked for and not for the tab it lands on, which is
+   * the whole of why the bug these replace was possible.** Both entries used to route to
+   * one handler that selected the coin and stopped, because the tab was `useState` inside
+   * `RightPane` and no prop reached it — so two menu items promising two different panels
+   * were the same function, and the panel never changed. The shell owns the tab now and
+   * decides which one each of these means; the board says *what happened*, which is the
+   * only thing it can honestly know.
+   */
+  onEditToken: (tokenId: Id<'tokens'>) => void
+  onOpenTokenSheet: (tokenId: Id<'tokens'>) => void
   /**
    * Merged over the base classes, which no longer include an edge of their own. The
    * board is the contents of a pane rather than a card floating on a page, so the
@@ -98,6 +112,8 @@ export function Board({
   onSelectToken,
   onClearSelection,
   onTokenGone,
+  onEditToken,
+  onOpenTokenSheet,
   className,
 }: BoardProps) {
   // The board's outer element, which is what "does the map have focus?" means for
@@ -401,15 +417,28 @@ export function Board({
     setDeleting(tokenId)
   }, [])
 
-  // Selecting the coin *and* leaving this pane is the point of both: the panels that edit
-  // a coin and open a sheet live in the other one, and the shell's selection is what tells
-  // them which coin is being talked about.
+  /**
+   * The two menu entries that leave this pane, each closing the menu on the way out.
+   *
+   * ⚠️ **Two handlers, and they were one.** The panels that edit a coin and open a sheet
+   * live in the other pane under two different tabs, so a single function could only ever
+   * satisfy one of the two entries — and satisfied neither, because selecting a coin does
+   * not move a tab. The shell is handed the gesture and picks the tab; all that is needed
+   * here is to stop pretending the two are the same act.
+   */
   const onMenuEdit = useCallback(
     (tokenId: Id<'tokens'>) => {
-      onSelectToken(tokenId)
+      onEditToken(tokenId)
       setMenu(null)
     },
-    [onSelectToken],
+    [onEditToken],
+  )
+  const onMenuOpenSheet = useCallback(
+    (tokenId: Id<'tokens'>) => {
+      onOpenTokenSheet(tokenId)
+      setMenu(null)
+    },
+    [onOpenTokenSheet],
   )
 
   // A click on the map closes both. It is the "I am done with this creature"
@@ -470,8 +499,42 @@ export function Board({
   // no explanation of what went wrong.
   const drawable = scene !== null && scene.imageUrl !== null
 
+  // Memoised because this component re-renders on every frame of a pan and a zoom, and a
+  // fresh object literal in the JSX below would be an allocation and a style key-walk per
+  // frame for a value that changes only when the DM picks a colour. `ZoomControls` takes a
+  // scale rather than a camera for the same reason, one element down.
+  const surround = useMemo(
+    () => (scene === null ? undefined : { backgroundColor: scene.backgroundColour }),
+    [scene],
+  )
+
   return (
-    <div ref={containerRef} className={cn('bg-muted/40 relative overflow-hidden', className)}>
+    /*
+      ⚠️ **The surround is painted here in the DOM rather than as a Konva rectangle**, and
+      the reason is what a full-viewport `<Rect>` would cost. It would have to live in the
+      background layer *in image space*, so covering the whole viewport at any zoom means
+      recomputing its size and position from the camera on every pan and wheel frame — and
+      `TokenHealthBar`'s note about every layer being re-rasterised on each of those frames
+      is the price. This element already exists, already has the right box, and repaints for
+      nothing. The one thing it does not do is appear in a canvas export, which nothing in
+      this application performs.
+
+      `bg-muted/40` was what this used to be: near-white in light mode, so a map floated in
+      a white page and read as one that had failed to load. `backgroundOf` on the server has
+      already turned a scene with no stored colour into a real one, so there is no `??` here.
+
+      ⚠️ **The class is unconditional and the style is what overrides it**, which is one
+      condition rather than two. An inline `background-color` always beats a class, so the
+      pair needs no proof of mutual exclusivity — the class is simply what shows while there
+      is no scene to ask, which is the loading skeleton and `BoardEmpty`, neither of them a
+      map with a surround. (It was written as a conditional class *and* a conditional style,
+      which is the same fact tested twice and a reader having to check they agree.)
+    */
+    <div
+      ref={containerRef}
+      className={cn('bg-muted/40 relative overflow-hidden', className)}
+      style={surround}
+    >
       {board.loading ? (
         <Skeleton className="absolute inset-0" />
       ) : drawable && scene ? (
@@ -596,7 +659,7 @@ export function Board({
               atY={menu?.y ?? 0}
               onClose={closeMenu}
               onEdit={onMenuEdit}
-              onOpenSheet={onMenuEdit}
+              onOpenSheet={onMenuOpenSheet}
               onDuplicate={openDuplicate}
               onDelete={openDelete}
             />
@@ -644,17 +707,19 @@ export function Board({
             className="absolute bottom-3 left-3"
           />
           {/*
-            Top-left, opposite the zoom bar, because it is a mode rather than a nudge and
-            wants to be visible from across the room while it is on. Offered on the
-            strength of the DM code alone, which authorises nothing — see `CalibrateToggle`.
+            Top-left, opposite the zoom bar. This used to be `CalibrateToggle` alone, on the
+            reasoning that a mode wants to be visible from across the room while it is on —
+            and that argument turned out to apply to the roll mode far more strongly, since
+            advantage is sticky and was two panes away. So the corner holds a toolbar now
+            and the calibrate button is one of its three groups. Everything DM-only inside
+            is offered on the strength of the DM code alone, which authorises nothing.
           */}
-          {board.isDm ? (
-            <CalibrateToggle
-              active={calibrating}
-              onToggle={onToggleCalibrate}
-              className="absolute top-3 left-3"
-            />
-          ) : null}
+          <BoardToolbar
+            isDm={board.isDm}
+            calibrating={calibrating}
+            onToggleCalibrate={onToggleCalibrate}
+            className="top-3 left-3"
+          />
         </>
       ) : (
         <BoardEmpty scene={scene} isDm={board.isDm} />

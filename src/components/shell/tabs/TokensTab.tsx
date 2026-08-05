@@ -1,13 +1,20 @@
 import { memo } from 'react'
 import type { ReactElement } from 'react'
+import { useQuery } from 'convex/react'
 
 import { useCharactersByGroup } from '@/components/board/dm/CharacterRows'
+import { LayerChoice } from '@/components/board/dm/LayerChoice'
 import { MISSING_SHEET, TokenEditPanel } from '@/components/board/dm/TokenEditPanel'
+import { TokenAddDialog } from '@/components/board/dm/TokenAddDialog'
 import { TokenSwatch } from '@/components/board/dm/TokenSwatch'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
 import { PickerRow } from '@/components/ui/picker-row'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useBoardLayers } from '@/hooks/useBoardLayers'
 import { useHiddenFromParty } from '@/hooks/useFog'
+import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicToken } from '@convex/lib/board'
 import type { PublicCharacter } from '@convex/lib/characters'
@@ -62,12 +69,13 @@ const NO_TOKENS: PublicToken[] = []
  * carry those names rather than the board's vocabulary:
  *
  * - `notStarted` — the whole of the lobby, where the query is skipped outright. **A real
- *   state rather than a hypothetical**: `TokenAddDialog` lives in DM tools and needs a scene
- *   on the table rather than a started game, so a DM setting an ambush up before pressing
- *   Start has coins this tab cannot see. Asking `board.tokens` anyway would mean resolving a
- *   signed storage URL per token for a screen the rest of the shell is not showing either
- *   (`MapPane` draws a placeholder, not a board), so the honest answer is a sentence saying
- *   so, in the same words that placeholder uses.
+ *   state rather than a hypothetical, and sharper now that the add button is on this tab**:
+ *   `TokenAddDialog` needs a scene on the table rather than a started game, so a DM setting
+ *   an ambush up before pressing Start can add coins *from this very panel* that the list
+ *   below cannot show. Asking `board.tokens` anyway would mean resolving a signed storage URL
+ *   per token for a screen the rest of the shell is not showing either (`MapPane` draws a
+ *   placeholder, not a board), so the honest answer is a sentence saying so, in the same
+ *   words that placeholder uses.
  * - `loading` — the first frame of a running game, and now only that.
  * - `ready` — every token in the game.
  */
@@ -273,6 +281,23 @@ export function TokensTab({
         </p>
       </div>
 
+      {/*
+        MAKING A COIN, in the tab that is about coins.
+
+        ⚠️ **These two lived under DM tools → Map setup, and that was the wrong filing rather
+        than a small one.** That panel is where a DM gets a *map* in and lines its grid up;
+        the button that creates a creature and the picker deciding which layer it lands on
+        are about the thing this tab lists, and a DM looking for *where do coins come from*
+        looked here first and found a sentence pointing three clicks away. Nothing was
+        re-implemented — both components moved whole.
+
+        A local component for `NewTokenLayer`'s reason, one function down: this is a third
+        region owning a subscription of its own, and inline it was a `useQuery` at the top of
+        the file, a three-way branch two hundred lines below it, and a *second* test of
+        `scene === null` for the sentence underneath.
+      */}
+      <AddCoin code={code} dmCode={dmCode} />
+
       {/* The bounded region, and the four utilities are the whole of the vertical argument —
           the same four the Sheets tab's selector carries, for the reasons written out at
           length there.
@@ -307,10 +332,8 @@ export function TokensTab({
           </div>
         ) : tokenList.tokens.length === 0 ? (
           <p className="text-muted-foreground text-sm">
-            No coins on the board yet. They are added from{' '}
-            <span className="font-medium">DM tools → Map setup → Add a token</span>, which needs a
-            map on the table first — a coin has to land somewhere. Everything about one after
-            that is edited here.
+            No coins yet. <span className="font-medium">Add a token</span> is just above, and
+            everything about one after that is edited below.
           </p>
         ) : (
           <ul className="flex flex-col gap-2">
@@ -374,6 +397,94 @@ export function TokensTab({
       </div>
     </>
   )
+}
+
+/**
+ * ADDING A COIN — the button, the three states of the map it needs, and the layer picker.
+ *
+ * ⚠️ **`{ code }` and nothing else, which is the whole cost of this subscription.**
+ * `useQuery` keys its memo on the serialised arguments, so this is byte-identical to the
+ * entry `useBoard` and `MapSetupPanel` already hold: one cache entry, one socket, one
+ * server-side execution, and this is one more reader of it rather than a second
+ * subscription. That is what made moving the button here free — the alternative, passing the
+ * scene down from `RightPane`, would have put a board fact into the props of a pane memoised
+ * against a divider that moves sixty times a second.
+ *
+ * ⚠️ **Three states rather than a nullable prop on the dialog**, which is what keeps
+ * `TokenAddDialog` unchanged: it needs a scene for the middle square a coin lands on and for
+ * its own title, and threading a null through it would put four guards inside a component
+ * that has a scene in every case it can actually run. *Waiting* and *there is no map* are
+ * this caller's to tell apart anyway — printing "add a map first" for a frame while the
+ * answer is in flight is the same mistake `TokenPlacementControl` refuses next door.
+ *
+ * **One branch decides the control and the sentence together.** They were two tests of
+ * `scene === null` at different depths, which is one fact asked twice and the shape where a
+ * button and the note under it come to describe different states.
+ *
+ * `shrink-0` for the header's reason: this is the answer to *how do I add one*, and a long
+ * list must not be able to squeeze it off the top.
+ */
+function AddCoin({ code, dmCode }: { code: string; dmCode: string }) {
+  const scene = useQuery(api.scenes.active, { code })
+
+  const [control, note] =
+    scene === undefined
+      ? ([<Skeleton key="loading" className="h-8 w-28" />, null] as const)
+      : scene === null
+        ? ([
+            <Button key="none" size="sm" variant="outline" disabled>
+              Add a token
+            </Button>,
+            <>
+              No map on the table, and a coin has to land on one. Put one there under{' '}
+              <span className="font-medium">DM tools → Map setup</span> and this button wakes
+              up.
+            </>,
+          ] as const)
+        : ([<TokenAddDialog key="add" code={code} dmCode={dmCode} scene={scene} />, null] as const)
+
+  return (
+    <div className="flex shrink-0 flex-col gap-2 border-b p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-muted-foreground text-xs">
+          A coin belongs to the game rather than to a map, so one villain can stand on several.
+        </p>
+        {control}
+      </div>
+
+      {note === null ? null : <p className="text-muted-foreground text-xs">{note}</p>}
+
+      <div className="flex flex-col gap-2">
+        <Label>New tokens land on</Label>
+        {/* The add dialog's own picker, so the layers a DM may create on are described in the
+            same three sentences wherever the question is asked — and both read the one
+            `useBoardLayers` cell, so this and the copy inside the dialog are one setting shown
+            twice rather than two to keep in step. Never disabled: nothing here writes to the
+            server, so there is never a call in flight to wait out. */}
+        <NewTokenLayer code={code} />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Which layer the DM's next coin lands on.
+ *
+ * **Half of what used to be `LayerTools` in `MapSetupPanel`**, and the split is along the
+ * line the two halves were always on: *where new coins go* is about coins, and *what this
+ * browser paints* is about looking at a map. The second half stayed where it was.
+ *
+ * Splitting costs nothing because `useBoardLayers` is a module-level subscribable store
+ * rather than `useState` — its own docblock says it was written that way precisely because
+ * the DM's control, the board's renderer and the add dialog are in three different parts of
+ * the screen. A second consumer is what it is for.
+ *
+ * A local component rather than a file of its own: it is one control over one hook, and this
+ * tab is the only thing that will ever mount it.
+ */
+function NewTokenLayer({ code }: { code: string }) {
+  const { active, setActive } = useBoardLayers(code)
+  return <LayerChoice layer={active} onChange={setActive} disabled={false} />
 }
 
 /**

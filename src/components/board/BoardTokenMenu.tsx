@@ -54,9 +54,19 @@ export type BoardTokenMenuProps = {
   atX: number
   atY: number
   onClose: () => void
-  /** Select the coin and send the reader to the panel that edits it. */
+  /**
+   * Select the coin and send the reader to the panel that edits it.
+   *
+   * ⚠️ **These two were the same function, and both docblocks said this anyway.** The tab
+   * was `useState` inside `RightPane`, so nothing on the board could move it; `Board`
+   * passed one handler to both props, and it selected the coin and stopped. Two entries
+   * with two labels did one thing, and the thing neither of them did is the half these
+   * sentences describe. `GameShell` owns the tab now. Kept as two props rather than
+   * collapsed into one, because two menu items that mean two things is the fact — and a
+   * single prop is how they came to be one function in the first place.
+   */
   onEdit: (tokenId: Id<'tokens'>) => void
-  /** Select the coin and send the reader to the sheet behind it. */
+  /** Select the coin and send the reader to the sheet behind it. See the ⚠️ above. */
   onOpenSheet: (tokenId: Id<'tokens'>) => void
   /** Ask the board to open the duplicate dialog. See the ⚠️ below. */
   onDuplicate: (tokenId: Id<'tokens'>) => void
@@ -67,9 +77,17 @@ export type BoardTokenMenuProps = {
 /**
  * Right-click a coin.
  *
- * **A surface over five things that already work**, which is why it is the last thing this
+ * **A surface over five things that already work**, which is why it is the last thing that
  * milestone built: every entry here routes to a mutation or a panel that has its own tests
  * and its own copy. Nothing is decided in this file.
+ *
+ * ⚠️ **That was true of five of the six, and the sixth shipped broken for a whole
+ * milestone.** *Edit this coin* routed to a panel that exists, on a tab nothing here could
+ * reach — see the ⚠️ on `onEdit`. Worth leaving as a note on the sentence rather than
+ * quietly correcting it: *a surface over things that already work* is only a safe thing to
+ * say once somebody has checked that the surface can actually reach them, and the shape of
+ * bug it hides is invisible to every guard in this repo. Those prove what a server will not
+ * send; this was a client asking for nothing at all.
  *
  * ⚠️ **The label naming the coin is not decoration — it is what makes leaving the selection
  * alone possible.** Right-clicking deliberately does not select: hijacking the selection
@@ -83,10 +101,10 @@ export type BoardTokenMenuProps = {
  * both dialogs as siblings of this menu and these items set their open state — which is
  * why `ConfirmDialog` grew a controlled pair.
  *
- * **Who gets what.** The DM gets five entries; a seat that controls the coin gets two.
- * Anybody else gets nothing at all — and that decision lives one level up, in the handler
- * that decides whether to open this at all, because the honest way to give somebody no menu
- * is to never suppress their browser's own.
+ * **Who gets what.** The DM gets six entries; a seat that controls the coin gets two, and
+ * one of the six is the same submenu. Anybody else gets nothing at all — and that decision
+ * lives one level up, in the handler that decides whether to open this at all, because the
+ * honest way to give somebody no menu is to never suppress their browser's own.
  */
 export const BoardTokenMenu = memo(function BoardTokenMenu({
   code,
@@ -163,6 +181,21 @@ export const BoardTokenMenu = memo(function BoardTokenMenu({
             <>
               <DropdownMenuItem onSelect={() => onEdit(token._id)}>Edit this coin</DropdownMenuItem>
 
+              {/*
+                ⚠️ **The DM gets this too now, and it was omitted rather than declined.** The
+                submenu shipped on the controller's branch alone, so the one person who marks
+                most of the creatures at the table — every monster in the fight — had to
+                select the coin, cross to the Tokens tab and find the picker, while a player
+                could tick *concentrating* on their own hero from the map. Nothing had to
+                change behind it: `setMarkers` takes a DM through `resolveDmAccess` and has
+                since it was written.
+
+                Extracted rather than written out twice: seventeen `DropdownMenuCheckboxItem`s
+                with a colour, a glyph and a `preventDefault` are exactly the block that
+                drifts one branch at a time.
+              */}
+              <ConditionsSubmenu token={token} onToggle={toggle} />
+
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>Who can see it</DropdownMenuSubTrigger>
                 <DropdownMenuSubContent>
@@ -230,32 +263,7 @@ export const BoardTokenMenu = memo(function BoardTokenMenu({
             </>
           ) : (
             <>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>Conditions</DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="max-h-80 overflow-y-auto">
-                  {TOKEN_MARKERS.map((marker) => (
-                    <DropdownMenuCheckboxItem
-                      key={marker}
-                      checked={token.markers.includes(marker)}
-                      // Ticking three conditions should be one opening rather than three
-                      // right-clicks, so the menu is told not to close on select.
-                      onSelect={(event) => {
-                        event.preventDefault()
-                        toggle(marker)
-                      }}
-                    >
-                      <span
-                        aria-hidden
-                        className="inline-flex size-4 items-center justify-center rounded-full text-[9px] font-bold"
-                        style={{ backgroundColor: TOKEN_MARKER_PIPS[marker].fill, color: PIP_INK }}
-                      >
-                        {TOKEN_MARKER_PIPS[marker].glyph}
-                      </span>
-                      {TOKEN_MARKER_LABELS[marker]}
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
+              <ConditionsSubmenu token={token} onToggle={toggle} />
 
               {/*
                 Omitted for a coin standing for nobody, which is the honest answer rather
@@ -274,3 +282,63 @@ export const BoardTokenMenu = memo(function BoardTokenMenu({
     </div>
   )
 })
+
+/**
+ * The seventeen conditions, tickable.
+ *
+ * **One copy for the two branches above.** It was written inline on the controller's, and
+ * when the DM needed it the choice was to duplicate seventeen checkbox items — each with a
+ * colour, a glyph, a `preventDefault` and a `checked` — or to lift them. The duplication is
+ * the shape that drifts: `TokenAppearanceFields`' docblock records what happened the last
+ * time a block of this size existed twice in this codebase, and it drifted inside one
+ * milestone.
+ *
+ * ⚠️ **The array is iterated from the vocabulary and intersected with what is stored, never
+ * mapped over the stored array.** `token.markers.includes(marker)` is the whole of it — so
+ * a value written by a newer deployment during a non-atomic schema push draws no row here
+ * rather than crashing a `Record` lookup inside a portal over the board. That is CLAUDE.md
+ * invariant 9's fail-closed *runtime* behaviour, in the one place on this surface it can
+ * have a home; `normaliseMarkers` on the server is the other half and its docblock names
+ * this one.
+ *
+ * The write itself is the caller's, and stays there deliberately: it is absolute, built by
+ * the shared `toggleMarker`, and reported through the caller's one `useLobbyAction` — so
+ * this component holds no state, no mutation and no error, and cannot become a second
+ * writer of `tokenMarkers`.
+ */
+function ConditionsSubmenu({
+  token,
+  onToggle,
+}: {
+  token: BoardToken
+  onToggle: (marker: TokenMarker) => void
+}) {
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>Conditions</DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="max-h-80 overflow-y-auto">
+        {TOKEN_MARKERS.map((marker) => (
+          <DropdownMenuCheckboxItem
+            key={marker}
+            checked={token.markers.includes(marker)}
+            // Ticking three conditions should be one opening rather than three right-clicks,
+            // so the menu is told not to close on select.
+            onSelect={(event) => {
+              event.preventDefault()
+              onToggle(marker)
+            }}
+          >
+            <span
+              aria-hidden
+              className="inline-flex size-4 items-center justify-center rounded-full text-[9px] font-bold"
+              style={{ backgroundColor: TOKEN_MARKER_PIPS[marker].fill, color: PIP_INK }}
+            >
+              {TOKEN_MARKER_PIPS[marker].glyph}
+            </span>
+            {TOKEN_MARKER_LABELS[marker]}
+          </DropdownMenuCheckboxItem>
+        ))}
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  )
+}

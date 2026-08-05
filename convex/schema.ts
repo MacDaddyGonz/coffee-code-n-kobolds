@@ -227,6 +227,15 @@ export default defineSchema({
     gridOffsetY: v.number(),
     // Maps that arrive with a grid printed on them do not want ours drawn over it.
     gridVisible: v.boolean(),
+    // What is painted around the map, where the image does not reach.
+    //
+    // ⚠️ **Optional where `gridVisible` beside it is required, and the difference is the
+    // table's age rather than the field's importance.** That one shipped *with* this table,
+    // so every row could carry it from the first write; this arrives against rows that
+    // already exist, and a schema push is not atomic. Read through `backgroundOf` in
+    // lib/scenes.ts and nowhere else — the discipline lib/sheet.ts states for every field
+    // its own schema could not require.
+    backgroundColour: v.optional(v.string()),
   }).index('by_gameId', ['gameId']),
 
   // STABLE token data — art, name, size, layer, owning character. Low churn: this

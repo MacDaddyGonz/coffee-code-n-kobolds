@@ -30,8 +30,16 @@ const LABEL_FONT_SIZE = 9
  * constant from there instead would close the loop, and a circular module whose
  * cycle is only survivable because both reads happen to be inside a render function
  * is not a thing to leave lying about for the next person.
+ *
+ * ⚠️ **It was 26 and is now 30, and the number is not free to pick.** `pipCapacity` in
+ * `@/lib/markers` requires this to hold at least two condition pips —
+ * `COIN_DETAIL_MIN_DIAMETER >= 2 * PIP_DIAMETER + PIP_GAP` — and `markers.test.ts`
+ * asserts it. The pips grew to match the armour-class circle beside them, so this had to
+ * follow, and it followed to the *smallest* number that still holds two rather than to a
+ * comfortable margin: detail hidden on a coin that could carry it is the cost on the other
+ * side. The visible effect is that coin detail now appears at a slightly higher zoom.
  */
-export const COIN_DETAIL_MIN_DIAMETER = 26
+export const COIN_DETAIL_MIN_DIAMETER = 30
 
 /**
  * The two cursor handlers that close over nothing, declared once for the module.

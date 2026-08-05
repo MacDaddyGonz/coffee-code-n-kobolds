@@ -218,6 +218,24 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
      point, and Convex throws if anyone ever adds one. That is the stronger guarantee, and it is
      available only because this particular secret happens to be a field.
 
+   ⚠️ **That union now carries two numbers on *both* members, and the guarantee above is unchanged
+   — know the difference before citing either.** `armourClass` and `passivePerception` are
+   **published** to every audience by [ADR 0014](docs/adr/0014-what-a-coin-says-about-itself.md), so
+   they sit on `exact` and on `band` alike. The promise the union exists for is *the player-facing
+   variant has nowhere to put a hit point*, and it holds word for word: `band` still has no
+   `current` and no `max`. A field on **both** members is not a discriminator question at all — the
+   union has nothing to say about a fact both audiences get. So this is a published field added, not
+   a guard loosened, and `vitals.test.ts` pins the real claim mechanically: **no member of the band
+   variant is a bare `float64`**, which is exactly what `current: v.number()` would be, while both
+   published fields are `v.union(v.number(), v.null())`.
+
+   **The scope is what keeps it defensible, and it is server-side.** `visibleVitals` drops a
+   creature the caller may not see *before* it assembles either variant, so a GM-layer or fogged
+   creature contributes no row and therefore no armour class. `maySeeCharacter` is untouched, and
+   `characters.sheet` still refuses an ordinary NPC. **The set of creatures a player hears about did
+   not change** — only what a row for one of them says. Do not read this as licence to move another
+   field onto that payload: a second one is a second decision and needs its own ADR.
+
    **There is a third shape, and it is a leaked *module*.** The two premade corpora —
    `convex/lib/library/` and `convex/lib/bestiary/` — are content nothing outside resolution has any
    business reading, and two different guards hold that:
@@ -381,8 +399,29 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
     d6's 1 come up about 2% more often than its 5, forever, on every damage roll in the game.
 
     The **die-count cap is load-bearing** and is the grammar rather than a separate check:
-    `ROLL_PATTERN` admits 1–20 dice and `MAX_ROLL_DICE` is that fact named, so a client cannot ask
-    the physics engine for 99,999 dice. A scaled creature's damage already goes through it.
+    `ROLL_PATTERN` admits **1–50 dice over eight faces — d2, d4, d6, d8, d10, d12, d20, d100** —
+    and `MAX_ROLL_DICE` is that fact named, so a client cannot ask the physics engine for 99,999
+    dice. A scaled creature's damage already goes through it.
+
+    ⚠️ **It was 1–20 over seven faces, and it moved by decision rather than by drift.** The ad-hoc
+    dice tray wanted a d2 and a 1×–50× count;
+    [ADR 0014](docs/adr/0014-what-a-coin-says-about-itself.md) records it and
+    [docs/requirements.md](docs/requirements.md) carries the amendment. Two things to know before
+    touching it again:
+
+    - **It is one grammar for two callers**, and that was the contested part. A sheet entry and a
+      string somebody types in the tray are checked by this one expression, with no second bound
+      anywhere — so the price, taken knowingly, is that a stored damage expression may now
+      legitimately read `30d6`. Two caps are two things that agree on the day they are written; if
+      this has to be re-narrowed, narrow it *here*, for both.
+    - **`MAX_ROLL_DICE`'s docblock is the checklist** and it was used as one. Moving the number
+      moves the regex, the constant, both `clamp` calls in `lib/dice.ts`, the CR scaler that reads
+      it to bound its multiplication, `ORDINARY_FACES` in `src/lib/dice/notation.ts` — the
+      renderer's own face list, which nothing checks against the grammar — and this paragraph.
+
+    ⚠️ **The renderer has no die-count cap at all, so the grammar is also the rigid-body count.**
+    Fifty dice is fifty bodies in the physics engine. If that turns out to be unusable the fix is a
+    *renderer* cap that shows a subset and says so — **never** a second grammar.
 
 ### Threat model — what the invariants above are for, and where the line is
 
@@ -473,11 +512,28 @@ the copy on the layer picker. **A partial guard described as a whole one is wors
 because somebody plans an ambush around it — which is why this paragraph exists rather than a
 sentence saying fog hides monsters.
 
+⚠️ **A fourth register, and it is the only one where this project has taken a secret it was keeping
+and given it away.** A creature's **armour class and passive perception** are now sent to every
+player who can see its coin — see [ADR 0014](docs/adr/0014-what-a-coin-says-about-itself.md) and the
+amendment in [docs/requirements.md](docs/requirements.md), which is the first in that section to lift
+a *secrecy guarantee* rather than a rules exclusion. ADR 0005 used a dragon's armour class as **the**
+worked example of the row-shaped secret, and that clause is struck through in place there.
+
+Be precise about what moved, because both sloppy readings are wrong. **What did not move is the
+scope:** `visibleVitals` drops a creature the caller may not see before it builds a row, so a
+GM-layer or fogged creature publishes nothing — the set of creatures a player hears about is the same
+set it was. `maySeeCharacter` is untouched and the rest of the stat block is exactly as unreachable.
+**What moved is one payload's contents, by one deliberate act with an author** — the maintainer was
+shown that the number was withheld and chose to publish it. The GM layer is still where a creature
+that must not be known about goes.
+
 The line: **not sending a secret is nearly free, so it is required; proving who is asking is not, so
-it is out of scope.** That still holds exactly as written — a secret the DM has *not* published is
-still not sent, and never hidden in the browser instead. Read this as licence to ship DM data to
-players and you have inverted it. What would move the line is an audience, not a feature — the game
-being played outside the trusted group.
+it is out of scope.** That still holds exactly as written for every secret nobody has deliberately
+published — such a secret is still not sent, and never hidden in the browser instead. Read either
+this paragraph or the one above it as licence to ship DM data to players and you have inverted them
+both: a published fact is one somebody decided to publish, on the record, and everything else is a
+secret. What would move the line itself is an audience, not a feature — the game being played outside
+the trusted group.
 
 ## Rules scope
 
@@ -543,6 +599,18 @@ no damage is applied, and nothing decides whether an attack hit. The sole amendm
 **Included** list rather than lift one from the Excluded list — *"Turns consist only of 1 action, 1
 bonus action and 1 reaction"* is a rule the table keeps and the app does not enforce, and saying so
 is the point, because an absence reads as an oversight.
+
+⚠️ **Board polishing lifted no rules exclusion either — that is five milestones in a row — but its
+two amendments are the first pair in this project that are not about rules at all, and neither is
+small.** One publishes a creature's **armour class and passive perception** on its coin, which lifts
+a **secrecy** guarantee rather than a rules one and is the only entry in
+[docs/requirements.md](docs/requirements.md)'s amendments section of that kind. The other widens
+`ROLL_PATTERN` to admit **d2 and fifty dice**, which is invariant 10's cap and therefore not a
+constant bump. Both went through the same door CR scaling passed and the four declined gaps below
+did not: *does something now change a number a player rolls against without a person asking it to?*
+Neither does. Nothing is compared to an armour class, nothing notices anybody, and fifty dice roll
+only when somebody asks for fifty dice. See
+[ADR 0014](docs/adr/0014-what-a-coin-says-about-itself.md).
 
 ⚠️ **Four neighbouring gaps were closed by declining them, and that is the discipline rather than
 laziness — but two of the four have since been reopened deliberately, so read the marks.**

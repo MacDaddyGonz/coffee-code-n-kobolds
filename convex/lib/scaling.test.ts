@@ -23,6 +23,7 @@ import {
   MIN_MAX_HP,
   MIN_PASSIVE_PERCEPTION,
   MIN_SAVE_DC,
+  ROLL_FACES,
   bestiarySheetValidator,
   clampHp,
   isValidRoll,
@@ -1023,7 +1024,19 @@ describe('the bounds are a tripwire rather than a repair', () => {
 // 5. scaleRoll — the exhaustive sweep
 // ---------------------------------------------------------------------------
 
-const FACES = [4, 6, 8, 10, 12, 20, 100] as const
+/**
+ * ⚠️ **`ROLL_FACES` rather than a hand-written list, and the hand-written one had already
+ * gone stale inside the commit that widened the grammar.** This sweep exists to prove
+ * `scaleRoll` can never emit a string `isValidRoll` refuses — so a face the grammar admits
+ * and this array omits is a hole in exactly the guard, silently. `d2` was that face for one
+ * commit. The count beside it never had the problem, because every reader of the cap reads
+ * `MAX_ROLL_DICE`.
+ *
+ * This is the one place in this file that imports the thing it is testing against, and it
+ * is the right call here: the claim is *the scaler agrees with the grammar*, which a second
+ * copy of the grammar cannot check.
+ */
+const FACES = ROLL_FACES
 const MODS = [-99, -1, 0, 1, 2, 99] as const
 
 /** The canonical spelling: no `+0` suffix, because no stat block has ever had one. */
@@ -1113,7 +1126,9 @@ describe('scaleRoll cannot emit a string the sheet validator refuses', () => {
       // Things `isValidRoll` refuses. Rewriting one would repair a typo in silence.
       '1d7',
       '0d6',
-      '30d6',
+      // Over the die cap, which is fifty since ADR 0014 — `30d6` used to be here and is
+      // now a roll the grammar accepts and this function will happily scale.
+      '51d6',
       '',
       'banana',
       '2d6 + 3',
@@ -1164,13 +1179,18 @@ describe('scaleRoll cannot emit a string the sheet validator refuses', () => {
    * is *distributed* is part of what it feels like to fight — so the remainder has
    * to land in the flat modifier or it is simply lost.
    */
-  test('a count driven past twenty is absorbed by the flat modifier, not dropped', () => {
-    const out = scaleRoll('10d10', rowAt(6).damage / rowAt(1).damage)
-    expect(out).toBe('20d10+62')
+  // ⚠️ **The input moved from `10d10` to `20d10` when the cap moved from twenty to fifty,
+  // and the reason is worth stating: at this ratio ten dice now scale to thirty-one, which
+  // is under the cap, so the old input would have gone on passing while testing nothing.
+  // A boundary test that stops sitting on its boundary is the failure this file's other
+  // ⚠️s are about.
+  test('a count driven past the cap is absorbed by the flat modifier, not dropped', () => {
+    const out = scaleRoll('20d10', rowAt(6).damage / rowAt(1).damage)
+    expect(out).toBe('50d10+69')
     expect(SIMPLE_ROLL.exec(out)![1]).toBe(String(MAX_ROLL_DICE))
     // Expected damage still lands on target — that is the whole point of the
     // modifier absorbing the overflow.
-    const target = averageOf('10d10') * (rowAt(6).damage / rowAt(1).damage)
+    const target = averageOf('20d10') * (rowAt(6).damage / rowAt(1).damage)
     expect(Math.abs(averageOf(out) - target)).toBeLessThanOrEqual(0.5)
   })
 
@@ -1245,7 +1265,7 @@ describe('scaleRoll cannot emit a string the sheet validator refuses', () => {
     // enough that the die cap has already absorbed everything else — at which point
     // expected damage is knowingly no longer preserved.
     const up = scaleRoll('20d4+99', rowAt(6).damage / rowAt(0).damage)
-    expect(up).toBe('20d4+999')
+    expect(up).toBe('50d4+999')
     expect(isValidRoll(up)).toBe(true)
     const down = scaleRoll('1d4-99', rowAt(6).damage / rowAt(0).damage)
     expect(down).toBe('13d4-999')

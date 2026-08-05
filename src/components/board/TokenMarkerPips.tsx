@@ -1,29 +1,20 @@
 import { memo, useMemo } from 'react'
-import { Circle, Group, Text } from 'react-konva'
+import { Group } from 'react-konva'
+
+// The disc itself, shared with the stat badges on the other shoulder — see its docblock
+// for why it stopped being local to this file.
+import { TokenPip } from '@/components/board/TokenPip'
 
 import {
   PIP_DIAMETER,
   PIP_FONT_SIZE,
   PIP_GAP,
-  PIP_INK,
   PIP_ROW_GAP,
   PIP_UNIT,
   PIP_STROKE,
   TOKEN_MARKER_PIPS,
   markerRow,
 } from '@/lib/markers'
-
-/**
- * The dark ring every pip is drawn with.
- *
- * A stroke rather than a shadow, and it is not decoration: five fills have to read on
- * whatever map art happens to be under them, and a ten-pixel disc of amber on a sandy
- * tavern floor is a disc nobody can find. `TokenCoin`'s hidden mark and
- * `TokenHealthBar`'s track make the same choice with the same reasoning — a blurred
- * canvas shadow is the most expensive primitive on this board and is paid once per pip
- * per creature per frame of a pan, where a hairline stroke is free.
- */
-const PIP_EDGE = 'rgba(2, 6, 23, 0.75)'
 
 /**
  * The `+n` counter's fill.
@@ -115,7 +106,7 @@ export const TokenMarkerPips = memo(function TokenMarkerPips({
   return (
     <Group listening={false}>
       {shown.map((marker, index) => (
-        <Pip
+        <TokenPip
           key={marker}
           x={left + index * step}
           y={y}
@@ -135,7 +126,7 @@ export const TokenMarkerPips = memo(function TokenMarkerPips({
           authoritative reading in words, which is two presses away in the editor and in
           the board menu. */}
       {overflow > 0 ? (
-        <Pip
+        <TokenPip
           x={left + shown.length * step}
           y={y}
           radius={pipRadius}
@@ -148,62 +139,3 @@ export const TokenMarkerPips = memo(function TokenMarkerPips({
     </Group>
   )
 })
-
-/**
- * One disc and the character on it.
- *
- * A local component rather than the two nodes written twice, because the counter is the
- * same disc as a condition and only its fill and its glyph differ — two copies is where
- * a stroke width gets tuned on the pips and not on the `+n` beside them.
- *
- * The text is centred the way `TokenCoin` centres its initials: a box the size of the
- * disc, anchored at its top-left, with Konva doing the alignment. Konva has no way to
- * centre a glyph on a point, and measuring one per pip per frame is not a thing to do
- * on a board of two hundred coins.
- */
-function Pip({
-  x,
-  y,
-  radius,
-  stroke,
-  fontSize,
-  fill,
-  glyph,
-}: {
-  x: number
-  y: number
-  radius: number
-  stroke: number
-  fontSize: number
-  fill: string
-  glyph: string
-}) {
-  return (
-    <Group x={x} y={y}>
-      <Circle
-        radius={radius}
-        fill={fill}
-        stroke={PIP_EDGE}
-        strokeWidth={stroke}
-        perfectDrawEnabled={false}
-      />
-      <Text
-        text={glyph}
-        x={-radius}
-        y={-radius}
-        width={radius * 2}
-        height={radius * 2}
-        align="center"
-        verticalAlign="middle"
-        fontSize={fontSize}
-        fontStyle="bold"
-        // One ink for all six fills, five of them from the vocabulary and the counter's
-        // own. `@/lib/markers` argues it: every fill is dark enough that white reads on
-        // it, and a per-fill ink is a second table whose failure mode is a pip that has
-        // gone invisible on exactly one condition.
-        fill={PIP_INK}
-        perfectDrawEnabled={false}
-      />
-    </Group>
-  )
-}

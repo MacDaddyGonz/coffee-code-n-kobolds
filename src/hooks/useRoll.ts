@@ -29,14 +29,32 @@ import type { RollMode, RollRequest } from '@convex/lib/roll'
  * those components is heavily commented about what it *does* care about, so the diff would
  * be noise in exactly the files worth reading.
  *
- * ⚠️ **Every provider is mounted inside `RightPane`'s memo boundary, and that is not
- * incidental.** The divider sets state in `GameShell` sixty times a second and `RightPane`
- * is memoised against it; a context whose value is a fresh object per render is fine
- * *inside* that boundary and would be a disaster crossing it. Same rule the pane already
- * states for `SheetFocus` and the tokens array: what must stay primitive is what crosses
- * *into* the memo, not what is built within it. Two of the three are mounted at the top of
- * that pane; the target is mounted by `CharacterSheetView`, which is further down the tree
- * and still comfortably inside the boundary.
+ * ⚠️ **`RollProvider` is mounted in `GameShell` — *outside* `RightPane`'s memo boundary —
+ * and this warning used to say it must not be. Read both halves.**
+ *
+ * The warning: the divider sets state in `GameShell` sixty times a second and both panes are
+ * memoised against it, so **a context whose value is a fresh object per render is fine
+ * inside that boundary and is a disaster crossing it.** That is the same rule the pane
+ * states for `SheetFocus` and the tokens array, and it is still true.
+ *
+ * Why this value crosses it safely, which is a property of the value rather than a
+ * relaxation of the rule. The roll modes are on the map now, so both panes send rolls and
+ * the provider has to wrap both — and it satisfies the condition the warning names, by
+ * construction rather than by luck:
+ *
+ * - Both context values are `useMemo`'d on dependencies that move **only on a human
+ *   action**, and the two senders are stable for the whole session because they read the
+ *   mode from the refs below. So a divider drag re-renders the provider and produces the
+ *   *same two objects*, and no consumer re-renders.
+ * - A mode flip re-renders the provider with an **unchanged `children` element reference**,
+ *   which React bails out of — so only the consumers reconcile, which is what a context is
+ *   for.
+ *
+ * **`RollTarget` is the one still mounted inside the boundary**, by `CharacterSheetView`,
+ * and there is no reason to move it: only the sheet has a target.
+ *
+ * The test for anything else considering this move is the two bullets above, not the
+ * precedent. A provider whose value is rebuilt per render still must not cross.
  *
  * ⚠️ **Three and not one, because React context has no selector.** A consumer re-renders
  * when the context *value* changes, whatever part of it that consumer actually reads — so

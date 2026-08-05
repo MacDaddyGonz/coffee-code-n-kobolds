@@ -28,6 +28,33 @@ export { MAX_SCENE_BYTES } from './limits'
 export const DEFAULT_SQUARES_ACROSS = 20
 
 /**
+ * What is painted around a map that has never been given a colour.
+ *
+ * A near-black rather than the near-white the shell used to paint, because that is what a
+ * board actually wants: a lit map on a dark surround reads as a map on a table, and the
+ * white one read as a map that had failed to load into a bigger white page. The DM can
+ * pick anything.
+ *
+ * ⚠️ **A real colour and never `null`, which is what makes `backgroundOf` a total
+ * function.** The alternative — letting absent mean *whatever the stylesheet was doing* —
+ * puts the default in the CSS and the override in the database, so the two would have to
+ * be kept in step by memory and a screenshot would be the only way to tell they had
+ * drifted. One answer, from one accessor.
+ */
+export const DEFAULT_SCENE_BACKGROUND = '#111114'
+
+/**
+ * The colour painted around this map. **The only reader of the optional field.**
+ *
+ * The schema could not require it — see the note on the column — so this is where absent
+ * becomes a value, exactly once. A row written before the field existed and a row whose
+ * DM has never opened the picker are the same thing and get the same answer.
+ */
+export function backgroundOf(scene: Doc<'scenes'>): string {
+  return scene.backgroundColour ?? DEFAULT_SCENE_BACKGROUND
+}
+
+/**
  * The only shape of a scene a query may return.
  *
  * `imageId` is deliberately absent: a raw storage id is useless to a browser and
@@ -46,6 +73,10 @@ export const publicSceneValidator = v.object({
   gridOffsetX: v.number(),
   gridOffsetY: v.number(),
   gridVisible: v.boolean(),
+  // Required *here* even though the column is optional, which is the point of a projection:
+  // `backgroundOf` has already turned absent into a colour, so no client ever has to know
+  // this field arrived late or what it would have meant if it were missing.
+  backgroundColour: v.string(),
 })
 
 export type PublicScene = Infer<typeof publicSceneValidator>
@@ -68,6 +99,7 @@ export async function publicScene(ctx: QueryCtx, scene: Doc<'scenes'>): Promise<
     gridOffsetX: scene.gridOffsetX,
     gridOffsetY: scene.gridOffsetY,
     gridVisible: scene.gridVisible,
+    backgroundColour: backgroundOf(scene),
   }
 }
 

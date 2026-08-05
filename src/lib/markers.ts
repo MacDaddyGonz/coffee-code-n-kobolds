@@ -121,15 +121,36 @@ export const TOKEN_MARKER_PIPS: Record<TokenMarker, { glyph: string; fill: strin
  * The row sits **below** the coin, between the rim and the name, which is the last
  * unoccupied strip: the bar owns the space above (`BAR_GAP`), the hidden-from-party
  * mark owns the upper-right shoulder, and the name owns what is below the row.
+ *
+ * ⚠️ **These grew, and `COIN_DETAIL_MIN_DIAMETER` had to grow with them.** They shipped at
+ * 10 px with a 7 px glyph, which is legible on a screenshot and not across a table — and
+ * the request that moved them was to make a condition read like the armour-class circle
+ * beside it, so they are now the same size as one. What that costs is spelled out under
+ * `pipCapacity`: the threshold at which a coin shows any detail at all rises from 26 to 30,
+ * so detail appears at a slightly higher zoom than it used to. That is a real behaviour
+ * change rather than a rounding, and it is an acceptance criterion so it cannot be quietly
+ * put back.
  */
-export const PIP_DIAMETER = 10
+export const PIP_DIAMETER = 14
 export const PIP_GAP = 2
 /** Coin rim → row top. */
 export const PIP_ROW_GAP = 3
 /** Row bottom → name top. */
 export const PIP_NAME_GAP = 2
-export const PIP_FONT_SIZE = 7
+export const PIP_FONT_SIZE = 9
 export const PIP_STROKE = 1
+
+/**
+ * The glyph size on a **stat badge** — the same disc carrying a *number* instead of a
+ * letter.
+ *
+ * Smaller than `PIP_FONT_SIZE` because an armour class of 22 has to fit inside the circle
+ * a `P` sits in, and two digits at nine pixels clip. Here rather than in the component for
+ * the reason every other dimension on this list is here: `TokenStatBadges` and
+ * `TokenMarkerPips` draw the same disc, and a size living beside only one of them is the
+ * half that gets tuned when somebody adjusts the other.
+ */
+export const PIP_BADGE_FONT_SIZE = 8
 
 /**
  * How much vertical room a row of pips takes, in screen pixels.
@@ -155,22 +176,30 @@ export const PIP_UNIT = PIP_DIAMETER + PIP_GAP
  *
  * `n` pips need `n * PIP_DIAMETER + (n - 1) * PIP_GAP` across, which rearranges to
  * the `+ PIP_GAP` in the numerator — the trailing gap that the last pip does not
- * need. So 26 px holds 2, 35 holds 3, 46 holds 4, 70 holds 6, 140 holds 11, and 210
+ * need. So 30 px holds 2, 46 holds 3, 62 holds 4, 94 holds 6, 174 holds 11, and 270
  * holds all seventeen.
  *
  * ⚠️ **`capacity >= 2` is guaranteed at every size this is ever called at, and the
  * guarantee is a coupling between two constants in two files.** `TokenCoin` draws
  * none of this except behind `showDetail`, which is `diameter * scale >=
- * COIN_DETAIL_MIN_DIAMETER` — 26, exported from `TokenHealthBar.tsx` — and two pips
- * need 22. The dependency is therefore
+ * COIN_DETAIL_MIN_DIAMETER` — 30, exported from `TokenHealthBar.tsx` — and two pips
+ * need 30. The dependency is therefore
  *
- *     COIN_DETAIL_MIN_DIAMETER >= 2 * PIP_DIAMETER + PIP_GAP     // 26 >= 22
+ *     COIN_DETAIL_MIN_DIAMETER >= 2 * PIP_DIAMETER + PIP_GAP     // 30 >= 30
  *
  * and `markers.test.ts` asserts it, so somebody lowering that threshold to 20 to get
  * names onto smaller coins finds out here rather than discovering a board of bare
  * `+4` counters. The arithmetic below still handles a capacity of one and of zero,
  * because a guaranteed precondition that is only guaranteed by a caller is one
  * refactor away from being false, and the answers are cheap.
+ *
+ * ⚠️ **It used to be 26 >= 22 and is now exactly equal, which is a tighter place to
+ * sit and is deliberate.** The pips grew to match the armour-class circle, and the
+ * threshold was raised to the smallest number that still holds two of them — rather
+ * than to a comfortable 34, which would have hidden detail on coins that can perfectly
+ * well carry it. The consequence of *equality* is that raising `PIP_DIAMETER` by one
+ * more pixel now breaks the assertion immediately instead of after four, which is the
+ * behaviour worth having: the next person to enlarge a pip is told in the same commit.
  */
 export function pipCapacity(drawnDiameter: number): number {
   // A non-finite width reaches this from a zero viewport during the first layout

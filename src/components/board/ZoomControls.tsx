@@ -9,6 +9,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { MAX_SCALE, MIN_SCALE, ZOOM_PRESETS } from '@/lib/camera'
+import { BOARD_OVERLAY_SURFACE } from '@/components/board/overlay'
 import { cn } from '@/lib/utils'
 
 export type ZoomControlsProps = {
@@ -60,7 +61,8 @@ export const ZoomControls = memo(function ZoomControls({
   return (
     <div
       className={cn(
-        'bg-background/90 flex items-center gap-1 rounded-lg border p-1 shadow-sm backdrop-blur',
+        BOARD_OVERLAY_SURFACE,
+        'flex items-center gap-1 p-1',
         className,
       )}
     >
