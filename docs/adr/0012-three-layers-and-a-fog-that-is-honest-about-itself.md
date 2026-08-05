@@ -111,8 +111,17 @@ So the line drawn is:
 | Tool | Hides |
 | --- | --- |
 | **GM layer** | everything: the row, the placement, the band, the feed line, the sheet. Absolute. |
-| **Fog** | where it is standing, how hurt it is, and what it just rolled. Not that a coin by that name exists. |
+| **Fog** | where it is standing, how hurt it is, and what it just rolled. Not that a coin by that name exists, and not what condition it is in. |
 | **Background** | nothing. Seen by all, moved by none but the DM. |
+
+⚠️ **The fog row gained its last clause when conditions arrived on a coin**, and it is this
+table's own argument reaching a second thing rather than a new exception. A condition is a
+fact about a *row*, so filtering it would mean putting a `tokenPositions` read into a query
+whose whole virtue is being off the drag path — the cost this section is about — and what it
+would buy is closing a devtools leak of exactly the kind already accepted, one line above,
+for a fogged coin's name. Recorded here rather than only in the newer record, because a
+table that stops being true is worse than one that was never written. The standing answer is
+unchanged: a creature that must not be known about goes on the GM layer.
 
 The residual is that devtools shows an `Ambush Skeleton` exists somewhere in the game. That is the
 same exposure an unplaced player-layer token has had since the board existed, and the honest summary

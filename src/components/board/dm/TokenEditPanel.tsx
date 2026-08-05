@@ -1,6 +1,6 @@
 import type { ReactElement, ReactNode } from 'react'
-import { useId, useState } from 'react'
-import { useMutation } from 'convex/react'
+import { useId, useMemo, useState } from 'react'
+import { useMutation, useQuery } from 'convex/react'
 
 import { FieldError } from '@/components/FieldError'
 import { UploadPicker } from '@/components/UploadPicker'
@@ -11,6 +11,10 @@ import {
   isUsableAppearance,
 } from '@/components/board/dm/TokenAppearanceFields'
 import { TokenControlPanel } from '@/components/board/dm/TokenControlPanel'
+import { TokenDeleteDialog, tokenDeleteCopy } from '@/components/board/dm/TokenDeleteDialog'
+import { TokenDuplicateDialog } from '@/components/board/dm/TokenDuplicateDialog'
+import { TokenMarkerControl } from '@/components/board/dm/TokenMarkerControl'
+import { TokenPlacementControl } from '@/components/board/dm/TokenPlacementControl'
 import { TokenSwatch } from '@/components/board/dm/TokenSwatch'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -18,6 +22,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Separator } from '@/components/ui/separator'
+import { tokensArgs } from '@/hooks/useBoard'
 import { useUpload } from '@/hooks/useUpload'
 import { parseNumber } from '@/lib/utils'
 import { api } from '@convex/_generated/api'
@@ -87,6 +92,11 @@ export type TokenEditPanelProps = {
   bound: PublicCharacter | null
   /** True until that list has arrived. The select is a skeleton in the meantime. */
   loading: boolean
+  /**
+   * After the coin has been deleted. The shell's `forgetToken`, which drops the
+   * selection so this panel is not left editing a row that has gone.
+   */
+  onRemoved?: (tokenId: Id<'tokens'>) => void
 }
 
 /**
@@ -102,11 +112,33 @@ export type TokenEditPanelProps = {
  * the same statements in the DM's words, on screen, at the control that causes them.
  *
  * **The order of the sections is what the DM is asking, in the order they ask it.** What
- * is this coin, who can see it, what does it look like, what is its picture, who may drag
- * it. The two consequential writes are first because they are the reason the tab exists —
- * a coin bound to nothing on a layer nobody is shown is what nothing else in the app can
- * reach — and *Controlled by* is last for the reason `SheetsTab` puts it last: it is what
- * the DM does after they have decided what the thing is.
+ * is this coin, who can see it, which maps it stands on, what is happening to it right
+ * now, what does it look like, what is its picture, who may drag it — and, past all of
+ * that, how to get rid of it. Conditions sit where they do because they are the one thing
+ * on this panel that changes *during* a fight: the DM reaching for it has just watched a
+ * goblin fail a save, and asking them to scroll past a colour picker to say so is the
+ * arrangement where nobody bothers. It is also the last section that is about the coin as
+ * a thing on the board rather than about its appearance. The two
+ * consequential writes are first because they are the reason the tab exists — a coin
+ * bound to nothing on a layer nobody is shown is what nothing else in the app can reach —
+ * and *Controlled by* is last of the edits for the reason `SheetsTab` puts it last: it is
+ * what the DM does after they have decided what the thing is.
+ *
+ * **Placement is third rather than filed with the cosmetics**, because it is the same
+ * register as the two above it: a coin standing on no board at all is the third of the
+ * three kinds this tab exists to reach, beside one bound to nothing and one on a layer
+ * that is not being drawn. **Duplicate joins that section rather than opening a seventh**,
+ * because copying a coin is a placement act — N coins on one named map — and the DM reading
+ * *which maps it is on* is the DM thinking *and five more here*; a section of its own would
+ * put a second heading between placement and appearance for a control that is one button.
+ *
+ * ⚠️ **Delete is last, and that is the roadmap's own argument scaled down one level.** A
+ * destructive control on a row in a two-hundred-row list was refused because it is one
+ * mis-click from deleting the ambush; a destructive control at the *top of the panel* is
+ * the same mis-click moved four inches. Everything above it is undone in one press —
+ * the layer goes back, the binding goes back, the old name is still typed in the field —
+ * and this is the one control here that nothing takes back. `SceneSelect` already puts
+ * Delete at the far end of a row for the same reason.
  *
  * ⚠️ **`TokenControlPanel` is mounted verbatim and nothing here computes who controls
  * anything.** It is the one client writer of `board.setControllers`, it reads
@@ -129,6 +161,7 @@ export function TokenEditPanel({
   byGroup,
   bound,
   loading,
+  onRemoved,
 }: TokenEditPanelProps): ReactElement {
   return (
     <div className="flex flex-col">
@@ -147,6 +180,24 @@ export function TokenEditPanel({
 
       <EditorSection title="Who can see it">
         <LayerControl code={code} dmCode={dmCode} token={token} />
+      </EditorSection>
+
+      <Separator />
+
+      <EditorSection title="Which maps it is on">
+        <TokenPlacementControl code={code} dmCode={dmCode} token={token} />
+        <DuplicateControl code={code} dmCode={dmCode} token={token} />
+      </EditorSection>
+
+      <Separator />
+
+      {/* Verbatim, like `TokenControlPanel` below and for the same reason: it is the one
+          client writer of `board.setMarkers`, it reads the conditions off the query rather
+          than from anything this panel holds, and nothing here derives or filters a marker.
+          Wrapped in a section because — unlike that panel — it brings no heading of its
+          own. */}
+      <EditorSection title="What is happening to it">
+        <TokenMarkerControl code={code} dmCode={dmCode} token={token} />
       </EditorSection>
 
       <Separator />
@@ -171,6 +222,18 @@ export function TokenEditPanel({
       <div className="p-3">
         <TokenControlPanel code={code} dmCode={dmCode} token={token} />
       </div>
+
+      <Separator />
+
+      <EditorSection title="Get rid of it">
+        <RemoveControl
+          code={code}
+          dmCode={dmCode}
+          token={token}
+          bound={bound}
+          onRemoved={onRemoved}
+        />
+      </EditorSection>
     </div>
   )
 }
@@ -655,7 +718,13 @@ function ArtControl({
         <p className="text-muted-foreground text-xs">
           {token.artUrl === null
             ? 'No art. Drawn as a coloured coin with its initials, which is enough to play with and saves an upload per goblin.'
-            : 'Replacing it deletes the old picture from storage there and then. There is no undo, and no other token is using it.'}
+            : // ⚠️ **The clause that used to end this sentence — "and no other token is
+              // using it" — was true and is now false.** It was written when an upload made
+              // exactly one coin, and duplication broke it: copies share their source's
+              // `imageId`. `replaceTokenArt` was made conditional in the same milestone, so
+              // the picture survives while a twin still draws it — which means the honest
+              // sentence is about *this* coin rather than about storage.
+              'Replacing it changes this coin only. The old picture is deleted unless a copy is still using it, and there is no undo.'}
         </p>
       </div>
 
@@ -683,6 +752,139 @@ function ArtControl({
             Clear the art
           </Button>
         )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * One line under the map list: copy this coin, N times, onto the board that is on the table.
+ *
+ * **The two facts the dialog needs are subscribed here rather than threaded down from the
+ * tab**, and both are cache entries the application is already holding — `scenes.active` with
+ * `{ code }` exactly, which `useBoard`, `MapSetupPanel` and `TokenPlacementControl` next door
+ * all read, and `board.tokens` through the shared `tokensArgs`, which is `RightPane`'s own
+ * entry for the list this panel is mounted inside. So this is two more readers of two open
+ * sockets and no server execution, which is what makes a control this small affordable at all.
+ *
+ * ⚠️ **The names are `board.tokens`' and not the tab's filtered rows.** The numbering counts
+ * every coin in the game — the GM layer included — because a run that skipped the coins a
+ * player cannot see would hand a copy the name of one that is already standing there. It is
+ * the DM's entry for the same reason `TokenAddDialog` insists on the DM's.
+ *
+ * ⚠️ **The active scene is where the copies land, and the trigger is disabled without one.**
+ * `duplicateToken` takes a `sceneId` and places every copy on it, so *which map* is not a
+ * question this control can leave unanswered — and the map on the table is the only answer a
+ * one-line control can give without becoming a second copy of the list above it. Never
+ * disabled with the *no map* sentence while `scenes.active` is still in flight, which is the
+ * discipline `TokenPlacementControl` keeps about `board.placements`: saying there is no map
+ * for one frame of every mount is saying something false about the usual case.
+ */
+function DuplicateControl({
+  code,
+  dmCode,
+  token,
+}: {
+  code: string
+  dmCode: string
+  token: PublicToken
+}): ReactElement {
+  const active = useQuery(api.scenes.active, { code })
+  const tokens = useQuery(api.board.tokens, tokensArgs(code, dmCode))
+
+  // Held still while the answer has not moved, so the dialog's `useMemo` over it is not
+  // rebuilt on every unrelated re-render of this panel.
+  const existingNames = useMemo(() => (tokens ?? []).map((row) => row.name), [tokens])
+
+  // Both facts, because the preview is the feature: an offer to copy a coin that renders a
+  // run starting from 1 on a board that already holds five of them is worse than a button
+  // that waits a frame.
+  const ready = active !== undefined && active !== null && tokens !== undefined
+
+  const trigger = (
+    <Button type="button" size="sm" variant="outline" disabled={!ready}>
+      Duplicate this coin…
+    </Button>
+  )
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {ready ? (
+        <TokenDuplicateDialog
+          code={code}
+          dmCode={dmCode}
+          token={token}
+          scene={active}
+          existingNames={existingNames}
+          trigger={trigger}
+        />
+      ) : (
+        trigger
+      )}
+      <span className="text-muted-foreground min-w-0 flex-1 text-xs">
+        {active === undefined || tokens === undefined
+          ? '…'
+          : active === null
+            ? 'Put a map on the table first — the copies have to land somewhere.'
+            : `Copies land on ${active.name}, the map on the table.`}
+      </span>
+    </div>
+  )
+}
+
+/**
+ * The one irreversible control on this panel, and the copy that says what it spares.
+ *
+ * ⚠️ **The prose here is the feature, not decoration.** A coin and a creature are
+ * different things and this application keeps them apart on purpose: `characters.remove`
+ * already exists, already detaches every token pointing at what it deletes, and lives on
+ * the Sheets tab. A *board* mutation reaching into the characters choke point to destroy
+ * a sheet is the coupling `TokenAddDialog` refuses in the other direction, so nothing
+ * here is going to grow a "and the sheet too" checkbox. What that costs is a DM who
+ * presses this expecting both — which is exactly what these two sentences are for.
+ *
+ * The confirmation itself is `TokenDeleteDialog`, shared with the board's right-click
+ * menu, so the wording cannot come apart between the two ways in.
+ */
+function RemoveControl({
+  code,
+  dmCode,
+  token,
+  bound,
+  onRemoved,
+}: {
+  code: string
+  dmCode: string
+  token: PublicToken
+  bound: PublicCharacter | null
+  onRemoved?: (tokenId: Id<'tokens'>) => void
+}): ReactElement {
+  return (
+    <div className="flex flex-col gap-2">
+      {/*
+        ⚠️ **The dialog's own sentence, not a second one.** This paraphrased it at first —
+        same three facts, different words, in a second file — which is precisely what
+        `tokenDeleteCopy` was extracted and exported to prevent, defeated on its first
+        opportunity. Two wordings for one irreversible act drift the moment the semantics
+        move, and the reader who finds them disagreeing cannot tell which is current.
+      */}
+      <p className="text-muted-foreground text-xs">
+        <strong className="text-foreground font-medium">The creature is not deleted.</strong>{' '}
+        {tokenDeleteCopy(token, bound).description}
+      </p>
+      <div>
+        <TokenDeleteDialog
+          code={code}
+          dmCode={dmCode}
+          token={token}
+          bound={bound}
+          onDeleted={onRemoved}
+          trigger={
+            <Button type="button" size="sm" variant="destructive">
+              Delete this coin
+            </Button>
+          }
+        />
       </div>
     </div>
   )

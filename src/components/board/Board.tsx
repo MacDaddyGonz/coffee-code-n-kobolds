@@ -3,12 +3,15 @@ import { toast } from 'sonner'
 
 import { BoardEmpty } from '@/components/board/BoardEmpty'
 import { BoardStage } from '@/components/board/BoardStage'
+import { BoardTokenMenu } from '@/components/board/BoardTokenMenu'
+import { BoardToolbar } from '@/components/board/BoardToolbar'
 import { FogLayer } from '@/components/board/FogLayer'
 import { TokenHpPopover } from '@/components/board/TokenHpPopover'
 import { TokenLayers } from '@/components/board/TokenLayers'
 import { ZoomControls } from '@/components/board/ZoomControls'
-import { CalibrateToggle } from '@/components/board/dm/CalibrateToggle'
 import { GridHandlesLayer } from '@/components/board/dm/GridHandlesLayer'
+import { TokenDeleteDialog } from '@/components/board/dm/TokenDeleteDialog'
+import { TokenDuplicateDialog } from '@/components/board/dm/TokenDuplicateDialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BoardToken } from '@/hooks/useBoard'
 import { useBoard } from '@/hooks/useBoard'
@@ -28,6 +31,9 @@ import { cn } from '@/lib/utils'
 import type { Id } from '@convex/_generated/dataModel'
 import type { Grid, Point } from '@convex/lib/grid'
 
+/** Held still, so a board with no dialog open hands the same array every render. */
+const NO_NAMES: readonly string[] = []
+
 export type BoardProps = {
   code: string
   dm: Dm
@@ -43,6 +49,22 @@ export type BoardProps = {
   selectedTokenId: Id<'tokens'> | null
   onSelectToken: (tokenId: Id<'tokens'>) => void
   onClearSelection: () => void
+  /** A coin deleted from the board menu. See `GameShell.forgetToken`. */
+  onTokenGone: (tokenId: Id<'tokens'>) => void
+  /**
+   * The two board gestures that ask for a *panel* rather than a selection: the DM's
+   * *Edit this coin* and anybody's *Open the sheet*.
+   *
+   * ⚠️ **Named for what the reader asked for and not for the tab it lands on, which is
+   * the whole of why the bug these replace was possible.** Both entries used to route to
+   * one handler that selected the coin and stopped, because the tab was `useState` inside
+   * `RightPane` and no prop reached it — so two menu items promising two different panels
+   * were the same function, and the panel never changed. The shell owns the tab now and
+   * decides which one each of these means; the board says *what happened*, which is the
+   * only thing it can honestly know.
+   */
+  onEditToken: (tokenId: Id<'tokens'>) => void
+  onOpenTokenSheet: (tokenId: Id<'tokens'>) => void
   /**
    * Merged over the base classes, which no longer include an edge of their own. The
    * board is the contents of a pane rather than a card floating on a page, so the
@@ -89,6 +111,9 @@ export function Board({
   selectedTokenId,
   onSelectToken,
   onClearSelection,
+  onTokenGone,
+  onEditToken,
+  onOpenTokenSheet,
   className,
 }: BoardProps) {
   // The board's outer element, which is what "does the map have focus?" means for
@@ -307,6 +332,115 @@ export function Board({
   // render that the note above is about.
   const onOpenHp = hpTarget.open
 
+  /**
+   * The coin the right-click menu is open on, and where to draw it.
+   *
+   * ⚠️ **The id is stored and the token is resolved against the live board every render**,
+   * which is `useTokenSelection`'s and `useHpTarget`'s discipline for the same reason: a
+   * coin deleted from under an open menu, or a scene switched away from, unmounts the menu
+   * with no effect to correct and no render in between during which it names a token that
+   * has gone. `canMove` is re-asked here too, so a grant revoked while the menu is open
+   * closes it.
+   *
+   * The position is in **container pixels**, converted once at the handler because this is
+   * the component holding the ref. Deliberately not a `Point`: that type means image space
+   * everywhere else on this board, and `@/lib/camera`'s header is entirely about what goes
+   * wrong when the two are confused.
+   */
+  const [menu, setMenu] = useState<{ tokenId: Id<'tokens'>; x: number; y: number } | null>(null)
+  const menuToken = useMemo(
+    () =>
+      menu === null
+        ? null
+        : (tokens.find((token) => token._id === menu.tokenId && token.canMove) ?? null),
+    [tokens, menu],
+  )
+
+  // Which dialog the menu has asked for. Mounted as siblings of the menu rather than
+  // inside it, because a Radix `DialogTrigger` in a menu item is unmounted by the menu
+  // closing on select and the dialog never appears.
+  const [duplicating, setDuplicating] = useState<Id<'tokens'> | null>(null)
+  const [deleting, setDeleting] = useState<Id<'tokens'> | null>(null)
+  // Guarded on the id rather than scanning for a match that cannot be there. `tokens` is a
+  // fresh array ten times a second during anybody's drag, and both of these are null for
+  // the whole of a session except the seconds a dialog is open.
+  const duplicateToken = useMemo(
+    () => (duplicating === null ? null : (tokens.find((token) => token._id === duplicating) ?? null)),
+    [tokens, duplicating],
+  )
+  // Every coin's name, for the duplicate dialog's live preview. Read off the array this
+  // component is already holding rather than through a subscription of its own, so the
+  // preview and the write take the same three inputs — which is the whole reason
+  // `addedNames` and `duplicateNames` are browser-shared rather than two rules that
+  // agreed once.
+  //
+  // ⚠️ Gated on the dialog being open, like the two lookups above. UnGated this mapped two
+  // hundred names ten times a second for the whole of every drag, to feed a dialog that is
+  // shut for all but a few seconds of a session — and while it *is* open, a background drag
+  // would hand it a fresh array identity on every tick and re-run its own naming memo with
+  // it.
+  const names = useMemo(
+    () => (duplicating === null ? NO_NAMES : board.tokens.map((token) => token.name)),
+    [board.tokens, duplicating],
+  )
+
+  const deleteToken = useMemo(
+    () => (deleting === null ? null : (tokens.find((token) => token._id === deleting) ?? null)),
+    [tokens, deleting],
+  )
+
+  // `[]` deps, so `TokenLayers`' prop contract holds: one function for the whole layer and
+  // no rebinding of eighty Konva listeners on a pan. One `getBoundingClientRect` per
+  // right-click is nothing.
+  const onTokenContextMenu = useCallback(
+    (token: BoardToken, at: { clientX: number; clientY: number }) => {
+      const box = containerRef.current?.getBoundingClientRect()
+      if (!box) return
+      setMenu({ tokenId: token._id, x: at.clientX - box.left, y: at.clientY - box.top })
+    },
+    [],
+  )
+  const closeMenu = useCallback(() => setMenu(null), [])
+
+  // ⚠️ **Every prop the menu takes is stable, which is what makes its `memo` mean
+  // anything.** It is deliberately `modal={false}` so the board keeps zooming underneath
+  // it — and this component re-renders on every frame of that zoom, so a fresh object or a
+  // fresh arrow here would reconcile the whole portalled subtree, seventeen checkbox items
+  // included, sixty times a second. Two numbers rather than a point, for the same reason
+  // `ZoomControls` takes a scale rather than a camera.
+  const openDuplicate = useCallback((tokenId: Id<'tokens'>) => {
+    setMenu(null)
+    setDuplicating(tokenId)
+  }, [])
+  const openDelete = useCallback((tokenId: Id<'tokens'>) => {
+    setMenu(null)
+    setDeleting(tokenId)
+  }, [])
+
+  /**
+   * The two menu entries that leave this pane, each closing the menu on the way out.
+   *
+   * ⚠️ **Two handlers, and they were one.** The panels that edit a coin and open a sheet
+   * live in the other pane under two different tabs, so a single function could only ever
+   * satisfy one of the two entries — and satisfied neither, because selecting a coin does
+   * not move a tab. The shell is handed the gesture and picks the tab; all that is needed
+   * here is to stop pretending the two are the same act.
+   */
+  const onMenuEdit = useCallback(
+    (tokenId: Id<'tokens'>) => {
+      onEditToken(tokenId)
+      setMenu(null)
+    },
+    [onEditToken],
+  )
+  const onMenuOpenSheet = useCallback(
+    (tokenId: Id<'tokens'>) => {
+      onOpenTokenSheet(tokenId)
+      setMenu(null)
+    },
+    [onOpenTokenSheet],
+  )
+
   // A click on the map closes both. It is the "I am done with this creature"
   // gesture, and leaving the editor open over bare map after the highlight has gone
   // would be a panel pointing at nothing.
@@ -365,8 +499,42 @@ export function Board({
   // no explanation of what went wrong.
   const drawable = scene !== null && scene.imageUrl !== null
 
+  // Memoised because this component re-renders on every frame of a pan and a zoom, and a
+  // fresh object literal in the JSX below would be an allocation and a style key-walk per
+  // frame for a value that changes only when the DM picks a colour. `ZoomControls` takes a
+  // scale rather than a camera for the same reason, one element down.
+  const surround = useMemo(
+    () => (scene === null ? undefined : { backgroundColor: scene.backgroundColour }),
+    [scene],
+  )
+
   return (
-    <div ref={containerRef} className={cn('bg-muted/40 relative overflow-hidden', className)}>
+    /*
+      ⚠️ **The surround is painted here in the DOM rather than as a Konva rectangle**, and
+      the reason is what a full-viewport `<Rect>` would cost. It would have to live in the
+      background layer *in image space*, so covering the whole viewport at any zoom means
+      recomputing its size and position from the camera on every pan and wheel frame — and
+      `TokenHealthBar`'s note about every layer being re-rasterised on each of those frames
+      is the price. This element already exists, already has the right box, and repaints for
+      nothing. The one thing it does not do is appear in a canvas export, which nothing in
+      this application performs.
+
+      `bg-muted/40` was what this used to be: near-white in light mode, so a map floated in
+      a white page and read as one that had failed to load. `backgroundOf` on the server has
+      already turned a scene with no stored colour into a real one, so there is no `??` here.
+
+      ⚠️ **The class is unconditional and the style is what overrides it**, which is one
+      condition rather than two. An inline `background-color` always beats a class, so the
+      pair needs no proof of mutual exclusivity — the class is simply what shows while there
+      is no scene to ask, which is the loading skeleton and `BoardEmpty`, neither of them a
+      map with a surround. (It was written as a conditional class *and* a conditional style,
+      which is the same fact tested twice and a reader having to check they agree.)
+    */
+    <div
+      ref={containerRef}
+      className={cn('bg-muted/40 relative overflow-hidden', className)}
+      style={surround}
+    >
       {board.loading ? (
         <Skeleton className="absolute inset-0" />
       ) : drawable && scene ? (
@@ -425,6 +593,7 @@ export function Board({
               onDragMove={move.onDragMove}
               onDragEnd={move.onDragEnd}
               onOpenHp={onOpenHp}
+              onContextMenu={onTokenContextMenu}
             />
             {/*
               Last, and that is the whole of how it wins the pointer — see `BoardStage`.
@@ -465,6 +634,68 @@ export function Board({
               onAdjust={hp.adjust}
             />
           ) : null}
+          {/*
+            The right-click menu, and the two dialogs it asks for.
+
+            ⚠️ **All three are siblings of the stage rather than children of it, and the
+            dialogs are siblings of the menu rather than children of *it*.** A Radix
+            `DialogTrigger` rendered inside a `DropdownMenuItem` is unmounted the moment
+            the menu closes on select, so the dialog it was going to open never appears —
+            which is why `ConfirmDialog` grew a controlled pair and why the menu asks
+            rather than hosts.
+
+            `menuToken` is resolved against the live board every render, so a coin deleted
+            or a scene switched from under an open menu unmounts it rather than leaving it
+            naming something that has gone.
+          */}
+          {menuToken ? (
+            <BoardTokenMenu
+              code={code}
+              dmCode={dm.dmCode}
+              playerId={playerId}
+              token={menuToken}
+              scene={scene}
+              atX={menu?.x ?? 0}
+              atY={menu?.y ?? 0}
+              onClose={closeMenu}
+              onEdit={onMenuEdit}
+              onOpenSheet={onMenuOpenSheet}
+              onDuplicate={openDuplicate}
+              onDelete={openDelete}
+            />
+          ) : null}
+          {dm.dmCode !== null && duplicateToken ? (
+            <TokenDuplicateDialog
+              code={code}
+              dmCode={dm.dmCode}
+              token={duplicateToken}
+              scene={scene}
+              existingNames={names}
+              open
+              onOpenChange={(next) => {
+                if (!next) setDuplicating(null)
+              }}
+            />
+          ) : null}
+          {dm.dmCode !== null && deleteToken ? (
+            <TokenDeleteDialog
+              code={code}
+              dmCode={dm.dmCode}
+              token={deleteToken}
+              // The board joins no roster, so the confirmation says the shorter of its two
+              // sentences here. The Tokens tab, which does hold `characters.list`, names
+              // the creature — one component, two callers, and the copy cannot drift.
+              bound={null}
+              open
+              onOpenChange={(next) => {
+                if (!next) setDeleting(null)
+              }}
+              onDeleted={(tokenId) => {
+                setDeleting(null)
+                onTokenGone(tokenId)
+              }}
+            />
+          ) : null}
           <ZoomControls
             // The scale, not the camera: a `BoardCamera` is a new object every render
             // and the bar reads one number off it. See `ZoomControlsProps`.
@@ -476,17 +707,19 @@ export function Board({
             className="absolute bottom-3 left-3"
           />
           {/*
-            Top-left, opposite the zoom bar, because it is a mode rather than a nudge and
-            wants to be visible from across the room while it is on. Offered on the
-            strength of the DM code alone, which authorises nothing — see `CalibrateToggle`.
+            Top-left, opposite the zoom bar. This used to be `CalibrateToggle` alone, on the
+            reasoning that a mode wants to be visible from across the room while it is on —
+            and that argument turned out to apply to the roll mode far more strongly, since
+            advantage is sticky and was two panes away. So the corner holds a toolbar now
+            and the calibrate button is one of its three groups. Everything DM-only inside
+            is offered on the strength of the DM code alone, which authorises nothing.
           */}
-          {board.isDm ? (
-            <CalibrateToggle
-              active={calibrating}
-              onToggle={onToggleCalibrate}
-              className="absolute top-3 left-3"
-            />
-          ) : null}
+          <BoardToolbar
+            isDm={board.isDm}
+            calibrating={calibrating}
+            onToggleCalibrate={onToggleCalibrate}
+            className="top-3 left-3"
+          />
         </>
       ) : (
         <BoardEmpty scene={scene} isDm={board.isDm} />

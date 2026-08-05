@@ -82,6 +82,33 @@ is a live constraint rather than a stale one — two of the Battle Master's best
 Trip Attack and Pushing Attack, were left out of the library because of it, and their dice went to
 manoeuvres that do the same job without knocking anybody prone.
 
+🚫 **Four sentences in this entry are superseded by the 5e 2024 conversion milestone in
+[roadmap.md](roadmap.md), and they are marked rather than corrected** — this entry is the record of
+what Milestone 4 decided, and editing it into agreement with a later milestone would delete the
+decision instead of its consequences. What that milestone changes:
+
+- **"Eight races"** becomes **nine species**, from the SRD's own list. **Half-Orc is retired** — it is
+  not a 2024 species — and Gnome arrives.
+- **"The Elf's +2 Dexterity"** goes. **No 2024 species changes an ability score**; the spread comes
+  from a background, which stays excluded, so it is absorbed into the premade sheet's stored numbers.
+  The Dwarf's extra hit point per level survives as Dwarven Toughness, and the Goliath's extra speed
+  survives as a base speed of 35.
+- **"Race is one dropdown with one trait behind it"** goes. A 2024 species has up to five traits and
+  may carry a lineage or ancestry choice behind it.
+- **"35 speed for all characters — now the default rather than the rule"** becomes **30**. The
+  paragraph's *mechanism* is untouched and was built correctly: a stored field, absent by default, read
+  through one accessor. Only the number the accessor answers moves. ⚠️ **Which makes it a stored-value
+  change wearing a constant's clothes** — every existing character has the field absent, so the
+  conversion cannot simply flip it.
+- **"Thirteen skills"** becomes **eighteen**. The half-lifting is unchanged and is the important part:
+  **backgrounds remain excluded**, there is still no background on a character, and there is still no
+  third source a proficiency can come from.
+
+**What survives untouched is the Equipment paragraph**, and it is worth ending on: a fixed kit as a
+line of text is exactly as true of an SRD starting-equipment package as of a hand-written one, and
+*"No inventory — set equipment per character"* has now governed two entirely different rule sets
+without needing a word changed.
+
 #### The screen and the sheet taxonomy — 2026-08-01 — [ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md)
 
 Two amendments, and neither is to the rule set — which is why they are stated separately from the
@@ -234,13 +261,38 @@ to the people at the table. The same reasoning covers **concentration**, which t
 — no spell records it and nothing drops it.
 
 ⚠️ **Four neighbouring gaps were closed the same way and needed no amendment, because the lists never
-promised them.** There are no **spell slots** anywhere — clicking a spell rolls its dice and says so,
-and the level printed beside it is a label rather than a resource. A hero has no **spell save DC**; a
-creature has one because the bestiary wrote one, and nothing in this application compares a roll to
-either. **Limited-use abilities** stay as coarse as they were: the app remembers whether a per-long-rest
-trait has been spent, which is the part a table forgets, and counts nothing else. And **initiative**
-turned out to need nothing new at all — a hero's bonus comes from Dexterity and a creature's is stored,
-through one accessor that already existed.
+promised them. Two of the four have since been reopened deliberately, so read the marks.**
+
+- 🚫 **Spell slots** — *decision reversed; not yet built.* There are none anywhere today, and the
+  level printed beside a spell is still a label rather than a resource. The **5e 2024 conversion**
+  milestone in [roadmap.md](roadmap.md) builds slot counting, and it lands with an amendment of its
+  own in this section. **Do not read this bullet as a rule to preserve.**
+- 🚫 **Spell save DC** — *decision reversed for a hero; not yet built.* A creature has one because the
+  bestiary wrote one, and a hero still has none today. The same conversion milestone gives every
+  caster a spell save DC **and** a spell attack bonus, derived from the spellcasting ability and the
+  proficiency bonus, because every 2024 caster has both and declining them ships a sheet with two
+  boxes the rules describe left empty. ⚠️ **What has not changed is that nothing compares a roll to
+  either of them** — this reverses a *field*, not the decision to announce rather than adjudicate.
+- 🚫 **Limited-use abilities stay as coarse as they were** — *decision reversed; not yet built.*
+  Today the app remembers whether a per-long-rest trait has been spent and counts nothing else, and
+  there is no short rest. Same milestone, same amendment, same instruction.
+- ✅ **Initiative** — needed nothing new at all: a hero's bonus comes from Dexterity and a creature's
+  is stored, through one accessor that already existed. **Still true after the conversion**, and the
+  only one of the four that is: derive what the SRD derives, store what the SRD prints, and a
+  creature's initiative is printed.
+
+⚠️ **The three reversals change what the app *counts* and *prints*, and not what it *adjudicates*,
+which is why they are amendments rather than a change of character.** No roll is compared to anything,
+no cast is refused, and casting at a higher slot level changes no die of damage. The turn structure
+above and concentration are **not** reopened, and the reasoning that keeps them out is the reasoning
+that survived: enforcing them means the app owning the round.
+
+⚠️ **One thing to know before reading the conversion's own amendment when it lands: a 2024 sheet puts
+the words *action*, *bonus action* and *Concentration* on screen, and neither of those is this bullet
+being reopened.** A spell row carries a casting time and a duration because the rulebook prints them;
+nothing counts an action and nothing drops a spell when its caster takes damage. That is the same
+register as a condition pip reading `prone` while nothing halves a speed, and it is the fifth time this
+file has had to draw the line between a **label** and a **rule**.
 
 **Two smaller notes on the *screen*, neither a rule.** *"When a clicked sheet item involves a dice
 roll, that character's token appears on screen for everyone and a 3D dice roll plays"* is met as
@@ -300,6 +352,89 @@ milestone, and a browser will not start audio without a gesture in any case.
 milestones in a row now. A layer is a permission, a rectangle is a region, a handout is a picture and
 a track is a file — none of them is a rule, none is adjudicated, and nothing here changes a number a
 player rolls against.
+
+#### Tokens: copying, placing and labelling a coin — 2026-08-04 — [ADR 0013](adr/0013-a-coin-you-can-copy-place-and-label.md)
+
+**One amendment, and it lifts nothing.** It is written down only because the exclusion it comes
+closest to **names the words this milestone puts on screen**, and an entry that looked like a
+lifting and was never recorded would be indistinguishable from one that quietly happened.
+
+**"No movement-detriment status effects (prone, stand up, difficult terrain, etc.)" — stands exactly
+as written.** A coin can now carry a fixed vocabulary of D&D conditions, drawn as small pips, set by
+the DM or by whoever may drag that coin. Four of them — `prone`, `grappled`, `restrained` and
+`paralyzed` — are named or implied by that exclusion, which is precisely why this paragraph exists.
+
+What the exclusion rules out is the **effect**, and none of it is built:
+
+- No speed is halved and no speed is read when a coin is marked. `speedOf` does not know markers
+  exist.
+- No advantage or disadvantage is granted, and no roll consults a condition. `lib/dice.ts` does not
+  import the vocabulary and is forbidden from doing so.
+- No drag is refused because of one. `requireMovableToken` gates *writing* a marker and never reads
+  one.
+- No health band, no save, no armour class and no sheet changes because a creature is prone.
+
+What ships is the **word on the coin** — the same register as a bestiary creature's loot being a line
+of text rather than an inventory, and as a spell's level being a label rather than a resource. It is
+a note the table keeps for itself, in the place everybody is already looking.
+
+⚠️ **That promise is held by a guard test rather than by this paragraph.** `markerGuard.test.ts`
+greps `convex/` for a quoted import of the condition vocabulary and allows exactly three modules —
+the schema that stores it, the one module that reads the table, and the two public functions. It
+sweeps the helper names as well, because a module could import nothing and still reach the row
+through the choke point. The reason it is a test and not a comment is that the way this exclusion
+gets broken is somebody writing three reasonable lines in the dice module.
+
+**`concentrating` is on that list too, and it touches a different declined decision.** The rolls
+amendment above records concentration as **still declined** — *no field and no check, and nothing on
+the sheet implies otherwise* — and that is unchanged: nothing records what a character is
+concentrating on, nothing drops it when they take damage, and no spell knows the word. What exists is
+a pip a person ticks and unticks, on a coin, for the same reason they might put a die on the table
+next to a miniature. Named here so it is not later mistaken for the rule arriving.
+
+**Nothing else moved.** A copy of a coin is a coin, a placement is a row saying which map something
+stands on, and deleting a coin deletes a coin — the creature's sheet survives, and is deleted from
+the Sheets tab. Nothing was added to the *Included* list, nothing was lifted from the *Excluded* one,
+and nothing here changes a number a player rolls against. **Five milestones in a row.**
+
+#### Milestone 12 — 2026-08-05 — [ADR 0014](adr/0014-what-a-coin-says-about-itself.md)
+
+Two amendments, and the run of five ends here. **Neither of them lifts a rules exclusion**, which is
+the usual shape of an entry in this section — the first lifts something else entirely, and saying so
+plainly is the point.
+
+**⚠️ A creature's armour class and passive perception are shown to every player who can see its
+coin. This is the first amendment in this document that lifts a *secrecy guarantee* rather than a
+rule.** Nothing in the two lists above was withholding it; the *threat model* was. A creature's
+armour class reached no player by any route —
+[ADR 0005](adr/0005-character-sheets-and-hit-point-secrecy.md) used it as its worked example of the
+secret that no validator can catch — and it now travels on the same payload as the health band, in
+a red circle on the coin, with passive perception beside it in a blue one.
+
+State the scope precisely, because the scope is the whole of what makes it defensible:
+
+- It reaches **only players who already have a row for that creature**. A GM-layer creature and a
+  fogged one are dropped before a row is built, so neither publishes anything — *the set of
+  creatures a player hears about did not change*, only what a row says.
+- **Nothing else off the stat block moved.** The attacks, the damage, the notes, the loot, the
+  challenge rating and the exact hit points are exactly as unreachable as they were, and
+  `characters.sheet` still answers *no such character* for an ordinary NPC.
+- **It adjudicates nothing.** No roll is compared to an armour class, nothing decides whether an
+  attack hit, and no creature notices anybody. The number on the coin is a label the DM already
+  typed, printed where the table is already looking — the same register as loot being a line of
+  text. What changed is who may read it, not what the software does with it.
+
+**Ad-hoc dice admit d2 and up to fifty dice at a time.** The eight faces offered are d2, d4, d6, d8,
+d10, d12, d20 and d100, with a 1×–50× count. Only d2 is new to the allow-list; the count raises a
+cap that has been twenty since the dice shipped. It is **one grammar** for a sheet entry and for
+somebody typing in the tray, deliberately — two caps are two things that agree on the day they are
+written — so the price, stated rather than discovered, is that a monster's damage expression may now
+legitimately read `30d6`. Nothing is adjudicated by either change, and the cap still exists: it is a
+different number, in the same place, refusing the same way.
+
+**Nothing else moved.** The other seven items in that milestone are a menu entry that was never
+wired up, four controls filed where nobody looks for them, a name that was clipped and a circle that
+was too small — none of them a rule, and none of them a secret.
 
 ## Accounts and games
 

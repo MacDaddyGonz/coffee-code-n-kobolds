@@ -1,7 +1,7 @@
 // A MAINTENANCE TOOL, NOT A FEATURE. Nothing here is part of the application.
 //
 // Deleting a game belongs to the game editor and admin milestone (see
-// `docs/roadmap.md` § "Milestone 12"), and it stays there. What this module is for is
+// `docs/roadmap.md`), and it stays there. What this module is for is
 // the litter: `npm run test:smoke` creates a throwaway game on every run and could
 // only ever clean up the scene and tokens it made, because there was no delete path
 // for a game document at all. The dev deployment had seventy-one games, thirty-five of
@@ -9,7 +9,8 @@
 // there deliberately is not another one.
 //
 // ⚠️ **`internalQuery` and `internalMutation`, and that choice is the reason this can
-// exist now rather than in Milestone 12.** A public `games.remove` would have to answer
+// exist now rather than in the game-editor milestone.** A public `games.remove` would
+// have to answer
 // "who may delete a game" — the DM code alone? the DM code plus the recovery phrase? —
 // and that is a real decision with an ADR behind it, not a line of code. An internal
 // function sidesteps the question honestly rather than pretending it has an easy

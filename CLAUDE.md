@@ -84,6 +84,16 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    before the feature existed. The rule to carry forward: *before adding a read of `tokenPositions`
    to a query, work out what that query then costs during a drag, and give it a way to not pay.*
 
+   🚫 **The middle early return is about to change meaning, and the sentence above has to change with
+   it — not yet, but in the commit that breaks it.** The maps-and-fog milestone in
+   [docs/roadmap.md](docs/roadmap.md) gives a scene a base: *lit, and you black areas out*, or *dark,
+   and you light areas up*. Under the second one, **no rectangles is the most hidden a map can be**,
+   so the free case stops being "nobody has drawn a rectangle" and becomes "this scene is in the
+   state it shipped in". The *property* survives — every game is still free until somebody uses the
+   feature — and the *reason* does not. Whoever builds it restates this paragraph and adds: **turning
+   a scene to dark buys the positions read for the rest of the session, without drawing anything.**
+   Until then, everything above is true as written.
+
 3. **Hash routing only** (`/#/game/ABC123`). GitHub Pages has no rewrite rules, so a browser-path
    deep link 404s on refresh.
 4. **Vite needs `base: '/coffee-code-n-kobolds/'`.** The site is served from a subpath; omitting
@@ -115,9 +125,24 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
 
    | Tables | The only module allowed to read them | The predicate | Where the predicate lives |
    | --- | --- | --- | --- |
-   | `tokens`, `tokenPositions` | `convex/lib/board.ts` | `maySee(token, isDm)` | same module |
+   | `tokens`, `tokenPositions`, `tokenMarkers` | `convex/lib/board.ts` | `maySee(token, isDm)` | same module |
    | `characters`, `characterVitals` | `convex/lib/characters.ts` | `maySeeCharacter(character, isDm, controlled?)` | same module |
    | `feed` | `convex/lib/feed.ts` | `mayHearOf(character, isDm, visible)` | **`convex/lib/characters.ts`** |
+
+   ⚠️ **`tokenMarkers` joined the first row rather than becoming a fourth, and that is the most
+   useful thing this table has said in a while: a secret-bearing table arrived and cost no new
+   machinery at all.** A marker row — the conditions on a coin — names a `tokenId`, so a row
+   belonging to a GM-layer coin says a hidden coin exists, which is the oracle `TOKEN_NOT_FOUND` is
+   written to close; and it is indistinguishable in type from a row about a hero, so no `returns:`
+   validator can tell them apart. It is a leaked *row* of the first row's exact shape.
+
+   What made it the **same** entry rather than a new one is that its predicate is already there:
+   `maySee(token, isDm)`, the same question, answered by the same function, in the same module. So
+   there is **no new predicate, no new reader and no fourth column** — one table name in one cell,
+   and `leakGuard.test.ts` then sweeps `lib/characters.ts` and `lib/feed.ts` against it for free.
+   **Contrast `fogRects`, below, which is absent for the opposite reason.** The test for which
+   applies is not "is this table new?" but *does a row of it have a non-secret twin, and is there
+   already a predicate that tells them apart?*
 
    ⚠️ **The fourth column exists because the third row's predicate is not in its own module, and
    this table used to imply it was.** `mayHearOf` lives in `convex/lib/characters.ts`, because it is
@@ -192,6 +217,24 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
      union whose player-facing variant has no numeric member at all. There is nowhere to put a hit
      point, and Convex throws if anyone ever adds one. That is the stronger guarantee, and it is
      available only because this particular secret happens to be a field.
+
+   ⚠️ **That union now carries two numbers on *both* members, and the guarantee above is unchanged
+   — know the difference before citing either.** `armourClass` and `passivePerception` are
+   **published** to every audience by [ADR 0014](docs/adr/0014-what-a-coin-says-about-itself.md), so
+   they sit on `exact` and on `band` alike. The promise the union exists for is *the player-facing
+   variant has nowhere to put a hit point*, and it holds word for word: `band` still has no
+   `current` and no `max`. A field on **both** members is not a discriminator question at all — the
+   union has nothing to say about a fact both audiences get. So this is a published field added, not
+   a guard loosened, and `vitals.test.ts` pins the real claim mechanically: **no member of the band
+   variant is a bare `float64`**, which is exactly what `current: v.number()` would be, while both
+   published fields are `v.union(v.number(), v.null())`.
+
+   **The scope is what keeps it defensible, and it is server-side.** `visibleVitals` drops a
+   creature the caller may not see *before* it assembles either variant, so a GM-layer or fogged
+   creature contributes no row and therefore no armour class. `maySeeCharacter` is untouched, and
+   `characters.sheet` still refuses an ordinary NPC. **The set of creatures a player hears about did
+   not change** — only what a row for one of them says. Do not read this as licence to move another
+   field onto that payload: a second one is a second decision and needs its own ADR.
 
    **There is a third shape, and it is a leaked *module*.** The two premade corpora —
    `convex/lib/library/` and `convex/lib/bestiary/` — are content nothing outside resolution has any
@@ -291,6 +334,36 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    never has to decide what a DM sees — a second question inside a discriminator is the failure
    `isReservedCharacter` is written the way it is to avoid.
 
+   ⚠️ **There is now a union on this schema with NO `never`-arm switch, and reading why is the
+   point of this paragraph — it is the exception that says what the rule is actually for.**
+   `TokenMarker` is the seventeen conditions a coin can carry, in `convex/lib/markers.ts`, and
+   nothing switches on it anywhere. That is not an oversight to be corrected: **there is no
+   predicate**, because nothing in `convex/` decides anything from a marker — no roll consults one,
+   no health band is computed from one, no drag is refused because of one. A switch written to
+   satisfy this invariant would be a guard that cannot fail, which is exactly what
+   [ADR 0012](docs/adr/0012-three-layers-and-a-fog-that-is-honest-about-itself.md) argued out of
+   `fogRects`' leak-guard entry, and this project does not keep those.
+
+   What the invariant protects is met three other ways that *can* fail: `TOKEN_MARKER_LABELS` on the
+   server, a `Record` of pip glyphs on the client, and `lib/markers.test.ts` pinning the validator's
+   members **and their order** against the `as const` list — the direction the compiler cannot see,
+   which is the one `lib/layers.ts` already exists to cover. Order, because the renderer iterates
+   the vocabulary, so the array *is* the pip order.
+
+   **The fail-closed runtime behaviour is real and has a home, in three places rather than one.**
+   `normaliseMarkers` iterates the vocabulary and intersects with the stored array — never maps over
+   it — on the write path, in the **server projection**, and in the renderer. The middle one is the
+   one that would be missed and matters most: `board.markers`' `returns:` is
+   `v.array(tokenMarkerValidator)`, so a row written by a newer deployment during a non-atomic push
+   would make that query **throw for every caller** and take the whole table's conditions
+   subscription down, where dropping it costs one undrawn pip. That is `maySeeLayer`'s composition
+   argument reaching a second union.
+
+   **So the rule to carry forward is not "every union gets a `never` arm".** It is: *find the place
+   a wrong answer does damage, and make the compiler refuse there.* For `isMonsterSheet` that is a
+   predicate and the arm is the guard. For `TokenMarker` there is no such place, and two `Record`s
+   and an order-pinning test are the whole of it.
+
    **Fog is a second, unrelated reason to withhold, `&&`-ed at the call site** exactly as
    `isReservedCharacter` is beside `maySeeCharacter`. It is a fact about a *(scene, position)* pair
    rather than about a row, so folding it into `maySee` would hand that predicate a set it cannot
@@ -326,8 +399,29 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
     d6's 1 come up about 2% more often than its 5, forever, on every damage roll in the game.
 
     The **die-count cap is load-bearing** and is the grammar rather than a separate check:
-    `ROLL_PATTERN` admits 1–20 dice and `MAX_ROLL_DICE` is that fact named, so a client cannot ask
-    the physics engine for 99,999 dice. A scaled creature's damage already goes through it.
+    `ROLL_PATTERN` admits **1–50 dice over eight faces — d2, d4, d6, d8, d10, d12, d20, d100** —
+    and `MAX_ROLL_DICE` is that fact named, so a client cannot ask the physics engine for 99,999
+    dice. A scaled creature's damage already goes through it.
+
+    ⚠️ **It was 1–20 over seven faces, and it moved by decision rather than by drift.** The ad-hoc
+    dice tray wanted a d2 and a 1×–50× count;
+    [ADR 0014](docs/adr/0014-what-a-coin-says-about-itself.md) records it and
+    [docs/requirements.md](docs/requirements.md) carries the amendment. Two things to know before
+    touching it again:
+
+    - **It is one grammar for two callers**, and that was the contested part. A sheet entry and a
+      string somebody types in the tray are checked by this one expression, with no second bound
+      anywhere — so the price, taken knowingly, is that a stored damage expression may now
+      legitimately read `30d6`. Two caps are two things that agree on the day they are written; if
+      this has to be re-narrowed, narrow it *here*, for both.
+    - **`MAX_ROLL_DICE`'s docblock is the checklist** and it was used as one. Moving the number
+      moves the regex, the constant, both `clamp` calls in `lib/dice.ts`, the CR scaler that reads
+      it to bound its multiplication, `ORDINARY_FACES` in `src/lib/dice/notation.ts` — the
+      renderer's own face list, which nothing checks against the grammar — and this paragraph.
+
+    ⚠️ **The renderer has no die-count cap at all, so the grammar is also the rigid-body count.**
+    Fifty dice is fifty bodies in the physics engine. If that turns out to be unusable the fix is a
+    *renderer* cap that shows a subset and says so — **never** a second grammar.
 
 ### Threat model — what the invariants above are for, and where the line is
 
@@ -418,11 +512,28 @@ the copy on the layer picker. **A partial guard described as a whole one is wors
 because somebody plans an ambush around it — which is why this paragraph exists rather than a
 sentence saying fog hides monsters.
 
+⚠️ **A fourth register, and it is the only one where this project has taken a secret it was keeping
+and given it away.** A creature's **armour class and passive perception** are now sent to every
+player who can see its coin — see [ADR 0014](docs/adr/0014-what-a-coin-says-about-itself.md) and the
+amendment in [docs/requirements.md](docs/requirements.md), which is the first in that section to lift
+a *secrecy guarantee* rather than a rules exclusion. ADR 0005 used a dragon's armour class as **the**
+worked example of the row-shaped secret, and that clause is struck through in place there.
+
+Be precise about what moved, because both sloppy readings are wrong. **What did not move is the
+scope:** `visibleVitals` drops a creature the caller may not see before it builds a row, so a
+GM-layer or fogged creature publishes nothing — the set of creatures a player hears about is the same
+set it was. `maySeeCharacter` is untouched and the rest of the stat block is exactly as unreachable.
+**What moved is one payload's contents, by one deliberate act with an author** — the maintainer was
+shown that the number was withheld and chose to publish it. The GM layer is still where a creature
+that must not be known about goes.
+
 The line: **not sending a secret is nearly free, so it is required; proving who is asking is not, so
-it is out of scope.** That still holds exactly as written — a secret the DM has *not* published is
-still not sent, and never hidden in the browser instead. Read this as licence to ship DM data to
-players and you have inverted it. What would move the line is an audience, not a feature — the game
-being played outside the trusted group.
+it is out of scope.** That still holds exactly as written for every secret nobody has deliberately
+published — such a secret is still not sent, and never hidden in the browser instead. Read either
+this paragraph or the one above it as licence to ship DM data to players and you have inverted them
+both: a published fact is one somebody decided to publish, on the record, and everything else is a
+secret. What would move the line itself is an audience, not a feature — the game being played outside
+the trusted group.
 
 ## Rules scope
 
@@ -489,17 +600,60 @@ no damage is applied, and nothing decides whether an attack hit. The sole amendm
 bonus action and 1 reaction"* is a rule the table keeps and the app does not enforce, and saying so
 is the point, because an absence reads as an oversight.
 
+⚠️ **Board polishing lifted no rules exclusion either — that is five milestones in a row — but its
+two amendments are the first pair in this project that are not about rules at all, and neither is
+small.** One publishes a creature's **armour class and passive perception** on its coin, which lifts
+a **secrecy** guarantee rather than a rules one and is the only entry in
+[docs/requirements.md](docs/requirements.md)'s amendments section of that kind. The other widens
+`ROLL_PATTERN` to admit **d2 and fifty dice**, which is invariant 10's cap and therefore not a
+constant bump. Both went through the same door CR scaling passed and the four declined gaps below
+did not: *does something now change a number a player rolls against without a person asking it to?*
+Neither does. Nothing is compared to an armour class, nothing notices anybody, and fifty dice roll
+only when somebody asks for fifty dice. See
+[ADR 0014](docs/adr/0014-what-a-coin-says-about-itself.md).
+
 ⚠️ **Four neighbouring gaps were closed by declining them, and that is the discipline rather than
-laziness.** There are **no spell slots**, anywhere — a spell's level on the sheet is a label and not
-a resource. A hero has **no spell save DC**; a creature has one because the bestiary wrote one, and
-nothing compares a roll to either. **Limited-use abilities** stay as coarse as `spentPerRest` already
-was: the app remembers whether a per-long-rest trait has been spent and counts nothing else, so Rage
-twice a day is the table's to track. **Concentration and the action economy** have no field and no
-check. Each of those is individually small and reasonable, and each is a rules engine arriving one
-feature at a time — which is what D&D Lite exists to not be. The test is unchanged and is the one CR
-scaling already passed: **the moment something changes a number a player rolls against without a
-person asking it to, it needs an amendment and an ADR.** See
-[ADR 0011](docs/adr/0011-announcing-a-roll-rather-than-adjudicating-one.md).
+laziness — but two of the four have since been reopened deliberately, so read the marks.**
+
+- 🚫 **No spell slots** — *decision reversed; not yet built.* There are none in the code today, and
+  a spell's level on the sheet is still only a label. **Do not defend this as a rule**: the
+  character-resources milestone in [docs/roadmap.md](docs/roadmap.md) builds slot counting, and this
+  bullet is deleted on the day it lands.
+- ✅ **No spell save DC for a hero** — still declined. A creature has one because the bestiary wrote
+  one, and nothing compares a roll to either.
+- 🚫 **Limited-use abilities stay as coarse as `spentPerRest`** — *decision reversed; not yet built.*
+  Today the app remembers whether a per-long-rest trait has been spent and counts nothing else, so
+  Rage twice a day is still the table's to track, and there is still no short rest. **Do not defend
+  this either** — same milestone, same deletion.
+- ✅ **Concentration and the action economy** — still declined. No field and no check, and nothing on
+  the sheet implies otherwise.
+
+Each of those was individually small and reasonable, and each is a rules engine arriving one feature
+at a time — which is what D&D Lite exists to not be. **The test that decided all four is unchanged
+and is the one CR scaling already passed: the moment something changes a number a player rolls
+against without a person asking it to, it needs an amendment and an ADR.** The two reversals came
+back through exactly that door rather than arriving inside a feature branch, and neither of them
+trips it: counting a slot compares nothing, refuses nothing, and changes no die of damage.
+
+See [ADR 0011](docs/adr/0011-announcing-a-roll-rather-than-adjudicating-one.md) — whose decisions 1
+and 4 are **struck through in place** for this reason, and whose 2, 3 and 5 stand.
+
+**Conditions on a coin lifted nothing either, and this is the first entry where a guard *test* is
+what makes that true rather than a promise.** A coin carries a fixed vocabulary of seventeen D&D
+conditions — `prone`, `grappled`, `restrained` and `paralyzed` among them, all four named or implied
+by requirements.md's *no movement-detriment status effects*. What ships is the **word on the coin**:
+no speed is halved, no advantage is granted, no drag is refused, no band is recomputed, and nothing
+on a sheet changes. The same register as loot being a line of text.
+
+The difference from every previous "we declined to adjudicate it" entry is that this one is
+**enforced**. `markerGuard.test.ts` greps `convex/` for a quoted import of the vocabulary and allows
+exactly three modules — the schema, the choke point and the board's public functions — plus a second
+sweep for the helper names, because a module could import nothing and still reach the row through
+`lib/board.ts`. It is a test rather than a comment because the way this exclusion gets broken is
+somebody adding three reasonable lines to `convex/lib/dice.ts`, and a comment there would not stop
+them. See [ADR 0013](docs/adr/0013-a-coin-you-can-copy-place-and-label.md), and the amendment in
+[docs/requirements.md](docs/requirements.md) — which is written down precisely because the exclusion
+names the words now on screen, and an unrecorded near-miss is indistinguishable from a quiet lifting.
 
 ## Commands
 

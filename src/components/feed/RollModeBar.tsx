@@ -27,10 +27,18 @@ const MODE_ICONS: Record<RollMode, LucideIcon> = {
  * HOW THE NEXT ROLL WILL BE MADE — normal, advantage or disadvantage, and the DM's
  * *just for me*.
  *
- * **No props: it reads `useRollControls()`.** The provider is mounted by `RightPane` around
- * the whole tab strip precisely so that this bar and the sheet rows that send rolls share
- * one sticky mode, and threading it back down as props would be the same state described
- * twice.
+ * **No props: it reads `useRollControls()`.** The provider is mounted by `GameShell` around
+ * both panes precisely so that this bar, the dice on the map and the sheet rows that send
+ * rolls share one sticky mode, and threading it back down as props would be the same state
+ * described twice.
+ *
+ * ⚠️ **It moved from the right-hand pane onto the map, which is what pushed the provider up
+ * a level.** It used to sit above the six tab bodies — always on screen, because the mode is
+ * sticky and a bar that only appeared on the two tabs that roll would let somebody set
+ * advantage, glance at the Table and come back to a modifier they could no longer see they
+ * had chosen. That argument is unchanged and is now better served: on the board it is
+ * visible from wherever the reader is *and* from where their eyes already are. `BoardToolbar`
+ * is its home and the height it gave up went to the feed.
  *
  * ⚠️ **The bar is loud when the mode is not Normal, and that loudness is the entire reason
  * it exists on every tab rather than only on the two that roll.** A sticky toggle that looks
@@ -49,10 +57,13 @@ const MODE_ICONS: Record<RollMode, LucideIcon> = {
  * the difference a reader is asked to notice is presence against absence rather than one
  * shade against another.
  *
- * ⚠️ **`shrink-0` and one line tall, because every pixel here is a pixel off the feed.**
- * The pane is a fixed-height column; a strip that could grow would take the space the
- * scrollback needs. `flex-wrap` is what makes that safe at a narrow divider setting — the
- * controls stack rather than the row growing a horizontal scrollbar.
+ * ⚠️ **No border, no padding of its own and no `shrink-0` any more**, and each of those was
+ * load-bearing where it used to be: the pane is a fixed-height column, so a strip that could
+ * grow would have taken the space the scrollback needed, and the bottom border was the line
+ * between it and the tab body. Inside a toolbar it is one group among three, and the
+ * surface, the padding and the separators belong to the bar. `flex-wrap` stays and matters
+ * more, not less — the whole toolbar wraps at a narrow pane width and this group has to wrap
+ * with it rather than growing a scrollbar.
  *
  * **Labelled as a group rather than captioned.** A visible "Rolling" would cost width the
  * three buttons want; `role="group"` with an `aria-label` gives a screen reader the same
@@ -70,7 +81,7 @@ export function RollModeBar(): ReactElement {
       role="group"
       aria-label="Roll mode"
       className={cn(
-        'flex shrink-0 flex-wrap items-center gap-1 border-b px-2 py-1',
+        'flex flex-wrap items-center gap-1 rounded-md px-1 py-0.5',
         loud && 'bg-primary/15 ring-primary/40 ring-1 ring-inset',
       )}
     >

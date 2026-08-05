@@ -39,6 +39,10 @@ import { MAX_CHARACTERS_PER_GAME } from './games'
 // belongs to lib/players.ts and the claim pointer with it, so the map that turns
 // seat → character back into character → seat is built there and imported here.
 import { holderByCharacter } from './players'
+// The pair of published sheet numbers a coin carries, derived together. It lives in
+// lib/skills.ts rather than lib/sheet.ts because passive perception needs values from both
+// and only that direction has no cycle — its own docblock carries the argument.
+import { coinStatsOf } from './skills'
 import type { BestiarySheet, CharacterSheet, StoredSheet } from './sheet'
 // `resolveSheet` rather than `characterSheet`, and that one substitution is the
 // whole of what Milestone 4 changed in this file. Everything below still asks for a
@@ -61,6 +65,7 @@ import {
   characterKindValidator,
   clampHitDice,
   clampHp,
+  defaultSheetFor,
   healthBand,
   presetSheetValidator,
   reconcileHp,
@@ -537,7 +542,7 @@ export const publicSheetValidator = v.object({
 export type PublicSheet = Infer<typeof publicSheetValidator>
 
 /**
- * THE MECHANICAL GUARD FOR THIS MILESTONE'S ACCEPTANCE TEST.
+ * THE MECHANICAL GUARD FOR THE HIT-POINT ACCEPTANCE TEST.
  *
  * A discriminated union, so the variant a player receives for an NPC has **no
  * numeric field to put a hit point in**. This is not a convention anybody has to
@@ -548,6 +553,35 @@ export type PublicSheet = Infer<typeof publicSheetValidator>
  * That is the right tool here and the wrong tool one file over. A DM-layer token is
  * a leaked *row* of identical shape, which a validator can never catch; hit points
  * are a leaked *field*, which is the case a validator catches perfectly.
+ *
+ * ⚠️ **TWO NUMBERS OFF THE SHEET NOW RIDE HERE, AND THE GUARANTEE ABOVE IS UNCHANGED.
+ * Read this before assuming the union has been weakened.** Armour class and passive
+ * perception are on **both** members, deliberately, and that is not the same act as
+ * putting `current` on the `band` member:
+ *
+ * - The guarantee this union exists for is *the player-facing variant has nowhere to put
+ *   a hit point*. `band` still has no `current` and no `max`, so it still holds, word for
+ *   word, and Convex still throws if a projection tries.
+ * - A field present on **both** members is not a discriminator question at all. It is
+ *   published to everyone who receives a row, and the union has nothing to say about it.
+ *
+ * These two are published **on purpose**, which is the part that needed a decision rather
+ * than a design. A creature's armour class reached no player before this — it is ADR 0005's
+ * own worked example of the row-shaped secret — and it now reaches every player who can
+ * already see the coin. The scope is the whole of the defence: `visibleVitals` below drops
+ * a creature a player may not see *before* it builds either variant, so a GM-layer or
+ * fogged creature contributes no row at all and therefore no armour class. Nothing else off
+ * the stat block moves. See ADR 0014.
+ *
+ * ⚠️ **The exact-only alternative was considered and is wrong for what was asked.** Putting
+ * them on `exact` alone would show a granted pet's armour class and hide the goblin's
+ * standing next to it, which is not "the number on the coin" — it is a second, invisible
+ * permission rule expressed as a missing badge.
+ *
+ * ⚠️ **`null` is a real answer for both and must stay reachable.** A hand-built creature
+ * whose DM never recorded a passive perception has none, and a blue circle reading 10 is a
+ * statistic the table would act on that nobody wrote. `passivePerceptionFor` in
+ * lib/skills.ts is the one place that decision is made.
  */
 export const publicVitalsValidator = v.union(
   v.object({
@@ -568,6 +602,9 @@ export const publicVitalsValidator = v.union(
     // *has* comes from their race, which the client can look up itself from
     // lib/races.ts — only which ones are gone has to travel.
     spentPerRest: v.array(v.string()),
+    // Published. See the ⚠️ above — on both members on purpose, and `null` is real.
+    armourClass: v.union(v.number(), v.null()),
+    passivePerception: v.union(v.number(), v.null()),
   }),
   v.object({
     kind: v.literal('band'),
@@ -578,6 +615,8 @@ export const publicVitalsValidator = v.union(
       v.literal('critical'),
       v.literal('down'),
     ),
+    armourClass: v.union(v.number(), v.null()),
+    passivePerception: v.union(v.number(), v.null()),
   }),
 )
 export type PublicVitals = Infer<typeof publicVitalsValidator>
@@ -990,6 +1029,24 @@ export async function visibleVitals(
     const vitals = byCharacter.get(character._id) ?? null
     const current = currentHpOf(vitals, sheet)
 
+    // The two published sheet numbers, computed **above** the branch because both
+    // variants carry them — see the ⚠️ on `publicVitalsValidator`. Deliberately not
+    // inside either arm: two copies of one expression is how a badge comes to mean
+    // something different on a monster than on a hero.
+    //
+    // ⚠️ **One call for the pair**, and it was two — `passivePerceptionFor` for one of them
+    // and a hand-written finite check for the other, which is one decision at two altitudes
+    // and re-implemented lib/sheet.ts's module-private `finiteOrNull`. `coinStatsOf` owns
+    // both, so *absent* means the same thing for both.
+    //
+    // ⚠️ **Free.** `resolveSheet` ran at the top of this loop already, for the kind test
+    // and for `maxHp`, so neither of these is a read — which is what made publishing them
+    // a decision about secrecy rather than about cost. They are *sheet* facts on a
+    // *vitals* channel that re-runs on every point of damage, which is the honest thing
+    // to know: a hit re-pushes two constants. The alternative is a sixth subscription
+    // that idles, and that is not worth a socket.
+    const stats = coinStatsOf(sheet)
+
     // The one branch that decides what leaves the server. Note that the exact
     // numbers are never even assembled on the losing side of it: the band is
     // computed from values that stay in this scope, so there is no object holding
@@ -1005,6 +1062,7 @@ export async function visibleVitals(
         kind: 'band',
         characterId: character._id,
         band: healthBand(current, sheet.maxHp),
+        ...stats,
       })
     } else {
       const isPc = sheet.kind === 'pc'
@@ -1020,6 +1078,7 @@ export async function visibleVitals(
         // absent value means none have been spent, for the same reason a missing
         // row means undamaged.
         hitDiceRemaining: isPc ? hitDiceRemainingOf(vitals, sheet) : null,
+        ...stats,
       })
     }
   }
@@ -1228,6 +1287,63 @@ export async function insertCharacter(
     currentHp: resolved.maxHp,
     ...(resolved.kind === 'pc' ? { hitDiceRemaining: resolved.hitDice.count } : {}),
   })
+  return characterId
+}
+
+/**
+ * A second creature exactly like this one, at full hit points.
+ *
+ * **The whole of what stops five goblins sharing a hit-point pool.** Roll20's own
+ * documentation tells a GM that eight identical goblins must have their bars *manually
+ * unlinked* from the character sheet or damaging one damages all eight, and the community
+ * wrote a script to work around it. A copy that makes its own character document costs
+ * this function, so that trap is one this project simply does not build.
+ *
+ * It lives here because it writes both of the tables `lib/characters.ts` is the sole
+ * reader of, and it is `insertCharacter` plus one line rather than a second insert path —
+ * which is what guarantees the copy gets its `characterVitals` row in the same transaction
+ * and gets it through the **spread** that keeps `hitDiceRemaining` absent rather than
+ * `undefined`.
+ *
+ * ⚠️ **Full hit points is `insertCharacter`'s decision and not duplication's.** Creating a
+ * character means starting it whole; the copy inherits that by reuse rather than by
+ * restating it. Note the consequence, which is the point of the feature: the source's
+ * *current* hit points are not copied, so duplicating a goblin on 3 hp gives a fresh one
+ * at full. `spentPerRest` is absent for the same reason — a copy is a fresh creature, not
+ * a resumed one.
+ *
+ * ⚠️ **The stored sheet passes through verbatim**, without `requireUsableSheet` and
+ * without `normaliseStoredSheet`. Re-validating would let a bestiary key retired since the
+ * source was stored refuse a duplication of a coin the DM is looking at — the same
+ * asymmetry `librarySheet` already keeps, where choosing a retired archetype is refused on
+ * write and reading one is tolerated. Re-normalising would be a write to a shape the DM
+ * did not ask to change, which is *the source is never renamed* reached from the other
+ * side. `?? defaultSheetFor('pc')` mirrors `characters.create`'s own line so the legacy-row
+ * default lives in one shape.
+ *
+ * ⚠️ **`reserved` is carried, and it is fail-closed.** A hero the DM has withheld from the
+ * table must not become visible by being copied. It is a second write rather than an
+ * argument on `insertCharacter` because `reserved` is deliberately not part of the sheet
+ * union — see the schema — and adding it to that signature would put the question in front
+ * of every other caller.
+ *
+ * Nothing else is carried because there is nothing else: a claim lives on `players` and
+ * not on `characters`, so a copy is unclaimed by construction. That is the same answer as
+ * *a copy does not inherit granted controllers*, arrived at from the other table.
+ */
+export async function copyCharacter(
+  ctx: MutationCtx,
+  gameId: Id<'games'>,
+  name: string,
+  source: Doc<'characters'>,
+): Promise<Id<'characters'>> {
+  const characterId = await insertCharacter(
+    ctx,
+    gameId,
+    name,
+    source.sheet ?? defaultSheetFor('pc'),
+  )
+  if (isReservedCharacter(source)) await setReserved(ctx, characterId, true)
   return characterId
 }
 

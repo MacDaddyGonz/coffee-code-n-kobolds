@@ -65,6 +65,7 @@ export type TokenLayersProps = {
   onDragEnd?: (token: BoardToken, point: Point) => void
   /** A click on a coin's health bar. The id comes back, not the token — see `TokenCoinProps`. */
   onOpenHp: (tokenId: Id<'tokens'>) => void
+  onContextMenu?: (token: BoardToken, at: { clientX: number; clientY: number }) => void
 }
 
 /**
@@ -124,6 +125,7 @@ export const TokenLayers = memo(function TokenLayers({
   onDragMove,
   onDragEnd,
   onOpenHp,
+  onContextMenu,
 }: TokenLayersProps) {
   // On `tokens` alone, because that is the only thing any of it depends on. A pan
   // changes neither which tokens exist nor where they are, and paying for a bucketing and
@@ -186,6 +188,7 @@ export const TokenLayers = memo(function TokenLayers({
                 onDragMove={onDragMove}
                 onDragEnd={onDragEnd}
                 onOpenHp={onOpenHp}
+                onContextMenu={onContextMenu}
               />
             ))}
           </Layer>

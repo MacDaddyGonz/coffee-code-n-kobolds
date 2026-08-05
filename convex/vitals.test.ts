@@ -149,6 +149,23 @@ async function expectKind(call: Promise<unknown>, kind: string) {
   expect(refusal.message.length).toBeGreaterThan(0)
 }
 
+/**
+ * The two published sheet numbers, for the fixtures below. **Written out rather than
+ * imported or derived**, for `MAX_SCENE_BYTES`' reason in `scenes.test.ts`: these are what
+ * the payload must say, and a test that recomputed them with `passivePerceptionFor` would
+ * agree with that function about anything, including a mistake.
+ *
+ * - The hero's armour class is on its sheet. Its passive perception is **derived**: Wisdom
+ *   11 is a modifier of 0, the fixture grants no Perception proficiency, so it is 10 + 0.
+ * - The creature's armour class is on its sheet. Its passive perception is `null`, because
+ *   `npcSheet` records none — which is the case worth having in the fixture, since the
+ *   tempting wrong answer is 10.
+ */
+const PC_ARMOUR_CLASS = 17
+const PC_PASSIVE_PERCEPTION = 10
+const NPC_ARMOUR_CLASS = 22
+const NPC_PASSIVE_PERCEPTION = null
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -643,7 +660,16 @@ describe('the vitals union is doing real work', () => {
     const asPlayer = await t.query(api.characters.vitals, { code: fixture.code })
     const npcRow = rowFor(asPlayer, fixture.npc)
     expect(npcRow, 'the player was told nothing about a creature they can see').toBeDefined()
-    expect(Object.keys(npcRow!).sort()).toEqual(['band', 'characterId', 'kind'])
+    // ⚠️ The key list gained two, and the three `not.toHaveProperty` lines below are the
+    // part that matters and are untouched: a creature's *hit points* are still absent from
+    // a player's payload. Its armour class is now present, on purpose — see ADR 0014.
+    expect(Object.keys(npcRow!).sort()).toEqual([
+      'armourClass',
+      'band',
+      'characterId',
+      'kind',
+      'passivePerception',
+    ])
     expect(npcRow).not.toHaveProperty('current')
     expect(npcRow).not.toHaveProperty('max')
     expect(npcRow).not.toHaveProperty('maxHp')
@@ -663,6 +689,17 @@ describe('the vitals union is doing real work', () => {
    *
    * Reading the validator's own members is deliberate. Asserting on a payload
    * cannot distinguish "the field is absent" from "the field is absent today".
+   *
+   * ⚠️ **The band variant carries two numbers now, and the claim below is still the same
+   * claim — read the `float64` assertion, not the key list.** Armour class and passive
+   * perception are published on both variants deliberately (see the ⚠️ on
+   * `publicVitalsValidator` and ADR 0014), and they are declared as
+   * `v.union(v.number(), v.null())`. So the guarantee this test exists to make holds
+   * unchanged and mechanically: **no member of the band variant is a bare `float64`**, which
+   * is what `current: v.number()` and `max: v.number()` are, so adding either still fails
+   * here. What weakened is nothing about hit points; what changed is that this variant is no
+   * longer empty of numbers, and the two it has are named in the key list on purpose so that
+   * a third one cannot arrive unremarked.
    */
   test('the band variant of publicVitalsValidator has nowhere to put a hit point', () => {
     type Field = { kind: string; value?: unknown }
@@ -677,10 +714,18 @@ describe('the vitals union is doing real work', () => {
 
     const band = variantNamed('band')
     expect(band, 'no `band` variant in the vitals union').toBeDefined()
-    expect(Object.keys(band!.fields).sort()).toEqual(['band', 'characterId', 'kind'])
+    expect(Object.keys(band!.fields).sort()).toEqual([
+      'armourClass',
+      'band',
+      'characterId',
+      'kind',
+      'passivePerception',
+    ])
+    // THE ASSERTION THIS TEST IS FOR. Both published numbers are `number | null` unions, so
+    // a bare `float64` on this variant is still exactly what a hit point would have to be.
     expect(
       Object.entries(band!.fields).filter(([, field]) => field.kind === 'float64'),
-      'the player-facing variant declares a number',
+      'the player-facing variant declares a bare number',
     ).toEqual([])
 
     // The control: the DM-facing variant does declare two, so the assertion above
@@ -713,16 +758,23 @@ describe('the vitals union is doing real work', () => {
       // row and for the same reason: it is state a rest clears, not something the
       // character is. Empty here, and empty is the common case.
       spentPerRest: [],
+      // Published to both audiences. See ADR 0014 — the hero's was never a secret; what
+      // this row proves is that the badge's number is on the payload rather than derived
+      // in the browser, which is the half that matters for a creature.
+      armourClass: PC_ARMOUR_CLASS,
+      passivePerception: PC_PASSIVE_PERCEPTION,
     }
 
     const asPlayer = await t.query(api.characters.vitals, { code: fixture.code })
     expect(Object.keys(rowFor(asPlayer, fixture.pc)!).sort()).toEqual([
+      'armourClass',
       'characterId',
       'current',
       'hitDiceCount',
       'hitDiceRemaining',
       'kind',
       'max',
+      'passivePerception',
       'spentPerRest',
     ])
     expect(rowFor(asPlayer, fixture.pc)).toEqual(exact)
@@ -734,6 +786,10 @@ describe('the vitals union is doing real work', () => {
     expect(rowFor(asDm, fixture.pc)).toEqual(exact)
     // And the DM's own row for the monster is the exact variant, so the two
     // payloads differ in the NPC row and in nothing else.
+    //
+    // ⚠️ **"and in nothing else" is now literally true of these two fields**, which is the
+    // point of publishing them: the DM's armour class for the monster and the player's are
+    // the same number, so the badge is not a thing a DM sees and a player does not.
     expect(rowFor(asDm, fixture.npc)).toEqual({
       kind: 'exact',
       characterId: fixture.npc,
@@ -742,6 +798,8 @@ describe('the vitals union is doing real work', () => {
       hitDiceCount: null,
       hitDiceRemaining: null,
       spentPerRest: [],
+      armourClass: NPC_ARMOUR_CLASS,
+      passivePerception: NPC_PASSIVE_PERCEPTION,
     })
   })
 })
@@ -810,6 +868,8 @@ describe('the bands a player is told, through characters.vitals', () => {
         hitDiceCount: null,
         hitDiceRemaining: null,
         spentPerRest: [],
+        armourClass: NPC_ARMOUR_CLASS,
+        passivePerception: NPC_PASSIVE_PERCEPTION,
       })
     }
   })
@@ -1159,6 +1219,8 @@ describe('refusing an NPC is indistinguishable from it not existing', () => {
       characterId: fixture.npc,
       current: NPC_CURRENT_HP,
       max: NPC_MAX_HP,
+      armourClass: NPC_ARMOUR_CLASS,
+      passivePerception: NPC_PASSIVE_PERCEPTION,
       hitDiceCount: null,
       hitDiceRemaining: null,
       spentPerRest: [],
@@ -1356,6 +1418,15 @@ function presetSheet(
 const PRESET_MAX_HP = 28
 const PRESET_HIT_DICE = 3
 const PRESET_NAME = 'Brannoc Emberhand'
+/**
+ * The same character's two published sheet numbers, and neither is stored anywhere: a
+ * `preset` document holds a race, a class, a subclass and a level. Both come out of
+ * `resolveSheet`, which is what makes them worth asserting on a *premade* hero rather than
+ * only on a hand-built one — the passive perception is derived from ability scores the
+ * library supplied, through a chain that never touches the stored document.
+ */
+const PRESET_ARMOUR_CLASS = 18
+const PRESET_PASSIVE_PERCEPTION = 13
 
 describe('Milestone 4: resolution runs server-side, and Milestone 3’s guarantee holds', () => {
   /**
@@ -1469,6 +1540,11 @@ describe('Milestone 4: resolution runs server-side, and Milestone 3’s guarante
       hitDiceCount: PRESET_HIT_DICE,
       hitDiceRemaining: PRESET_HIT_DICE,
       spentPerRest: [],
+      // The library's, like every other number in this row — which is the same proof one
+      // field further: a `preset` document stores no armour class and no ability scores, so
+      // both of these had to come off the *resolved* sheet or they would be null.
+      armourClass: PRESET_ARMOUR_CLASS,
+      passivePerception: PRESET_PASSIVE_PERCEPTION,
     }
 
     // The player playing them, another seat entirely, a caller with no seat at all,
@@ -2004,6 +2080,8 @@ describe('a granted seat is sent exact hit points, and only that seat', () => {
       hitDiceCount: null,
       hitDiceRemaining: null,
       spentPerRest: [],
+      armourClass: NPC_ARMOUR_CLASS,
+      passivePerception: NPC_PASSIVE_PERCEPTION,
     })
 
     // Ben was granted nothing, and neither was the caller with no seat at all — which is
@@ -2088,6 +2166,76 @@ describe('a granted seat is sent exact hit points, and only that seat', () => {
     // being told about an empty game.
     expect(rowFor(await t.query(api.characters.vitals, { code, dmCode }), hidden)?.kind).toBe(
       'exact',
+    )
+  })
+
+  /**
+   * THE WHOLE DEFENCE OF PUBLISHING ARMOUR CLASS, ASSERTED RATHER THAN ARGUED.
+   *
+   * A creature's armour class now reaches every player who can see its coin — a secret
+   * lifted deliberately, on the record, in ADR 0014. What makes that defensible is entirely
+   * the *scope*: it is published to people who were already being told the creature exists,
+   * and to nobody else. So the claim to hold onto is not "the number is safe", it is
+   * **"the set of creatures a player hears about did not change"** — and if that ever stops
+   * being true, this badge starts announcing the armour class of the ambush.
+   *
+   * The mechanism is that `visibleVitals` `continue`s past a creature the caller may not
+   * see **before** it assembles either variant, so there is no row to hang a number on. This
+   * asserts the consequence directly rather than trusting the ordering: the number is in the
+   * DM's payload and absent from the player's, as a raw substring scan over the serialised
+   * response so that a future field carrying it by another name fails too.
+   *
+   * ⚠️ **The armour class here is deliberately not `NPC_ARMOUR_CLASS`.** The fixture's
+   * visible monster uses that value and is legitimately in the player's payload, so scanning
+   * for 22 would find it and this test would pass on the wrong row. A distinct number is
+   * what makes the scan mean *this* creature.
+   */
+  test('a DM-layer creature publishes no armour class to a player, and does to the DM', async () => {
+    const t = harness()
+    const fixture = await vitalsFixture(t)
+    const { code, dmCode, sceneId, seat: ana } = fixture
+
+    // Both distinct from every other number in the fixture, so a hit in the scan below can
+    // only have come from this creature.
+    const SECRET_ARMOUR_CLASS = 19
+    const SECRET_PASSIVE_PERCEPTION = 21
+    const ambush = await makeNpc(
+      t,
+      code,
+      dmCode,
+      'The Thing In The Rafters',
+      npcSheet({
+        armourClass: SECRET_ARMOUR_CLASS,
+        passivePerception: SECRET_PASSIVE_PERCEPTION,
+      }),
+    )
+    await addToken(t, code, dmCode, sceneId, {
+      name: 'Rafters',
+      layer: 'gm',
+      characterId: ambush,
+    })
+
+    // `containsNumber` rather than `toContain`, and the word boundaries are load-bearing:
+    // a bare substring search for 19 finds it inside 190, inside a timestamp and inside a
+    // character id, so the negative half would pass or fail for reasons unrelated to the
+    // payload. This is the helper every other scan in this file uses.
+    const asPlayer = JSON.stringify(await t.query(api.characters.vitals, { code, playerId: ana }))
+    expect(containsNumber(asPlayer, SECRET_ARMOUR_CLASS)).toBe(false)
+    expect(containsNumber(asPlayer, SECRET_PASSIVE_PERCEPTION)).toBe(false)
+    expect(asPlayer).not.toContain(ambush)
+
+    // The positive control, without which the scan above passes on an empty payload — the
+    // discipline every payload scan in this repo keeps. The DM is told all three.
+    const asDm = JSON.stringify(await t.query(api.characters.vitals, { code, dmCode }))
+    expect(containsNumber(asDm, SECRET_ARMOUR_CLASS)).toBe(true)
+    expect(containsNumber(asDm, SECRET_PASSIVE_PERCEPTION)).toBe(true)
+    expect(asDm).toContain(ambush)
+
+    // And the second control: the *visible* monster's armour class is in the player's
+    // payload, so the assertion above is about this creature being hidden rather than about
+    // the field having failed to ship.
+    expect(rowFor(await t.query(api.characters.vitals, { code, playerId: ana }), fixture.npc)).toMatchObject(
+      { kind: 'band', armourClass: NPC_ARMOUR_CLASS },
     )
   })
 

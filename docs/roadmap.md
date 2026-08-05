@@ -14,7 +14,7 @@ Two principles drive the ordering:
 Each milestone is a branch (or a few), merged to `dev`, then promoted to `main` when it's worth
 deploying. Acceptance criteria are written so you can tell "done" from "mostly done".
 
-**Numbering note.** Five milestones have been inserted after the one before them shipped, and each
+**Numbering note.** Nine milestones have been inserted after the one before them shipped, and each
 insertion pushed everything below it down one.
 
 - **Milestone 4, the character library**, inserted after Milestone 3 shipped.
@@ -35,11 +35,42 @@ insertion pushed everything below it down one.
   are written against who is at the table and what they are holding, and **the DM could not reach DM
   mode without being told where to look.** The front door being in the wrong place is not something
   to fix after building three more rooms.
+- **Milestones 11, 13 and 14 — tokens; maps, fog and barriers; character resources** — all three
+  inserted after Milestone 10 shipped, and after reading how Roll20 does the same three jobs. They
+  arrive together because they are one review of the board screen rather than three ideas, and they
+  are three milestones rather than one because each is a separate decision with its own ADR: what a
+  coin *is* once it is placed, what a map *is* beyond one image and one fog model, and whether the
+  application counts what a roll spends. **This is the first insertion that fixes something already
+  shipped rather than something about to be built** — `board.removeToken` has been complete and
+  fully tested since Milestone 2, with no button anywhere in the application, which is a gap five
+  milestones of new features walked straight past. (They were 11, 12 and 13 when they were written;
+  the board-polishing milestone below was inserted between the first and the second.) ⚠️ **The third
+  of those three is gone**, and it is the only entry in this list describing a milestone that was
+  planned and then **replaced rather than shipped or deferred** — see the entry below it.
+- **Milestone 14 is no longer the character-resources milestone.** It was planned as spell slots,
+  limited uses and the short rest, and it is now the **5e 2024 conversion**, on the maintainer's
+  instruction. This is a **replacement in place rather than a seventh insertion**, so it renumbers
+  nothing at all: no heading below it moves and the table further down is untouched, which is the
+  first time a change to this file's plan has cost even less than an insertion. What the old milestone
+  planned is **absorbed** rather than dropped — the 2024 rules contain slots, limited uses and both
+  rests — so nothing in the reversal trail below is undone. ⚠️ **Anything in this file that names it
+  "the character-resources milestone" now points at a milestone that builds resources as one section
+  of nine**, and the two places that matter are marked where they sit.
+- **Milestone 12, board polishing**, inserted after Milestone 11 shipped and after twenty minutes of
+  using it. It is the *second* insertion that fixes something already shipped, and the first that
+  fixes something shipped **one milestone earlier** — the right-click menu's *Edit this coin* was
+  wired to a handler that could not do what its own docblock promised. The rest is the same
+  discovery the milestone before it made: four controls filed where nobody looks for them, three
+  things too small or too clipped to read, and one missing die. ⚠️ **Two of its nine items are not
+  polish at all** and are listed under its own heading as such — one publishes a number this
+  codebase has withheld since Milestone 3, and one widens the dice grammar that CLAUDE.md
+  invariant 10 calls the cap itself.
 
 So rolls and dice went 4 → 5 → 6 → 7 → 8 → **9**, DM tooling 5 → 6 → 7 → 8 → 9 → **10**, tools and
-polish 6 → 7 → 8 → 9 → 10 → **11**, and the game editor 7 → 8 → 9 → 10 → 11 → **12**. This file is
-renumbered throughout. **The ADRs are not**, because an ADR is not edited after the fact — read them
-against this table:
+polish 6 → 7 → 8 → 9 → 10 → 11 → 14 → **15**, and the game editor
+7 → 8 → 9 → 10 → 11 → 12 → 15 → **16**. This
+file is renumbered throughout. **The ADRs are not**, because an ADR is not edited after the fact —
+read them against this table:
 
 | Where the ADR says | It means | Read it as |
 | --- | --- | --- |
@@ -48,9 +79,9 @@ against this table:
 | Milestone 5 — [0006](adr/0006-premade-character-library.md) | rolls, feed and dice | 9 |
 | Milestone 6 — [0006](adr/0006-premade-character-library.md) | DM tooling, layers, fog of war | 10 |
 | Milestone 6 — [0007](adr/0007-monster-bestiary-and-cr-scaling.md) | rolls, feed and dice | 9 |
-| Milestone 7 — [0004](adr/0004-board-authorisation-and-layers.md) | orphaned-blob sweeper, admin view | 12 |
+| Milestone 7 — [0004](adr/0004-board-authorisation-and-layers.md) | orphaned-blob sweeper, admin view | 16 |
 | Milestone 7 — [0007](adr/0007-monster-bestiary-and-cr-scaling.md) | DM tooling, layers, fog of war | 10 |
-| Milestone 8 — [0006](adr/0006-premade-character-library.md) | orphaned-blob sweeper | 12 |
+| Milestone 8 — [0006](adr/0006-premade-character-library.md) | orphaned-blob sweeper | 16 |
 
 [ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md),
 [ADR 0009](adr/0009-who-plays-what-and-what-control-grants.md),
@@ -58,10 +89,17 @@ against this table:
 [ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md) and
 [ADR 0012](adr/0012-three-layers-and-a-fog-that-is-honest-about-itself.md) have no rows, and that is
 the discipline working rather than an omission: not one of them names a milestone number anywhere, so
-the fourth and fifth renumberings cost them nothing. They say "the dice milestone" and "the DM-tooling
-milestone", which is the formulation that survives. **Five in a row is the convention holding** —
+the last four renumberings cost them nothing. They say "the dice milestone" and "the DM-tooling
+milestone", which is the formulation that survives. **Nine in a row is the convention holding** —
 which is now long enough that it is simply how an ADR is written here — and the table above stops
 growing on the day the last numbered ADR is superseded.
+[ADR 0013](adr/0013-a-coin-you-can-copy-place-and-label.md) has no row either, and was the first
+written *knowing* the rule rather than happening to keep it: it says "the tools-and-polish milestone"
+where it has to name the one that will want the word *marker* for a drawing pen. ADRs 0014, 0015 and
+0016 name no number either — and 0014 is the first written under a renumbering that happened *to it*
+rather than below it, since the milestone it belongs to was inserted above the two that had already
+claimed 0014 and 0015 in this file's prose. That cost two words here and nothing at all in the ADRs,
+which is the whole argument for the convention stated in one sentence.
 
 ⚠️ **ADR 0012 is the first one that had to name a *deployment* step rather than a milestone**, and it
 is worth knowing the difference. Renaming the GM layer's stored value is a widen–migrate–narrow across
@@ -75,7 +113,9 @@ wrote down — *a comment that names a milestone number dates badly, and naming 
 so every "still Milestone 6" in a completed section above now reads "still the rolls milestone", and
 the same for the DM-tooling, tools and game-editor milestones. **Each insertion since has cost a heading
 renumber and this table, and nothing else**, which is the prediction that sentence made being paid
-out rather than a coincidence worth glossing over.
+out rather than a coincidence worth glossing over. The three inserted at once cost exactly the same —
+two headings and two cells — which is the strongest version of that payout available, because three
+insertions at once is where a numbering scheme that had not been fixed would have collapsed.
 
 Source comments carry the same drift and have **not** been swept, though Milestone 5 stopped adding to
 it: nothing written in that milestone names a number. Older comments naming one are read against the
@@ -1345,8 +1385,9 @@ removing. Read `controllerIds` and `grantedPlayerIds` off the payload, as the gr
   `internalQuery` and an `internalMutation`, which are absent from the generated public API and
   reachable only by a caller already holding deploy credentials, so there is no "who may delete a
   game" to answer. `npm run prune-games` is the whole of the interface, dry-run by default, filtered
-  to a name prefix, with no `--all`. **The admin view that deletes a game a person chose is still
-  Milestone 12** and this took nothing from it — there is deliberately no public mutation, because
+  to a name prefix, with no `--all`. **The admin view that deletes a game a person chose is still the
+  game-editor milestone's** and this took nothing from it — there is deliberately no public mutation,
+  because
   that is where the authorisation question comes back and it wants an ADR. The smoke script was left
   calling `ConvexHttpClient` only: wiring the purge into its cleanup would make a test depend on
   deploy credentials it does not otherwise need, so it prints a pointer at the broom instead.
@@ -1502,6 +1543,17 @@ multiclassing and experience points are excluded by design. Consult the 2024 rul
 cherry-picked feature *works*, never for what a character *has*. The corpus is the authority on the
 second question, and a rules reference that disagrees with it is describing a different game.
 
+🚫 **That last sentence is the one thing the 5e 2024 conversion deliberately gives up, and it is left
+standing here rather than corrected.** After that milestone the SRD is the authority on **both**
+questions and the corpus is a transcription of it, so an archetype is chosen at level 3, there are
+twelve classes rather than eight, and *"a rules reference that disagrees with the corpus is describing a
+different game"* inverts into *the corpus disagreeing with the SRD is a transcription bug.* Everything
+above it survives: levels still stop at 5, backgrounds, inventory, multiclassing and experience points
+are still excluded, and **the paragraph was correct for the eleven milestones it governed**. It is
+marked rather than edited because a reduction this project chose on purpose, and then chose to stop
+choosing, is exactly the kind of decision a roadmap edited into agreement with the code can no longer
+show you.
+
 ### Five things the data model does not have, and each one is a decision
 
 None of these is a gap to fill quietly on the way past. Each changes what the roll path is.
@@ -1535,6 +1587,32 @@ None of these is a gap to fill quietly on the way past. Each changes what the ro
 [requirements.md](requirements.md) means by D&D Lite and what the bestiary milestone already decided
 about CR scaling. But it is an answer that has to be given, because the opposite reading builds a
 rules engine by accident, one feature at a time.
+
+⚠️ **Three of these five have now been answered the other way, and this list is the reason it is
+possible to say which.** This milestone gave all five answers, and
+[ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md) recorded them: **no slots at
+all** for the first, **no spell save DC for a hero** for the second, and **no count per key and no
+short rest** for the fourth. The **5e 2024 conversion** below reverses **1, 2 and 4**, at the
+maintainer's instruction, with ADR 0016 superseding those three decisions. This list is left exactly as
+it was written — the point of writing a decision down is that it can be found and overturned rather
+than quietly drifted away from, and a list edited to agree with the code can no longer catch the code
+being wrong.
+
+**Decisions 3 and 5 are unchanged and still hold:** initiative is still one function over a stored
+number and a derived one, and nothing *enforces* concentration or the action economy. ⚠️ **Read
+decision 5 carefully after the conversion, because it is the one that looks reversed and is not.** A
+2024 spell sheet prints a casting time and a duration that may read *Concentration, up to 1 minute*, so
+the words arrive on screen — but nothing drops a spell when its caster takes damage and nothing counts
+a bonus action. A field that says *concentration* is not a check that enforces it, which is the
+distinction the condition pips already drew.
+
+⚠️ **Decision 2 falls for a reason worth naming, because it is not the reason the other two fall.** 1
+and 4 were reversed by instruction — the maintainer asked for slot counting. 2 falls **structurally**:
+every 2024 caster has a spell save DC and a spell attack bonus, so declining them means shipping a
+sheet the rules describe with two boxes empty. Its own answer above predicted the shape of the fix —
+*"either they get derived at resolution (and the spellcasting ability per class becomes stored
+content)"* — and that is exactly what the conversion does. **Nothing is compared to the DC**, then or
+now, which is why this reverses a *field* and not a decision about adjudication.
 
 ### Reference material, and what each is good for
 
@@ -1741,10 +1819,1206 @@ a corridor is fogged has no position rows for what is standing in it.
 
 ---
 
-## Milestone 11 — Tools and polish
+## ✅ Milestone 11 — Tokens
+
+**Done.** The decisions are recorded in
+[ADR 0013](adr/0013-a-coin-you-can-copy-place-and-label.md). Seven things it settled differently from
+the section below, or found out by building it, so read them together:
+
+- ⚠️ **The naming rule's third sentence was one word wrong, and it produced two coins with one
+  name.** The section below says the suffix is skipped when one coin is added and *nothing is
+  numbered yet*. Both readings of that agree on the case it describes, which is why the difference
+  is easy to miss — and under the narrow one, duplicating a lone `Goblin` gives a second coin **also
+  called `Goblin`**, then a third, because nothing ever becomes numbered. Asking whether the base is
+  on the board **at all** fixes it and keeps the described case exactly. It is also the honest
+  statement of what separates the two surfaces: the add dialog passes a name it is about to create,
+  the duplicate control passes one already standing there.
+- **"Add five of these" and "duplicate five times" became one code path, and that is what makes the
+  acceptance line reachable.** `Goblin 1 … Goblin 5` falls out of an *add* with nothing numbered
+  yet; a *duplicate* of an existing `Goblin` correctly gives `Goblin 2 …`, because the source is
+  never renamed. The section below reads as though one control had to produce both, and it cannot.
+- ⚠️ **The third blob delete was already broken, not merely waiting.** `deleteTokensInGame` deleted
+  one blob per row, so two coins sharing one meant deleting an id that had already gone — which
+  throws and aborts the whole transaction. Confirmed against the dev deployment
+  (`storage id … not found`). It was unreachable only because nothing could make a twin, and
+  `board.addToken` has always accepted a blob another coin already owns. It is also the one of the
+  three that **must not** ask the new predicate: on a purge the answer is `true` for a twin that is
+  also about to go, and asking per row would be forty thousand document reads in one transaction. It
+  deduplicates instead, which is a stronger statement rather than a weaker one.
+- **A secret-bearing table arrived and cost no new machinery.** `tokenMarkers` joined `tokens` and
+  `tokenPositions` on invariant 8's first row because its predicate is already there — `maySee`, same
+  question, same function, same module. No new choke point and no fourth column. The test for whether
+  a table belongs on that list turns out not to be "is it new?" but *does a row have a non-secret
+  twin, and does a predicate already tell them apart?*
+- ⚠️ **`normaliseMarkers` needed a home the plan did not name.** The roadmap puts the fail-closed
+  intersection in the renderer, which is right and insufficient: `board.markers`' `returns:` validator
+  is `v.array(tokenMarkerValidator)`, so a value from a newer deployment would make the **query throw
+  for every caller** and take the whole table's conditions subscription down, where dropping it costs
+  one undrawn pip. Three call sites, three different failures.
+- **Radix's `ContextMenu` does take an `open` prop**, so "it is uncontrolled" was the wrong reason for
+  the right decision. The real one is that the point it positions at lives in its trigger's own state
+  with no prop supplying it, and its content omits `side`/`align` so it cannot be re-aimed. The
+  canvas half of the argument stands: one `<canvas>`, no DOM node per coin.
+- **A pre-existing bug fell out of building the menu.** `BoardStage`'s space-pan claimed *any* button,
+  so with space held a right-press began a pan and then opened the menu. Nothing could reach it before
+  the board had a right-click gesture, and that handler's own docblock had always described the
+  intended behaviour correctly.
+- ⚠️ **`npm run test:smoke` caught a regression this milestone introduced, and it is the file's own
+  argument arriving from an unexpected direction.** Unifying add and duplicate meant running the
+  DM's *typed* name through `duplicateNames` — and its skip case returns the **base**, so a DM
+  typing `Kobold of the Arch 3` on a board with no kobolds got a coin called `Kobold of the Arch`,
+  with no way to create a trailing number at all. Nothing local saw it: every test asserted the
+  numbering, and the bug was in the typing. The rule that survives is the honest one — **a name
+  somebody typed is not a copy of anything, so nothing rewrites it**; only the coins the DM did not
+  name are numbered. Note what this says about that script: its usual job is values a real
+  deployment refuses, and here it was a *behaviour* nobody had thought to assert.
+- ⚠️ **The browser confirmed rather than corrected, and that is worth recording because it breaks the
+  run.** Every milestone in this file has found at least one thing by opening the app that lint and
+  the suite did not — the layout milestone's `forceMount` panel, the DM-tooling milestone's veil above
+  the player layer. This one found nothing in the application. What it did find was **three bugs in
+  the driver script**: a malformed PNG fixture, a create-game flow that needs *Enter game* pressed on
+  the reveal panel, and a map that has to be put on the table before the board draws anything. Stated
+  plainly rather than dressed up as a finding, because the honest version is the useful one — and
+  because the *reason* is probably that this milestone is five small surfaces over machinery that
+  already existed, where those two were new layout and a new render order. What the browser did earn
+  is the arithmetic, seen rather than asserted: a one-square coin at 100% carrying four conditions
+  draws **two pips and a `+2`**, which is `floor((40 + 2) / 12) = 3` slots with the last spent on the
+  counter.
+
+**Acceptance, as met:** the DM adds five Goblins in one press and gets `Goblin 1 … Goblin 5`, each
+with its own sheet — damaging one moves one health bar and the other four stay full. Duplicating an
+existing `Goblin` continues the run rather than colliding with it, and the source keeps its name. The
+DM puts one on a second map from the Tokens tab without it leaving the first, and pressing the button
+again does not move it. A coin marked *poisoned* draws a pip; four conditions on a coin at the detail
+threshold draw one pip and a `+3`, and zooming in reveals the rest. A player right-clicking a monster
+gets their browser's menu and nothing of ours; a player right-clicking their own hero gets conditions
+and the sheet. A player inspecting network traffic sees no marker row for a GM-layer coin — asserted
+with a positive control, and covered a second time for free by the enumeration sweep, which
+`boardFixture` now marks the hidden coin to keep honest.
+
+**The original plan follows.**
+
+**Inserted after Milestone 10 shipped**, and it is the first insertion in this file that fixes
+something already built rather than clearing the way for something about to be. Whatever gets built
+in this milestone, the decisions go in **ADR 0013**.
+
+The tell is one sentence: **`board.removeToken` has been complete, DM-gated and covered by its own
+tests since Milestone 2, and nothing in `src/` has ever called it.** A DM cannot delete a coin from
+the running application. Five milestones of new features walked past that, which is what a gap looks
+like when every milestone is about the thing it is adding.
+
+The reference for this milestone is Roll20's token system, and the useful part of reading it was not
+the feature list. It was **where Roll20 gets it wrong**: its own documentation tells a GM that eight
+identical goblins must have their hit-point bars *manually unlinked* from the character sheet, or
+damaging one damages all eight, and the community wrote a script (`DupCharToken`) to work around it.
+That is a trap this project can simply not build, because a copy that makes its own character
+document costs one function.
+
+### A coin the DM can get rid of
+
+Wire the existing mutation to the Tokens tab and to the board. Nothing on the server changes except
+the blob-sharing fix below, which is not optional and is not small — see the ⚠️ at the end.
+
+The delete control lives in the **editor**, not on the row: a destructive control on a row in a
+two-hundred-row list is one mis-click away from deleting the ambush. Its copy has to say what it does
+**not** do — the bound creature's sheet stays, and is deleted from the Sheets tab. That asymmetry is
+deliberate. A coin and a creature are different things, `characters.remove` already exists and
+detaches every token pointing at what it deletes, and a *board* mutation reaching into the characters
+choke point to destroy a sheet is the coupling `TokenAddDialog` already refuses in the other
+direction.
+
+### Placement becomes something the DM can perform
+
+`MapSetupPanel` tells the DM today that "tokens belong to the game, not to this map, so one villain
+can stand on several." **That is true of the schema and false of the application.** `board.addToken`
+is the only thing that creates a placement, and `board.moveToken` is only ever called with the
+*active* scene, so a coin created on map A can never be put on map B and can never be taken off map A
+without being destroyed.
+
+Three DM-only functions fix it — `board.placeOnScene`, `board.removeFromScene`, and a
+`board.placements` query answering *which boards does this coin stand on*. Deciding which board a
+creature stands on is `addToken`'s decision made a second time, and `scenes.list` is DM-only because
+a list of scene names is a spoiler, so a player has no route to another scene's id anyway.
+
+`placeOnScene` is **idempotent** — if the row is already there it returns without writing, so
+pressing the button twice does not teleport a coin the DM had already positioned. `removeFromScene`
+is a **no-op rather than a throw** when the coin is not there, for `files.discard`'s reason: the
+client calls it from a menu that may be a frame stale, and a second removal should be nothing rather
+than a second error.
+
+⚠️ **`board.placements` is per token, and that is its whole cost model.** It reads by token, so it is
+invalidated by moves of *one* coin rather than by every drag on the board, and it is subscribed only
+while the Tokens tab has a coin selected. The obvious alternative — one game-wide map of coin →
+boards, so the whole list could show it — puts every placement on every scene into the read set of a
+panel that is open all session, which is exactly the read invariant 2's read-side rule exists to
+refuse. That is why `TokensTab`'s comment says today that the list cannot answer this. **The comment
+gets narrowed, not deleted**: the *list* still says nothing, and the *selected coin* gets an answer.
+
+### Duplicate, and "add five of these"
+
+One press produces `Goblin 1 … Goblin 5`, and **each one gets its own character document and its own
+vitals row.** That is the whole feature and it is the thing Roll20 needs a community script for. Five
+goblins sharing one hit-point pool is a bug that looks like a feature until the second one takes
+damage.
+
+The naming rule lives in one browser-shared function, so the dialog's preview and the write are the
+same code rather than two implementations that agreed on the day they were written. Three sentences:
+the **base** is the source name with one trailing ` <digits>` removed, so duplicating `Goblin 3`
+continues the goblins rather than starting the `Goblin 3`s; `n` is the highest number already in use
+among names matching the base, a bare base counting as 1; and the suffix is skipped entirely when one
+coin is added and nothing is numbered yet, so adding a single `Goblin` gets `Goblin` and not
+`Goblin 1`.
+
+**The source is never renamed.** `Goblin 1 … Goblin 5` reads better if the first duplication renames
+`Goblin` to `Goblin 1`, and it is refused: it is a write to a coin the DM did not ask to change, it
+re-pushes `board.tokens` to the whole table, and on a bound coin it leaves the sheet's name
+disagreeing with the coin's unless the rename cascades into the characters choke point. An
+over-length numbered name **refuses rather than truncating** — Milestone 1 shipped exactly the bug a
+truncation causes, and the smoke test exists because of it.
+
+What a copy inherits, and what it does not:
+
+| Field | Copied? | Why |
+| --- | --- | --- |
+| layer, size, tint | yes | it is the same creature, and five goblins prepared on the GM layer stay prepared |
+| art | **yes** | five goblins with no picture is not the feature — and this is the change with teeth, below |
+| the character | **no — a fresh one** | the entire point |
+| granted controllers | **no** | a grant is a decision about a person and a coin; an unattached copy is the DM's, which is Milestone 2's correction reached by a new route |
+
+**One transaction, not two.** `TokenAddDialog` argues the other way for the *client* creating a
+character and then a token, and that argument does not transfer: there the client owns the sequence
+and a refused token leaves a sheet the Sheets tab deletes in two clicks. Here the server owns both
+halves, so N coins and N sheets arrive together or not at all. Twelve half-created goblins is not a
+state anybody should have to clean up. The count is capped, and **both** caps are checked before
+anything is written with **two different messages**, because "too many coins" and "too many sheets"
+are two different reasons the DM is stuck and the fix differs.
+
+⚠️ **This is the milestone that makes token art shareable, and three unconditional deletes have been
+waiting for it since Milestone 2.** `board.removeToken`, `replaceTokenArt` and `deleteTokensInGame`
+each delete a token's stored image with no check, each carrying a comment naming the other two and
+saying that whatever makes art shareable has to make all three conditional **at the same time**.
+Duplication copies the image id. So: one new predicate — *is this blob some **other** token's art?* —
+and all three ask it in the same commit, or deleting one of five goblins strips the art off the other
+four and `Goblin 2` becomes a purple disc mid-fight. It is a sibling of the existing predicate rather
+than a parameter on it, because that one answers `files.discard`'s question (*is anything using
+this?*) and this one answers the delete path's (*is anything else?*), and collapsing them gives the
+discard guard an argument no caller ever wants to pass.
+
+### Conditions on a coin
+
+A fixed vocabulary of D&D conditions — poisoned, prone, stunned, restrained, concentrating, dead and
+the rest — drawn as small pips on the coin, set by the DM **or by the coin's controller**.
+
+⚠️ **They are labels and nothing else, and that sentence is the whole design.** Nothing in `convex/`
+reads a marker: no roll consults one, no health band is computed from one, no drag is refused because
+of one. That promise gets a **guard test** rather than a comment, in the shape `corpusGuard.test.ts`
+already has — it greps `convex/` for a **quoted module specifier** and fails if any module outside the
+schema, the choke point and the board's public functions imports the vocabulary. Matching a quoted
+specifier rather than a bare path matters for the reason that test already gives: several files will
+legitimately explain in prose that markers adjudicate nothing, and a guard that fails on the code
+written most carefully to respect it is a guard that gets deleted.
+
+⚠️ **`prone`, `grappled`, `restrained` and `paralysed` are named in
+[requirements.md](requirements.md)'s Excluded list — *no movement-detriment status effects* — and
+shipping them here lifts nothing.** What that entry excludes is the *effect*: the app halving a speed,
+granting advantage, or refusing a drag. What ships is the *word on the coin*, which is the same
+register as a bestiary creature's loot being a line of text and not an inventory. Because the
+exclusion names the word, the clarification is **written into that file's amendments section** rather
+than assumed — which is the only route by which an exclusion ever moves, and the discipline that
+makes Milestone 4's two amendments mean anything.
+
+**Their own table, not a field on `tokens`, and the reason is who writes it.** All six writers of the
+`tokens` document today are DM-gated, so *what can a player cause to be written to the table that
+holds `layer`?* answers **nothing**, and that emptiness is worth a table to keep. A marker is the
+first row a non-DM may cause to exist on the board. The secondary reason is invariant 2 seen from the
+read side: `board.tokens` resolves a signed storage URL per token, so a marker on that document would
+re-mint up to two hundred URLs every time somebody ticks *poisoned* — the exact cost ADR 0004 split
+the two board queries to avoid.
+
+**The row's existence means *this coin has conditions*,** the way a placement row's existence means
+*this coin is on that board*. Clearing the last marker deletes the row rather than storing an empty
+array, so a game with two hundred coins and one poisoned goblin holds one row.
+
+**The gate is the existing `requireMovableToken`, and reusing it is a decision rather than a
+shortcut.** [ADR 0012](adr/0012-three-layers-and-a-fog-that-is-honest-about-itself.md) separated
+`maySeeLayer` from `mayPlayersMove` because sight and interaction genuinely differ. Marking is not a
+third question: a player may mark the coins they may drag, and must not mark scenery they can see and
+cannot touch. Because it is the same question it gets the same function — so a Background coin
+refuses with `TokenNotMovable` (right: the player is looking at it, there is no existence to oracle),
+a GM-layer coin refuses with `TokenNotFound` (right: parity preserved), and an ungranted player-layer
+coin refuses with `TokenNotYours`. **Three refusals, no new constants, no new oracles.** The tripwire
+goes in the docblock: the day *may mark* and *may move* differ is the day `lib/layers.ts` gets a third
+predicate, and it will look exactly like the one ADR 0012 describes.
+
+⚠️ **A marker union with no `never` arm, and that is honest rather than lax.** Invariant 9 asks a new
+union for an allow-list switch with a `never` arm — but **there is no predicate here**, because
+nothing decides anything from a marker, which is the entire point. A switch written to satisfy the
+rule would be a guard that cannot fail, which is precisely what ADR 0012 argued out of `fogRects`'
+leak-guard entry. What the invariant protects is met three other ways that *can* fail: a `Record` of
+labels on the server, a `Record` of pip glyphs on the client, and a test pinning the validator's
+members and order against the list — the direction the compiler cannot see. And the fail-closed
+*runtime* behaviour is real and has a home: **the renderer iterates the vocabulary and intersects with
+the stored array**, rather than mapping over the stored array, so a value written by a newer
+deployment is not drawn rather than crashing a `Record` lookup in JSX across the whole board.
+
+⚠️ **Fog does not hide a coin's conditions**, and that is `board.tokens`' argument rather than an
+omission: filtering them means a `tokenPositions` read in a query whose whole virtue is being off the
+drag path. What it would buy is closing a devtools leak *of exactly the kind ADR 0012 already accepted
+for a fogged coin's name*. So that ADR's Hides table gains a clause — fog takes where it is, how hurt
+it is and what it just rolled, **not that a coin by that name exists and not what condition it is
+in** — and the standing answer is unchanged: a creature that must not be known about goes on the GM
+layer, where the guard is whole.
+
+### A context menu on the board
+
+Right-click a coin: edit, layer, duplicate, take off this map, delete. Built on the Radix dropdown
+primitive rather than hand-rolled, for the boring reasons — submenus, keyboard navigation, Escape,
+outside-click and focus return, none of which is worth writing again over a canvas.
+
+Right-clicking must **not** change the selection: the menu names the coin it opened on, and hijacking
+the selection would move the arrow keys as a side effect of asking a question.
+
+⚠️ **A player who does not control the coin gets no menu at all**, not a menu of greyed-out items. A
+list of the things you may not do is an inventory of the game's furniture, and on a Background coin it
+reads as the application being broken. ADR 0012's argument for a *distinguishable* refusal is about a
+write somebody attempted; it is not a licence to volunteer the list. A player who *does* control the
+coin gets exactly two entries — conditions, and open the sheet — both things they can already reach,
+which is the smallest thing that is not nothing.
+
+**Deliberately not done here:**
+
+- **A Delete key on the board.** `useBoardKeys` owns Escape and the arrows, and adding an
+  irreversible, undo-less destroy to a canvas the DM's hands are already on the keyboard for is how a
+  session loses an ambush. If anything earns a key later it is *take off this map*, which is
+  reversible.
+- **Multi-select.** Declined on the record in `useTokenSelection`, and the argument is untouched: the
+  arrow keys have to be aimed somewhere, and a batch move would have to answer what happens when the
+  server refuses half of it. Worth noting that **duplicate is the feature multi-select was mostly
+  wanted for** — five goblins in one press — so this reduces the pressure rather than deferring it a
+  third time.
+- **Deleting a coin deleting its creature.** Duplicating five times creates five sheets; deleting the
+  five coins leaves five sheets, to be deleted from the Sheets tab.
+- **A DM-only marker on a coin the party can see.** That is a second reason to withhold on a
+  per-*field* basis, which needs `publicVitalsValidator`'s treatment — a discriminated union whose
+  player variant has no member for it. Nobody has asked, and it is a whole design.
+- **Z-order and rotation.** Both are cosmetics with no secrecy question, and `TokenLayers` already
+  sorts big-under-small deliberately, so a z-order field would have to argue with it first.
+- **Anything at all that reads a marker.** The guard test is what makes that a promise rather than an
+  intention.
+
+**Acceptance:** the DM adds five Goblins in one press and gets `Goblin 1 … Goblin 5`, each with its
+own sheet — damaging one moves one health bar and four stay full. The DM puts one of them on a second
+map from the Tokens tab without it leaving the first, marks it poisoned, right-clicks it and deletes
+it, and **the other four still have their art.** A player right-clicking a monster gets nothing; a
+player right-clicking their own hero gets two entries and can mark it concentrating. A player
+inspecting network traffic sees no marker row for a GM-layer coin — asserted with a positive control,
+like every other payload scan in the suite. `npm run test:smoke` round-trips the marker union as both
+an argument and a projected field, and compares a duplicated coin against its source field by field.
+
+---
+
+## ✅ Milestone 12 — Board polishing
+
+**Done.** The decisions are in [ADR 0014](adr/0014-what-a-coin-says-about-itself.md). Five things it
+settled differently from the section below, or found out by building it:
+
+- ⚠️ **The name clamp was reversed rather than tuned, and the *box* stayed.** The section below says
+  the name renders at its natural width; dropping the `width` outright would have left every label
+  left-aligned against the coin's centre, because Konva's `align` means nothing without one. Keeping
+  the box and deleting only `ellipsis` is the whole change: Konva measures the line, centres it in
+  the box, and a line wider than the box overflows *symmetrically*. Two characters, not a
+  measurement problem.
+- **The coin's annotation scheme survived being extended and then had to be corrected by looking at
+  a coin.** `TokenCoin` has claimed since the pips landed that its marks are *disjoint by
+  construction*, and the two new badges were placed by consulting that sentence — upper-left and
+  lower-left at 45°, mirroring the hidden-from-party pip. That is six distinct *positions* and it is
+  **not** a proof that no two touch: a disc centred on the rim has half of itself outside it, and
+  the health bar spans the coin's full width, so at 45° the armour-class badge grazed the bar's left
+  end. Flattened to 30°. Visible in a browser and in nothing else, which is the entry that most
+  earns this list.
+- ⚠️ **Fifty dice in the physics engine works, and that was genuinely unknown.** The renderer has no
+  count cap of its own, so the grammar is the rigid-body count — and the section below says that if
+  it turned out to be unusable the fix was a *renderer* cap and never a second grammar. It did not:
+  50d20 settles in about eight seconds and every face is readable. The dice do cover most of a
+  fitted map on the way down, which is a thing to know rather than a thing to fix.
+- **The `RollProvider` hoist was safe for a reason the warning against it already named.**
+  `useRoll.ts` said a context whose value is a fresh object per render must not cross `RightPane`'s
+  memo boundary. Both of its values are memoised on human-action dependencies and its senders are
+  session-stable, so it satisfies that condition rather than being an exception to it — and the
+  warning is kept, because it is still right about the general case.
+- ⚠️ **A duplicate React key, introduced by this milestone and caught only in a browser.** The grid
+  calibrator and the new background picker are siblings, and both were keyed on `active._id` so that
+  switching maps remounts them — which is two children with the same key, whose documented
+  behaviour is that a child may be *duplicated or omitted*. Nothing looked wrong on screen; it was a
+  console warning during a scripted run. A key only has to be unique among siblings, so a word each
+  fixed it. Worth recording because the tests could not have found it and neither could the eye.
+
+**The original plan follows.**
+
+**Inserted after Milestone 11 shipped**, and after twenty minutes of using it. The decisions go in
+**ADR 0014**.
+
+Nine things, found by opening the board rather than by reading it. Seven are polish in the ordinary
+sense — a control filed where nobody looks for it, a circle too small to read, a name clipped at the
+zoom people actually play at. **Two are not**, and they are named first so nothing further down this
+section reads as though they were:
+
+| Not polish | What it actually is |
+| --- | --- |
+| **Armour class and passive perception on a coin** | The first amendment in this project that **lifts a secrecy guarantee** rather than a rules exclusion. A creature's armour class reaches no player today, and [ADR 0005](adr/0005-character-sheets-and-hit-point-secrecy.md) uses it as *the* worked example of the row-shaped secret. |
+| **d2, and fifty dice** | Widening `ROLL_PATTERN`, which CLAUDE.md invariant 10 calls the cap itself: *"the die-count cap is load-bearing and is the grammar rather than a separate check."* |
+
+Both were put to the maintainer with the cost stated, and both were chosen deliberately. That is the
+door [ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md)'s two reversals came
+through, and it is the only door either of these gets to come through either.
+
+### The defect
+
+**Right-clicking a coin and choosing *Edit this coin* does nothing at all.** Both it and *Open the
+sheet* are wired to the same handler, and that handler only selects — nothing switches the
+right-hand tab, because the tab is local state inside `RightPane` with no way in from outside. Two
+prop docblocks in `BoardTokenMenu` promise a tab switch that cannot happen.
+
+⚠️ **This shipped one milestone ago, in the commit whose own plan called the menu "a surface over
+five things that already work".** Five of the six entries were; this one was a surface over
+something that did not exist, and nothing caught it because there is no test that can — the wiring
+compiles, the mutation is never reached, and the failure is a tab that stays where it was. It is
+worth naming as the shape of bug this project's guard tests are structurally unable to find: they
+prove what a *server* will not send, and this is a client that asks for nothing.
+
+The fix lifts the tab to `GameShell` beside `selectedTokenId`, `clearSelection` and `forgetToken` —
+which is where it should have been the moment the board needed to point at a panel. `showTab` crosses
+`RightPane`'s memo boundary, so it is a stable `useCallback` for the reason that pane's header
+already gives about the divider.
+
+### Where things live
+
+- **The Add Token button and the layer picker move to the Tokens tab.** They are under DM Tools →
+  Map today, which is where you set up a *map*. Nothing is re-implemented: `TokenAddDialog` needs a
+  scene, and `scenes.active` is the **same cache entry** `useBoard` already holds, so this costs one
+  more reader of an existing socket and no server execution.
+- **The roll-mode buttons, the ad-hoc dice and the DM's grid adjuster become one toolbar on the
+  map.** `RollModeBar` and `CalibrateToggle` **move** rather than being copied, and `DiceComposer`
+  gives up its five presets — which have moved and grown to eight faces plus a count — while keeping
+  the typed-expression field pinned under the feed, where typing belongs. The feed gains the height.
+
+  ⚠️ **This is the one item with an architectural cost, and it is worth stating rather than
+  discovering.** A toolbar on the map that sets the roll mode forces `RollProvider` out of
+  `RightPane` and up to `GameShell`, which `useRoll.ts` explicitly warns against: *"a context whose
+  value is a fresh object per render is fine inside that boundary and would be a disaster crossing
+  it."* It is safe here for a reason the docblock has to be rewritten to say rather than left to
+  imply — both values are memoised on deps that move only on a human action, and the senders are
+  stable for the session by construction — and *"it turned out to be fine"* is not the same sentence
+  as *"the warning was wrong"*. The warning is still right about the general case.
+
+### What a coin says about itself
+
+- **A bound coin shows its armour class in a red circle and its passive perception in a blue one.**
+  See the table at the top: this publishes armour class, and the scope is the whole of what makes it
+  defensible. A player receives both **only for coins they already see** — a GM-layer coin is not
+  sent at all and a fogged one is already dropped by `boardCharacterAccess`. Nothing else on the
+  stat block moves, and `maySeeCharacter` is untouched, so `characters.sheet` still refuses an
+  ordinary NPC. The numbers ride on **both** variants of `publicVitalsValidator`, which leaves that
+  union's actual guarantee — *the player-facing variant has nowhere to put a hit point* — true
+  word for word.
+
+  ⚠️ **Passive perception needs a derivation that does not exist yet.** `passivePerceptionOf`
+  returns `null` for every hero, because a hero's is computed from ability scores, level and the
+  Perception flag while a creature's is stored pre-calculated. One accessor answering it for both
+  sheet variants is new code, and `null` must stay `null` — a hand-built goblin has no recorded
+  passive perception, and printing 10 would invent a statistic the DM never gave.
+
+- **The name is no longer clipped to the coin's width.** That clamp was deliberate and its reason —
+  names smearing over each other at low zoom — is real; the maintainer was shown the trade and chose
+  the overlap. The docblock keeps the argument and records which way it went, because the next
+  reader should find a decision rather than an absence.
+
+- **The condition pips get bigger**, to the size of the new circles, which is what makes *"like the
+  AC example"* literally true. ⚠️ They are coupled to `COIN_DETAIL_MIN_DIAMETER` by an assertion in
+  `markers.test.ts` — a pip row must fit two pips at the threshold — so the threshold rises with
+  them and **coin detail now appears at slightly higher zoom.** That is a real behaviour change and
+  it is in the acceptance criteria so it cannot be quietly reverted.
+
+- **The DM gets the conditions submenu too.** It exists already, in the non-DM branch only. One
+  extraction, no new mutation and no new gate: `setMarkers` already admits a DM.
+
+### The map's own colour
+
+A scene gets a background colour, so the area around the map is not always white.
+`convex/lib/scenes.ts` states the licence in as many words — *"Nothing in a scene is a secret"* — so
+this collides with nothing, and it follows `gridVisible`'s pattern step for step with **one
+difference**: `gridVisible` could be required because it shipped with the table, and `scenes` is now
+populated, so the field is optional and read through exactly one accessor.
+
+⚠️ **`TINT_PATTERN` must become shared rather than copied.** It is a module-private `const` in
+`convex/board.ts`, and its own reason — *"a CSS colour function or a `url(...)` would be a string the
+browser interprets on every other player's screen, put there by whoever runs the game"* — applies
+with **more** force to something painting the whole viewport than to a coin. One regex, in
+`convex/lib/`, or this milestone ships the second copy that agreed once.
+
+### The dice
+
+Eight faces — d2, d4, d6, d8, d10, d12, d20, d100 — and a count from 1 to 50. Only **d2** is new to
+the face allow-list, and the count is the part that moves invariant 10.
+
+`MAX_ROLL_DICE`'s own docblock names what has to move with it: *"the regex is the copy that decides…
+when one moves, both move."* Six sites, plus CLAUDE.md. **The consequence to state rather than
+discover** is that the sheet grammar and the ad-hoc grammar are one grammar, so a sheet entry may now
+legitimately say `30d6`. That is the price of not having two caps that agreed once, and it was
+chosen over the alternative with that sentence in front of it.
+
+⚠️ **The renderer has no count cap of its own, so raising the grammar raises the rigid-body count
+directly.** Fifty dice in the physics engine is the one number in this milestone that nothing but a
+browser can answer. If it is unusable the fix is a *renderer* cap that shows a subset and says so —
+**never** a second grammar.
+
+### Deliberately not done here
+
+- **A per-player or per-coin choice of which badges show.** Two circles is what was asked for; a
+  preferences model is a whole design and nobody has asked.
+- **Anything else off the stat block on the coin.** Attacks, damage, saves and notes stay where they
+  are. The argument above is specifically about two numbers, and it does not generalise.
+- **A second dice grammar for ad-hoc rolls.** Considered and refused above.
+- **Exporting or screenshotting the board.** The background colour is painted in the DOM rather than
+  in Konva, so it would not appear in a canvas export — which nothing does today, and which is the
+  cheaper trade than putting a full-viewport rectangle into the per-pan-frame rasterisation path.
+
+**Acceptance:** right-clicking a coin and choosing *Edit this coin* selects it and lands on the
+Tokens tab, and *Open the sheet* lands on the sheet — they are no longer the same handler. Add Token
+and the layer picker are on the Tokens tab and DM Tools → Map carries neither. The DM sets a map's
+background colour and every player sees it after a reload. A bound coin shows a red AC circle and a
+blue passive-perception circle; an unbound coin shows neither; a hand-built goblin with no recorded
+passive perception shows the red one **and no blue one**. A player sees **no AC badge on a GM-layer
+or fogged creature**, asserted with a positive control, because the whole defence of publishing it is
+that the scope did not widen. `Venerable Sapphire Dragon` reads in full at the zoom where the board
+fits. Roll modes, all eight dice, the 1×–50× count and the grid adjuster are on the map, and the mode
+still tints loudly when it is not Normal. `1d2` rolls and shows a d2, `50d6` rolls, and `51d6` is
+refused with the grammar's own message.
+
+---
+
+## Milestone 13 — Maps, fog and barriers
+
+**Inserted after Milestone 10 shipped.** The decisions go in **ADR 0015**.
+
+[ADR 0012](adr/0012-three-layers-and-a-fog-that-is-honest-about-itself.md) shipped a fog that is
+honest about itself: real for tokens, polite for the map, and a map tool rather than a secrecy tool.
+The honest thing it does not do is the one thing a dungeon crawl needs — **start covered.** Today the
+DM paints darkness onto a lit map; Roll20's model, and every published dungeon workflow, is the
+inverse: the page is dark and the GM opens it up room by room. Everything else here is the map tooling
+that stops at one image: a scene cannot be reordered, duplicated, annotated or re-imaged, and the
+picker downloads twenty-five full battle maps to draw twenty-five thumbnails the size of a postage
+stamp.
+
+**And there are no walls.** Roll20's Dynamic Lighting is a ray-tracer with per-token vision, explorer
+mode and a performance page telling you which browsers it works in. ⚠️ **None of that is built here,
+and the omission is load-bearing rather than a matter of budget.** What ships is Roll20's *barriers*
+with only their movement half: a token cannot be dragged through a wall, and nothing about a wall
+decides what anybody can **see**. The reason is written into [CLAUDE.md](../CLAUDE.md) already —
+per-player fog, reveal-as-you-walk and line of sight each make a stored row *a statement about what
+one caller may know*, and that is the day invariant 8's reader/predicate table needs a fourth row.
+This milestone is specified so that day does not arrive.
+
+### Fog that starts covered
+
+A scene gains a base — **lit, and you black areas out**, or **dark, and you light areas up** — and
+under the second one a drawn shape is a hole in the dark rather than the dark itself. Everything else
+about fog is unchanged: the same shapes, the same eraser, the same server-side filtering of positions,
+health bands and feed lines.
+
+⚠️ **Two defaults, meaning opposite things, and both are right.** An *absent* base means lit, because
+every scene stored before this exists was calibrated under that model and defaulting them to dark
+would black out every map in every game on the schema push — absence is history. An *unrecognised*
+base means dark, fail-closed on `isMonsterSheet`'s terms and emphatically not `groupOf`'s tolerant
+ones, because a schema push is not atomic and a row written by a newer deployment must read as *more*
+hidden by an older one. Both are read through one accessor apiece.
+
+⚠️ **The early return inverts, and it is the whole cost model.** Fog is affordable today because a
+scene with no shapes returns before the positions read. Under a covered base, *no shapes* is the most
+hidden a map can be. So the free case is no longer "nobody has drawn a rectangle" — it is **"this
+scene is in the state it shipped in"**, which is still every game until somebody uses the feature, so
+the property invariant 2 names survives. What does not survive is the *reason*, and that invariant's
+own wording has to be corrected in the commit that makes it false. The new sentence to add: **turning
+a scene to dark buys the positions read for the rest of the session, without drawing anything.**
+
+The rule that a coin anybody at the table controls is never veiled stops being a courtesy and becomes
+load-bearing twice over: under a dark map with nothing revealed yet, *everything* is hidden, so
+without it every player loses their own hero on the first click of the toggle.
+
+⚠️⚠️ **The reveal stamp inverts, and this is the highest-value catch in the milestone.**
+`convex/fog.ts`'s own header states the rule — two of these functions widen an audience and one
+narrows it, which is why the reveal timestamp is on `erase` and `clear` and deliberately not on
+`draw`. **That is a statement about a lit base and is exactly backwards under a dark one.** Get it
+wrong and rubbing out a reveal replays a session's worth of rolls across the map — the failure ADR
+0012 built the timestamp to prevent, arriving through the mechanism it built. One small predicate, one
+place, and a fourth union with a `never` arm whose runtime default is **the opposite direction from
+every other fail-closed default in the codebase**: it defaults to *stamp*, because a stamp too many
+costs one missing flourish and a stamp too few replays an evening. Both docblocks must say why the two
+defaults point opposite ways, or somebody will "fix" one of them. `feed.test.ts`'s per-mutation
+assertion grows a second axis: **per act × per base.**
+
+Flipping the base **must not delete the shapes**. Inverting a map exactly — what was dark is now lit —
+is arguably a feature and definitely a surprise, so the confirm dialog says it in words; deleting is
+what *clear* is for, and a flip that destroyed an afternoon's drawing with no undo is unforgivable.
+
+⚠️ **Two client inversions will be missed if they are not written down.** The DM's crossed-disc
+"hidden from the party" cue on a coin has its own early return and its own skip of the positions
+query, and both invert; and the fog layer's *nothing drawn, draw nothing* early return inverts into
+*nothing drawn, paint the whole map*. A half-inverted fog is a map that lies, which is why the base
+lands as **one commit** covering the server, both, and the tools panel — where the Clear button's
+label and its destructive confirm must also become a function of the base, since under a dark map
+"clear all fog" *darkens everything* and a destructive confirm saying the opposite of what it does is
+the worst copy bug available here.
+
+### Shapes that are not rectangles
+
+Rectangle and polygon, which is exactly what Roll20 offers and there is no third. Stored on the
+existing shape row with the four numbers **reinterpreted as the bounding box**, computed server-side
+and never taken from the client — a client-supplied box that is wrong is a shape drawn on every screen
+that hides nothing.
+
+**The box is the whole reason a polygon is cheap.** The existing rectangle test rejects a polygon in
+one comparison unless the point is inside its box, so the ray-cast runs for the handful of shapes that
+could possibly contain the point and never for two hundred.
+
+⚠️ **The point-in-polygon edge convention has to agree with the rectangle one exactly**, and it does:
+half-open in one axis, one edge inclusive and the opposite exclusive. So a polygon spelling out a
+rectangle answers *identically at all four edges*, and two abutting shapes of different kinds tile
+with no seam and without both claiming the line. **That equivalence is a test, not a paragraph**, and
+it is the keystone of the milestone's geometry.
+
+⚠️ And the one documented soft spot changes meaning. The containment test fails open on a non-finite
+coordinate, which ADR 0012 calls "the only fail-open branch in the fog design". **Under a covered base
+that fail-open inverts to fail-closed** — a token with a broken position is withheld rather than
+published — so ADR 0015 has to say so rather than leaving a reader to trust ADR 0012's sentence.
+
+The draw mutation takes a **discriminated union** of the two shapes rather than flat numbers plus an
+optional point list. It costs three call-site edits and it buys a `never` arm; the additive
+alternative accepts a call carrying both spellings and silently prefers one, which is two states for
+one meaning and the failure [ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md) settled.
+
+### Walls that stop a token, and nothing else
+
+The DM draws a polyline on a scene; a token may not be dragged along a path that crosses it. Decided
+on the **centre path**, for the reason fog uses a centre and not a footprint: no token size and no grid
+size enter the arithmetic, so an uncalibrated grid cannot silently switch it off.
+
+**The enforcement is split, and the split is the design.**
+
+- **The client is where the feel is.** The drag tests each frame against the *last accepted* point and
+  simply does not accept a blocked one — the token slides up to the wall and stops, which is what
+  Roll20 does and is the entire user-facing feature. Testing against the last accepted point rather
+  than the drag origin is what makes walking round a wall work, and makes the block path-dependent,
+  which is what a person expects. Skipped for the DM.
+- **The server is a backstop on the settling write only**, `&&`-ed at the call site and never folded
+  into `requireMovableToken` — whose docblock's argument against a `fogRects` read applies word for
+  word, because that handler runs ten times a second and a range read there turns every wall the DM
+  draws into a conflict against every in-flight drag. A drag produces roughly twenty unchecked writes
+  and exactly one checked one.
+
+⚠️ **What that leaves advisory, written out rather than glossed.** Intermediate positions are
+unchecked, stored and broadcast, so a client that never settles can park a token anywhere and everyone
+watches it walk through the wall; and because those unchecked writes move the *from* point, a client
+that wants to cross a wall crosses it in unchecked steps and the settling check then sees a legal hop.
+Large tokens are tested by their centre, so a 2×2 ogre's body can overlap a wall its centre missed.
+
+⭐ **Checked against the threat model this is clean rather than a compromise, and the sentence is the
+one that matters: unlike `playerId`, and unlike fog, nothing behind a wall is a secret.** A wall
+withholds no row, no field and no payload, so invariant 1 does not enter at all and the advisory
+ceiling costs nothing in the register where cost is measured. *"Server-side refusals that stop a
+misclick are worth having and are not claimed to be more than that"* is already the written rule, and
+this is the first feature to which it applies with no residual worth arguing about.
+
+Three questions, answered:
+
+- **Walls do not block the DM.** They place creatures inside sealed rooms, drag the party through a
+  door they have just narrated open, and rearrange scenery. A wall the DM cannot cross is a wall the
+  DM cannot use.
+- **Background-layer tokens are moot, and that is the answer.** Players already may not move them, so
+  nobody subject to walls can move one. **No new predicate and no change to `lib/layers.ts`** —
+  scenery is placed, not walked.
+- **The refusal is its own kind and is not an existence oracle.** Every wall goes to every client, so a
+  blocked player has been sent the thing that blocked them and there is nothing to enumerate.
+  Answering *not found* about a coin on their own screen would be a lie that reads as a bug — ADR
+  0012's inversion argument, reused.
+
+⚠️ **Walls are sent to everyone and drawn for the DM only.** The client cannot block a drag against
+geometry it does not have, and a wall traced over the map's own drawn wall leaks nothing the fully
+downloaded map does not already leak. The genuine residual is **a barrier where the map shows no
+wall** — an invisible ward, a magically sealed door — which is information the image does not carry
+and which devtools recovers. One sentence in the ADR's costs section and one in the wall panel's copy,
+because a partial guard described as a whole one is worse than no guard.
+
+### Scene management, and the second set of unconditional deletes
+
+Notes (DM-only, per scene), reorder, duplicate, and **replace a scene's image without losing its grid,
+its fog, its walls or where everything is standing**.
+
+⚠️ **Every coordinate in this application is in the stored image's pixel space**, so replacing the blob
+moves everything. The mutation refuses an aspect-ratio change beyond a whisker — *"that map is a
+different shape; add it as a new map instead"* — and otherwise multiplies one scale factor through the
+grid, every placement, every fog shape and every wall. A uniform similarity transform, so shapes
+snapped to the old grid stay snapped to the new one. Same-size replacement, which is the common case,
+skips every rewrite.
+
+⚠️ **A duplicated scene shares the map blob, because invariant 6 forbids copying it — and that breaks
+two unconditional deletes exactly as duplication broke three in the milestone before.** `scenes.remove`
+and the game purge both delete a scene's image with no check. **Both become conditional in the same
+commit**, or duplicating a map and then deleting the original blanks the copy. It is the same rule the
+tokens milestone applies to a coin's art, arriving for a second table, and it is worth noticing that
+two milestones in a row
+found the same latent bug: **an unconditional delete is a bet that nothing will ever share the thing,
+and this project has now lost that bet twice.**
+
+What a duplicate always takes: the image, the grid, the fog base, the notes and **the walls**. What it
+takes only on request: the token placements and the fog shapes. The sentence that decides the split is
+worth keeping — *a wall is a property of the map; a placement and a fog shape are where things are
+tonight.* One choice rather than three checkboxes, because that sentence answers every case a DM
+actually has.
+
+### Thumbnails, and the guard that does not catch them
+
+The scene picker fetches the full battle map for every row. Generate a small derivative in the browser
+**from the already-downscaled blob** so a 23-megapixel source is decoded once rather than twice, store
+it, and fall back to the full map for every scene uploaded before this exists.
+
+⚠️ **`storageGuard.test.ts` will pass and should not.** It derives one predicate per *table*, and
+`scenes` already has one, so a second blob field on the same table sails through with those bytes
+unprotected by `files.discard`. Closing that is part of the milestone: the guard scans for the storage
+id **field names** and asserts the owning predicate mentions each — derived rather than listed, so it
+cannot become the fifth place somebody forgets the fifth field. **Its positive control is that it
+fails today**, against a predicate that only asks about the map.
+
+A map upload now stores two blobs, so the client's discard path takes an array — one transaction, one
+round trip, and half as many ways for a catch to be partly right.
+
+⚠️ **The orphaned-blob problem gets worse, and this milestone does not fix it.** A crashed tab now
+leaks two blobs instead of one. Still the game-editor milestone's, and named here rather than left
+implicit.
+
+### Align a grid by tracing
+
+For a map that already has a grid printed on it: drag a box over a block of the map's *own* squares,
+say how many squares it spans, and the app solves the size and both offsets.
+
+**The offset falls out of a modulus**, which is the whole of the offset solve. The grid draws at
+`offset + k × size` and walks back to the first line at or before zero, so any member of the
+congruence class is equivalent, and the traced box's edge sits on a printed line. There is nothing to
+iterate and nothing to fit.
+
+⭐ **What replaces Roll20's missing independent X and Y is better than independent X and Y.** Roll20's
+own blog calls their alignment tool "click, drag and pray" and says what it lacked was per-axis
+scaling. Cells here are square and stay square — declined for the third time, because token size stops
+meaning anything otherwise — so the size is the mean of the two measurements. **But the disagreement is
+measured and shown**: `140.0 px across · 139.6 px down · 0.3% out`, and past a threshold it says
+plainly that the map's squares are not square, that this application's are, and by how much. The app
+tells the DM how wrong the assumption is, which is precisely what praying could not do, and it
+delivers the *intent* of per-axis scaling inside one number rather than pretending the intent was
+unreasonable.
+
+It composes with the existing calibration handles by being a different object and saying so: the
+handles box is square by construction and anchored to the grid origin, the trace box is free-aspect and
+anchored anywhere, only one is ever on screen, and both write through the one existing grid write path
+at its three rates.
+
+⚠️ **The rubber-band gesture is about to be written a third time** — the fog layer has it, the trace box
+needs it, the wall tool needs a variant. Extract it before the second copy exists, not after the third.
+
+### The DM sees what the table sees
+
+The existing "your view of the board" toggle shows the DM the player's *layers*. It must also apply the
+*fog*, and it must be obvious that it is on — a persistent badge on the board rather than a control
+buried in the right pane. Roll20's documentation says GMs get this wrong constantly, and a toggle you
+cannot see from the map is why.
+
+⚠️ **It is a preference and never a permission**, which is what that hook's docblock already says about
+the layer half. The fog half inherits the sentence verbatim: it is this browser choosing what to paint
+of a payload it is fully entitled to. It is not a filter and must never be described as one.
+
+**Deliberately not done here:**
+
+- **Per-shape hide-or-reveal.** It makes containment order-dependent — last shape wins — which turns a
+  short-circuit into a full walk, turns the veil into a stencil composite, and hands the DM Roll20's
+  famously confusing layers-of-paint model. **The trigger to revisit is a DM wanting a hole inside a
+  reveal**, and not before.
+- ⚠️ **Per-player fog, reveal-as-you-walk, and line of sight of any kind.** These are the three things
+  [CLAUDE.md](../CLAUDE.md) names as needing a fourth row in the reader/predicate table, and the wall
+  system is specified movement-only precisely so it does not become the third. A wall that blocked
+  *sight* would make `walls` and `fogRects` secret-bearing tables the same day.
+- **Doors, one-way barriers, wall groups and per-token exemptions.** Roll20 has all four and each is a
+  small design of its own.
+- **Footprint-based wall collision**, **freehand fog**, **automatic grid detection from the image**,
+  **independent X and Y cells**, **server-side map tiling or masking**, and **undo** for any of it.
+- **A cross-game scene library and blob deduplication.** Game-editor milestone, along with the sweeper
+  the thumbnails make more urgent.
+
+**Acceptance:** a scene set to dark hides every DM-placed creature from a player's payload with **no
+shape drawn at all** — no position row, no health band, no feed line — and revealing one room brings
+back exactly what is standing in it and announces none of it. A player cannot drag a token through a
+drawn wall and the DM can. A traced box over three of a printed map's own squares lands the grid
+exactly and prints how far out of square the map is. Duplicating a map and then deleting the original
+leaves the copy's image intact. The scene picker draws twenty-five rows without fetching twenty-five
+battle maps. `npm test`'s existing 1270 lines of fog assertions pass **untouched** — if any of them
+needs editing, the absent-base default is wrong.
+
+---
+
+## Milestone 14 — The 5e 2024 conversion
+
+**This milestone replaces the character-resources milestone that stood in this slot** — spell slots,
+limited uses and the short rest. Replaced, and **absorbed rather than cancelled**: everything that
+milestone planned still gets built here, because the 2024 rules contain all of it. What changes is
+that it stops being the point. The decisions go in **ADR 0016**, which now supersedes a great deal
+more than that milestone's ADR was going to.
+
+⚠️ **Read this paragraph before any other. This is the first milestone that replaces a system rather
+than extending one, and it is the largest in the project by every measure.** Eleven milestones have
+added features to D&D Lite. This one **deletes D&D Lite** and puts the **5e (2024) SRD 5.2.1** in its
+place at character levels 1–5, keeping seven named things from what is there now. Every milestone
+before this could be described as *"and also"*; this one is *"instead"*. Nothing about the board, the
+feed, the seats, the fog or the coins changes — this is a rules and content milestone that reaches
+every sheet-shaped surface in the application and nothing else.
+
+⚠️ **It should be several branches, and the ordering below is not decorative.** A single branch that
+renames a vocabulary, rewrites two corpora, widens a schema and redraws four panels is a branch
+nobody reviews. The sequence in *Ten steps, in this order* near the end is the deliverable's shape.
+
+### The seven things that survive, and what each costs to keep
+
+Named first, because everything below is either one of these or a consequence of the SRD.
+
+| Kept | Status after conversion | What keeping it costs |
+| --- | --- | --- |
+| The **Level + Name + Species + Class + Archetype** builder | Survives, with one field changed and one gated | `race` becomes `species` throughout; the archetype step is **empty at levels 1–2** because 2024 chooses a subclass at level 3 |
+| A **premade library of popular builds, levels 1–5** | Survives, rebuilt | 72 hand-written sheets become **60**, and every number on all 60 is re-derived from the SRD |
+| **Levels 1–5 only** | Survives, and is now the main scope lever | Caps spell level at 3, so 156 of the SRD's 312 levelled spells are in range instead of all of them |
+| **CR scaling up and down** | Survives, unchanged in design | `convex/lib/bestiary/benchmarks.ts`' ten rows must be **re-derived** from SRD stat blocks, because they were fitted to a hand-written corpus that is being replaced |
+| **The ad-hoc dice tray** — d2, d4, d6, d8, d10, d12, d20, d100 | Survives untouched | **Nothing. It already arrived**, in the board-polishing milestone above — see the note under *What needs nothing at all* |
+| **No inventory**; every character issued weapons and armour for its class and archetype | Survives, and gets *more* precise | The SRD's starting-equipment packages are the source, reduced to the line of text `LibrarySheet.equipment` already holds |
+| **No weight, no encumbrance, no XP, no money, and none of the biography fields** | Survives; most were never built | The two that *were* — a spell's level as a pure label, and speed's default — both move, for reasons below |
+
+**The biography exclusions are the cheapest thing in this milestone and are listed for completeness
+rather than work.** No personality trait, ideal, bond, flaw, language, background, ally, organisation,
+backstory, alignment, faith, gender, age, height, weight, eye or hair field exists in the schema today
+and none is added. The only one with any reach is **background**, and it has a great deal of reach —
+see the next-but-one section.
+
+### The reference, and the one that must not be used
+
+**Primary and authoritative: [`downfallx/dnd-5e-srd-markdown`](https://github.com/downfallx/dnd-5e-srd-markdown), branch `master`.**
+Genuinely SRD 5.2.1, organised by topic. The files this milestone reads, with sizes, because the size
+is what tells you whether a question is answerable by reading or needs a script:
+
+| File | Size | What it settles |
+| --- | --- | --- |
+| `character-origins.md` | 17 KB | The nine species and the four backgrounds |
+| `classes.md` | 298 KB | Twelve classes, their level tables, their one subclass each |
+| `spells.md` | 326 KB | 15 cantrips and 312 levelled spells |
+| `equipment.md` | 72 KB | 38 weapons with mastery properties, 12 armours and a shield |
+| `feats.md` | 7.6 KB | Origin, General, Fighting Style and Epic Boon feats |
+| `rules-glossary.md` | 73 KB | The fifteen conditions, and every defined term |
+| `monsters.md` | 19 KB | The **anatomy** of a 2024 stat block |
+| `monsters-A-Z.md` | 517 KB | 235 creatures |
+| `animals.md` | 140 KB | 95 more |
+| `playing-the-game.md` | 65 KB | The eighteen skills, and the D20 Test |
+
+🚫 **[`sycarion/5e-2024-SRD`](https://github.com/sycarion/5e-2024-SRD) must not be used, and the reason
+is recorded here so nobody wires it in later on the strength of its name.** Despite the repository
+title it is the **2014 SRD 5.1**. Its own `Changelog.md` carries *"Update material to reflect 5.2.1
+SRD"* as an unchecked to-do, beside *"Rename Races to Species"*; it is a June-2025 fork of a 2022
+wiki. The content confirms it beyond argument — Fighter gains `Martial Archetype` and no Weapon
+Mastery, Monk spends `Ki Points`, Ranger has `Favored Enemy` and `Natural Explorer`, there are six
+in-class Fighting Styles rather than four feats, and `Races/` contains Half-Elf and Half-Orc. Reaching
+for it as a "second opinion" converts this application to the **previous edition** one file at a time,
+which is the failure mode a rejected reference exists to prevent.
+
+⚠️ **This inverts the rule the dice milestone wrote down, and the inversion is the milestone.** That
+milestone's instruction was: *consult the 2024 rules for how a cherry-picked feature works, never for
+what a character has — the corpus is the authority on the second question.* After this milestone the
+SRD is the authority on **both**, and the corpus is a *transcription* of it rather than a
+cherry-picked subset with its own opinions. The sentence in that section is left standing and marked,
+because it was correct for eleven milestones and is the thing being deliberately given up.
+
+### Six numbers that decide the size of this milestone
+
+⚠️ **Enumerate before implementing.** Every count below is a snapshot taken while this was written and
+must be regenerated from the SRD files and from the corpus rather than trusted. The instruction that
+matters is the *ratio*, not the figures.
+
+| | Today | After | Δ |
+| --- | --- | --- | --- |
+| Classes | 8 | **12** | +4, each bringing a resource shape that does not exist yet |
+| Archetypes | 16 (two per class, none from any SRD) | **12** (one per class, all SRD) | −4, and 8 retired by name |
+| Species | 8 | **9** | Half-Orc **retired**, Gnome added |
+| Skills | 13 | **18** | +5 — History, Medicine, Nature, Religion, Survival |
+| Spells / catalogue entries | 52 total, of which 24 are spells | **171 spells** (15 cantrips + 156 of levels 1–3) | ~7× the spell corpus |
+| Creatures | 129 | **253** in range (160 of 235 monsters and 93 of 95 animals, at CR 0–6) | ~2× |
+| Premade sheets | 72 | **60** | 12 classes × (levels 1–2 shared) + 12 × 3 subclass levels |
+| Feats | 16 hand-written, mixing feats with class features | **10** reachable at levels 1–5 (4 Origin, 4 Fighting Style, 2 General) | The SRD's feat list is *smaller* than ours, and the difference is that ours contains class features |
+
+⭐ **That last row is the most useful line in the table, and it should be read twice.** `convex/lib/rules.ts`
+today calls sixteen things `FEATS`, and only five of them are feats — Second Wind, Action Surge, Rage,
+Sneak Attack, Divine Smite, Lay on Hands, Bardic Inspiration and Wild Shape are **class features**,
+which is a different thing with a different home and a different recharge story. The conversion is
+therefore not "add SRD feats to our feat list"; it is **splitting one list into two** and discovering
+that the smaller half was already correct. Whoever builds this should expect the class-feature half to
+be the whole job and the feat half to be an afternoon.
+
+### Where the arithmetic actually moves — six changes, and only one is a simplification
+
+Everything else in this milestone is transcription. These six change numbers, and each needs a line in
+ADR 0016.
+
+**1. ⚠️ Ability scores no longer come from species — they come from *background*, which is excluded.
+This is the sharpest conflict in the whole conversion.** In 2024 a species grants **no ability score
+increase at all**; a background grants three named abilities with a `+2/+1` or `+1/+1/+1` spread, plus
+an **Origin feat**, plus **two skill proficiencies**, plus a tool proficiency and equipment. Excluding
+background removes the *source* of the ability spread and of half the skill proficiencies.
+
+The resolution is **absorption, not addition, and it costs nothing structural because the shape is
+already right.** `LibrarySheet.abilities` already stores a finished array with the note *"the standard
+array, allocated for the class and without considering race"*. After this it stores the standard array
+**with the build's background increases already applied**, and the *"without considering race"* clause
+becomes true by construction rather than by discipline — since no species touches a score, the
+apply-race-on-top step loses its arithmetic entirely. The two skill proficiencies land in
+`skillProficiencies` the same way, and the Origin feat lands in the entry list.
+
+⭐ **CLAUDE.md's *"no second source of proficiency can ever exist"* survives this, and stating why is
+the point.** There is still **no background on a character**, no background list, and no second grant.
+What arrives is the *premade sheet* being the authority on a fixed set of numbers, which is what it
+has always been — [ADR 0006](adr/0006-premade-character-library.md)'s stored-link-and-override model
+is untouched. A reader who concludes "backgrounds were lifted" has read it backwards: the exclusion is
+what forces the absorption. **The requirements amendment must say this in these words**, because "the
++2 came from somewhere" is the question the next reader will ask.
+
+**2. 🚫 Speed's default is 30, not 35, and this reverses a Milestone 4 amendment.** Eight of the nine
+species have `Speed: 30 feet`; the Goliath has 35, and a Wood Elf's lineage raises it to 35. So
+`SPEED_FEET = 35` in `convex/lib/sheet.ts` becomes **30**, and Milestone 4's amendment — *"35 speed for
+all characters — now the default rather than the rule"* — is superseded rather than refined. The
+Goliath is still the reason the field exists; it is simply no longer the reason the *default* is what
+it is. ⚠️ **`speedOf` answers 35 for every sheet with the field absent, and every stored sheet has it
+absent**, so this is a **stored-value change disguised as a constant edit**: flipping the constant
+silently slows every existing character by five feet, which is correct for eight species and wrong for
+the Goliaths. It needs the migration in step 9, not a one-line commit.
+
+**3. The archetype is chosen at level 3, not level 2, and levels 1–2 therefore have none.**
+`SUBCLASS_LEVEL` moves from 2 to 3 for all twelve classes — the SRD is unanimous, which is worth
+knowing because 2014 was not. The library's shape changes with it: today a class is `base` (level 1)
+plus two paths covering levels 2–5. After this it is **levels 1 and 2 shared**, then one path covering
+levels 3–5. `ClassLibrary` in `convex/lib/library/types.ts` needs `base` to become a level-indexed
+record rather than one sheet, and the builder's archetype control must be **absent** rather than empty
+below level 3 — a disabled dropdown reads as a thing the player failed to fill in.
+
+⚠️ **The archetype step stops being a choice, and that is a licensing fact rather than a design one.**
+No SRD, 2014 or 2024, contains more than one subclass per class. The eight second archetypes the
+library ships — Battle Master, Assassin, Oath of Vengeance, College of Valour, Light Domain, Path of
+the Wild Heart, School of Divination, Beast Master — appear in **no** SRD and were written from general
+knowledge. They are **retired by name**, and every character holding one needs step 9. What arrives
+instead is the twelve that are licensed: Path of the Berserker, College of Lore, Life Domain, Circle
+of the Land, Champion, Warrior of the Open Hand, Oath of Devotion, Hunter, Thief, Draconic Sorcery,
+Fiend Patron and Evoker.
+
+**4. Thirteen skills become eighteen.** History, Medicine, Nature, Religion and Survival are missing
+today, all of them Intelligence or Wisdom. `SKILL_KEYS` in `convex/lib/skills.ts` grows by five, and
+so does everything derived from it: `SkillProficiencies` (a `Record` over the union, so the compiler
+lists every construction site), `skillProficienciesValidator`, `creatureSkillsValidator`, `noSkills`,
+and the sheet's skill list. ⚠️ **`BestiaryCombat.skills` caps at four and a 2024 stat block routinely
+lists more** — the cap is a content rule checked by the corpus test, and re-deriving 253 creatures is
+the commit that discovers it. Decide the new cap from the corpus rather than from the old constant.
+
+**5. Counts stated as *"equal to your Proficiency Bonus"* are everywhere, and the literal model still
+holds.** Draconic Breath Weapon, Stonecunning, Giant Ancestry and Adrenaline Rush are all
+proficiency-bonus-many uses per long rest — a *derived* count, where the absorbed milestone planned
+per-sheet literals. ⭐ **The literal survives, and checking that is worth one paragraph rather than a
+redesign:** a library sheet is written per level, the proficiency bonus is +2 at levels 1–4 and +3 at
+level 5, so a literal on a per-level sheet is *exact* and never drifts. This is the same argument the
+absorbed milestone made about ability-modifier-derived counts, reaching a second kind of derivation
+and holding.
+
+**6. ⭐ Monsters gain ability scores, and this is the only simplification in the milestone.** A 2024
+stat block carries all six scores with modifier *and* save columns, which deletes the reason the
+reduced NPC sheet exists. Today `BestiaryCombat` pre-calculates `attackBonus`, `initiativeBonus`,
+`passivePerception`, `saveDc` and per-skill bonuses **because there are no scores to derive them
+from** — that is [ADR 0005](adr/0005-character-sheets-and-hit-point-secrecy.md)'s reduction, restated
+three times in `convex/lib/bestiary/types.ts`. With scores present, all five become derivable by the
+functions heroes already use, and `NPC_ACTIONS`' flat `1d6+2` numbers can become `1d6+STR` in the same
+grammar as a hero's.
+
+⚠️ **Take the simplification, but do not take it all the way, and know which of the two reasons you
+are honouring.** A monster's stored `attackBonus` may become derived; a monster's stored **initiative**
+must not, because the SRD prints an initiative modifier that is *"typically equal to its Dexterity
+modifier"* and explicitly permits extras. The rule to carry forward: **derive what the SRD derives, and
+store what the SRD prints.** And `passivePerception` stays *nullable* — the board draws it now, and
+`passivePerceptionFor` in `convex/lib/skills.ts` already carries the argument that printing 10 for a
+creature nobody gave one is inventing a statistic.
+
+### What arrives on the sheet that is not on it today
+
+The attached D&D Beyond sheets cross out what is excluded; **six things are left un-crossed that this
+application does not currently have**, and they are listed here because an un-crossed box is an
+instruction and an unlisted absence reads as an oversight.
+
+| Arriving | Status today | Note |
+| --- | --- | --- |
+| **Spell save DC and spell attack bonus for a hero** | ADR 0011 decision **2** declines it | 🚫 **Reversed.** Every 2024 caster has both, derived from the spellcasting ability plus proficiency — so the spellcasting ability per class becomes stored content, exactly as the dice milestone's *"five things"* list predicted it would have to |
+| **Temporary hit points** | No field | A second number beside current HP in `characterVitals`, with its own clamp. Not healing, and not part of the max |
+| **Death saving throws** | 🚫 *"Never in scope"* in the milestone this one replaces | ⚠️ **Needs its own line in ADR 0016.** Three successes and three failures is a *counter*, not an adjudication — nothing decides whether the character dies. But it reverses a stated never, so it is recorded rather than slipped in |
+| **Heroic Inspiration** | No field | A boolean. The 2024 Human regains it on every long rest, which is the one place it interacts with anything |
+| **Resistances, immunities and vulnerabilities** | Creatures have them in prose; heroes have nothing | Labels on the sheet. **Nothing computes damage**, so nothing applies one |
+| **Senses — darkvision and the passive scores** | Passive Perception exists; passive Insight and Investigation do not | Both derive from skills that exist after change 4, so they cost two accessors |
+
+⚠️ **Languages are the one un-crossed box that stays out.** The *Proficiencies & Training* panel lists
+Armour, Weapons, Tools **and Languages**, and languages are named in the exclusion list — so that box
+keeps three of its four sections. Worth stating because the screenshot and the prose list disagree, and
+the prose list is the instruction.
+
+### The library: sixty sheets, and the shape of a class changes
+
+Twelve classes, each with levels 1 and 2 shared and one archetype covering levels 3–5. The four new
+classes are **Druid, Monk, Sorcerer and Warlock**, and they arrive with four resource shapes the
+absorbed milestone explicitly said this corpus did not contain:
+
+| Class | Resource | Shape at levels 1–5 | Recharge |
+| --- | --- | --- | --- |
+| Monk | **Focus Points** | Equal to Monk level, from level 2 (so 2→5) | Short rest |
+| Sorcerer | **Sorcery Points** | Equal to level, from level 2 | Long rest, plus Sorcerous Restoration at level 5 |
+| Warlock | **Pact Magic slots** | A *tiny* bank: 1 slot at level 1, 2 thereafter, rising in slot **level** rather than count | **Short rest** — the one caster whose slots come back before a long rest |
+| Druid | **Wild Shape** | 2 uses at level 2 | One back on a short rest, all on a long rest |
+
+⚠️ **Wild Shape is the one feature in the SRD that makes a hero's sheet read the bestiary.** Its known
+forms are Beast stat blocks of CR ≤ 1/4 without a Fly Speed, which is a **query against the creature
+corpus from a player-facing surface** — and `corpusGuard.test.ts` allows exactly three modules to
+import `lib/bestiary/`. Decide this deliberately: the cheapest answer that keeps the guard whole is
+that a druid's four forms are **content on the library sheet**, four entries like any other, rather
+than a live lookup. A live lookup needs a fourth module on that allow-list and an argument for it.
+
+⭐ **Warlock Pact Magic is why the absorbed milestone's slot model has to change, and it is worth
+finding out now rather than at content time.** That milestone reasoned from a corpus with no Warlock:
+*"There is no Warlock, so there is no Pact Magic and no slot bank that recharges on a short rest… the
+2024 rules describe eight resource shapes and this corpus contains three."* After this milestone the
+corpus contains **all of them**, and the sentence is deleted rather than qualified.
+
+### The absorbed milestone, corrected in one place
+
+Everything the character-resources milestone planned still holds — one shape covering discrete uses,
+dice pools and point pools; **absent, never zero**; the declaration optional on content with an
+allow-list test on both sides; a spend on the first part a category offers and never twice for one
+cast; the spend after the dice are evaluated; `convex/feed.ts` still reading no guarded table; and the
+band variant of the vitals payload still having nowhere to put a number. Read that section in the git
+history of this file before starting — it is not restated here because it was right.
+
+🚫 **One of its decisions does not survive contact with the SRD.** It said:
+
+> **A feature that partially recovers on a short rest is written as long-rest, deliberately.** …
+> expressing that needs an *amount* as well as a period, which turns a boolean into a number and a
+> comparison into arithmetic.
+
+That was a defensible reduction against a corpus where the pattern appeared once. In 2024 it is **the
+normal case** — Second Wind, Wild Shape and Superiority-style pools all say *"regain one expended use
+on a short rest, all on a long rest"* — so writing them as long-rest-only would under-restore most of
+the martial classes at every short rest in the game. The resource shape therefore carries **a maximum,
+a recharge period, and an amount returned by the shorter rest**. The direction-of-error argument is
+unchanged and still the safety net; it is no longer the design.
+
+⚠️ **Its two named incompletenesses both stay named.** Divine Sense's *"a few times a day"* is a
+2014-ism that 2024 replaces with a real number, so that one **closes for free**. Shared pools — a
+child entry spending a parent's uses — stays open for exactly the reason given: a child-to-parent
+pointer is a reference to a resolver-minted id, and renaming the parent in content orphans the
+children at the next level-up. With twelve archetypes instead of sixteen the exposure is smaller, not
+different.
+
+### The bestiary: a 2024 stat block, and the guards that already cover it
+
+253 creatures at CR 0–6, transcribed into `BestiaryEntry` with the field changes from change 6 above.
+The `BestiaryFile` category split (`monster` / `enemy` / `social`) is a **local organising choice with
+no SRD counterpart** and should survive — the SRD has one flat list, and a DM choosing at speed does
+not.
+
+Three things this section does **not** get to skip:
+
+- ⚠️ **`benchmarks.ts`' ten rows are fitted to a corpus that is being deleted.** CR scaling preserves a
+  creature's offset from its own CR row, so the rows *are* the scaler. Re-derive them from the SRD's
+  own CR 0–6 stat blocks, and expect `convex/lib/scaling.test.ts` to be the thing that tells you the
+  old curve was wrong.
+- **`social.ts`' thirty NPCs have no SRD source**, because the SRD has no innkeeper. They are the one
+  part of the corpus that is authored rather than transcribed, and the plan should say so rather than
+  leaving a reader to wonder which creatures were checked against what.
+- ⚠️ **Nothing about `maySeeCharacter`, `maySee`, `mayHearOf` or `boardCharacterAccess` changes**, and
+  that is the load-bearing sentence of the whole milestone. A monster's sheet is still a leaked *row*;
+  its hit points are still a leaked *field*; the corpus is still a leaked *module*. Every guard in
+  CLAUDE.md invariant 8 keeps its exact meaning because **none of them reads a rule** — they read a
+  layer, a control grant and a document kind. A conversion that changed one of them would be doing
+  something other than converting.
+
+### What needs nothing at all, and why each is worth naming
+
+⭐ **The condition vocabulary is already correct, and it was written knowing this milestone was
+coming.** `convex/lib/markers.ts` holds the SRD's fifteen conditions plus `concentrating` and `dead`,
+in American spelling, with a comment saying *"the SRD this project moves to later is American and a
+vocabulary that half-matches it is worse than one that does not match at all."* That is the discipline
+paying out: seventeen strings, zero edits, and `lib/markers.test.ts` pins the order.
+
+⭐ **The dice tray is already correct too, and it arrived one milestone ago.** d2 through d100 with
+`ROLL_PATTERN` widened to admit `d2` and up to fifty dice is the board-polishing milestone's work, not
+this one's. **This milestone must not re-add it**, and CLAUDE.md invariant 10's cap sentence is already
+rewritten there.
+
+Also untouched: hash routing, the Vite base path, the upload limits, `snapToGrid`, the three layers,
+fog, the feed's shape, the roll modes, the crit effects, `resolveDmAccess` and every leak-guard test.
+**The board does not know a rules edition exists**, which is the payout on eleven milestones of keeping
+rules out of it.
+
+### Weapon mastery is the one 2024 feature that lands on a standing exclusion
+
+Every one of the SRD's 38 weapons carries exactly one of eight **mastery properties** — Cleave, Graze,
+Nick, Push, Sap, Slow, Topple, Vex — and a Fighter unlocks three of them at level 1. Three are
+movement-detriment effects: **Push** shoves a creature 10 feet, **Slow** reduces its Speed by 10, and
+**Topple** knocks it Prone. requirements.md excludes *"movement-detriment status effects (prone, stand
+up, difficult terrain, etc.)"* and that exclusion still stands.
+
+**So a mastery is a word on the weapon entry and nothing else** — the same register as a condition pip,
+a creature's loot and a spell's level. Nothing shoves, nothing halves a speed, nothing sets Prone, and
+`convex/lib/dice.ts` never learns the vocabulary. ⚠️ **This needs an amendment for the reason the
+conditions one did:** the exclusion names the exact effects the labels describe, and a near-miss that
+goes unrecorded is indistinguishable from a quiet lifting. If the vocabulary gets its own module, it
+gets `markerGuard.test.ts`' treatment — a grep with a three-module allow-list — because the way this
+exclusion breaks is somebody writing three reasonable lines in the dice module.
+
+**Concentration and the action economy arrive as labels on the same terms.** The spell sheet shows a
+casting time (`1A`, `1BA`, `1h`) and a duration that may read *Concentration, up to 1 minute*, and both
+are printed and neither is checked. Nothing drops a spell when its caster takes damage and nothing
+counts a bonus action. **ADR 0011's decision 5 therefore stands**, and the existing amendment about a
+turn being one action, one bonus action and one reaction stands with it — a field that says
+*concentration* is not a rule that enforces it, which is the distinction this project has now drawn
+five times.
+
+### The documents this milestone must write
+
+- **ADR 0016** — the decisions. It supersedes
+  [ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md)'s **decisions 1, 2 and 4** and
+  leaves 3 and 5 standing, which is one more than the absorbed milestone was going to take (decision 2, the
+  hero's spell save DC, goes because 2024 gives every caster one). It also substantially supersedes
+  **[ADR 0006](adr/0006-premade-character-library.md)** on library shape and **[ADR 0007](adr/0007-monster-bestiary-and-cr-scaling.md)**
+  on what a creature stores, while leaving both their *mechanisms* — stored link plus override diff,
+  and offset-preserving CR scaling — completely intact. ⚠️ **Supersede the numbers, not the machinery**,
+  and say which is which in a table, because a reader who concludes the override model was replaced
+  will rebuild something that works.
+- **[requirements.md](requirements.md)** — the largest amendment in that file, and the first that
+  replaces the *rule set* rather than adjusting it. The `DnD Lite rule set` lists stay verbatim as
+  always. The amendment must state, in this order: that the subset is replaced by SRD 5.2.1 at levels
+  1–5; that **racial abilities and skills stay lifted** but for a new reason (a species trait is now
+  SRD text, and a skill proficiency now comes from the premade sheet's absorbed background rather than
+  from the class list); that **background remains excluded and its numbers are absorbed**; that
+  **35 speed is superseded by 30**; that a spell's level stops being a label; that **backgrounds,
+  inventory, weight, encumbrance, XP, money, languages, multiclassing, the biography fields, the action
+  economy and concentration-as-a-check all stay out**; and that weapon mastery, casting times and
+  concentration *labels* lift nothing.
+- **[CLAUDE.md](../CLAUDE.md)** — a **rewrite of the *Rules scope* section, not an edit.** That section
+  is currently the specification of D&D Lite, and D&D Lite is what this milestone removes. Its two
+  🚫 reversal bullets close here; its two ✅ bullets change — the spell-save-DC one is reversed and the
+  concentration one stands. ⚠️ **The invariants above it change far less than the section below it**, and
+  the rewrite must not blur that: invariant 8's table, invariant 9's unions and invariant 10's guards
+  are all still true word for word.
+
+### Ten steps, in this order
+
+The ordering is the risk ordering the roadmap's first principle asks for: the vocabulary rename touches
+the most files and decides nothing, so it goes first and alone; the migration goes last because it
+cannot be written until every rename is known.
+
+1. **Vocabulary and constants.** `race` → `species` throughout, `SPEED_FEET` to 30, `SUBCLASS_LEVEL` to
+   3, five new skills. No content, no behaviour, no new fields — one reviewable rename.
+2. **`race()` is a landmine and this step is where it goes off.** `convex/lib/races.ts` ends with
+   `RACE_BY_KEY.get(key)!` under the comment *"Non-null: `RaceKey` is derived from the same list, so an
+   unknown key cannot exist."* ⚠️ **Retiring Half-Orc makes that comment false and every Half-Orc
+   character reads `.name` off `undefined`** — which is precisely the bug `findClass` in
+   `convex/lib/classes.ts` was rewritten to prevent, and whose docblock records that it turned
+   `characters.list` into a `TypeError` *for the whole party*. `race()` is the one lookup in that pair
+   that never got the fix. **Give it the `findClass` treatment before retiring anything.**
+3. **Schema widening.** Temporary hit points, death saves, heroic inspiration, the resource shape, the
+   spellcasting ability. All optional, all accessor-defaulted — widen → migrate → narrow, as always.
+4. **The nine species**, with their full trait lists. ⚠️ **A species is no longer one trait.** The
+   Dragonborn has four traits and a ten-row ancestry table; the Elf has five and a three-row lineage
+   table; `Race` in `races.ts` holds `traitName` and `traitText`, singular. And **lineage and legacy
+   choices are a sixth pick** — Drow/High/Wood, Forest/Rock, three fiendish legacies, ten draconic
+   ancestries, six giant ancestries. Decide whether the build absorbs them (recommended, and consistent
+   with the archetype being one option) or the builder grows a field.
+5. **The twelve classes and their one archetype each**, with level tables for 1–5 only.
+6. **The spell corpus** — 15 cantrips and 156 spells of levels 1–3. This is the largest single content
+   job in the project's history and the one most worth generating-then-reviewing rather than typing.
+7. **The library's sixty sheets**, on the new `ClassLibrary` shape.
+8. **The creature corpus** — 253 entries, then re-derive `benchmarks.ts`, then let `scaling.test.ts`
+   argue with you.
+9. **The migration.** Every stored character points at a vocabulary that moved: a retired species key,
+   one of eight retired archetype keys, a class with a different level table, an absent `speed` whose
+   default changed under it, and catalogue copies whose keys may no longer exist. ⚠️ **The
+   copy-versus-link split decides the blast radius and it runs both ways** — a stored *copy* of a
+   catalogue entry survives a retired key by design ([ADR 0006](adr/0006-premade-character-library.md)),
+   and a stored *link* to a library sheet resolves against whatever the library now says. So a hand-built
+   sheet needs nothing and a premade one changes under its owner. Both behaviours are correct and the
+   plan must say which characters get which.
+10. **The panels.** `CharacterSheetView`, `PcSheetForm`, `PresetNumbers`, `SkillList`, `AbilityTable`,
+    `SheetEntryList`, `CreatureSheetView`, `CharacterBuilder`, `BestiaryPicker` and the DM's sheet
+    selector. ⚠️ **The renderer must keep iterating its vocabularies** rather than naming members in
+    JSX — `SHEET_ENTRY_CATEGORIES`, `CHARACTER_GROUPS`, `SKILL_KEYS` — for the reason invariant 9 gives:
+    naming five skills in markup is how the sixth arrives stored, counted and invisible.
+
+### ⚠️ The field-by-field rebuild trap, sixth outing, and the largest surface it has ever had
+
+CLAUDE.md records this firing on `skillProficiencies`, `speed`, five NPC fields and `group`, and that
+**only `npm run test:smoke` has ever caught it.** This milestone adds five optional fields and rebuilds
+two entire corpora through the same entry normaliser — a hero's feats, a hero's spells, a monster's
+actions and both override diffs. ⚠️ **`resolvePreset`'s retired-class branch is now reachable in
+anger**, because eight archetype keys and one species key are genuinely being retired rather than
+hypothetically. Write the smoke assertions *before* the content, and make the deep key-set comparison
+in `scripts/board-smoke.mjs` cover the new fields on the first commit that adds one.
+
+**Deliberately not done:**
+
+- **Levels 6–20.** The level cap is the scope lever the whole milestone rests on. Extending it later
+  costs 12 sheets per level and reopens spell levels 4–9 — 156 more spells.
+- **Backgrounds as an entity.** Their numbers are absorbed; the concept is not added. This is the
+  exclusion doing work, not an omission.
+- **Multiclassing, XP, money, weight, encumbrance, inventory, languages** and every biography field.
+- **Any adjudication whatsoever.** No roll is compared to an AC or a save DC, no damage is applied, no
+  resistance is halved, no condition does anything, no mastery pushes anybody, no concentration breaks,
+  no death save kills a character and no cast is refused. ⭐ **This is the line that makes a
+  full-ruleset conversion possible at all**, and it is the same line ADR 0011 drew: the application
+  *announces and counts*, and the table *adjudicates*. Converting the rule set does not convert that.
+- **Magic items, attunement, crafting, downtime, the 244 KB of `magic-items.md`** and everything in
+  `gameplay-toolbox.md`.
+- **A rules-text reader.** The SRD is a build-time source for content, not a document the application
+  ships or searches. `bundleGuard.test.ts` and `corpusGuard.test.ts` keep every byte of it server-side,
+  and a 1.9 MB corpus is the strongest argument those guards have ever had.
+
+**Acceptance:** a player builds a level 1 Gnome Wizard with no archetype step on screen at all, levels
+to 3, and is offered exactly one — Evoker — which the sheet then shows. A level 5 Cleric's sheet prints
+a spell save DC and a spell attack bonus derived from Wisdom and the proficiency bonus, and neither is
+stored on any of the sixty sheets. A Wood Elf moves 35 and a Human moves 30, from species content
+rather than from a constant. A Warlock takes a short rest and gets both Pact Magic slots back while the
+Wizard beside them gets none — asserted as one positive and one negative, because a short rest that
+restored a Wizard's slots would be the app inventing a rule. A Fighter's greatsword shows `Graze` and
+nothing in the codebase reads it: `grep` for the mastery vocabulary outside its own module and the
+sheet renderer returns nothing, enforced by a guard test. A Half-Orc character created before this
+milestone still opens, with a name, without a `TypeError`, and says plainly which species it needs
+choosing again. `npm run test:smoke` compares a stored sheet's key set at depth against the real
+deployment for all four sheet kinds, because it is the only thing that has ever caught the rebuild
+trap. And a player inspecting network traffic sees no ability score, no resource count and no spell
+save DC for any creature whose sheet they may not already read — the same scan, with the same positive
+control, over a corpus twice the size.
+
+---
+
+## Milestone 15 — Tools and polish
 
 - Ruler tool, measuring in squares (1 square = 5 feet).
-- Multi-colour marker + eraser on the board. **DM only** — players must not have this.
+- Multi-colour marker + eraser on the board. **DM only** — players must not have this. ⚠️ **The word
+  *marker* is already taken** — the tokens milestone shipped `tokenMarkers`, the condition labels on
+  a coin, and `convex/lib/markers.ts` is their vocabulary. This one is a **pen**, and naming it
+  anything with `marker` in it will collide with a table, a query, a mutation and a guard test. See
+  [ADR 0013](adr/0013-a-coin-you-can-copy-place-and-label.md), which records the collision rather
+  than resolving it, because renaming the condition labels would have made the specification and the
+  code disagree.
 - Background music player, synced play state across the group.
 - Initiative tracker.
 
@@ -1753,7 +3027,7 @@ marker tool available.
 
 ---
 
-## Milestone 12 — Game editor and admin
+## Milestone 16 — Game editor and admin
 
 - Libraries: maps/boards, modal images, tokens and music. **NPC sheets are no longer on this list** —
   the bestiary moved forward to Milestone 5, because a monster's sheet feeds the roll path as much as a
@@ -1792,6 +3066,36 @@ substantially smaller.
   movement-detriment status effects are all still out. See
   [ADR 0006](adr/0006-premade-character-library.md). Milestone 5 lifts **none** of them: a creature's
   loot is a line of text and its CR is a label, which is why the bestiary needs no amendment at all.
+  ⚠️ **The tokens milestone amends that file and lifts no exclusion**, which is worth stating because
+  it looks as though it might. A condition pip is the *word* `prone` on a coin and never the effect —
+  nothing halves a speed, grants advantage or refuses a drag — so *no movement-detriment status
+  effects* stands exactly as written and the amendment is a clarification.
+
+  🚫 **The 5e 2024 conversion is the exception to this whole bullet, and it is the only one there has
+  ever been.** Every entry above records an exclusion *held*. That milestone replaces the excluded-rules
+  list's parent — the D&D Lite subset itself — with SRD 5.2.1 at levels 1–5, so *"anything still in the
+  excluded rules list"* stops being a description of what is out and becomes a description of **what
+  survived a replacement**. What survives is most of it, and it is worth naming rather than trusting:
+  **backgrounds as an entity, inventory, weight, encumbrance, experience points, money, languages,
+  multiclassing, every biography field, the action economy and concentration-as-a-check are all still
+  out.** What moves is that eight classes become twelve, thirteen skills become eighteen, an archetype
+  is chosen at level 3, and a species trait is SRD text rather than a house paraphrase. ⚠️ **Background
+  is the one worth reading twice**: it stays excluded, and its ability spread and two skill
+  proficiencies are **absorbed into the premade sheet's stored numbers**, because in 2024 that is where
+  they come from and there is nowhere else for them to be. No background exists on a character, and
+  there is still no second source a proficiency can arrive from.
+
+  And **counting adjudicates nothing**, before or after: no roll is compared to anything, no cast is
+  refused, casting at a higher slot level changes no die, no weapon mastery pushes anybody, no
+  resistance halves damage and no death save kills a character. That is the line ADR 0011 drew, and
+  converting the rule set does not convert it.
+- **Dynamic lighting, line of sight, and vision of any kind.** Roll20's is a ray-tracer with
+  per-token vision, explorer mode and a documentation page listing which browsers it works in. The
+  maps milestone takes its *barriers* and only their movement half, deliberately: a wall that decided
+  what somebody could **see** would make every stored wall and every stored fog shape a statement
+  about what one caller may know, which is the change CLAUDE.md invariant 8 names as needing a fourth
+  row in the reader/predicate table. **Per-player fog and reveal-as-you-walk are the same decision
+  wearing different clothes** and are declined with it.
 - **An encounter generator, and CR arithmetic of any kind.** Milestone 5 stores the metadata one would
   need and deliberately reads none of it. Budgeting a fight is the DM's judgement, and a generator is
   the first step towards the rules engine D&D Lite exists to not be.
@@ -1821,7 +3125,16 @@ not disagreed about so much as never asked.
   monster is still hand-built. **Milestone 5 tests the answer** rather than reopening it — a bestiary
   entry adds a stored skill bonus and a stored passive perception, both for exactly the reason
   `initiativeBonus` is stored, so the reduction now costs three fields instead of one. Three is still
-  cheaper than six ability scores that no monster's player would ever roll.
+  cheaper than six ability scores that no monster's player would ever roll. 🚫 **Reopened, and
+  answered the other way, by the 5e 2024 conversion.** The last sentence assumed nobody would roll a
+  monster's ability scores; a 2024 stat block *prints* all six with modifier and save columns, so the
+  scores stop being a cost and become content that already exists. Storing them makes
+  `attackBonus`, `saveDc`, the skill bonuses and `passivePerception` derivable by the functions heroes
+  already use, and lets a monster's damage read `1d6+STR` in the grammar rather than a frozen `1d6+2`.
+  ⭐ **The reduction was right for five milestones and is the one thing in this file that got cheaper by
+  being reversed** — which is the argument for writing an answer down even when it looks obvious.
+  ⚠️ **`initiativeBonus` stays stored** and is the boundary: derive what the SRD derives, store what
+  the SRD prints.
 - **Whether a DM's tweak to a creature should outlive the game it was made in.** An override is scoped
   to one character in one game, so the Ogre somebody made tougher last month has to be made tougher
   again. Fixing that means either a per-DM saved variant — with no accounts to hang it off
@@ -1833,17 +3146,37 @@ not disagreed about so much as never asked.
   has run enough sessions to have an opinion. **CR scaling pushes the answer down rather than up** —
   one Owlbear that covers CR 1 to CR 6 is worth more at the table than six Owlbears, so the number to
   aim at is however many creatures are genuinely *different*, and the spec's targets may be measuring
-  the wrong thing.
+  the wrong thing. ⚠️ **The 5e 2024 conversion answers this by not answering it**, and that is worth
+  seeing clearly rather than reading the new number as a decision: transcribing every SRD creature at
+  CR 0–6 takes the corpus from 129 to 253 because *the SRD has that many*, not because anybody judged
+  253 to be the right size for a table. The question is therefore **wider open after the conversion
+  than before it**, and the thing that would answer it is a season of play — not a count.
 - **Whether the benchmark table should be per-role rather than global.** Scaling preserves a creature's
   offset from its own CR row, which keeps a Tank tanky — but it assumes every role's numbers grow along
   the same curve, and a Spellcaster's probably does not grow like a Brute's. Ten rows is content that
   can be tuned in place; ten rows per role is eighty, and nobody has yet scaled enough creatures to know
   whether the single curve reads wrong.
 - Whether the initiative tracker belongs with the rolls rather than in tools and polish — a real
-  session will answer this. **Still open**, and now three milestones away from being playable enough to
-  ask it properly rather than one, which is the compounding price of three insertions and is worth
-  naming rather than glossing. Written without numbers deliberately: this entry has been renumbered
-  twice already.
+  session will answer this. **Still open**, and now six milestones away rather than three, which is
+  the compounding price of six insertions and is worth naming rather than glossing. Written without
+  numbers deliberately: this entry has been renumbered five times already, and has cost nothing each
+  time, which is the whole argument for writing it that way.
+- **Whether shared resource pools are worth a pointer between sheet entries.** A cleric's Channel
+  Divinity options all spend one use, a bard's Cutting Words spends an Inspiration die, and a Monk
+  spends Focus Points on three different things. The 5e 2024 conversion counts the *parent* and leaves
+  the children counting nothing, because a child-to-parent pointer would be a reference to another
+  entry's **resolver-minted id** — so renaming the parent in content silently orphans the children at
+  the next level-up. That is a real incompleteness rather than a decision that has settled. ⚠️ **The
+  conversion changes the exposure in both directions at once**, which is why this entry is not simply
+  narrowed: retiring the Battle Master removes the worst offender, and the Monk arrives spending one
+  pool three ways at level 2, which is a *more* central case than the one the entry was written about.
+  Fewer archetypes, more shared pools.
+- **Whether an unconditional stored-blob delete is ever the right default.** Two milestones in a row
+  found the same latent bug: a token's art and a scene's map are each deleted with no check that
+  anything else references them, which was true when exactly one thing could, and stops being true the
+  moment anything can be copied. Both are fixed where they were found. The question left open is
+  whether the *next* table holding a storage id should be written reference-counted from the start, or
+  whether the comment-naming-its-siblings convention — which did work, twice — is genuinely enough.
 - **Whether the layout should have come before the character library rather than after two libraries.**
   Worth recording as a judgement to check rather than a decision to defend. Building the shell first
   would have meant the sheet panel, the bestiary picker and the DM tabs each landing in their final home
@@ -1854,6 +3187,12 @@ not disagreed about so much as never asked.
 - **Whether the library should go past level 5.** It stops there, and a character the DM pushes
   beyond it keeps its level and its proficiency bonus while its sheet stands still. Extending it is
   24 more hand-written sheets per five levels, and nobody has yet played long enough to want them.
+  ⚠️ **The 5e 2024 conversion makes this the single most expensive open question in the file**, and
+  changes what the cost is made of. It becomes **12 sheets per level** rather than 24 per five, and
+  each level past 5 reopens a spell level — levels 6–9 alone add another 156 spells to transcribe,
+  which is as much content again as the whole conversion's spell corpus. The level cap stops being a
+  convenience and becomes **the scope lever the conversion rests on**, so answering this question is a
+  milestone rather than a content pass.
 - **Whether a player should be able to nudge their own numbers.** Today a premade character's stats
   are the library's, and changing one is a DM override that pins that field against every future
   level ([ADR 0006](adr/0006-premade-character-library.md)). That is the right default for beginners

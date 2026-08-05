@@ -1,9 +1,17 @@
 import { memo, useMemo } from 'react'
 import { Circle, Group, Line, Text } from 'react-konva'
 
-import { setCursor } from './konvaPointer'
+import { claimContextMenu, setCursor } from './konvaPointer'
 import { COIN_DETAIL_MIN_DIAMETER, TokenHealthBar } from './TokenHealthBar'
+import { TokenMarkerPips } from './TokenMarkerPips'
+import { TokenStatBadges } from './TokenStatBadges'
 import { useCanvasImage } from '@/hooks/useCanvasImage'
+// How tall a row of pips is, imported rather than re-derived. The coupling between the
+// name's `y` here and the row `TokenMarkerPips` draws is a named constant for the same
+// reason `COIN_DETAIL_MIN_DIAMETER` above is one: two files agreeing by arithmetic agree
+// until one of them is edited, and the symptom is a name printed through the pips on
+// every coin that carries a condition.
+import { MARKER_ROW_SCREEN_HEIGHT } from '@/lib/markers'
 // The tint and the letters on an art-less coin, shared with the HTML profile icon
 // that draws a seat the same way — one function of a name, so a person is the same
 // disc on the board as in the roster. See `@/lib/avatar`.
@@ -78,6 +86,19 @@ export type TokenCoinProps = {
    * identities applies the whole way down.
    */
   onOpenHp: (tokenId: Id<'tokens'>) => void
+  /**
+   * A right-click on this coin, in **client** pixels — the board converts them, because it
+   * is the one holding the container's rectangle.
+   *
+   * ⚠️ **Only fired when this caller has a menu to be given**, which is `token.canMove`:
+   * the DM everywhere, a seat on the coins it controls, and nobody else. That test lives
+   * here rather than in the menu because *no menu at all* has to mean the browser's own
+   * menu appears — and suppressing it and then showing nothing is what reads as a broken
+   * application. `canMove` is already the affordance mirroring `requireMovableToken`, which
+   * is also what gates the marker write, so this is one rule on a third surface rather than
+   * a fourth predicate.
+   */
+  onContextMenu?: (token: BoardToken, at: { clientX: number; clientY: number }) => void
 }
 
 /**
@@ -111,6 +132,7 @@ export const TokenCoin = memo(function TokenCoin({
   onDragMove,
   onDragEnd,
   onOpenHp,
+  onContextMenu,
 }: TokenCoinProps) {
   const art = useCanvasImage(token.artUrl)
 
@@ -129,22 +151,53 @@ export const TokenCoin = memo(function TokenCoin({
   const edge = EDGE_WIDTH / scale
   const nameFontSize = NAME_FONT_SIZE / scale
   // One test for both things written on a coin — the name below and the health bar
-  // above — so a zoom-out drops them together rather than leaving a board of bars
-  // over anonymous discs. The threshold and the argument for it live with the bar;
-  // see `COIN_DETAIL_MIN_DIAMETER`.
+  // above — and for the two things marked on it, the hidden-from-party pip and the
+  // row of conditions, so a zoom-out drops all four together rather than leaving a
+  // board of bars and pips over anonymous discs. The threshold and the argument for
+  // it live with the bar; see `COIN_DETAIL_MIN_DIAMETER`, and see `pipCapacity` for
+  // the coupling that makes the same number guarantee a row has room for two pips.
   const showDetail = diameter * scale >= COIN_DETAIL_MIN_DIAMETER
 
-  // Half the width the label is centred in — and it is the coin's own half-width,
-  // deliberately, with `ellipsis` below doing the truncating.
+  // ⚠️ **THE NAME IS NO LONGER CLAMPED, AND THAT REVERSES A DECISION RATHER THAN
+  // CORRECTING AN OVERSIGHT. Read both halves before changing it back.**
   //
-  // It used to be `max(radius, 60 / scale)`, which at a fitted zoom made the box
-  // around two and a half squares wide. Two tokens standing next to each other then
-  // overprinted their names into an unreadable smear, and a huddle of six was worse.
-  // A label that cannot leave its own square cannot collide with its neighbour, so
-  // the board stays readable exactly when it is busiest — which is the case that
-  // matters. The price is a clipped name on a one-square coin; the full name is a
-  // hover away, and the tint and art carry the identity in the meantime.
+  // It was `radius` with `ellipsis` below, so a label could never leave its own square.
+  // The argument for that was real and is worth keeping written down: before it, the box
+  // was `max(radius, 60 / scale)` — around two and a half squares wide at a fitted zoom —
+  // and two coins standing next to each other overprinted their names into an unreadable
+  // smear, with a huddle of six worse. A label that cannot leave its square cannot collide
+  // with its neighbour, so the board stayed readable exactly when it was busiest.
+  //
+  // What that cost was the case people actually hit: at the zoom where a whole map fits,
+  // *every* name on the board is an ellipsis and a letter, because the clamp is the coin's
+  // drawn width and the coin is small. A board of `Gob…` `Gob…` `Gob…` is not more readable
+  // than an overlap — it is the same information loss with none of the width. The
+  // maintainer was shown the trade and chose the overlap.
+  //
+  // So there is no `width` and no `ellipsis` on the `Text` below at all: Konva measures the
+  // string and centres it on the coin. Names overlap when creatures stand shoulder to
+  // shoulder, and that is the accepted cost. **If it becomes intolerable, the fix is not to
+  // reinstate this clamp** — that is the arrangement this replaced — it is to show the full
+  // name only for the hovered or selected coin, which was the third option and was not
+  // chosen. Recorded in ADR 0014.
+  //
+  // The box itself stays, because it is what centres the label — see the ⚠️ on the `Text`.
   const nameHalfWidth = radius
+
+  // ⚠️ **The name yields to the pips.** Nothing else can: the bar owns the strip above
+  // the rim, the hidden mark owns the upper-right shoulder, and the row has to sit
+  // against the coin it is about — a row hung *below* the name would be an annotation
+  // about whichever creature is standing underneath. So the name drops by exactly the
+  // row's height when there is one and sits where it always did when there is not.
+  //
+  // The condition is the stored array rather than what `markerRow` actually draws,
+  // which is a deliberate approximation: a coin marked *only* with a value this bundle
+  // has never heard of reserves a strip for a row it then draws nothing in, and the
+  // symptom is a few pixels of gap under one coin during the seconds of a non-atomic
+  // schema push. The alternative is a second `markerRow` call per coin per frame of
+  // every pan, to be exact about a gap nobody can see.
+  const hasMarkers = token.markers.length > 0
+  const nameTop = hasMarkers ? MARKER_ROW_SCREEN_HEIGHT / scale : edge * 2
 
   return (
     <Group
@@ -165,6 +218,16 @@ export const TokenCoin = memo(function TokenCoin({
       }}
       onMouseEnter={(event) => setCursor(event, draggable ? 'grab' : 'pointer')}
       onMouseLeave={(event) => setCursor(event, '')}
+      onContextMenu={(event) => {
+        // ⚠️ **Nothing happens for a caller with no menu, and that is the feature rather
+        // than a missing branch.** The browser's own menu is then left alone, which is what
+        // right-clicking bare map already does; suppressing it and showing nothing is what
+        // reads as the application having frozen. `canMove` is the same affordance the
+        // drag and the marker write use, so this is one rule on a third surface.
+        if (!onContextMenu || !token.canMove) return
+        claimContextMenu(event)
+        onContextMenu(token, { clientX: event.evt.clientX, clientY: event.evt.clientY })
+      }}
       onDragStart={(event) => {
         setCursor(event, 'grabbing')
         onDragStart?.(token)
@@ -269,8 +332,8 @@ export const TokenCoin = memo(function TokenCoin({
         never marked: the server does not fog one, so a mark would be a lie about the one
         thing the DM would act on.
 
-        Behind `showDetail` with the bar and the name, so a zoom-out drops the coin's
-        three annotations together rather than leaving pips over anonymous discs.
+        Behind `showDetail` with the bar, the conditions and the name, so a zoom-out drops
+        the coin's four annotations together rather than leaving pips over anonymous discs.
       */}
       {showDetail && token.hiddenFromParty ? (
         <Group
@@ -300,17 +363,90 @@ export const TokenCoin = memo(function TokenCoin({
         </Group>
       ) : null}
 
+      {/*
+        WHAT THE CREATURE IS: armour class in red, passive perception in blue, on the two
+        left shoulders.
+
+        ⚠️ **These publish a number that was a secret until ADR 0014**, and the reason that
+        is safe is not in this file. `token.vitals` is null for a creature the caller may
+        not see, because `visibleVitals` drops it before assembling a row — so a GM-layer or
+        fogged creature has no numbers here for the same reason it has no health bar. There
+        is no `isDm` in the component below and there must not be, exactly as there is none
+        in `TokenHealthBar`.
+
+        Behind `showDetail` with everything else, so a zoom-out drops the coin's annotations
+        together. The disc is the size of a condition pip on purpose — see the component.
+
+        ⚠️ **Gated on `token.vitals` as well as `showDetail`, which is the health bar's gate
+        and the pips' gate for the reason written out on theirs.** `scale` is a prop, so a
+        wheel-zoom busts this memo every frame; without the second test every scenery coin
+        and every unbound coin on the board would mount this component sixty times a second
+        to reach an early return. It renders nothing either way — the gate is about not
+        asking. `token.vitals` is read three elements up, so it costs nothing.
+      */}
+      {showDetail && token.vitals ? (
+        <TokenStatBadges vitals={token.vitals} radius={radius} scale={scale} />
+      ) : null}
+
+      {/*
+        THE CONDITIONS, and they are labels and nothing else — no roll consults one, no
+        health band is computed from one, no drag is refused because of one, and
+        `markerGuard.test.ts` on the server is what makes that a promise rather than a
+        comment. `token.markers` is read off the payload exactly as `vitals` is; this
+        component decides nothing about which of them arrived.
+
+        ⚠️ **Fog does not take these away**, unlike a coin's position, its health band and
+        its feed lines. That is `board.tokens`' argument reached by a second route and
+        argued in full on the field in `useBoard`: filtering conditions means reading
+        `tokenPositions` in a query whose whole virtue is being off the drag path. A
+        creature that must not be known about goes on the GM layer, where the row never
+        reaches this bundle at all.
+
+        **The composition of a coin, which is disjoint by construction:** the bar occupies
+        the strip above the rim, the name the strip below, the hidden-from-party pip the
+        upper-right shoulder at 45°, the two stat badges the two *left* shoulders at 30°,
+        and this row the strip between the rim and the name — which is why `nameTop` above
+        exists and why it is the *name* that yields. **Six annotations, six places.**
+
+        ⚠️ **It was four, and the badges were placed by consulting this sentence — then the
+        angle was corrected by looking at a coin, which is the part worth carrying
+        forward.** The scheme gives each mark a distinct *position*; it does not prove that
+        no two ever touch. A disc centred on the rim has half of itself outside it, and the
+        health bar spans the coin's full width, so the upper badge at 45° grazed the bar's
+        left end — visible in a browser and in nothing else. `TokenStatBadges` flattens to
+        30° for that reason. There is no seventh obvious place, so a seventh annotation is a
+        layout decision rather than a position to pick.
+      */}
+      {/*
+        ⚠️ **Gated on `hasMarkers` as well as `showDetail`, and the second test is not
+        redundant with the component's own early return.** `scale` is a prop here, so a
+        wheel-zoom busts this memo on every frame — which without the gate meant mounting
+        two hundred `TokenMarkerPips`, each missing its `useMemo` on the changed `scale`
+        and running a seventeen-member intersection to conclude that nothing is ticked. It
+        renders `null` either way; the gate is about not asking. `hasMarkers` is already
+        computed above for `nameTop`, so it costs nothing.
+      */}
+      {showDetail && hasMarkers ? (
+        <TokenMarkerPips markers={token.markers} radius={radius} scale={scale} />
+      ) : null}
+
       {showDetail ? (
         <Text
           text={token.name}
           x={-nameHalfWidth}
-          y={radius + edge * 2}
+          y={radius + nameTop}
           width={nameHalfWidth * 2}
           align="center"
+          // ⚠️ **`ellipsis` is gone and the box has stayed** — see the long note above
+          // `nameHalfWidth`, which is where the reversal is argued. Keeping the box is what
+          // makes this a two-character change rather than a measurement problem: with
+          // `wrap="none"` and nothing to truncate, Konva measures the line and centres it
+          // inside the box, so a line wider than the box overflows *symmetrically* and the
+          // name stays centred on the coin. Dropping the width instead would left-align
+          // every name against the coin's centre, because `align` means nothing without one.
           fontSize={nameFontSize}
           fill="#ffffff"
           wrap="none"
-          ellipsis
           shadowColor="#000000"
           shadowBlur={nameFontSize * 0.4}
           shadowOpacity={0.95}

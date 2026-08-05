@@ -9,33 +9,22 @@ import { useRollControls, useRollPending } from '@/hooks/useRoll'
 import { MAX_ROLL_LENGTH, normaliseRoll, rollProblem } from '@convex/lib/sheet'
 
 /**
- * The one-tap rolls, in the order a beginner reaches for them.
- *
- * The audience for this app includes children and people who have never played, and *"type
- * some dice"* is not an instruction those readers can act on. Five buttons that each produce
- * a legal expression is the cheapest possible answer — no state, no picker, no dropdown —
- * and it doubles as documentation of the notation, because pressing `d20` puts `1d20` in the
- * feed line and the shape of that is then obvious.
- *
- * ⚠️ **Stored as the expression and labelled without the count**, which is a deliberate
- * mismatch of two characters. `ROLL_PATTERN` requires a die count, so `d20` is not a roll and
- * `1d20` is — but nobody at a table says "one d twenty". The label is the English and the
- * value is the grammar; `2d6` needs no such help and so has none.
- */
-const PRESETS: readonly { label: string; expression: string }[] = [
-  { label: 'd20', expression: '1d20' },
-  { label: 'd12', expression: '1d12' },
-  { label: 'd8', expression: '1d8' },
-  { label: 'd6', expression: '1d6' },
-  { label: '2d6', expression: '2d6' },
-]
-
-/**
- * THE DICE TRAY: somebody types `2d6` and the whole table watches it land.
+ * THE DICE TRAY: somebody **types** `2d6+3` and the whole table watches it land.
  *
  * Pinned under the scrollback like a chat input, which is what it is — the roll goes off, the
  * line comes back over the same subscription everybody else is reading, and the 3D dice
  * tumble for about a second while the round trip completes.
+ *
+ * ⚠️ **The one-tap presets used to be a row above this field and are now `DiceBar` on the
+ * map.** They were five buttons producing five legal expressions, and the reason they existed
+ * is unchanged and worth carrying forward: the audience includes children and people who have
+ * never played, and *"type some dice"* is not an instruction those readers can act on. What
+ * changed is that five became eight faces and a count, and that a control pressed while
+ * looking at the board belongs on the board. **The typed field stayed here** — typing an
+ * expression belongs with the scrollback that will answer it, and a text input on a floating
+ * toolbar over a canvas is a keyboard trap waiting to be found. The deliberate two-character
+ * mismatch went with them and is restated there: a button says `d20` and sends `1d20`,
+ * because `ROLL_PATTERN` requires a count and nobody at a table says "one d twenty".
  *
  * ⚠️ **Nothing here rolls anything.** There is no arithmetic in this file and no `d20` being
  * evaluated: it sends a string, and the faces come back decided. That is the rule the
@@ -75,7 +64,7 @@ export function DiceComposer(): ReactElement {
   const errorId = `${fieldId}-error`
 
   /**
-   * Held already-normalised, so `2d6 + wis` typed by hand and `2d6+WIS` offered by a preset
+   * Held already-normalised, so `2d6 + wis` typed by hand and `2d6+WIS` pasted from somewhere
    * are byte-identical rather than merely equivalent by the time anything judges either of
    * them. `normaliseRoll` is written to run on every keystroke — it cannot throw — and the
    * sheet entry picker's roll fields do exactly this.
@@ -120,24 +109,6 @@ export function DiceComposer(): ReactElement {
         send(expression)
       }}
     >
-      <div className="flex flex-wrap gap-1">
-        {PRESETS.map((preset) => (
-          <Button
-            key={preset.expression}
-            type="button"
-            size="xs"
-            variant="outline"
-            // Through `send` rather than straight to `rollDice`, so the presets cannot become
-            // the one path that skips validation — even though each of their values is a
-            // constant this file can see is legal.
-            disabled={pending}
-            onClick={() => send(preset.expression)}
-          >
-            {preset.label}
-          </Button>
-        ))}
-      </div>
-
       <div className="flex gap-1.5">
         <Input
           id={fieldId}

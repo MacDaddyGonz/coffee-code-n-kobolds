@@ -46,11 +46,24 @@ rather than merely absent: there is nowhere to put a hit point in the shape a pl
 future edit that tries makes Convex throw at runtime. This is the same mechanical guarantee
 `publicGameValidator` gives the DM code, and it needs no test to keep it honest.
 
-**An NPC's sheet is a leaked row.** `Ancient Red Dragon`, armour class 22, with a breath weapon on
-it, has exactly the shape of a hero's document. No validator can tell one from the other, so the
+**An NPC's sheet is a leaked row.** `Ancient Red Dragon`, ~~armour class 22,~~ with a breath weapon
+on it, has exactly the shape of a hero's document. No validator can tell one from the other, so the
 guard has to be structural: `convex/lib/characters.ts` is the only module in `convex/` permitted to
 read `characters` and `characterVitals`, every read passes through one `maySeeCharacter(character,
 isDm)` predicate, and `isDm` comes from `resolveDmAccess` and nothing else.
+
+> ⚠️ **The struck-through clause stopped being true, and it was this record's worked example.**
+> A creature's **armour class is now published** to every player who can see its coin —
+> [ADR 0014](0014-what-a-coin-says-about-itself.md) records the decision and the scope. Struck in
+> place rather than rewritten, because the point of writing a decision down is that it can be found
+> and overturned rather than quietly drifted away from.
+>
+> **Everything else in the paragraph stands, and the example still works without that clause.** The
+> breath weapon is the leaked row: the attacks, the damage, the notes, the loot, the challenge rating
+> and the hit points are exactly as unreachable as they were, `maySeeCharacter` is untouched, and
+> `characters.sheet` still answers `null` for an ordinary NPC. What changed is one number on a
+> different payload, not the shape of the guard — which is why this is an annotation rather than a
+> supersession.
 
 `leakGuard.test.ts` was generalised from one hard-coded reader to a table of table→reader pairs
 rather than copied. There are now two secrets of this shape and there will be a third — fog of war

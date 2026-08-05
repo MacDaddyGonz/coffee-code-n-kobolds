@@ -1874,8 +1874,10 @@ describe('the dice tray is the one place a roll arrives from a human', () => {
 
     const refused = [
       chain,
-      // Twenty dice is the grammar's ceiling and `MAX_ROLL_DICE` is that fact named.
-      '21d6',
+      // Fifty dice is the grammar's ceiling and `MAX_ROLL_DICE` is that fact named. It
+      // was twenty until ADR 0014 widened it for the dice tray — one grammar for a sheet
+      // entry and for a person typing, which is why this list moved with it.
+      '51d6',
       '99d20',
       // A die the allow-list does not carry: `1d7` is a typo rather than a house rule.
       '1d7',
@@ -2141,6 +2143,122 @@ describe('a row arriving because the audience widened is marked as history', () 
     vi.setSystemTime(new Date('2026-08-02T20:02:00.000Z'))
     await t.mutation(api.board.setLayer, { code, dmCode, tokenId: creatureToken, layer: 'gm' })
     expect(newest(await dmFeed(t, fixture)).predatesReveal).toBe(false)
+  })
+
+  /**
+   * ⚠️ **THE STAMP FOR THE MUTATION THIS MILESTONE ADDS — THIS SECTION'S OWN INSTRUCTION,
+   * FOLLOWED IN THE SAME COMMIT.** The header above says in as many words that coverage of
+   * `stampReveal` is discipline rather than construction: a stamp never written on a path
+   * invented later fails nothing at all, because no test knows the mutation exists.
+   * `board.duplicateToken` is exactly such a path, and ADR 0012 records that the warning
+   * described the present rather than the future the last time — `characters.assign` shipped
+   * without its stamp in the milestone that wrote the warning about that.
+   *
+   * ⚠️ **The subject is the fixture's *hero* coin rather than its creature coin, and that
+   * choice is what keeps this a test about one write.** The creature's coin stands on the GM
+   * layer, so building the case on it would need a `board.setLayer` to `player` first — and
+   * that mutation stamps as well, so the test would hold two writes that both move the clock
+   * and only their ordering would say which of them was under assertion. The hero's coin is
+   * already on the player layer with a character on it, which is `duplicateToken`'s condition
+   * verbatim, so the duplicate is the only thing here that can have moved the flag.
+   *
+   * Worth knowing what the stamp cannot do on this path, because it is not a reason to drop
+   * it: the copies' creatures are written in the same transaction and have rolled nothing, so
+   * no row *becomes* audible through this write. What is asserted is the trade `gameRevealedAt`
+   * already states and which is the right way round — a stamp too many costs one missing
+   * flourish, a stamp too few replays an evening.
+   */
+  test('duplicating a player-layer coin with a creature on it marks the lines it publishes', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(BEFORE_REVEAL)
+
+    const t = harness()
+    const fixture = await feedFixture(t)
+    const { code, dmCode, sceneId, heroToken } = fixture
+    await rollCreatureAttack(t, fixture)
+    await rollHeroInitiative(t, fixture)
+
+    // The player's window is asserted by name before anything else, because every `every`
+    // below is vacuously true on an empty array — the creature is still on the GM layer, so
+    // the hero's line is the whole of what the table can hear and it has to actually be there.
+    const heard = await t.query(api.feed.list, { code })
+    expect(heard.map((row) => row.actorName)).toEqual([HERO_NAME])
+
+    // Nothing has been revealed since these rows were written, so nothing is history yet —
+    // the negative control, and the one that fails if the comparison is accidentally inverted
+    // or if `gameRevealedAt` starts answering something other than the last stamp.
+    expect(heard.some((row) => row.predatesReveal)).toBe(false)
+    expect((await dmFeed(t, fixture)).some((row) => row.predatesReveal)).toBe(false)
+
+    vi.setSystemTime(AFTER_REVEAL)
+    await t.mutation(api.board.duplicateToken, {
+      code,
+      dmCode,
+      sceneId,
+      tokenId: heroToken,
+      count: 2,
+    })
+
+    const published = await t.query(api.feed.list, { code })
+    expect(published.map((row) => row.actorName)).toEqual([HERO_NAME])
+    expect(published.every((row) => row.predatesReveal)).toBe(true)
+    // And to the DM too, whose three lines include the two the party has never heard, because
+    // the flag is a fact about the *game's* clock rather than about this caller's audience.
+    expect((await dmFeed(t, fixture)).every((row) => row.predatesReveal)).toBe(true)
+
+    // The live half, without which everything above is satisfied by a flag stuck at `true`:
+    // a roll made after the duplicate is current, and the flourish plays.
+    await rollHeroInitiative(t, fixture)
+    expect(newest(await t.query(api.feed.list, { code })).predatesReveal).toBe(false)
+  })
+
+  /**
+   * ⚠️ **THE HALF THAT PINS THE CONDITION RATHER THAN THE CALL.** `duplicateToken` stamps on
+   * `addToken`'s exact pair of clauses, read off the source row — player layer *and* a
+   * character on it — and both are load-bearing: an empty coin names nobody, and a GM-layer
+   * one is the encounter being prepared rather than sprung. So this is the test that fails if
+   * somebody simplifies that to `layer === 'player'` alone, and the test that fails if the
+   * condition is dropped and every duplicate stamps. The test above is the other half of the
+   * pair and is what fails if the stamp goes altogether; neither is meaningful without it.
+   *
+   * Asserted on a row written *before* the duplicates and read back after each of them, which
+   * is the inverted shape the narrowing tests in this section already use and the only one
+   * that can see the difference: it reads `false` beforehand and has to still read `false`
+   * afterwards. A stamp made here would mark that line as history, silencing the flourish for
+   * a roll the table watched land, every time the DM asks for five more barrels.
+   */
+  test('duplicating a GM-layer coin, or a coin with no creature, marks nothing', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(BEFORE_REVEAL)
+
+    const t = harness()
+    const fixture = await feedFixture(t)
+    const { code, dmCode, sceneId, creatureToken } = fixture
+    // Scenery: on the player layer, so the *only* clause keeping it from stamping is the
+    // absence of a character. `addToken` does not stamp for it either, for that same reason.
+    const barrel = await addToken(t, code, dmCode, sceneId, { name: 'Barrel', layer: 'player' })
+    await rollHeroInitiative(t, fixture)
+    expect(newest(await t.query(api.feed.list, { code })).predatesReveal).toBe(false)
+
+    // The DM's prepared encounter, copied twice behind the GM layer. It publishes nothing, so
+    // it must move nothing.
+    vi.setSystemTime(AFTER_REVEAL)
+    await t.mutation(api.board.duplicateToken, {
+      code,
+      dmCode,
+      sceneId,
+      tokenId: creatureToken,
+      count: 2,
+    })
+    expect(newest(await t.query(api.feed.list, { code })).predatesReveal).toBe(false)
+    expect((await dmFeed(t, fixture)).some((row) => row.predatesReveal)).toBe(false)
+
+    // And the coin with nobody on it, a minute after that. A copy of it names no character, so
+    // there is no history for it to publish however visible the layer is.
+    vi.setSystemTime(new Date('2026-08-02T20:02:00.000Z'))
+    await t.mutation(api.board.duplicateToken, { code, dmCode, sceneId, tokenId: barrel, count: 2 })
+    expect(newest(await t.query(api.feed.list, { code })).predatesReveal).toBe(false)
+    expect((await dmFeed(t, fixture)).some((row) => row.predatesReveal)).toBe(false)
   })
 
   /**

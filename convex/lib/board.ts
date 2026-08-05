@@ -21,6 +21,10 @@ import {
   MAX_SCENES_PER_GAME,
   MAX_TOKENS_PER_GAME,
 } from './games'
+// The condition vocabulary, and the normaliser that runs on both sides of the wire. One of
+// the three modules inside `convex/` allowed to import it — see `markerGuard.test.ts`.
+import { normaliseMarkers, tokenMarkerValidator, type TokenMarker } from './markers'
+import { addedNames, duplicateNames } from './names'
 import { findClaimHolder, holderByCharacter, listSeats } from './players'
 import type { Grid, Point, Rect } from './grid'
 import { anyRectCovers, cellOf, centreOfCell, snapToGrid } from './grid'
@@ -849,9 +853,10 @@ const FREE_CELL_RINGS = 8
  * drags needed to undo it. Found by running the app; no test would have noticed,
  * because every individual write was correct.
  *
- * Deliberately only used by `addToken`. Moving a token onto an occupied square is a
- * legitimate thing to want — two figures crowding a doorway — so `moveToken` must
- * never displace anything, and this is not called from there.
+ * Deliberately only used by the mutations that **create** a placement — `addToken`,
+ * `placeOnScene` and `duplicate`. Never `moveToken`: moving a token onto an occupied
+ * square is a legitimate thing to want — two figures crowding a doorway — so that
+ * handler must never displace anything, and this is not called from there.
  *
  * Occupancy compares snapped centres rather than footprints. A 2×2 ogre overlapping
  * a 1×1 goblin's square is not detected, which is the honest limit of one line of
@@ -865,6 +870,35 @@ export async function freeCellNear(
   sizeSquares: number,
   point: Point,
 ): Promise<Point> {
+  return (await freeCellsNear(ctx, sceneId, grid, sizeSquares, point, 1))[0]
+}
+
+/**
+ * The `count` nearest empty squares to `point`, nearest first, for dropping that many
+ * *new* tokens at once.
+ *
+ * **The plural is the real function and `freeCellNear` above is the `count: 1` case**,
+ * so there is one occupancy rule and one terminating condition rather than two that
+ * agreed on the day they were written. Adding five goblins is precisely the gesture
+ * that produced the stacking `freeCellNear` was written to stop, so a duplicate that
+ * called it five times would either read the placements five times or hand back the
+ * same square five times, depending on how the transaction saw its own writes.
+ *
+ * **One placements read for the whole batch.** Each accepted cell joins `taken` before
+ * the walk continues, which is what makes the five copies land in five different
+ * squares from a single scan of the board.
+ *
+ * The ring walk, the snapped-centre key and the fallback are all `freeCellNear`'s and
+ * unchanged — see the note above for why occupancy is a centre and not a footprint.
+ */
+export async function freeCellsNear(
+  ctx: QueryCtx,
+  sceneId: Id<'scenes'>,
+  grid: Grid,
+  sizeSquares: number,
+  point: Point,
+  count: number,
+): Promise<Point[]> {
   const placements = await ctx.db
     .query('tokenPositions')
     .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
@@ -879,10 +913,12 @@ export async function freeCellNear(
     }),
   )
 
+  const found: Point[] = []
   const wanted = cellOf(point, grid, sizeSquares)
-  for (let ring = 0; ring <= FREE_CELL_RINGS; ring += 1) {
-    for (let dCol = -ring; dCol <= ring; dCol += 1) {
-      for (let dRow = -ring; dRow <= ring; dRow += 1) {
+
+  for (let ring = 0; ring <= FREE_CELL_RINGS && found.length < count; ring += 1) {
+    for (let dCol = -ring; dCol <= ring && found.length < count; dCol += 1) {
+      for (let dRow = -ring; dRow <= ring && found.length < count; dRow += 1) {
         // Only the edge of each ring: the inside was covered by a smaller one.
         if (ring > 0 && Math.abs(dCol) !== ring && Math.abs(dRow) !== ring) continue
         const candidate = centreOfCell(
@@ -890,15 +926,21 @@ export async function freeCellNear(
           grid,
           sizeSquares,
         )
-        if (!taken.has(`${candidate.x},${candidate.y}`)) return candidate
+        const key = `${candidate.x},${candidate.y}`
+        if (taken.has(key)) continue
+        taken.add(key)
+        found.push(candidate)
       }
     }
   }
 
   // Every square within the search is occupied, which needs 289 tokens on one
-  // scene and cannot happen under MAX_TOKENS_PER_GAME. Stack rather than refuse:
-  // a token the DM cannot place at all is worse than one they have to drag.
-  return centreOfCell(wanted, grid, sizeSquares)
+  // scene and cannot happen under MAX_TOKENS_PER_GAME and MAX_DUPLICATE_COUNT.
+  // Stack rather than refuse: a token the DM cannot place at all is worse than
+  // one they have to drag.
+  while (found.length < count) found.push(centreOfCell(wanted, grid, sizeSquares))
+
+  return found
 }
 
 /**
@@ -1150,13 +1192,25 @@ export async function setTokenCharacter(
  * no way for anyone looking at it afterwards to explain why. Unlike the suppression on
  * its three siblings, this one is observable and is tested.
  *
- * The delete is **unconditional** on there having been a previous blob, matching
- * `board.removeToken` and `deleteTokensInGame`, and it inherits their caveat unchanged:
- * today an upload makes exactly one token and there is no route to pick an existing blob,
- * so this id has no other owner. The game editor's shared token library breaks that, and
- * whatever makes art shareable has to make all **three** of those deletes conditional at
- * the same time. A *partially* conditional set of three is the state in which somebody
- * believes the problem is solved.
+ * ⚠️ **The delete is conditional on nothing else owning the blob, and duplication is what
+ * made that necessary.** This used to be unconditional, on the reasoning that an upload
+ * made exactly one token — true until `board.duplicate` began copying the image id, at
+ * which point repointing one of five goblins would have blanked the other four. The row
+ * being patched must not count as an owner of the picture it is giving up, which is the
+ * whole reason `otherTokenReferencesImage` exists as a sibling of `tokenReferencesImage`
+ * rather than as a flag on it.
+ *
+ * The question is asked **before** the patch. It is correct either way, because the
+ * predicate excludes this row by `_id` — but computing it first means the answer does not
+ * depend on read-your-writes returning a row whose `imageId` has already moved on, and
+ * this file has already recorded once what it costs to let two adjacent lines carry a
+ * correctness property.
+ *
+ * This is one of the three deletes the shared-art conversion had to reach together, and
+ * the other two are **not** the same shape: `board.removeToken` asks this predicate, and
+ * `deleteTokensInGame` cannot ask it at all — see its own note for why. Naming all three
+ * at each of them is what made them findable in one pass; saying how each one differs is
+ * what stops the next reader assuming they are interchangeable.
  *
  * Checks nothing it cannot know: that the blob exists and is under `MAX_TOKEN_BYTES` is
  * `board.setArt`'s job, through the same `requireTokenArt` that `board.addToken` runs,
@@ -1170,8 +1224,10 @@ export async function replaceTokenArt(
   const previous = token.imageId ?? null
   if (previous === imageId) return
 
+  const shared = previous !== null && (await otherTokenReferencesImage(ctx, token, previous))
+
   await ctx.db.patch('tokens', token._id, { imageId: imageId ?? undefined })
-  if (previous) await ctx.storage.delete(previous)
+  if (previous && !shared) await ctx.storage.delete(previous)
 }
 
 /**
@@ -1241,6 +1297,82 @@ export async function revokeControlForSeat(
   }
 }
 
+/**
+ * Where one token stands on one scene, or null if it is not on that board at all.
+ *
+ * Extracted from `placeToken`'s own body, which is why there is one lookup rather than
+ * four: the upsert asks it, `board.placeOnScene` asks it to be idempotent, and
+ * `board.removeFromScene` asks it to be a no-op. The row's **existence** is what puts a
+ * token on a board, so "is it there?" and "where is it?" are one question.
+ */
+export async function placementOf(
+  ctx: QueryCtx,
+  sceneId: Id<'scenes'>,
+  tokenId: Id<'tokens'>,
+): Promise<Doc<'tokenPositions'> | null> {
+  return await ctx.db
+    .query('tokenPositions')
+    .withIndex('by_sceneId_and_tokenId', (q) => q.eq('sceneId', sceneId).eq('tokenId', tokenId))
+    .unique()
+}
+
+/**
+ * Take one token off one board, leaving every other placement alone.
+ *
+ * The single-board sibling of `deleteTokenPlacements` below, which sweeps *every* board
+ * because the token itself is going. Two functions rather than one with a nullable
+ * `sceneId`, for `deleteScenePlacements`' reason: the axis differs, so the bound differs,
+ * and one function taking either would be one function with two bounds.
+ *
+ * ⚠️ **The no-op is the early return, and this deliberately reports nothing.** It answered
+ * a boolean at first, on a docblock claiming that was *what let `board.removeFromScene` be
+ * a no-op rather than a throw* — which was not true: the mutation discarded it, and the
+ * `if (!placement) return` above is the whole of the behaviour. A return value nobody reads
+ * is the same shape as a guard that cannot fail, and this file argues against keeping those.
+ * If a caller ever needs to tell the two outcomes apart it can have the boolean back, and
+ * that day the sentence will be true.
+ */
+export async function removeTokenFromScene(
+  ctx: MutationCtx,
+  sceneId: Id<'scenes'>,
+  tokenId: Id<'tokens'>,
+): Promise<void> {
+  const placement = await placementOf(ctx, sceneId, tokenId)
+  if (!placement) return
+
+  await ctx.db.delete('tokenPositions', placement._id)
+}
+
+/**
+ * Every board this token stands on. **Ids only.**
+ *
+ * The narrow crossing this module always makes — a set of ids leaves and never a row,
+ * the same discipline `boardCharacterAccess` keeps — so the scene *names* are resolved
+ * by the caller through `lib/scenes.ts` and this file never learns one.
+ *
+ * Bounded by the scene count rather than the placement count, verbatim from
+ * `deleteTokenPlacements` below: a token holds at most one row per scene, so this is the
+ * tight bound and `MAX_PLACEMENTS_PER_SCENE` would be the wrong axis.
+ *
+ * ⚠️ **That bound has stopped being unreachable.** Until `board.placeOnScene` existed a
+ * coin could only ever be on the boards `addToken` and `moveToken` had put it on, and the
+ * client only ever names the active scene — so a token on all 25 scenes was not a state
+ * the application could produce. It is now one press per map. The take is still exactly
+ * tight and still cannot truncate, but it is worth knowing it is now approached rather
+ * than theoretical.
+ */
+export async function tokenPlacementScenes(
+  ctx: QueryCtx,
+  tokenId: Id<'tokens'>,
+): Promise<Id<'scenes'>[]> {
+  const placements = await ctx.db
+    .query('tokenPositions')
+    .withIndex('by_tokenId', (q) => q.eq('tokenId', tokenId))
+    .take(MAX_SCENES_PER_GAME)
+
+  return placements.map((placement) => placement.sceneId)
+}
+
 /** Insert or update the placement of a token on a scene. */
 export async function placeToken(
   ctx: MutationCtx,
@@ -1248,10 +1380,7 @@ export async function placeToken(
   tokenId: Id<'tokens'>,
   point: Point,
 ): Promise<void> {
-  const existing = await ctx.db
-    .query('tokenPositions')
-    .withIndex('by_sceneId_and_tokenId', (q) => q.eq('sceneId', sceneId).eq('tokenId', tokenId))
-    .unique()
+  const existing = await placementOf(ctx, sceneId, tokenId)
 
   // Upsert rather than insert, because the row's existence is what puts a token on
   // a board: a drag has to patch the four coordinates it already has, while a token
@@ -1327,12 +1456,38 @@ export async function deleteScenePlacements(
  * (CLAUDE.md invariant 6). Rows without their art would be a *worse* leak than the
  * games being cleaned up, because a deleted game's coins are unreachable from every
  * screen in the app and would sit against the 1 GB ceiling for ever with nothing able
- * to name them. Unconditional on the id being present, exactly as `board.removeToken`
- * is, and it inherits that mutation's caveat unchanged: the game editor's token
- * library makes one piece of art shareable between tokens, and whatever makes it
- * shareable has to make **all three** of the unconditional deletes conditional at the
- * same time — `board.removeToken`, `replaceTokenArt` above, and this one. Three sites,
- * named at each of them, because a partially converted set is worse than none.
+ * to name them.
+ *
+ * ⚠️ **Each distinct blob is deleted exactly once, and this is the third of the three
+ * sites the shared-art conversion had to reach — converted differently from the other
+ * two, on purpose.** `board.removeToken` and `replaceTokenArt` ask
+ * `otherTokenReferencesImage`; this one must not, for two reasons that both matter:
+ *
+ * - **It would answer the wrong question.** A purge deletes *every* token in the game,
+ *   so "is any other token using this?" is `true` for a twin that is also about to go.
+ *   Asked per row it would keep the blob for ever, or work only by accident of the order
+ *   the loop happens to run in — which is exactly the fragility `replaceTokenArt`'s early
+ *   return exists to stop this file resting on.
+ * - **It would be O(n²).** Two hundred tokens would mean two hundred range reads of two
+ *   hundred rows — forty thousand document reads in one transaction, on the function that
+ *   has to work on the largest game in the deployment. Today it reads two hundred rows
+ *   once, and it still does.
+ *
+ * So the conversion here is **deduplication**, and it is a stronger statement than the
+ * other two make rather than a weaker one: the question they ask is answered *no* by
+ * construction for every id, because no token survives to own it.
+ *
+ * ⚠️ **This also fixes a live bug rather than merely preparing for one.** The loop used
+ * to call `ctx.storage.delete` once per row, and a second delete of the same id throws —
+ * confirmed against a real deployment: `Error: storage id … not found`, a plain `Error`
+ * and not a `ConvexError`, so it aborts the whole transaction. Before duplication nothing
+ * could produce two tokens sharing a blob, so it never fired; from the moment one press
+ * can make five goblins, a purge of any game containing them would have failed outright
+ * and `admin.purgeGame` would have had no way to clean it up.
+ *
+ * The two deletes are ordered rows-then-blobs, so a failure part-way leaves storage
+ * holding bytes with no row — which the orphaned-blob sweeper is for — rather than rows
+ * pointing at bytes that have gone, which nothing repairs.
  *
  * This does **not** make the orphaned-blob sweeper unnecessary. That sweeper is for
  * blobs a *refused or abandoned upload* left behind — a mutation that throws cannot
@@ -1348,17 +1503,286 @@ export async function deleteTokensInGame(
     .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
     .take(MAX_TOKENS_PER_GAME)
 
+  const blobs = new Set<Id<'_storage'>>()
+
   for (const token of tokens) {
     // Placements first, across every scene rather than the current one, for the same
     // reason `removeToken` does it in this order: they are what points at the token,
     // so no ordering of failures can leave a scene holding a position for a document
     // that has gone.
     await deleteTokenPlacements(ctx, token._id)
-    if (token.imageId) await ctx.storage.delete(token.imageId)
+    if (token.imageId) blobs.add(token.imageId)
     await ctx.db.delete('tokens', token._id)
   }
 
+  // ⚠️ **One range read for the conditions, not `deleteTokenMarkers` per token.** This
+  // loop first called that helper per row, which is a `by_tokenId` index read apiece — two
+  // hundred of them, to clear a table a real game holds a handful of rows in. It is the
+  // same per-row question the note above rejects for the blob predicate, arriving linear
+  // instead of quadratic and so much easier to miss. `by_gameId` already exists because
+  // `visibleMarkers` needs it, and this is the function that has to work on the largest
+  // game in the deployment.
+  const markerRows = await ctx.db
+    .query('tokenMarkers')
+    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  for (const row of markerRows) {
+    await ctx.db.delete('tokenMarkers', row._id)
+  }
+
+  for (const imageId of blobs) {
+    await ctx.storage.delete(imageId)
+  }
+
   return tokens.length
+}
+
+/** The conditions on one coin, for a client that may see that coin. */
+export const publicTokenMarkersValidator = v.object({
+  tokenId: v.id('tokens'),
+  markers: v.array(tokenMarkerValidator),
+})
+export type PublicTokenMarkers = Infer<typeof publicTokenMarkersValidator>
+
+/**
+ * Every coin's conditions, for a caller who may see that coin.
+ *
+ * ⚠️ **Filters first and projects second**, exactly as `publicTokens` does: a marker row
+ * naming a GM-layer coin says a hidden coin exists, which is the oracle `TOKEN_NOT_FOUND`
+ * exists to close, and it is indistinguishable in type from a row about a hero. So the
+ * predicate is `maySee` — the same one, in the same module — and this needed **no new
+ * choke point**.
+ *
+ * ⚠️ **`normaliseMarkers` runs here as well as in the renderer, and the two catch
+ * different failures.** The renderer's copy stops an unknown value crashing a `Record`
+ * lookup in JSX; this one stops it reaching `publicTokenMarkersValidator`, which is
+ * `v.array(tokenMarkerValidator)` — so a row written by a newer deployment during a
+ * non-atomic push would make this query **throw for every caller** and take the whole
+ * table's conditions subscription down, rather than costing one pip. That is precisely
+ * the composition `maySeeLayer`'s docblock calls load-bearing: because the value is
+ * dropped, the `returns:` validator never sees it.
+ *
+ * ⚠️ **No `tokenPositions` read, ever, which is what makes "fog does not hide a coin's
+ * conditions" affordable rather than merely decided.** A fog test here would join every
+ * drag's invalidation set on a subscription that is open all session — `board.tokens`'
+ * argument reached by a second route. ADR 0012's Hides table gains the clause: fog takes
+ * where a coin is, how hurt it is and what it just rolled, **not that a coin by that name
+ * exists and not what condition it is in**.
+ *
+ * **A game where nobody has ticked anything reads one empty range and stops**, so its read
+ * sets are byte-identical to what they were before the feature existed — the free case
+ * `foggedTokenIds`' middle early return has. And the token read is one point get **per
+ * marked coin** rather than per coin, so renaming an unmarked coin does not invalidate
+ * this subscription.
+ *
+ * No `listSeats` either: nothing here is per-seat, so unlike `board.tokens` this does not
+ * re-run on a join, a rename or a claim.
+ */
+export async function visibleMarkers(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+  isDm: boolean,
+): Promise<PublicTokenMarkers[]> {
+  const rows = await ctx.db
+    .query('tokenMarkers')
+    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  // Concurrent, like `publicTokens` next door: no lookup depends on another, and the
+  // array is bounded by the same cap the range read is. Awaiting them in a loop made one
+  // serial round trip per *marked* coin on a subscription that re-executes for every
+  // client at the table whenever anybody ticks a checkbox.
+  //
+  // ⚠️ Still a point get per marked coin rather than a `visibleTokens` range read, which
+  // is the load-bearing half: a range read would put all two hundred token documents into
+  // this subscription's read set, so renaming an unmarked coin would re-push every
+  // client's pips — and it would spend the free case, where a game with nothing ticked
+  // does no `tokens` work at all.
+  const tokens = await Promise.all(rows.map((row) => ctx.db.get('tokens', row.tokenId)))
+
+  const visible: PublicTokenMarkers[] = []
+  rows.forEach((row, index) => {
+    const token = tokens[index]
+    // The `gameId` test is `visiblePositions`' verbatim: a marker row pointing at a token
+    // in another game is data that should not exist, and dropping it here means a stray
+    // row can never become a pip on somebody else's coin.
+    if (!token || token.gameId !== gameId || !maySee(token, isDm)) return
+
+    const markers = normaliseMarkers(row.markers)
+    if (markers.length === 0) return
+    visible.push({ tokenId: row.tokenId, markers })
+  })
+  return visible
+}
+
+/** The marker row for one token, or null. At most one exists, by the writer's construction. */
+async function markerRowOf(
+  ctx: QueryCtx,
+  tokenId: Id<'tokens'>,
+): Promise<Doc<'tokenMarkers'> | null> {
+  return await ctx.db
+    .query('tokenMarkers')
+    .withIndex('by_tokenId', (q) => q.eq('tokenId', tokenId))
+    .unique()
+}
+
+/**
+ * Write one coin's conditions. **The only writer of `tokenMarkers`.**
+ *
+ * ⚠️ **An empty list deletes the row rather than storing `[]`**, because the row's
+ * existence *is* the fact — the way a placement row's existence is what puts a coin on a
+ * board. A game with two hundred coins and one poisoned goblin holds one row.
+ *
+ * The no-op guard is `setTokenAppearance`'s and `setTokenLayer`'s, and it matters more
+ * here than it does for either: a patch that changed nothing would still invalidate
+ * `board.markers` for **every client at the table**, and this is the one write in the
+ * application a non-DM can make ten times in a row by tapping a checkbox.
+ *
+ * The caller normalises before calling — `board.setMarkers` does — so this can compare
+ * element by element and trust that equal contents means equal arrays. Ordering and
+ * deduplication are `normaliseMarkers`' job precisely so that the browser's optimistic
+ * value and the stored value are the same bytes.
+ */
+export async function setTokenMarkers(
+  ctx: MutationCtx,
+  gameId: Id<'games'>,
+  tokenId: Id<'tokens'>,
+  markers: TokenMarker[],
+): Promise<void> {
+  const existing = await markerRowOf(ctx, tokenId)
+
+  if (markers.length === 0) {
+    if (existing) await ctx.db.delete('tokenMarkers', existing._id)
+    return
+  }
+
+  if (!existing) {
+    await ctx.db.insert('tokenMarkers', { gameId, tokenId, markers })
+    return
+  }
+
+  const same =
+    existing.markers.length === markers.length &&
+    existing.markers.every((marker, index) => marker === markers[index])
+  if (same) return
+
+  await ctx.db.patch('tokenMarkers', existing._id, { markers })
+}
+
+/**
+ * Take a deleted coin's conditions with it.
+ *
+ * The third residue path beside `deleteTokenPlacements` and the art blob, and it has to be
+ * called from both `board.removeToken` and `deleteTokensInGame` or a purged game leaves
+ * rows pointing at nothing.
+ *
+ * ⚠️ **`characters.remove` deliberately does not call this**, and the asymmetry is the
+ * point: `detachCharacterFromTokens` unbinds the coin and leaves it standing, and the
+ * conditions were on the *coin* rather than on the creature. A goblin whose sheet the DM
+ * deleted is still a coin lying prone on the floor.
+ */
+export async function deleteTokenMarkers(
+  ctx: MutationCtx,
+  tokenId: Id<'tokens'>,
+): Promise<void> {
+  const existing = await markerRowOf(ctx, tokenId)
+  if (existing) await ctx.db.delete('tokenMarkers', existing._id)
+}
+
+
+/**
+ * The names the next `count` coins should take, given a source name and everything
+ * already on the board.
+ *
+ * ⚠️ **This shape is what keeps invariant 8 intact, and the obvious alternative breaks
+ * it.** A helper handing back *every token name in the game* would give `convex/board.ts`
+ * an array containing `Ambush Skeleton` — the exact string `board.test.ts` scans player
+ * payloads for, and the secret this module exists to hold. What leaves here is
+ * `Goblin 4`, `Goblin 5`: strings derived from the source name the caller already holds
+ * and from an integer. A GM-layer coin's name **influences the number and nothing else**,
+ * which is the same narrow crossing `countTokensInGame` below makes with one integer and
+ * `tokenReferencesImage` with one boolean.
+ *
+ * Counting both layers is required for the reason those two give: numbering that ignored
+ * the hidden half would hand the DM a `Goblin 4` to stand beside the `Goblin 4` they had
+ * already prepared.
+ *
+ * ⚠️ **The `total` comes back with the names, and that is what stops the caller reading
+ * these two hundred rows twice.** `addToken` and `duplicateToken` both need a count for the
+ * cap check *and* the names for the batch, and asking `countTokensInGame` separately meant
+ * the same range read twice, back to back, on the two mutations that write the most. It is
+ * the argument invariant 8 already settled in the other direction — *asking a second
+ * question about the same two hundred rows should not read them twice* is why
+ * `visibleCharacterIds` was retired into `boardCharacterAccess`. A number is the narrowest
+ * crossing there is, so nothing about the boundary changes.
+ *
+ * **Two derivations, one read**, because a name somebody *typed* and a name derived from a
+ * coin on the board are two acts — see `addedNames` beside `duplicateNames` in lib/names.ts.
+ * Both are pure and browser-shared, so the dialog's live preview and this write are one
+ * function rather than two that agreed on the day they were written.
+ */
+export async function nextTokenNames(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+  sourceName: string,
+  count: number,
+  typed = false,
+): Promise<{ names: string[]; total: number }> {
+  const tokens = await ctx.db
+    .query('tokens')
+    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  const existing = tokens.map((token) => token.name)
+  return {
+    names: typed
+      ? addedNames(sourceName, existing, count)
+      : duplicateNames(sourceName, existing, count),
+    total: tokens.length,
+  }
+}
+
+/**
+ * One more coin exactly like this one, under a new name and standing for a new creature.
+ *
+ * ⚠️ **Both optional fields are spread, never written as `imageId: undefined`, and that
+ * is the line `npm run test:smoke` exists to protect.** `undefined` is not a Convex value,
+ * so an insert naming a field and giving it that is a *different write* from an insert
+ * omitting the field — and convex-test does not apply Convex's own value validation, so
+ * the spelled-out version passes the whole suite and only misbehaves against a real
+ * deployment. It is also exactly what makes the smoke script's field-by-field comparison
+ * report `present on one side only`. `insertCharacter` carries the same warning for the
+ * same reason.
+ *
+ * `layer` is carried as **stored**, legacy spelling and all, because `layerOf` is a
+ * read-time reader and a copy is not the place to migrate a row.
+ *
+ * ⚠️ **`controllerIds` is omitted rather than written as `[]`**, matching `addToken` — a
+ * duplicate is `addToken`'s decision made a second time, and both spellings read
+ * identically through `grantedControllersOf`. (`setTokenControllers` writes `[]`, and that
+ * is right for *it*: an edit that clears a list should leave the shape it always leaves.)
+ *
+ * **Grants are dropped, and that is the decision rather than a simplification.** A grant
+ * is a decision about a person and a coin; an unattached copy is the DM's, which is the
+ * correction the first real session forced on `requireMovableToken` reached by a new
+ * route.
+ */
+export async function copyTokenRow(
+  ctx: MutationCtx,
+  source: Doc<'tokens'>,
+  name: string,
+  characterId: Id<'characters'> | undefined,
+): Promise<Id<'tokens'>> {
+  return await ctx.db.insert('tokens', {
+    gameId: source.gameId,
+    name,
+    layer: source.layer,
+    sizeSquares: source.sizeSquares,
+    tint: source.tint,
+    ...(source.imageId === undefined ? {} : { imageId: source.imageId }),
+    ...(characterId === undefined ? {} : { characterId }),
+  })
 }
 
 /**
@@ -1407,4 +1831,45 @@ export async function tokenReferencesImage(
     .take(MAX_TOKENS_PER_GAME)
 
   return tokens.some((token) => token.imageId === imageId)
+}
+
+/**
+ * Is this blob the art of some **other** token in the same game? So the two delete
+ * paths can stop short of reclaiming a picture a twin is still drawing.
+ *
+ * ⚠️ **A sibling of `tokenReferencesImage` above and deliberately not a parameter on
+ * it**, because the two answer different callers' questions and the difference is
+ * exactly one row. `files.discard` asks *is anything using this?* and needs `true` for
+ * the token being examined — that is what makes it refuse to strip the art off a coin
+ * somebody is looking at. A delete path asks *is anything **else** using this?* and
+ * needs `false` for the row it is about to remove or repoint. Collapsing them into one
+ * function with an optional `exclude` gives the discard guard an argument no caller
+ * ever wants to pass, and which a future caller can get wrong in the one direction that
+ * blanks a live coin.
+ *
+ * **The exclusion is what makes each call site correct, not the ordering.** Two of the
+ * three sites could be made to work by running the check before the row write and
+ * leaning on read-your-writes; a correctness property held by the order of two adjacent
+ * lines is precisely the fragility `replaceTokenArt`'s early return already documents
+ * having nearly shipped. The `_id` comparison holds whichever side of the write it runs.
+ *
+ * Takes the row rather than a `(gameId, tokenId)` pair, so the game comes off the
+ * document and there is no way to ask the question about the wrong one. `imageId` stays
+ * a separate argument because `replaceTokenArt` asks about the **previous** blob, which
+ * is no longer the one the row will hold.
+ *
+ * Counts both layers, for `tokenReferencesImage`'s reason verbatim: a DM-layer
+ * skeleton's portrait is exactly as much in use as a hero's.
+ */
+export async function otherTokenReferencesImage(
+  ctx: QueryCtx,
+  token: Doc<'tokens'>,
+  imageId: Id<'_storage'>,
+): Promise<boolean> {
+  const tokens = await ctx.db
+    .query('tokens')
+    .withIndex('by_gameId', (q) => q.eq('gameId', token.gameId))
+    .take(MAX_TOKENS_PER_GAME)
+
+  return tokens.some((other) => other._id !== token._id && other.imageId === imageId)
 }

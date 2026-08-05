@@ -347,7 +347,7 @@ export function evaluateRoll(
   if (!parsed) return inertResult(expression, mode)
 
   // The identity on every expression `isValidRoll` accepts — the grammar's own
-  // `(?:[1-9]|1\d|20)` is the enforcement and `MAX_ROLL_DICE` is that fact named. Written
+  // `(?:[1-9]|[1-4]\d|50)` is the enforcement and `MAX_ROLL_DICE` is that fact named. Written
   // as a bound anyway, so that a grammar loosened in some future milestone costs a wrong
   // number of dice rather than a mutation that never returns.
   const count = clamp(parsed.count, 1, MAX_ROLL_DICE)

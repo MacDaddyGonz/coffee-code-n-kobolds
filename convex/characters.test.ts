@@ -525,6 +525,10 @@ describe('characters.create', () => {
    * `listCharacters` reads with. Previously character 201 was invisible in
    * `characters.list` while `claim` still accepted it, because `claim` resolves
    * it with a direct `db.get`.
+   *
+   * One of the cap-filling tests `vitest.config.ts` raises the `convex` project's
+   * `testTimeout` for — see the note there. Two hundred real `characters.create` round
+   * trips is the point of it rather than an inefficiency.
    */
   test('the write cap matches the read bound, so everything created is visible', async () => {
     const t = convexTest(schema, modules)

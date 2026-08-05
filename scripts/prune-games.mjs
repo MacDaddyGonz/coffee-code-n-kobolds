@@ -5,8 +5,8 @@
 // clean up the scene and tokens it made — there was no delete path for a game document
 // at all. The dev deployment had seventy-one games, thirty-five of them smoke litter,
 // every one of them holding whatever seats, characters and blobs its run had left. The
-// real thing — an admin view that deletes a game a person chose — is Milestone 12; see
-// `docs/roadmap.md`. This is the broom, and `convex/admin.ts` explains why it is safe
+// real thing — an admin view that deletes a game a person chose — is the game-editor
+// milestone; see `docs/roadmap.md`. This is the broom, and `convex/admin.ts` explains why it is safe
 // for it to exist ahead of the milestone that owns the feature.
 //
 //   node scripts/prune-games.mjs                          # dry run, "Board Smoke " games

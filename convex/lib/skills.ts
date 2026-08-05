@@ -10,8 +10,14 @@
 // *class's* skills; backgrounds are still excluded, so there is no second source a
 // proficiency can come from and no place for one to be added by accident.
 
-import type { AbilityKey, AbilityScores } from './sheet'
-import { abilityModifier, proficiencyBonus } from './sheet'
+import type { AbilityKey, AbilityScores, CharacterSheet } from './sheet'
+import {
+  abilityModifier,
+  armourClassOf,
+  passivePerceptionOf,
+  proficiencyBonus,
+  skillProficienciesOf,
+} from './sheet'
 
 export type Skill = {
   key: SkillKey
@@ -106,4 +112,63 @@ export function passivePerception(
   proficiencies: SkillProficiencies,
 ): number {
   return 10 + skillBonus(scores, level, proficiencies, 'perception')
+}
+
+/**
+ * Passive perception for **either** kind of sheet — derived for a hero, stored for a
+ * creature, `null` when a creature has none recorded.
+ *
+ * ⚠️ **New because the two halves had never met, and the halves are genuinely different
+ * facts.** A hero's is computed above from Wisdom, the level and the Perception flag, all
+ * of which exist only on a `PcSheet`. A creature's is a pre-calculated number the bestiary
+ * or the DM wrote, read by `passivePerceptionOf` in lib/sheet.ts, which answers `null` for
+ * every `pc` — so before this there was no way to ask the question of a `CharacterSheet`,
+ * only of one variant or the other. The board asks it of both.
+ *
+ * ⚠️ **It lives here rather than beside `passivePerceptionOf`, and the import graph is
+ * why.** lib/sheet.ts imports only *types* from this module, deliberately — its own comment
+ * says so — because this module imports `abilityModifier` and `proficiencyBonus` as values
+ * from it. A function needing both `passivePerception` (here) and `passivePerceptionOf`
+ * (there) can only sit on this side without closing that loop.
+ *
+ * ⚠️ **`null` stays `null` for a hand-built creature, and printing 10 instead would be
+ * inventing a statistic.** `passivePerceptionOf`'s docblock makes that point and it is
+ * sharper now that the answer is drawn on the board: a blue circle reading 10 on a goblin
+ * whose DM never gave it one is a number the table will act on.
+ *
+ * `skillProficienciesOf` rather than `sheet.skillProficiencies`, because that field is
+ * optional on a stored PC sheet and the accessor is the one place its default lives.
+ */
+export function passivePerceptionFor(sheet: CharacterSheet): number | null {
+  if (sheet.kind !== 'pc') return passivePerceptionOf(sheet)
+  return passivePerception(sheet.abilities, sheet.level, skillProficienciesOf(sheet))
+}
+
+/**
+ * THE TWO NUMBERS A COIN SAYS ABOUT ITSELF — armour class and passive perception, derived
+ * together because they are published together.
+ *
+ * ⚠️ **One function rather than two calls at the call site, and that is a correction.**
+ * `visibleVitals` reached for `passivePerceptionFor` for one of them and wrote
+ * `Number.isFinite(sheet.armourClass) ? … : null` inline for the other — two altitudes for
+ * one decision, and the inline half quietly re-implemented `finiteOrNull` because that
+ * helper is module-private to lib/sheet.ts. The pair is what
+ * [ADR 0014](../../docs/adr/0014-what-a-coin-says-about-itself.md) publishes, so the pair
+ * is what gets derived, and *absent* means the same thing for both by construction.
+ *
+ * Returns the exact shape both members of `publicVitalsValidator` carry, so the caller
+ * spreads it rather than naming the two fields twice.
+ *
+ * ⚠️ **This is the door a third published stat would come through, and it should not open
+ * quietly.** Adding one here is adding it to a payload whose union exists to discriminate
+ * *hit points* — the argument for the first two is that `resolveSheet` had already run so
+ * they cost no read, and that argument will be just as available for a third. The shape
+ * that survives a third is `{ characterId, vitals, stats }`, with the discriminator left
+ * single-purpose. Ship that before shipping the third stat, not after.
+ */
+export function coinStatsOf(sheet: CharacterSheet): {
+  armourClass: number | null
+  passivePerception: number | null
+} {
+  return { armourClass: armourClassOf(sheet), passivePerception: passivePerceptionFor(sheet) }
 }
