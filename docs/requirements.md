@@ -82,6 +82,33 @@ is a live constraint rather than a stale one — two of the Battle Master's best
 Trip Attack and Pushing Attack, were left out of the library because of it, and their dice went to
 manoeuvres that do the same job without knocking anybody prone.
 
+🚫 **Four sentences in this entry are superseded by the 5e 2024 conversion milestone in
+[roadmap.md](roadmap.md), and they are marked rather than corrected** — this entry is the record of
+what Milestone 4 decided, and editing it into agreement with a later milestone would delete the
+decision instead of its consequences. What that milestone changes:
+
+- **"Eight races"** becomes **nine species**, from the SRD's own list. **Half-Orc is retired** — it is
+  not a 2024 species — and Gnome arrives.
+- **"The Elf's +2 Dexterity"** goes. **No 2024 species changes an ability score**; the spread comes
+  from a background, which stays excluded, so it is absorbed into the premade sheet's stored numbers.
+  The Dwarf's extra hit point per level survives as Dwarven Toughness, and the Goliath's extra speed
+  survives as a base speed of 35.
+- **"Race is one dropdown with one trait behind it"** goes. A 2024 species has up to five traits and
+  may carry a lineage or ancestry choice behind it.
+- **"35 speed for all characters — now the default rather than the rule"** becomes **30**. The
+  paragraph's *mechanism* is untouched and was built correctly: a stored field, absent by default, read
+  through one accessor. Only the number the accessor answers moves. ⚠️ **Which makes it a stored-value
+  change wearing a constant's clothes** — every existing character has the field absent, so the
+  conversion cannot simply flip it.
+- **"Thirteen skills"** becomes **eighteen**. The half-lifting is unchanged and is the important part:
+  **backgrounds remain excluded**, there is still no background on a character, and there is still no
+  third source a proficiency can come from.
+
+**What survives untouched is the Equipment paragraph**, and it is worth ending on: a fixed kit as a
+line of text is exactly as true of an SRD starting-equipment package as of a hand-written one, and
+*"No inventory — set equipment per character"* has now governed two entirely different rule sets
+without needing a word changed.
+
 #### The screen and the sheet taxonomy — 2026-08-01 — [ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md)
 
 Two amendments, and neither is to the rule set — which is why they are stated separately from the
@@ -237,22 +264,35 @@ to the people at the table. The same reasoning covers **concentration**, which t
 promised them. Two of the four have since been reopened deliberately, so read the marks.**
 
 - 🚫 **Spell slots** — *decision reversed; not yet built.* There are none anywhere today, and the
-  level printed beside a spell is still a label rather than a resource. The character-resources
+  level printed beside a spell is still a label rather than a resource. The **5e 2024 conversion**
   milestone in [roadmap.md](roadmap.md) builds slot counting, and it lands with an amendment of its
   own in this section. **Do not read this bullet as a rule to preserve.**
-- ✅ **Spell save DC** — still declined for a hero. A creature has one because the bestiary wrote
-  one, and nothing in this application compares a roll to either.
+- 🚫 **Spell save DC** — *decision reversed for a hero; not yet built.* A creature has one because the
+  bestiary wrote one, and a hero still has none today. The same conversion milestone gives every
+  caster a spell save DC **and** a spell attack bonus, derived from the spellcasting ability and the
+  proficiency bonus, because every 2024 caster has both and declining them ships a sheet with two
+  boxes the rules describe left empty. ⚠️ **What has not changed is that nothing compares a roll to
+  either of them** — this reverses a *field*, not the decision to announce rather than adjudicate.
 - 🚫 **Limited-use abilities stay as coarse as they were** — *decision reversed; not yet built.*
   Today the app remembers whether a per-long-rest trait has been spent and counts nothing else, and
   there is no short rest. Same milestone, same amendment, same instruction.
 - ✅ **Initiative** — needed nothing new at all: a hero's bonus comes from Dexterity and a creature's
-  is stored, through one accessor that already existed.
+  is stored, through one accessor that already existed. **Still true after the conversion**, and the
+  only one of the four that is: derive what the SRD derives, store what the SRD prints, and a
+  creature's initiative is printed.
 
-⚠️ **The two reversals change what the app *counts* and not what it *adjudicates*, which is why they
-are amendments rather than a change of character.** No roll is compared to anything, no cast is
-refused, and casting at a higher slot level changes no die of damage. The turn structure above and
-concentration are **not** reopened, and the reasoning that keeps them out is the reasoning that
-survived: enforcing them means the app owning the round.
+⚠️ **The three reversals change what the app *counts* and *prints*, and not what it *adjudicates*,
+which is why they are amendments rather than a change of character.** No roll is compared to anything,
+no cast is refused, and casting at a higher slot level changes no die of damage. The turn structure
+above and concentration are **not** reopened, and the reasoning that keeps them out is the reasoning
+that survived: enforcing them means the app owning the round.
+
+⚠️ **One thing to know before reading the conversion's own amendment when it lands: a 2024 sheet puts
+the words *action*, *bonus action* and *Concentration* on screen, and neither of those is this bullet
+being reopened.** A spell row carries a casting time and a duration because the rulebook prints them;
+nothing counts an action and nothing drops a spell when its caster takes damage. That is the same
+register as a condition pip reading `prone` while nothing halves a speed, and it is the fifth time this
+file has had to draw the line between a **label** and a **rule**.
 
 **Two smaller notes on the *screen*, neither a rule.** *"When a clicked sheet item involves a dice
 roll, that character's token appears on screen for everyone and a 3D dice roll plays"* is met as

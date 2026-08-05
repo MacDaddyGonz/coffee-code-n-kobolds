@@ -44,7 +44,18 @@ insertion pushed everything below it down one.
   shipped rather than something about to be built** — `board.removeToken` has been complete and
   fully tested since Milestone 2, with no button anywhere in the application, which is a gap five
   milestones of new features walked straight past. (They were 11, 12 and 13 when they were written;
-  the board-polishing milestone below was inserted between the first and the second.)
+  the board-polishing milestone below was inserted between the first and the second.) ⚠️ **The third
+  of those three is gone**, and it is the only entry in this list describing a milestone that was
+  planned and then **replaced rather than shipped or deferred** — see the entry below it.
+- **Milestone 14 is no longer the character-resources milestone.** It was planned as spell slots,
+  limited uses and the short rest, and it is now the **5e 2024 conversion**, on the maintainer's
+  instruction. This is a **replacement in place rather than a seventh insertion**, so it renumbers
+  nothing at all: no heading below it moves and the table further down is untouched, which is the
+  first time a change to this file's plan has cost even less than an insertion. What the old milestone
+  planned is **absorbed** rather than dropped — the 2024 rules contain slots, limited uses and both
+  rests — so nothing in the reversal trail below is undone. ⚠️ **Anything in this file that names it
+  "the character-resources milestone" now points at a milestone that builds resources as one section
+  of nine**, and the two places that matter are marked where they sit.
 - **Milestone 12, board polishing**, inserted after Milestone 11 shipped and after twenty minutes of
   using it. It is the *second* insertion that fixes something already shipped, and the first that
   fixes something shipped **one milestone earlier** — the right-click menu's *Edit this coin* was
@@ -1532,6 +1543,17 @@ multiclassing and experience points are excluded by design. Consult the 2024 rul
 cherry-picked feature *works*, never for what a character *has*. The corpus is the authority on the
 second question, and a rules reference that disagrees with it is describing a different game.
 
+🚫 **That last sentence is the one thing the 5e 2024 conversion deliberately gives up, and it is left
+standing here rather than corrected.** After that milestone the SRD is the authority on **both**
+questions and the corpus is a transcription of it, so an archetype is chosen at level 3, there are
+twelve classes rather than eight, and *"a rules reference that disagrees with the corpus is describing a
+different game"* inverts into *the corpus disagreeing with the SRD is a transcription bug.* Everything
+above it survives: levels still stop at 5, backgrounds, inventory, multiclassing and experience points
+are still excluded, and **the paragraph was correct for the eleven milestones it governed**. It is
+marked rather than edited because a reduction this project chose on purpose, and then chose to stop
+choosing, is exactly the kind of decision a roadmap edited into agreement with the code can no longer
+show you.
+
 ### Five things the data model does not have, and each one is a decision
 
 None of these is a gap to fill quietly on the way past. Each changes what the roll path is.
@@ -1566,16 +1588,31 @@ None of these is a gap to fill quietly on the way past. Each changes what the ro
 about CR scaling. But it is an answer that has to be given, because the opposite reading builds a
 rules engine by accident, one feature at a time.
 
-⚠️ **Two of these five were answered, and then the first one was answered again the other way.** This
-milestone gave all five answers, and [ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md)
-recorded them: **no slots at all** for the first, and **no count per key and no short rest** for the
-fourth. The character-resources milestone below **reverses both**, at the maintainer's instruction,
-with ADR 0016 superseding those two decisions and leaving the other three standing. This list is left
-exactly as it was written — the point of writing a decision down is that it can be found and
-overturned rather than quietly drifted away from, and a list edited to agree with the code can no
-longer catch the code being wrong. **Decisions 2, 3 and 5 are unchanged and still hold:** a hero still
-has no spell save DC, initiative is still one function over a stored number and a derived one, and
-nothing expresses concentration or the action economy.
+⚠️ **Three of these five have now been answered the other way, and this list is the reason it is
+possible to say which.** This milestone gave all five answers, and
+[ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md) recorded them: **no slots at
+all** for the first, **no spell save DC for a hero** for the second, and **no count per key and no
+short rest** for the fourth. The **5e 2024 conversion** below reverses **1, 2 and 4**, at the
+maintainer's instruction, with ADR 0016 superseding those three decisions. This list is left exactly as
+it was written — the point of writing a decision down is that it can be found and overturned rather
+than quietly drifted away from, and a list edited to agree with the code can no longer catch the code
+being wrong.
+
+**Decisions 3 and 5 are unchanged and still hold:** initiative is still one function over a stored
+number and a derived one, and nothing *enforces* concentration or the action economy. ⚠️ **Read
+decision 5 carefully after the conversion, because it is the one that looks reversed and is not.** A
+2024 spell sheet prints a casting time and a duration that may read *Concentration, up to 1 minute*, so
+the words arrive on screen — but nothing drops a spell when its caster takes damage and nothing counts
+a bonus action. A field that says *concentration* is not a check that enforces it, which is the
+distinction the condition pips already drew.
+
+⚠️ **Decision 2 falls for a reason worth naming, because it is not the reason the other two fall.** 1
+and 4 were reversed by instruction — the maintainer asked for slot counting. 2 falls **structurally**:
+every 2024 caster has a spell save DC and a spell attack bonus, so declining them means shipping a
+sheet the rules describe with two boxes empty. Its own answer above predicted the shape of the fix —
+*"either they get derived at resolution (and the spellcasting ability per class becomes stored
+content)"* — and that is exactly what the conversion does. **Nothing is compared to the DC**, then or
+now, which is why this reverses a *field* and not a decision about adjudication.
 
 ### Reference material, and what each is good for
 
@@ -2526,246 +2563,449 @@ needs editing, the absent-base default is wrong.
 
 ---
 
-## Milestone 14 — Spell slots, limited uses and the short rest
+## Milestone 14 — The 5e 2024 conversion
 
-**Inserted after Milestone 10 shipped.** The decisions go in **ADR 0016**, which
-**supersedes [ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md)'s first and fourth
-decisions and leaves its second, third and fifth standing.**
+**This milestone replaces the character-resources milestone that stood in this slot** — spell slots,
+limited uses and the short rest. Replaced, and **absorbed rather than cancelled**: everything that
+milestone planned still gets built here, because the 2024 rules contain all of it. What changes is
+that it stops being the point. The decisions go in **ADR 0016**, which now supersedes a great deal
+more than that milestone's ADR was going to.
 
-⚠️ **Start with that, because this is the first milestone in the project to reverse a decision rather
-than extend one.** ADR 0011 says, in as many words:
+⚠️ **Read this paragraph before any other. This is the first milestone that replaces a system rather
+than extending one, and it is the largest in the project by every measure.** Eleven milestones have
+added features to D&D Lite. This one **deletes D&D Lite** and puts the **5e (2024) SRD 5.2.1** in its
+place at character levels 1–5, keeping seven named things from what is there now. Every milestone
+before this could be described as *"and also"*; this one is *"instead"*. Nothing about the board, the
+feed, the seats, the fog or the coins changes — this is a rules and content milestone that reaches
+every sheet-shaped surface in the application and nothing else.
 
-> **There are no spell slots and there will be none.** No table, no field, no counter.
->
-> **Limited-use resources stay exactly as coarse as they are.** No count per key, no short rest.
+⚠️ **It should be several branches, and the ordering below is not decorative.** A single branch that
+renames a vocabulary, rewrites two corpora, widens a schema and redraws four panels is a branch
+nobody reviews. The sequence in *Ten steps, in this order* near the end is the deliverable's shape.
 
-Both are reversed, deliberately and on the maintainer's instruction. That costs a superseding ADR, an
-entry in [requirements.md](requirements.md)'s amendments section, and a **rewrite** — not a deletion —
-of [CLAUDE.md](../CLAUDE.md)'s *"Four neighbouring gaps were closed by declining them"* paragraph, of
-which **two close here and two stay declined.** A reversal recorded properly is a project working; a
-reversal made by editing the old sentence is a project that can no longer catch itself being wrong.
+### The seven things that survive, and what each costs to keep
 
-### Nothing here crosses ADR 0011's line, and the ADR has to say why
+Named first, because everything below is either one of these or a consequence of the SRD.
 
-The line is: *the moment something changes a number a player rolls against without a person asking it
-to, it needs a spec amendment and an ADR.*
+| Kept | Status after conversion | What keeping it costs |
+| --- | --- | --- |
+| The **Level + Name + Species + Class + Archetype** builder | Survives, with one field changed and one gated | `race` becomes `species` throughout; the archetype step is **empty at levels 1–2** because 2024 chooses a subclass at level 3 |
+| A **premade library of popular builds, levels 1–5** | Survives, rebuilt | 72 hand-written sheets become **60**, and every number on all 60 is re-derived from the SRD |
+| **Levels 1–5 only** | Survives, and is now the main scope lever | Caps spell level at 3, so 156 of the SRD's 312 levelled spells are in range instead of all of them |
+| **CR scaling up and down** | Survives, unchanged in design | `convex/lib/bestiary/benchmarks.ts`' ten rows must be **re-derived** from SRD stat blocks, because they were fitted to a hand-written corpus that is being replaced |
+| **The ad-hoc dice tray** — d2, d4, d6, d8, d10, d12, d20, d100 | Survives untouched | **Nothing. It already arrived**, in the board-polishing milestone above — see the note under *What needs nothing at all* |
+| **No inventory**; every character issued weapons and armour for its class and archetype | Survives, and gets *more* precise | The SRD's starting-equipment packages are the source, reduced to the line of text `LibrarySheet.equipment` already holds |
+| **No weight, no encumbrance, no XP, no money, and none of the biography fields** | Survives; most were never built | The two that *were* — a spell's level as a pure label, and speed's default — both move, for reasons below |
 
-**No number a player rolls against changes.**
+**The biography exclusions are the cheapest thing in this milestone and are listed for completeness
+rather than work.** No personality trait, ideal, bond, flaw, language, background, ally, organisation,
+backstory, alignment, faith, gender, age, height, weight, eye or hair field exists in the schema today
+and none is added. The only one with any reach is **background**, and it has a great deal of reach —
+see the next-but-one section.
 
-- **Casting at a higher slot level does not change the damage expression.** Cure Wounds rolls the
-  `2d8+WIS` on the sheet whichever slot goes; the catalogue's own prose already says *"roll another
-  2d8 for each spell slot level above 1st"*, and the player rolls the difference in the dice tray. **A
-  slot's level decides which counter goes down and nothing else.**
-- **Nothing is refused.** The dialog's buttons are *Cast anyway* and *Cancel*, and *Cast anyway* is
-  always live. The app counts and warns; it never adjudicates.
-- Nothing compares a roll to anything.
+### The reference, and the one that must not be used
 
-⚠️ **Two things do change and both are amendments rather than adjudication.** The app now *counts* two
-things it declined to count — and a person still presses the button that says what it will spend. And
-**`feed.roll` gains a side effect on stored state, the first time in this codebase a roll writes
-anything other than a feed row.** That deserves its own paragraph in the ADR, because it is the seam
-through which a rules engine would enter if one ever did.
+**Primary and authoritative: [`downfallx/dnd-5e-srd-markdown`](https://github.com/downfallx/dnd-5e-srd-markdown), branch `master`.**
+Genuinely SRD 5.2.1, organised by topic. The files this milestone reads, with sizes, because the size
+is what tells you whether a question is answerable by reading or needs a script:
 
-### The corpus decides what exists, and the corpus is small
+| File | Size | What it settles |
+| --- | --- | --- |
+| `character-origins.md` | 17 KB | The nine species and the four backgrounds |
+| `classes.md` | 298 KB | Twelve classes, their level tables, their one subclass each |
+| `spells.md` | 326 KB | 15 cantrips and 312 levelled spells |
+| `equipment.md` | 72 KB | 38 weapons with mastery properties, 12 armours and a shield |
+| `feats.md` | 7.6 KB | Origin, General, Fighting Style and Epic Boon feats |
+| `rules-glossary.md` | 73 KB | The fifteen conditions, and every defined term |
+| `monsters.md` | 19 KB | The **anatomy** of a 2024 stat block |
+| `monsters-A-Z.md` | 517 KB | 235 creatures |
+| `animals.md` | 140 KB | 95 more |
+| `playing-the-game.md` | 65 KB | The eighteen skills, and the D20 Test |
 
-⚠️ **Enumerate before implementing.** The numbers below are a snapshot of content and must be
-regenerated from `convex/lib/library/` and `convex/lib/rules.ts` rather than trusted.
+🚫 **[`sycarion/5e-2024-SRD`](https://github.com/sycarion/5e-2024-SRD) must not be used, and the reason
+is recorded here so nobody wires it in later on the strength of its name.** Despite the repository
+title it is the **2014 SRD 5.1**. Its own `Changelog.md` carries *"Update material to reflect 5.2.1
+SRD"* as an unchecked to-do, beside *"Rename Races to Species"*; it is a June-2025 fork of a 2022
+wiki. The content confirms it beyond argument — Fighter gains `Martial Archetype` and no Weapon
+Mastery, Monk spends `Ki Points`, Ranger has `Favored Enemy` and `Natural Explorer`, there are six
+in-class Fighting Styles rather than four feats, and `Races/` contains Half-Elf and Half-Orc. Reaching
+for it as a "second opinion" converts this application to the **previous edition** one file at a time,
+which is the failure mode a rejected reference exists to prevent.
 
-| Fact | Count |
-| --- | --- |
-| Library sheets | 72 |
-| Classes | **8** — barbarian, bard, cleric, fighter, paladin, ranger, rogue, wizard |
-| Library entries in total | 711 |
-| **Highest spell level anywhere in the corpus** | **3** |
-| Sheets needing a slot declaration | **43 of 72** |
-| Entry-level use declarations | **81, across 48 sheets** |
-| Catalogue entries gaining one | 7 of 52 |
-| **Total content edits** | **133** |
+⚠️ **This inverts the rule the dice milestone wrote down, and the inversion is the milestone.** That
+milestone's instruction was: *consult the 2024 rules for how a cherry-picked feature works, never for
+what a character has — the corpus is the authority on the second question.* After this milestone the
+SRD is the authority on **both**, and the corpus is a *transcription* of it rather than a
+cherry-picked subset with its own opinions. The sentence in that section is left standing and marked,
+because it was correct for eleven milestones and is the thing being deliberately given up.
 
-There is **no Warlock**, so there is no Pact Magic and no slot bank that recharges on a short rest.
-There is no Sorcerer, no Monk and no Druid, so there are no sorcery points, no focus points and no wild
-shape to track. The reduced class list is what makes this tractable, and it is worth saying out loud:
-the 2024 rules describe eight resource shapes and this corpus contains three.
+### Six numbers that decide the size of this milestone
 
-⚠️ **The 2024 half-caster question is answered by the corpus, and the answer is no slots at level 1.**
-The 2024 rules give Paladins and Rangers spellcasting at level 1, where 2014 gave it at level 2 — and
-this library's level-1 paladin and level-1 ranger carry **no spells at all**, so slots there would be
-pips with nothing to spend them on. That is the roadmap's own rule applied: *consult the rules for how
-a cherry-picked feature works, never for what a character has.* The test asserts slots exactly where a
-levelled spell exists, so giving those two sheets a spell list makes the suite demand the slots in the
-same edit — which is the right way for a content decision to be reversible.
+⚠️ **Enumerate before implementing.** Every count below is a snapshot taken while this was written and
+must be regenerated from the SRD files and from the corpus rather than trusted. The instruction that
+matters is the *ratio*, not the figures.
 
-⭐ **Font of Inspiration is the observation the whole design turns on.** It appears on exactly two of
-the 72 sheets — the two level-5 bards — and it says *"you get every Bardic Inspiration die back on a
-short rest as well as a long one."* **So the recharge period of one entry differs by archetype and by
-level.** No per-class formula can express that. A per-sheet literal expresses it by being written down,
-and that is why the model is content sitting beside the sheet rather than a table keyed by class. It
-is also the assertion that pins the argument in the test, and it should carry that sentence in its
-comment.
+| | Today | After | Δ |
+| --- | --- | --- | --- |
+| Classes | 8 | **12** | +4, each bringing a resource shape that does not exist yet |
+| Archetypes | 16 (two per class, none from any SRD) | **12** (one per class, all SRD) | −4, and 8 retired by name |
+| Species | 8 | **9** | Half-Orc **retired**, Gnome added |
+| Skills | 13 | **18** | +5 — History, Medicine, Nature, Religion, Survival |
+| Spells / catalogue entries | 52 total, of which 24 are spells | **171 spells** (15 cantrips + 156 of levels 1–3) | ~7× the spell corpus |
+| Creatures | 129 | **253** in range (160 of 235 monsters and 93 of 95 animals, at CR 0–6) | ~2× |
+| Premade sheets | 72 | **60** | 12 classes × (levels 1–2 shared) + 12 × 3 subclass levels |
+| Feats | 16 hand-written, mixing feats with class features | **10** reachable at levels 1–5 (4 Origin, 4 Fighting Style, 2 General) | The SRD's feat list is *smaller* than ours, and the difference is that ours contains class features |
 
-**Counts derived from an ability modifier are safe as literals, and that is checkable rather than
-hoped:** exactly one of the eight races changes an ability score, and only Dexterity, so a literal
-written against a sheet's own fixed standard array is exact for every race a character can be.
+⭐ **That last row is the most useful line in the table, and it should be read twice.** `convex/lib/rules.ts`
+today calls sixteen things `FEATS`, and only five of them are feats — Second Wind, Action Surge, Rage,
+Sneak Attack, Divine Smite, Lay on Hands, Bardic Inspiration and Wild Shape are **class features**,
+which is a different thing with a different home and a different recharge story. The conversion is
+therefore not "add SRD feats to our feat list"; it is **splitting one list into two** and discovering
+that the smaller half was already correct. Whoever builds this should expect the class-feature half to
+be the whole job and the feat half to be an afternoon.
 
-⚠️ **Two things are declined at the content level and both need saying.** Divine Sense's corpus text is
-*"a few times a day"* — **no number** — and inventing one is the application writing content.
-And every entry that spends a *parent's* pool — a Battle Master's four manoeuvres, a cleric's Channel
-Divinity options, a bard's Cutting Words — is left uncounted, because a pointer from child to parent
-would make one counter a function of another entry's **resolver-minted id**, so renaming the parent in
-content silently orphans four children at the next level-up. The counter lives on the parent, which is
-where the corpus already puts the sentence, and the children spend nothing. **This is a named
-incompleteness rather than an oversight**, and it goes in the ADR in those words, because this file's
-own rule about fog applies: *a partial guard described as a whole one is worse than no guard.*
+### Where the arithmetic actually moves — six changes, and only one is a simplification
 
-### One shape for three kinds of resource
+Everything else in this milestone is transcription. These six change numbers, and each needs a line in
+ADR 0016.
 
-An entry declares how many times it can be spent and which rest hands them back, and that one shape
-covers all three shapes the 2024 rules have: **discrete uses** (Second Wind, Rage, Channel Divinity),
-**dice pools** (a Battle Master's four dice — the *die* is already the entry's own roll expression, so
-a pool is a counter with the die on the row), and **point pools** (Lay on Hands, twenty-five hit points
-at level 5, spent in whatever amounts the paladin likes). What differs between them is the amount spent
-per gesture, which is the caller's business rather than the content's: a roll spends one and the
-paladin types seven into the stepper.
+**1. ⚠️ Ability scores no longer come from species — they come from *background*, which is excluded.
+This is the sharpest conflict in the whole conversion.** In 2024 a species grants **no ability score
+increase at all**; a background grants three named abilities with a `+2/+1` or `+1/+1/+1` spread, plus
+an **Origin feat**, plus **two skill proficiencies**, plus a tool proficiency and equipment. Excluding
+background removes the *source* of the ability spread and of half the skill proficiencies.
 
-⚠️ **Absent, never zero.** A resource with a maximum of zero would be one that is permanently empty,
-which is a different and useless thing from *not counted* — and *not counted* is what 630 of the 711
-entries will always be. This is [ADR 0008](adr/0008-one-shell-and-what-a-sheet-entry-is.md)'s settled
-rule: an optional field already has a spelling for none, and adding a second is two states for one
-meaning that every field-by-field rebuild then has to agree about.
+The resolution is **absorption, not addition, and it costs nothing structural because the shape is
+already right.** `LibrarySheet.abilities` already stores a finished array with the note *"the standard
+array, allocated for the class and without considering race"*. After this it stores the standard array
+**with the build's background increases already applied**, and the *"without considering race"* clause
+becomes true by construction rather than by discipline — since no species touches a score, the
+apply-race-on-top step loses its arithmetic entirely. The two skill proficiencies land in
+`skillProficiencies` the same way, and the Origin feat lands in the entry list.
 
-⚠️ **The declaration stays optional on content, unlike `category`.** Milestone 6 made `category`
-required on content precisely so the compiler would print the list of 763 entries to fix, and that
-asymmetry does not transfer: every entry has a category and almost none has a resource, so requiring
-it means 630 literals reading *undefined*. **The mechanical refusal comes from the library test
-instead** — an allow-list of every entry that must declare one, plus **the inverse, so a stray
-declaration is caught too.** Write the test before the content, so the suite prints the 133 edits
-rather than somebody remembering them.
+⭐ **CLAUDE.md's *"no second source of proficiency can ever exist"* survives this, and stating why is
+the point.** There is still **no background on a character**, no background list, and no second grant.
+What arrives is the *premade sheet* being the authority on a fixed set of numbers, which is what it
+has always been — [ADR 0006](adr/0006-premade-character-library.md)'s stored-link-and-override model
+is untouched. A reader who concludes "backgrounds were lifted" has read it backwards: the exclusion is
+what forces the absorption. **The requirements amendment must say this in these words**, because "the
++2 came from somewhere" is the question the next reader will ask.
 
-**One union for a rest and for a recharge period, not two.** They are the same two values, and the
-question *does this rest hand that back* is a comparison between them: a resource's recharge is the
-shortest rest that restores it. The first draft had two identical unions with two label records and
-two `never` arms for the same two words.
+**2. 🚫 Speed's default is 30, not 35, and this reverses a Milestone 4 amendment.** Eight of the nine
+species have `Speed: 30 feet`; the Goliath has 35, and a Wood Elf's lineage raises it to 35. So
+`SPEED_FEET = 35` in `convex/lib/sheet.ts` becomes **30**, and Milestone 4's amendment — *"35 speed for
+all characters — now the default rather than the rule"* — is superseded rather than refined. The
+Goliath is still the reason the field exists; it is simply no longer the reason the *default* is what
+it is. ⚠️ **`speedOf` answers 35 for every sheet with the field absent, and every stored sheet has it
+absent**, so this is a **stored-value change disguised as a constant edit**: flipping the constant
+silently slows every existing character by five feet, which is correct for eight species and wrong for
+the Goliaths. It needs the migration in step 9, not a one-line commit.
 
-⚠️ **Its fail default is `false`, and it is the fail-*conservative* direction rather than the
-fail-closed one — the first time in this codebase those differ.** Nothing behind it guards a secret.
-What it guards is *the app deciding a rule*: restoring too little costs one click on a counter that is
-directly editable by design, and restoring too much is invisible and is the application handing a
-player a resource nobody asked it to.
+**3. The archetype is chosen at level 3, not level 2, and levels 1–2 therefore have none.**
+`SUBCLASS_LEVEL` moves from 2 to 3 for all twelve classes — the SRD is unanimous, which is worth
+knowing because 2014 was not. The library's shape changes with it: today a class is `base` (level 1)
+plus two paths covering levels 2–5. After this it is **levels 1 and 2 shared**, then one path covering
+levels 3–5. `ClassLibrary` in `convex/lib/library/types.ts` needs `base` to become a level-indexed
+record rather than one sheet, and the builder's archetype control must be **absent** rather than empty
+below level 3 — a disabled dropdown reads as a thing the player failed to fill in.
 
-### The short rest, and what it deliberately does not do
+⚠️ **The archetype step stops being a choice, and that is a licensing fact rather than a design one.**
+No SRD, 2014 or 2024, contains more than one subclass per class. The eight second archetypes the
+library ships — Battle Master, Assassin, Oath of Vengeance, College of Valour, Light Domain, Path of
+the Wild Heart, School of Divination, Beast Master — appear in **no** SRD and were written from general
+knowledge. They are **retired by name**, and every character holding one needs step 9. What arrives
+instead is the twelve that are licensed: Path of the Berserker, College of Lore, Life Domain, Circle
+of the Land, Champion, Warrior of the Open Hand, Oath of Devotion, Hunter, Thief, Draconic Sorcery,
+Fiend Patron and Evoker.
 
-A second rest button, restoring only what declares itself short-rest and **nothing else**. It does not
-heal, and it does not hand hit dice back — spending hit dice is what a short rest is *for*.
+**4. Thirteen skills become eighteen.** History, Medicine, Nature, Religion and Survival are missing
+today, all of them Intelligence or Wisdom. `SKILL_KEYS` in `convex/lib/skills.ts` grows by five, and
+so does everything derived from it: `SkillProficiencies` (a `Record` over the union, so the compiler
+lists every construction site), `skillProficienciesValidator`, `creatureSkillsValidator`, `noSkills`,
+and the sheet's skill list. ⚠️ **`BestiaryCombat.skills` caps at four and a 2024 stat block routinely
+lists more** — the cap is a content rule checked by the corpus test, and re-deriving 253 creatures is
+the commit that discovers it. Decide the new cap from the corpus rather than from the old constant.
 
-⚠️ **That copy is load-bearing, not decoration.** The hit dice control already records that a button
-labelled "Long rest" which only handed the dice back **read as broken the first time somebody pressed
-it at one hit point.** A short rest does *less* than a player expects, so the button has to say so or
-the identical failure arrives with a different noun. Both rests read their label and their explanation
-out of one record and the panel iterates the two rather than naming them in JSX — the reason the
-sheet's category sections already iterate.
+**5. Counts stated as *"equal to your Proficiency Bonus"* are everywhere, and the literal model still
+holds.** Draconic Breath Weapon, Stonecunning, Giant Ancestry and Adrenaline Rush are all
+proficiency-bonus-many uses per long rest — a *derived* count, where the absorbed milestone planned
+per-sheet literals. ⭐ **The literal survives, and checking that is worth one paragraph rather than a
+redesign:** a library sheet is written per level, the proficiency bonus is +2 at levels 1–4 and +3 at
+level 5, so a literal on a per-level sheet is *exact* and never drifts. This is the same argument the
+absorbed milestone made about ability-modifier-derived counts, reaching a second kind of derivation
+and holding.
 
-⚠️ **A feature that partially recovers on a short rest is written as long-rest, deliberately.** The
-2024 Barbarian gets one rage back on a short rest and all of them on a long one; expressing that needs
-an *amount* as well as a period, which turns a boolean into a number and a comparison into arithmetic.
-The corpus's own prose says *"between long rests"*, the corpus is the authority on what a character
-has, and the direction of the error is the safe one: under-restoring costs one click on an editable
-counter.
+**6. ⭐ Monsters gain ability scores, and this is the only simplification in the milestone.** A 2024
+stat block carries all six scores with modifier *and* save columns, which deletes the reason the
+reduced NPC sheet exists. Today `BestiaryCombat` pre-calculates `attackBonus`, `initiativeBonus`,
+`passivePerception`, `saveDc` and per-skill bonuses **because there are no scores to derive them
+from** — that is [ADR 0005](adr/0005-character-sheets-and-hit-point-secrecy.md)'s reduction, restated
+three times in `convex/lib/bestiary/types.ts`. With scores present, all five become derivable by the
+functions heroes already use, and `NPC_ACTIONS`' flat `1d6+2` numbers can become `1d6+STR` in the same
+grammar as a hero's.
 
-### Spending, wired into the roll path
+⚠️ **Take the simplification, but do not take it all the way, and know which of the two reasons you
+are honouring.** A monster's stored `attackBonus` may become derived; a monster's stored **initiative**
+must not, because the SRD prints an initiative modifier that is *"typically equal to its Dexterity
+modifier"* and explicitly permits extras. The rule to carry forward: **derive what the SRD derives, and
+store what the SRD prints.** And `passivePerception` stays *nullable* — the board draws it now, and
+`passivePerceptionFor` in `convex/lib/skills.ts` already carries the argument that printing 10 for a
+creature nobody gave one is inventing a statistic.
 
-⭐ **A roll spends on the first part its category offers and on no other**, so a weapon-shaped spell
-does not spend twice for its two clicks — a spell that rolls to hit and then rolls damage is one cast,
-and the damage a beat later is that cast landing. Composed out of the existing parts function rather
-than switching on the category a second time, so a fourth category is answered in exactly one place. A
-cantrip spends nothing and falls out of the arithmetic rather than needing a rule, which is the whole
-of what a cantrip is. **Reading an entry's description aloud spends nothing** — it is the one gesture
-on a sheet that is explicitly not doing the thing.
+### What arrives on the sheet that is not on it today
 
-The feed line says what it cost, as a second clause beside the advantage note rather than a seventh
-sentence template — bolting it into the existing six arms would put the same phrase in three of them
-and leave the other three deciding whether it applied. ⚠️ **It is keyed off what happened and never off
-what was asked for**, which is the rule the advantage note already states: a line reading *spending a
-slot* over a character who had none would be the feed asserting a rule the server deliberately did not
-enforce.
+The attached D&D Beyond sheets cross out what is excluded; **six things are left un-crossed that this
+application does not currently have**, and they are listed here because an un-crossed box is an
+instruction and an unlisted absence reads as an oversight.
 
-Three properties of that seam worth writing into the code:
+| Arriving | Status today | Note |
+| --- | --- | --- |
+| **Spell save DC and spell attack bonus for a hero** | ADR 0011 decision **2** declines it | 🚫 **Reversed.** Every 2024 caster has both, derived from the spellcasting ability plus proficiency — so the spellcasting ability per class becomes stored content, exactly as the dice milestone's *"five things"* list predicted it would have to |
+| **Temporary hit points** | No field | A second number beside current HP in `characterVitals`, with its own clamp. Not healing, and not part of the max |
+| **Death saving throws** | 🚫 *"Never in scope"* in the milestone this one replaces | ⚠️ **Needs its own line in ADR 0016.** Three successes and three failures is a *counter*, not an adjudication — nothing decides whether the character dies. But it reverses a stated never, so it is recorded rather than slipped in |
+| **Heroic Inspiration** | No field | A boolean. The 2024 Human regains it on every long rest, which is the one place it interacts with anything |
+| **Resistances, immunities and vulnerabilities** | Creatures have them in prose; heroes have nothing | Labels on the sheet. **Nothing computes damage**, so nothing applies one |
+| **Senses — darkvision and the passive scores** | Passive Perception exists; passive Insight and Investigation do not | Both derive from skills that exist after change 4, so they cost two accessors |
 
-- **`convex/feed.ts` still reads and writes no guarded table itself** — the spend goes through the
-  characters choke point, and `leakGuard.test.ts` unchanged is the check.
-- **The spend happens after the dice are evaluated**, so nobody "fixes" it into a pre-flight check that
-  could refuse.
-- ⚠️ **The roll joins the vitals subscription's invalidation set only when something is spent.** A
-  greatsword's to-hit reads no vitals row and costs exactly what it cost before. That is invariant 2's
-  question asked in the right direction, and the answer falls out of the design rather than needing a
-  mitigation.
+⚠️ **Languages are the one un-crossed box that stays out.** The *Proficiencies & Training* panel lists
+Armour, Weapons, Tools **and Languages**, and languages are named in the exclusion list — so that box
+keeps three of its four sections. Worth stating because the screenshot and the prose list disagree, and
+the prose list is the instruction.
 
-### The counters reach the client already
+### The library: sixty sheets, and the shape of a class changes
 
-**Nothing new is subscribed to.** The client already holds the resolved sheet, which carries the
-maxima, and already subscribes to vitals, which will carry what has been spent. The warning before an
-over-spend is the subtraction of two things already on the screen, and the arithmetic is the same
-shared function the server writes by, so a pip a client draws and a number the server stores cannot
-come apart.
+Twelve classes, each with levels 1 and 2 shared and one archetype covering levels 3–5. The four new
+classes are **Druid, Monk, Sorcerer and Warlock**, and they arrive with four resource shapes the
+absorbed milestone explicitly said this corpus did not contain:
 
-⭐ **The band variant of the vitals payload gains nothing, and reviewing that is the point of this
-milestone rather than a formality.** *The dragon has one breath left* is the same class of fact as
-*the dragon is on 40 hit points*, and that variant is the strongest mechanical guarantee in the
-codebase precisely because it has **nowhere to put a number**. Nothing on a creature's sheet declares a
-resource today, so there is nothing to leak — which is exactly why the guarantee must survive a
-milestone that adds two counters, structurally rather than circumstantially. The payload scan grows
-both new keys to its forbidden list, with its positive control.
+| Class | Resource | Shape at levels 1–5 | Recharge |
+| --- | --- | --- | --- |
+| Monk | **Focus Points** | Equal to Monk level, from level 2 (so 2→5) | Short rest |
+| Sorcerer | **Sorcery Points** | Equal to level, from level 2 | Long rest, plus Sorcerous Restoration at level 5 |
+| Warlock | **Pact Magic slots** | A *tiny* bank: 1 slot at level 1, 2 thereafter, rising in slot **level** rather than count | **Short rest** — the one caster whose slots come back before a long rest |
+| Druid | **Wild Shape** | 2 uses at level 2 | One back on a short rest, all on a long rest |
 
-### The second stored-value migration this project has done
+⚠️ **Wild Shape is the one feature in the SRD that makes a hero's sheet read the bestiary.** Its known
+forms are Beast stat blocks of CR ≤ 1/4 without a Fly Speed, which is a **query against the creature
+corpus from a player-facing surface** — and `corpusGuard.test.ts` allows exactly three modules to
+import `lib/bestiary/`. Decide this deliberately: the cheapest answer that keeps the guard whole is
+that a druid's four forms are **content on the library sheet**, four entries like any other, rather
+than a live lookup. A live lookup needs a fourth module on that allow-list and an argument for it.
 
-The existing spent-abilities field is a set of keys with no counts. The new one is that field with a
-number added, which is why it is stored as pairs rather than a record: the fold is *every key becomes
-one spent use*, and the legacy read is a concatenation rather than two shapes to reconcile.
+⭐ **Warlock Pact Magic is why the absorbed milestone's slot model has to change, and it is worth
+finding out now rather than at content time.** That milestone reasoned from a corpus with no Warlock:
+*"There is no Warlock, so there is no Pact Magic and no slot bank that recharges on a short rest… the
+2024 rules describe eight resource shapes and this corpus contains three."* After this milestone the
+corpus contains **all of them**, and the sentence is deleted rather than qualified.
 
-Widen → migrate → narrow, copying Milestone 10's sequence line for line: both new fields optional and
-one accessor folding the old one in; an internal maintenance mutation to sweep, whose paging read and
-writes live in `lib/characters.ts` because invariant 8 forbids `admin.ts` reading that table itself;
-then a later branch removing the field. **Self-enforcing: a blocked pipeline rather than broken data.**
+### The absorbed milestone, corrected in one place
 
-⚠️ **This leaves a second outstanding narrowing step alongside Milestone 10's**, which has still not
-been run against production. Two half-finished migrations is one more than this project should carry —
-finish the layer rename first.
+Everything the character-resources milestone planned still holds — one shape covering discrete uses,
+dice pools and point pools; **absent, never zero**; the declaration optional on content with an
+allow-list test on both sides; a spend on the first part a category offers and never twice for one
+cast; the spend after the dice are evaluated; `convex/feed.ts` still reading no guarded table; and the
+band variant of the vitals payload still having nowhere to put a number. Read that section in the git
+history of this file before starting — it is not restated here because it was right.
 
-### ⚠️ The field-by-field rebuild trap, fifth outing, and the worst one yet
+🚫 **One of its decisions does not survive contact with the SRD.** It said:
 
-[CLAUDE.md](../CLAUDE.md) records this firing four times — `skillProficiencies`, `speed`, five NPC
-fields, `group` — and that **only `npm run test:smoke` has ever caught it.** This is the
-highest-exposure instance so far, because the entry normaliser is shared across a hero's feats, a
-hero's spells, a monster's actions and both override diffs. **Five sites**, and the fifth is
-`resolvePreset`'s two branches, where the retired-class branch leaves the field absent *deliberately*
-and must say so — because that function's own documentation already records shipping without
-`skillProficiencies` in exactly that branch.
+> **A feature that partially recovers on a short rest is written as long-rest, deliberately.** …
+> expressing that needs an *amount* as well as a period, which turns a boolean into a number and a
+> comparison into arithmetic.
 
-**Deliberately not done here:**
+That was a defensible reduction against a corpus where the pattern appeared once. In 2024 it is **the
+normal case** — Second Wind, Wild Shape and Superiority-style pools all say *"regain one expended use
+on a short rest, all on a long rest"* — so writing them as long-rest-only would under-restore most of
+the martial classes at every short rest in the game. The resource shape therefore carries **a maximum,
+a recharge period, and an amount returned by the shorter rest**. The direction-of-error argument is
+unchanged and still the safety net; it is no longer the design.
 
-- **Concentration and the action economy.** ADR 0011's fifth decision stands untouched, and so does
-  the existing amendment about turns consisting of one action, one bonus action and one reaction. The
-  CLAUDE.md paragraph is **rewritten to keep them**, not deleted wholesale, and that is the difference
-  between reversing a decision and abandoning a discipline.
-- **Death saves and exhaustion.** Never in scope; nothing tracks a character at zero hit points beyond
-  the `down` band.
-- **A spell save DC for a hero.** ADR 0011's second decision stands.
-- **Upcasting changing anything.** Say it in three places — the ADR, the module header, and the slot
-  control's own copy — because it is the assumption a 5e player brings and the one thing here that
-  would quietly become a rules engine.
-- **Automatic slot recovery.** A wizard's Arcane Recovery is a counter that remembers whether it was
-  used and hands nothing back.
-- **Preparing spells.** The sheet's spell list is what it is.
-- **Shared pools**, for the reason above, and **refusal of any kind.**
+⚠️ **Its two named incompletenesses both stay named.** Divine Sense's *"a few times a day"* is a
+2014-ism that 2024 replaces with a real number, so that one **closes for free**. Shared pools — a
+child entry spending a parent's uses — stays open for exactly the reason given: a child-to-parent
+pointer is a reference to a resolver-minted id, and renaming the parent in content orphans the
+children at the next level-up. With twelve archetypes instead of sixteen the exposure is smaller, not
+different.
 
-**Acceptance:** a level 5 wizard clicks Fireball, everybody sees `casts Fireball, spending a 3rd-level
-slot, 1 left` and the same dice; clicking it twice more leaves zero, warns, and **still rolls**. A
-fighter takes a short rest and gets Second Wind and Action Surge back while their hit points, their
-hit dice and any slots stay exactly where they were — asserted as three negatives, because what a
-short rest does *not* do is the whole of what makes it a short rest. A level-5 bard's Bardic
-Inspiration comes back on a short rest and a level-4 bard's does not, from content rather than from
-code. A player inspecting network traffic sees no remaining-use count for any creature whose sheet
-they may not already read. `npm run test:smoke` compares a stored sheet's key set at depth against the
-real deployment, because it is the only thing that has ever caught the rebuild trap.
+### The bestiary: a 2024 stat block, and the guards that already cover it
+
+253 creatures at CR 0–6, transcribed into `BestiaryEntry` with the field changes from change 6 above.
+The `BestiaryFile` category split (`monster` / `enemy` / `social`) is a **local organising choice with
+no SRD counterpart** and should survive — the SRD has one flat list, and a DM choosing at speed does
+not.
+
+Three things this section does **not** get to skip:
+
+- ⚠️ **`benchmarks.ts`' ten rows are fitted to a corpus that is being deleted.** CR scaling preserves a
+  creature's offset from its own CR row, so the rows *are* the scaler. Re-derive them from the SRD's
+  own CR 0–6 stat blocks, and expect `convex/lib/scaling.test.ts` to be the thing that tells you the
+  old curve was wrong.
+- **`social.ts`' thirty NPCs have no SRD source**, because the SRD has no innkeeper. They are the one
+  part of the corpus that is authored rather than transcribed, and the plan should say so rather than
+  leaving a reader to wonder which creatures were checked against what.
+- ⚠️ **Nothing about `maySeeCharacter`, `maySee`, `mayHearOf` or `boardCharacterAccess` changes**, and
+  that is the load-bearing sentence of the whole milestone. A monster's sheet is still a leaked *row*;
+  its hit points are still a leaked *field*; the corpus is still a leaked *module*. Every guard in
+  CLAUDE.md invariant 8 keeps its exact meaning because **none of them reads a rule** — they read a
+  layer, a control grant and a document kind. A conversion that changed one of them would be doing
+  something other than converting.
+
+### What needs nothing at all, and why each is worth naming
+
+⭐ **The condition vocabulary is already correct, and it was written knowing this milestone was
+coming.** `convex/lib/markers.ts` holds the SRD's fifteen conditions plus `concentrating` and `dead`,
+in American spelling, with a comment saying *"the SRD this project moves to later is American and a
+vocabulary that half-matches it is worse than one that does not match at all."* That is the discipline
+paying out: seventeen strings, zero edits, and `lib/markers.test.ts` pins the order.
+
+⭐ **The dice tray is already correct too, and it arrived one milestone ago.** d2 through d100 with
+`ROLL_PATTERN` widened to admit `d2` and up to fifty dice is the board-polishing milestone's work, not
+this one's. **This milestone must not re-add it**, and CLAUDE.md invariant 10's cap sentence is already
+rewritten there.
+
+Also untouched: hash routing, the Vite base path, the upload limits, `snapToGrid`, the three layers,
+fog, the feed's shape, the roll modes, the crit effects, `resolveDmAccess` and every leak-guard test.
+**The board does not know a rules edition exists**, which is the payout on eleven milestones of keeping
+rules out of it.
+
+### Weapon mastery is the one 2024 feature that lands on a standing exclusion
+
+Every one of the SRD's 38 weapons carries exactly one of eight **mastery properties** — Cleave, Graze,
+Nick, Push, Sap, Slow, Topple, Vex — and a Fighter unlocks three of them at level 1. Three are
+movement-detriment effects: **Push** shoves a creature 10 feet, **Slow** reduces its Speed by 10, and
+**Topple** knocks it Prone. requirements.md excludes *"movement-detriment status effects (prone, stand
+up, difficult terrain, etc.)"* and that exclusion still stands.
+
+**So a mastery is a word on the weapon entry and nothing else** — the same register as a condition pip,
+a creature's loot and a spell's level. Nothing shoves, nothing halves a speed, nothing sets Prone, and
+`convex/lib/dice.ts` never learns the vocabulary. ⚠️ **This needs an amendment for the reason the
+conditions one did:** the exclusion names the exact effects the labels describe, and a near-miss that
+goes unrecorded is indistinguishable from a quiet lifting. If the vocabulary gets its own module, it
+gets `markerGuard.test.ts`' treatment — a grep with a three-module allow-list — because the way this
+exclusion breaks is somebody writing three reasonable lines in the dice module.
+
+**Concentration and the action economy arrive as labels on the same terms.** The spell sheet shows a
+casting time (`1A`, `1BA`, `1h`) and a duration that may read *Concentration, up to 1 minute*, and both
+are printed and neither is checked. Nothing drops a spell when its caster takes damage and nothing
+counts a bonus action. **ADR 0011's decision 5 therefore stands**, and the existing amendment about a
+turn being one action, one bonus action and one reaction stands with it — a field that says
+*concentration* is not a rule that enforces it, which is the distinction this project has now drawn
+five times.
+
+### The documents this milestone must write
+
+- **ADR 0016** — the decisions. It supersedes
+  [ADR 0011](adr/0011-announcing-a-roll-rather-than-adjudicating-one.md)'s **decisions 1, 2 and 4** and
+  leaves 3 and 5 standing, which is one more than the absorbed milestone was going to take (decision 2, the
+  hero's spell save DC, goes because 2024 gives every caster one). It also substantially supersedes
+  **[ADR 0006](adr/0006-premade-character-library.md)** on library shape and **[ADR 0007](adr/0007-monster-bestiary-and-cr-scaling.md)**
+  on what a creature stores, while leaving both their *mechanisms* — stored link plus override diff,
+  and offset-preserving CR scaling — completely intact. ⚠️ **Supersede the numbers, not the machinery**,
+  and say which is which in a table, because a reader who concludes the override model was replaced
+  will rebuild something that works.
+- **[requirements.md](requirements.md)** — the largest amendment in that file, and the first that
+  replaces the *rule set* rather than adjusting it. The `DnD Lite rule set` lists stay verbatim as
+  always. The amendment must state, in this order: that the subset is replaced by SRD 5.2.1 at levels
+  1–5; that **racial abilities and skills stay lifted** but for a new reason (a species trait is now
+  SRD text, and a skill proficiency now comes from the premade sheet's absorbed background rather than
+  from the class list); that **background remains excluded and its numbers are absorbed**; that
+  **35 speed is superseded by 30**; that a spell's level stops being a label; that **backgrounds,
+  inventory, weight, encumbrance, XP, money, languages, multiclassing, the biography fields, the action
+  economy and concentration-as-a-check all stay out**; and that weapon mastery, casting times and
+  concentration *labels* lift nothing.
+- **[CLAUDE.md](../CLAUDE.md)** — a **rewrite of the *Rules scope* section, not an edit.** That section
+  is currently the specification of D&D Lite, and D&D Lite is what this milestone removes. Its two
+  🚫 reversal bullets close here; its two ✅ bullets change — the spell-save-DC one is reversed and the
+  concentration one stands. ⚠️ **The invariants above it change far less than the section below it**, and
+  the rewrite must not blur that: invariant 8's table, invariant 9's unions and invariant 10's guards
+  are all still true word for word.
+
+### Ten steps, in this order
+
+The ordering is the risk ordering the roadmap's first principle asks for: the vocabulary rename touches
+the most files and decides nothing, so it goes first and alone; the migration goes last because it
+cannot be written until every rename is known.
+
+1. **Vocabulary and constants.** `race` → `species` throughout, `SPEED_FEET` to 30, `SUBCLASS_LEVEL` to
+   3, five new skills. No content, no behaviour, no new fields — one reviewable rename.
+2. **`race()` is a landmine and this step is where it goes off.** `convex/lib/races.ts` ends with
+   `RACE_BY_KEY.get(key)!` under the comment *"Non-null: `RaceKey` is derived from the same list, so an
+   unknown key cannot exist."* ⚠️ **Retiring Half-Orc makes that comment false and every Half-Orc
+   character reads `.name` off `undefined`** — which is precisely the bug `findClass` in
+   `convex/lib/classes.ts` was rewritten to prevent, and whose docblock records that it turned
+   `characters.list` into a `TypeError` *for the whole party*. `race()` is the one lookup in that pair
+   that never got the fix. **Give it the `findClass` treatment before retiring anything.**
+3. **Schema widening.** Temporary hit points, death saves, heroic inspiration, the resource shape, the
+   spellcasting ability. All optional, all accessor-defaulted — widen → migrate → narrow, as always.
+4. **The nine species**, with their full trait lists. ⚠️ **A species is no longer one trait.** The
+   Dragonborn has four traits and a ten-row ancestry table; the Elf has five and a three-row lineage
+   table; `Race` in `races.ts` holds `traitName` and `traitText`, singular. And **lineage and legacy
+   choices are a sixth pick** — Drow/High/Wood, Forest/Rock, three fiendish legacies, ten draconic
+   ancestries, six giant ancestries. Decide whether the build absorbs them (recommended, and consistent
+   with the archetype being one option) or the builder grows a field.
+5. **The twelve classes and their one archetype each**, with level tables for 1–5 only.
+6. **The spell corpus** — 15 cantrips and 156 spells of levels 1–3. This is the largest single content
+   job in the project's history and the one most worth generating-then-reviewing rather than typing.
+7. **The library's sixty sheets**, on the new `ClassLibrary` shape.
+8. **The creature corpus** — 253 entries, then re-derive `benchmarks.ts`, then let `scaling.test.ts`
+   argue with you.
+9. **The migration.** Every stored character points at a vocabulary that moved: a retired species key,
+   one of eight retired archetype keys, a class with a different level table, an absent `speed` whose
+   default changed under it, and catalogue copies whose keys may no longer exist. ⚠️ **The
+   copy-versus-link split decides the blast radius and it runs both ways** — a stored *copy* of a
+   catalogue entry survives a retired key by design ([ADR 0006](adr/0006-premade-character-library.md)),
+   and a stored *link* to a library sheet resolves against whatever the library now says. So a hand-built
+   sheet needs nothing and a premade one changes under its owner. Both behaviours are correct and the
+   plan must say which characters get which.
+10. **The panels.** `CharacterSheetView`, `PcSheetForm`, `PresetNumbers`, `SkillList`, `AbilityTable`,
+    `SheetEntryList`, `CreatureSheetView`, `CharacterBuilder`, `BestiaryPicker` and the DM's sheet
+    selector. ⚠️ **The renderer must keep iterating its vocabularies** rather than naming members in
+    JSX — `SHEET_ENTRY_CATEGORIES`, `CHARACTER_GROUPS`, `SKILL_KEYS` — for the reason invariant 9 gives:
+    naming five skills in markup is how the sixth arrives stored, counted and invisible.
+
+### ⚠️ The field-by-field rebuild trap, sixth outing, and the largest surface it has ever had
+
+CLAUDE.md records this firing on `skillProficiencies`, `speed`, five NPC fields and `group`, and that
+**only `npm run test:smoke` has ever caught it.** This milestone adds five optional fields and rebuilds
+two entire corpora through the same entry normaliser — a hero's feats, a hero's spells, a monster's
+actions and both override diffs. ⚠️ **`resolvePreset`'s retired-class branch is now reachable in
+anger**, because eight archetype keys and one species key are genuinely being retired rather than
+hypothetically. Write the smoke assertions *before* the content, and make the deep key-set comparison
+in `scripts/board-smoke.mjs` cover the new fields on the first commit that adds one.
+
+**Deliberately not done:**
+
+- **Levels 6–20.** The level cap is the scope lever the whole milestone rests on. Extending it later
+  costs 12 sheets per level and reopens spell levels 4–9 — 156 more spells.
+- **Backgrounds as an entity.** Their numbers are absorbed; the concept is not added. This is the
+  exclusion doing work, not an omission.
+- **Multiclassing, XP, money, weight, encumbrance, inventory, languages** and every biography field.
+- **Any adjudication whatsoever.** No roll is compared to an AC or a save DC, no damage is applied, no
+  resistance is halved, no condition does anything, no mastery pushes anybody, no concentration breaks,
+  no death save kills a character and no cast is refused. ⭐ **This is the line that makes a
+  full-ruleset conversion possible at all**, and it is the same line ADR 0011 drew: the application
+  *announces and counts*, and the table *adjudicates*. Converting the rule set does not convert that.
+- **Magic items, attunement, crafting, downtime, the 244 KB of `magic-items.md`** and everything in
+  `gameplay-toolbox.md`.
+- **A rules-text reader.** The SRD is a build-time source for content, not a document the application
+  ships or searches. `bundleGuard.test.ts` and `corpusGuard.test.ts` keep every byte of it server-side,
+  and a 1.9 MB corpus is the strongest argument those guards have ever had.
+
+**Acceptance:** a player builds a level 1 Gnome Wizard with no archetype step on screen at all, levels
+to 3, and is offered exactly one — Evoker — which the sheet then shows. A level 5 Cleric's sheet prints
+a spell save DC and a spell attack bonus derived from Wisdom and the proficiency bonus, and neither is
+stored on any of the sixty sheets. A Wood Elf moves 35 and a Human moves 30, from species content
+rather than from a constant. A Warlock takes a short rest and gets both Pact Magic slots back while the
+Wizard beside them gets none — asserted as one positive and one negative, because a short rest that
+restored a Wizard's slots would be the app inventing a rule. A Fighter's greatsword shows `Graze` and
+nothing in the codebase reads it: `grep` for the mastery vocabulary outside its own module and the
+sheet renderer returns nothing, enforced by a guard test. A Half-Orc character created before this
+milestone still opens, with a name, without a `TypeError`, and says plainly which species it needs
+choosing again. `npm run test:smoke` compares a stored sheet's key set at depth against the real
+deployment for all four sheet kinds, because it is the only thing that has ever caught the rebuild
+trap. And a player inspecting network traffic sees no ability score, no resource count and no spell
+save DC for any creature whose sheet they may not already read — the same scan, with the same positive
+control, over a corpus twice the size.
 
 ---
 
@@ -2826,14 +3066,29 @@ substantially smaller.
   movement-detriment status effects are all still out. See
   [ADR 0006](adr/0006-premade-character-library.md). Milestone 5 lifts **none** of them: a creature's
   loot is a line of text and its CR is a label, which is why the bestiary needs no amendment at all.
-  ⚠️ **The tokens and character-resources milestones each amend that file and neither lifts an
-  exclusion**, which is worth stating because both look as though they might. A condition pip is the
-  *word* `prone` on a coin and never the effect — nothing halves a speed, grants advantage or refuses
-  a drag — so *no movement-detriment status effects* stands exactly as written and the amendment is a
-  clarification. And counting a spell slot adjudicates nothing: no roll is compared to anything, no
-  cast is refused, and casting at a higher level does not change a single die. **Backgrounds,
-  inventory, multiclassing, experience points, concentration and the action economy are all still
-  out.**
+  ⚠️ **The tokens milestone amends that file and lifts no exclusion**, which is worth stating because
+  it looks as though it might. A condition pip is the *word* `prone` on a coin and never the effect —
+  nothing halves a speed, grants advantage or refuses a drag — so *no movement-detriment status
+  effects* stands exactly as written and the amendment is a clarification.
+
+  🚫 **The 5e 2024 conversion is the exception to this whole bullet, and it is the only one there has
+  ever been.** Every entry above records an exclusion *held*. That milestone replaces the excluded-rules
+  list's parent — the D&D Lite subset itself — with SRD 5.2.1 at levels 1–5, so *"anything still in the
+  excluded rules list"* stops being a description of what is out and becomes a description of **what
+  survived a replacement**. What survives is most of it, and it is worth naming rather than trusting:
+  **backgrounds as an entity, inventory, weight, encumbrance, experience points, money, languages,
+  multiclassing, every biography field, the action economy and concentration-as-a-check are all still
+  out.** What moves is that eight classes become twelve, thirteen skills become eighteen, an archetype
+  is chosen at level 3, and a species trait is SRD text rather than a house paraphrase. ⚠️ **Background
+  is the one worth reading twice**: it stays excluded, and its ability spread and two skill
+  proficiencies are **absorbed into the premade sheet's stored numbers**, because in 2024 that is where
+  they come from and there is nowhere else for them to be. No background exists on a character, and
+  there is still no second source a proficiency can arrive from.
+
+  And **counting adjudicates nothing**, before or after: no roll is compared to anything, no cast is
+  refused, casting at a higher slot level changes no die, no weapon mastery pushes anybody, no
+  resistance halves damage and no death save kills a character. That is the line ADR 0011 drew, and
+  converting the rule set does not convert it.
 - **Dynamic lighting, line of sight, and vision of any kind.** Roll20's is a ray-tracer with
   per-token vision, explorer mode and a documentation page listing which browsers it works in. The
   maps milestone takes its *barriers* and only their movement half, deliberately: a wall that decided
@@ -2870,7 +3125,16 @@ not disagreed about so much as never asked.
   monster is still hand-built. **Milestone 5 tests the answer** rather than reopening it — a bestiary
   entry adds a stored skill bonus and a stored passive perception, both for exactly the reason
   `initiativeBonus` is stored, so the reduction now costs three fields instead of one. Three is still
-  cheaper than six ability scores that no monster's player would ever roll.
+  cheaper than six ability scores that no monster's player would ever roll. 🚫 **Reopened, and
+  answered the other way, by the 5e 2024 conversion.** The last sentence assumed nobody would roll a
+  monster's ability scores; a 2024 stat block *prints* all six with modifier and save columns, so the
+  scores stop being a cost and become content that already exists. Storing them makes
+  `attackBonus`, `saveDc`, the skill bonuses and `passivePerception` derivable by the functions heroes
+  already use, and lets a monster's damage read `1d6+STR` in the grammar rather than a frozen `1d6+2`.
+  ⭐ **The reduction was right for five milestones and is the one thing in this file that got cheaper by
+  being reversed** — which is the argument for writing an answer down even when it looks obvious.
+  ⚠️ **`initiativeBonus` stays stored** and is the boundary: derive what the SRD derives, store what
+  the SRD prints.
 - **Whether a DM's tweak to a creature should outlive the game it was made in.** An override is scoped
   to one character in one game, so the Ogre somebody made tougher last month has to be made tougher
   again. Fixing that means either a per-DM saved variant — with no accounts to hang it off
@@ -2882,7 +3146,11 @@ not disagreed about so much as never asked.
   has run enough sessions to have an opinion. **CR scaling pushes the answer down rather than up** —
   one Owlbear that covers CR 1 to CR 6 is worth more at the table than six Owlbears, so the number to
   aim at is however many creatures are genuinely *different*, and the spec's targets may be measuring
-  the wrong thing.
+  the wrong thing. ⚠️ **The 5e 2024 conversion answers this by not answering it**, and that is worth
+  seeing clearly rather than reading the new number as a decision: transcribing every SRD creature at
+  CR 0–6 takes the corpus from 129 to 253 because *the SRD has that many*, not because anybody judged
+  253 to be the right size for a table. The question is therefore **wider open after the conversion
+  than before it**, and the thing that would answer it is a season of play — not a count.
 - **Whether the benchmark table should be per-role rather than global.** Scaling preserves a creature's
   offset from its own CR row, which keeps a Tank tanky — but it assumes every role's numbers grow along
   the same curve, and a Spellcaster's probably does not grow like a Brute's. Ten rows is content that
@@ -2893,14 +3161,16 @@ not disagreed about so much as never asked.
   the compounding price of six insertions and is worth naming rather than glossing. Written without
   numbers deliberately: this entry has been renumbered five times already, and has cost nothing each
   time, which is the whole argument for writing it that way.
-- **Whether shared resource pools are worth a pointer between sheet entries.** A Battle Master's four
-  manoeuvres all spend one Superiority Die, a cleric's Channel Divinity options all spend one use, and
-  a bard's Cutting Words spends an Inspiration die. The character-resources milestone counts the
-  *parent* and leaves the children counting nothing, because a child-to-parent pointer would be a
-  reference to another entry's **resolver-minted id** — so renaming the parent in content silently
-  orphans four children at the next level-up. That is a real incompleteness rather than a decision
-  that has settled: it is fine while a Battle Master is one of sixteen archetypes and stops being fine
-  the first time a table plays one for a whole campaign.
+- **Whether shared resource pools are worth a pointer between sheet entries.** A cleric's Channel
+  Divinity options all spend one use, a bard's Cutting Words spends an Inspiration die, and a Monk
+  spends Focus Points on three different things. The 5e 2024 conversion counts the *parent* and leaves
+  the children counting nothing, because a child-to-parent pointer would be a reference to another
+  entry's **resolver-minted id** — so renaming the parent in content silently orphans the children at
+  the next level-up. That is a real incompleteness rather than a decision that has settled. ⚠️ **The
+  conversion changes the exposure in both directions at once**, which is why this entry is not simply
+  narrowed: retiring the Battle Master removes the worst offender, and the Monk arrives spending one
+  pool three ways at level 2, which is a *more* central case than the one the entry was written about.
+  Fewer archetypes, more shared pools.
 - **Whether an unconditional stored-blob delete is ever the right default.** Two milestones in a row
   found the same latent bug: a token's art and a scene's map are each deleted with no check that
   anything else references them, which was true when exactly one thing could, and stops being true the
@@ -2917,6 +3187,12 @@ not disagreed about so much as never asked.
 - **Whether the library should go past level 5.** It stops there, and a character the DM pushes
   beyond it keeps its level and its proficiency bonus while its sheet stands still. Extending it is
   24 more hand-written sheets per five levels, and nobody has yet played long enough to want them.
+  ⚠️ **The 5e 2024 conversion makes this the single most expensive open question in the file**, and
+  changes what the cost is made of. It becomes **12 sheets per level** rather than 24 per five, and
+  each level past 5 reopens a spell level — levels 6–9 alone add another 156 spells to transcribe,
+  which is as much content again as the whole conversion's spell corpus. The level cap stops being a
+  convenience and becomes **the scope lever the conversion rests on**, so answering this question is a
+  milestone rather than a content pass.
 - **Whether a player should be able to nudge their own numbers.** Today a premade character's stats
   are the library's, and changing one is a DM override that pins that field against every future
   level ([ADR 0006](adr/0006-premade-character-library.md)). That is the right default for beginners
