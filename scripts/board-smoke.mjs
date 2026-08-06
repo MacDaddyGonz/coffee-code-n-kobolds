@@ -1645,16 +1645,52 @@ async function main() {
     uploads.push(imageId)
     check('files:generateUploadUrl accepted a POST and returned a storageId', Boolean(imageId))
 
+    // A SECOND BLOB FOR THE SAME ROW, which is what makes this the interesting upload in the
+    // file rather than a repeat of the one above. `scenes.thumbnailId` is a *new optional
+    // column on a populated table*, and that is the shape of change this script exists for:
+    // convex-test does not apply Convex's own value validation, so an insert that spells the
+    // field with an explicit `undefined` rather than omitting it passes the whole suite and
+    // is a different write against a real deployment.
+    const thumbnailId = await uploadPng(client, code, dmCode)
+    uploads.push(thumbnailId)
+
     const scene = await client.mutation('scenes:create', {
       code,
       dmCode,
       name: 'Admittance',
       imageId,
+      thumbnailId,
       imageWidth: MAP_WIDTH,
       imageHeight: MAP_HEIGHT,
     })
     sceneId = scene.sceneId
     check('scenes:create stored a scene', Boolean(sceneId))
+
+    // 1b. THE PROJECTION SPLIT, ASSERTED AS A PAIR AGAINST THE REAL DEPLOYMENT. `scenes:list`
+    // is DM-only and carries a signed URL for the derivative; `scenes:active` is ungated and
+    // must carry no trace of it, because every player at the table subscribes to it. Either
+    // half alone proves nothing — a payload with no thumbnail anywhere would satisfy the
+    // second, so the first is the positive control for it.
+    const dmScenes = await client.query('scenes:list', { code, dmCode })
+    const listedScene = dmScenes.find((row) => row._id === sceneId)
+    const tableScene = await client.query('scenes:active', { code })
+    check(
+      'scenes:list gave the DM a thumbnail URL, and scenes:active gave the table none',
+      listedScene &&
+        typeof listedScene.thumbnailUrl === 'string' &&
+        listedScene.thumbnailUrl !== listedScene.imageUrl &&
+        tableScene !== null &&
+        !Object.prototype.hasOwnProperty.call(tableScene, 'thumbnailUrl'),
+      listedScene
+        ? `DM keys ${Object.keys(listedScene).length}, table keys ${tableScene ? Object.keys(tableScene).length : 0}`
+        : 'the DM’s list did not contain the scene it just made',
+    )
+    // AND THE OTHER HALF OF `files.discard`'s NEW COLUMN. `sceneReferencesThumbnail` is the
+    // predicate `storageGuard.test.ts` had to be rewritten per-field to force into existence;
+    // without it this call would delete the bytes of a picture the picker is drawing.
+    await refuses('files:discard refused a blob a scene holds as its thumbnail', () =>
+      client.mutation('files:discard', { code, dmCode, imageIds: [thumbnailId] }),
+    )
 
     // 2. Non-integer floats through the real value validation. 37.5 and −12.25
     // are exact in binary; a deployment that mangled them would break every snap.
@@ -4212,14 +4248,14 @@ async function main() {
     // through `tokenReferencesImage`, so the only transaction allowed to delete the outgoing
     // art is the one that stopped referencing it.
     await refuses('files:discard refused the new blob, because the coin now references it', () =>
-      client.mutation('files:discard', { code, dmCode, imageId: secondArt }),
+      client.mutation('files:discard', { code, dmCode, imageIds: [secondArt] }),
     )
     // The other half of that, and the property the cleanup registry at the bottom of this
     // file rests on: `discard` returns early when the blob is not in storage, so discarding
     // one `setArt` has already deleted is a no-op rather than a second error on top of the
     // first. Asserted through what it did *not* disturb, because "it did not throw" is a
     // claim the run's own catch already makes.
-    await client.mutation('files:discard', { code, dmCode, imageId: firstArt })
+    await client.mutation('files:discard', { code, dmCode, imageIds: [firstArt] })
     const artAfterDiscard = await tokensOf(editable.tokenId)
     const liveArtFetch = newArtUrl ? await fetch(newArtUrl) : null
     check(
@@ -5961,7 +5997,7 @@ async function main() {
     // half alone is meaningless — a `discard` that refused unconditionally would satisfy the
     // first, and one that never asked any table would satisfy the second.
     const discardWhileLive = await refusalOf(() =>
-      client.mutation('files:discard', { code, dmCode, imageId: handoutBlob }),
+      client.mutation('files:discard', { code, dmCode, imageIds: [handoutBlob] }),
     )
     check(
       'files:discard refused the blob while the handout still pointed at it',
@@ -6010,7 +6046,7 @@ async function main() {
     // whole upload list in `finally` safe rather than a list of guesses about which uploads
     // survived a run that failed halfway.
     const discardAfterRemove = await refusalOf(() =>
-      client.mutation('files:discard', { code, dmCode, imageId: handoutBlob }),
+      client.mutation('files:discard', { code, dmCode, imageIds: [handoutBlob] }),
     )
     check(
       'the same files:discard call accepted once the handout was gone',
@@ -6154,7 +6190,7 @@ async function main() {
     // the blob could be ten megabytes — which is the other half of why `discard` matters more to
     // `music.create` than to the two mutations it copies.
     await refuses('files:discard refused the audio while the track still pointed at it', () =>
-      client.mutation('files:discard', { code, dmCode, imageId: trackBlob }),
+      client.mutation('files:discard', { code, dmCode, imageIds: [trackBlob] }),
     )
 
     // AND THE DELETE, with the track put back on first so the pointer repair is exercised too.
@@ -7528,7 +7564,7 @@ async function main() {
       // running it over the whole list safe rather than a list of guesses about which
       // uploads survived a run that failed halfway.
       for (const imageId of uploads) {
-        await quietly(() => client.mutation('files:discard', { code, dmCode, imageId }))
+        await quietly(() => client.mutation('files:discard', { code, dmCode, imageIds: [imageId] }))
       }
       console.log(
         `\n  cleaned up ${1 + extraScenes.length} scenes, ${created.length} tokens, ${createdCharacters.length} characters and ${seats.length} seats, and swept ${uploads.length} uploads`,
@@ -7572,7 +7608,7 @@ async function main() {
           client.mutation('files:discard', {
             code: foreign.code,
             dmCode: foreign.dmCode,
-            imageId: foreign.imageId,
+            imageIds: [foreign.imageId],
           }),
         )
       }

@@ -19,6 +19,31 @@
 export const MAX_SCENE_BYTES = 4 * 1024 * 1024
 
 /**
+ * The largest scene *thumbnail* the server will accept — the small derivative the browser
+ * makes from the map it is about to upload, for the DM's scene picker.
+ *
+ * ⚠️ **A number of its own rather than `MAX_SCENE_BYTES` reused, and `MAX_TOKEN_BYTES`
+ * below already wrote the reason down**: a limit sixteen times what the thing can
+ * legitimately weigh is nominally a check while allowing a sixteenfold overrun. A 320 px
+ * WebP at quality 0.7 (`THUMB_MAX_EDGE` and `THUMB_QUALITY` in `src/lib/images.ts`) is
+ * fifteen to forty kilobytes for a real battle map, so 256 KB is nearly an order of
+ * magnitude of headroom and still a sixteenth of a map.
+ *
+ * ⚠️ **Deliberately *not* derived the way `MAX_TOKEN_BYTES` is — twice the uncompressed
+ * bitmap — and the difference says something true about this blob.** That rule exists
+ * because token art is a file *the DM chose* and the server is defending against whatever
+ * came out of an unknown encoder. A thumbnail is produced by this application, from a blob
+ * this application already accepted, by a function two files away; twice the RGBA worst
+ * case would be 800 KB and would be defending against nothing. The check is still here
+ * because invariant 6 is about what is in storage rather than about who wrote it, and a
+ * client bug that posted the *map* into this argument is exactly the case it catches.
+ *
+ * The arithmetic the other four limits are tuned to survives untouched: 25 thumbnails a
+ * game at this ceiling is 6.4 MB, against 100 MB of maps.
+ */
+export const MAX_THUMB_BYTES = 256 * 1024
+
+/**
  * The largest token-art blob the server will accept, checked the same way and for
  * the same reason — `board.addToken` reads the stored file rather than believing
  * the client about it.
@@ -106,3 +131,34 @@ export const MAX_MUSIC_BYTES = 10 * 1024 * 1024
  * to a different unit rather than a new kind of thing living here.
  */
 export const MAX_DUPLICATE_COUNT = 10
+
+/**
+ * How many blobs one `files.discard` may throw away.
+ *
+ * A map upload now stores two blobs — the image and its thumbnail — so the client's catch
+ * hands `discard` an array rather than an id, and an array needs a bound. Four, because the
+ * largest legitimate call is two and doubling it leaves room for a third derivative without
+ * making this a decision again.
+ *
+ * ⚠️ **The bound is what stops this becoming a sweeper, and that is its first job rather
+ * than a side effect.** `discard` is the one mutation in the application that deletes bytes
+ * by id, DM-gated and nothing more; unbounded, it is a single call that empties a game's
+ * share of the 1 GB ADR 0001 accepts. The array exists so one catch is one round trip, not
+ * so a client can hand over a list it assembled.
+ *
+ * **Its second job is the read cost.** `discard` asks every `…References…` predicate about
+ * every id, and each predicate is a bounded read of a whole table — a few hundred documents
+ * for `tokens`. That is the price of the choke point in CLAUDE.md invariant 8: only a
+ * boolean crosses the module boundary, so five questions about four ids genuinely is twenty
+ * reads and cannot be one. At four it is under 1200 documents in the worst case and nothing
+ * near a transaction's ceiling; at forty it would be a different function.
+ *
+ * ⚠️ **It sits in this file rather than in lib/games.ts for `MAX_DUPLICATE_COUNT`'s reason,
+ * with one honest difference.** Every constant there bounds a *game* and both of these
+ * bound a *call*. Unlike that one, no browser control has to agree with this number — the
+ * only caller is `useUpload.commit` and it passes one or two — so the file-header's
+ * "shared by the Convex functions and the browser" is not what puts it here. The taxonomy
+ * is: `lib/games.ts` is the authorisation choke point that `src/` deliberately never
+ * imports, and this is where a bound with no game in it goes.
+ */
+export const MAX_DISCARD_IDS = 4

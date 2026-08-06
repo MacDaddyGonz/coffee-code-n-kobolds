@@ -19,7 +19,7 @@ import { MAX_SCENES_PER_GAME } from './games'
 // Lives in lib/limits.ts, which the browser imports too so there is one definition
 // of it rather than one on each side. Brought through here because `scenes.create`
 // is what enforces it, and this is where a reader looks for it.
-export { MAX_SCENE_BYTES } from './limits'
+export { MAX_SCENE_BYTES, MAX_THUMB_BYTES } from './limits'
 
 /**
  * The grid a fresh scene starts with, guessed at 20 squares across the image.
@@ -117,6 +117,54 @@ export async function publicScene(ctx: QueryCtx, scene: Doc<'scenes'>): Promise<
   }
 }
 
+/**
+ * The same scene, plus the three things **only the DM is ever sent**.
+ *
+ * ⚠️ **The split is the point, and it is CLAUDE.md invariant 1 rather than tidiness.**
+ * `scenes.active` is ungated — it is the one board the whole table is looking at, so every
+ * player subscribes to it — and it returns `publicSceneValidator`. Anything added to that
+ * object is published to the table by construction. So the projection forks, and the fork
+ * has exactly one consumer: `scenes.list`, which is DM-only and *throws* for anybody else.
+ *
+ * What that buys, field by field:
+ *
+ * - **`thumbnailUrl`** is not a secret at all; it is a second signed URL for a picture no
+ *   player renders. On `publicSceneValidator` it would cost every client at the table a
+ *   storage resolution per scene change for bytes nothing on their screen asks for.
+ * - **`notes`** is the DM's prep. It is the reason this fork is not optional.
+ * - **`order`** is only meaningful in a list nobody else receives.
+ *
+ * The three arrive over two commits and the fork was built for the first of them, which is
+ * the right way round: a projection created *because* a secret needed somewhere to go is a
+ * projection somebody has to notice. `scenes.test.ts` pins `publicSceneValidator`'s exact
+ * key set against a real player payload for the same reason `games.list`'s test does — a
+ * subtractive spec across two audiences only guarantees the fields it names.
+ */
+export const dmSceneValidator = publicSceneValidator.extend({
+  /**
+   * A small derivative of the map, or **the map itself** when there is not one.
+   *
+   * ⚠️ **The fallback is resolved here and never in the browser**, which is `backgroundOf`'s
+   * discipline applied to a URL. A client writing `scene.thumbnailUrl ?? scene.imageUrl` is
+   * a client that can disagree with the server about which picture a row shows, and there
+   * would be two of them the moment a second surface drew a scene list. It is `null` only
+   * when the map's own blob has gone, which `publicScene` already says must not be an error.
+   */
+  thumbnailUrl: v.union(v.string(), v.null()),
+})
+
+export type DmScene = Infer<typeof dmSceneValidator>
+
+export async function dmScene(ctx: QueryCtx, scene: Doc<'scenes'>): Promise<DmScene> {
+  const base = await publicScene(ctx, scene)
+  // Two `getUrl` calls only when there is genuinely a second blob. A scene uploaded before
+  // thumbnails existed resolves exactly one, and hands the same string back twice.
+  const thumbnailUrl =
+    scene.thumbnailId === undefined ? null : await ctx.storage.getUrl(scene.thumbnailId)
+
+  return { ...base, thumbnailUrl: thumbnailUrl ?? base.imageUrl }
+}
+
 export async function listScenes(ctx: QueryCtx, gameId: Id<'games'>): Promise<Doc<'scenes'>[]> {
   return await ctx.db
     .query('scenes')
@@ -136,6 +184,36 @@ export async function sceneReferencesImage(
 ): Promise<boolean> {
   const scenes = await listScenes(ctx, gameId)
   return scenes.some((scene) => scene.imageId === imageId)
+}
+
+/**
+ * Is this blob still a scene's **thumbnail**? The same question one column over.
+ *
+ * ⚠️ **A second function rather than a second `||` inside the one above, and this pair is
+ * the whole reason `storageGuard.test.ts` was rewritten.** That guard used to derive one
+ * predicate per *table*, so `scenes` already having `sceneReferencesImage` meant a second
+ * blob column on the same table satisfied it with nothing asking about those bytes. It now
+ * derives one per **field**, and this function is the name it forces.
+ *
+ * Widening `sceneReferencesImage` to look at both columns would have passed the old guard
+ * *and* the new one — the derivation only asks that a predicate of that name exists and is
+ * awaited — so the argument for two functions has to stand on its own, and it does. It is
+ * `otherTokenReferencesImage`'s argument in `lib/board.ts` arriving for a different reason:
+ * a predicate that answers about two columns cannot tell a caller *which* one held the
+ * blob, and `replaceImage` needs exactly that. It repoints both columns at once and must
+ * reclaim the old map and the old thumbnail independently, because a DM who replaced a map
+ * with a blob the game happens to hold twice is a case that has to resolve per column.
+ *
+ * Rows with no thumbnail — every scene stored before the field existed — contribute
+ * `undefined`, which is never equal to an id, so they cannot make this true by accident.
+ */
+export async function sceneReferencesThumbnail(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+  imageId: Id<'_storage'>,
+): Promise<boolean> {
+  const scenes = await listScenes(ctx, gameId)
+  return scenes.some((scene) => scene.thumbnailId === imageId)
 }
 
 /**
@@ -174,15 +252,16 @@ export async function sceneReferencesImage(
  * not the storage leak the image delete above prevents — but it is litter no query in the
  * application can ever reach again, which is the same reason `purgeGame` exists at all.
  */
-export async function deleteScenesInGame(
-  ctx: MutationCtx,
-  gameId: Id<'games'>,
-): Promise<number> {
+export async function deleteScenesInGame(ctx: MutationCtx, gameId: Id<'games'>): Promise<number> {
   const scenes = await listScenes(ctx, gameId)
   for (const scene of scenes) {
     await deleteScenePlacements(ctx, scene._id)
     await deleteSceneFog(ctx, scene._id)
     await ctx.storage.delete(scene.imageId)
+    // And the derivative with it. A thumbnail is small, which is exactly why forgetting it
+    // here would be invisible: 25 orphans a game is a few megabytes nothing in the
+    // application can name, and no screen would ever be short a picture to say so.
+    if (scene.thumbnailId) await ctx.storage.delete(scene.thumbnailId)
     await ctx.db.delete('scenes', scene._id)
   }
   return scenes.length
@@ -216,7 +295,10 @@ export async function getSceneInGame(
 ): Promise<Doc<'scenes'>> {
   const scene = await findSceneInGame(ctx, gameId, sceneId)
   if (!scene) {
-    throw new ConvexError({ kind: 'SceneNotFound', message: 'That scene is not in this game.' })
+    throw new ConvexError({
+      kind: 'SceneNotFound',
+      message: 'That scene is not in this game.',
+    })
   }
   return scene
 }

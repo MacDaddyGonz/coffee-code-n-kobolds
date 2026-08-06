@@ -1,6 +1,8 @@
 import { ConvexError, v } from 'convex/values'
 
 import { mutation, query } from './_generated/server'
+import type { QueryCtx } from './_generated/server'
+import type { Id } from './_generated/dataModel'
 import { deleteScenePlacements } from './lib/board'
 import { colourProblem } from './lib/colour'
 import { deleteSceneFog } from './lib/fog'
@@ -11,6 +13,9 @@ import { requireSceneName } from './lib/names'
 import {
   DEFAULT_SQUARES_ACROSS,
   MAX_SCENE_BYTES,
+  MAX_THUMB_BYTES,
+  dmScene,
+  dmSceneValidator,
   getSceneInGame,
   listScenes,
   publicScene,
@@ -53,22 +58,80 @@ export const active = query({
  * need to play. Throwing rather than answering emptily is deliberate too: only
  * the DM's own panel calls this, so an empty answer would hide a wrong-code bug
  * behind a plausible-looking "no scenes yet".
+ *
+ * ⚠️ **The one caller of `dmSceneValidator`, and it must stay the one caller.** That
+ * projection carries what the DM alone may read; `scenes.active` is ungated and carries
+ * `publicSceneValidator`, which is the whole of what a player is ever sent about a board.
+ * The refusal above is what makes the wider payload defensible, so the two facts are one
+ * fact: this query throws for a non-DM, therefore this query may say more.
  */
 export const list = query({
   args: { code: v.string(), dmCode: v.string() },
-  returns: v.array(publicSceneValidator),
+  returns: v.array(dmSceneValidator),
   handler: async (ctx, args) => {
     const game = await requireDm(ctx, args.code, args.dmCode)
     const scenes = await listScenes(ctx, game._id)
     // Oldest first: Convex appends _creationTime to every index, so the DM's list
     // stays in the order they uploaded rather than reshuffling on each render.
-    return await Promise.all(scenes.map((scene) => publicScene(ctx, scene)))
+    return await Promise.all(scenes.map((scene) => dmScene(ctx, scene)))
   },
 })
 
 /** Finite and positive — which rules out the NaN, the 0 and the negative. */
 function isUsableImageSize(pixels: number): boolean {
   return Number.isFinite(pixels) && pixels > 0
+}
+
+/**
+ * CLAUDE.md invariant 6's server half, for one blob.
+ *
+ * Read from storage rather than taken as an argument, because the byte count is the one
+ * fact about an upload the client cannot be trusted to report — it is the client being
+ * checked. A helper rather than the check written out three times, because `create` now
+ * looks at two blobs and `replaceImage` looks at two more, and three copies of a ceiling
+ * comparison is three chances to pair the wrong constant with the wrong blob. That is the
+ * mistake `UploadSpec` in `src/hooks/useUpload.ts` was restructured to make unspellable on
+ * the other side of the wire.
+ *
+ * ⚠️ **`tooBig` is passed whole rather than built from a noun and the number.** A generated
+ * sentence has to render `MAX_THUMB_BYTES` as *0.25 MB*, which is not how anybody says a
+ * quarter of a megabyte, and the two ceilings here are four orders of magnitude apart. The
+ * missing-blob case genuinely is one sentence for every caller: whichever blob went, the
+ * advice is to add the map again.
+ */
+async function requireStoredBlob(
+  ctx: QueryCtx,
+  imageId: Id<'_storage'>,
+  limit: { maxBytes: number; tooBig: string },
+): Promise<void> {
+  const blob = await ctx.db.system.get('_storage', imageId)
+  if (!blob) {
+    throw new ConvexError({
+      kind: 'BadInput',
+      message: 'That upload is no longer in storage. Try adding the map again.',
+    })
+  }
+  if (blob.size > limit.maxBytes) {
+    throw new ConvexError({ kind: 'BadInput', message: limit.tooBig })
+  }
+}
+
+/** The two ceilings a map upload is checked against, worded for the DM. */
+const SCENE_IMAGE_LIMIT = {
+  maxBytes: MAX_SCENE_BYTES,
+  tooBig: `Maps have to be under ${MAX_SCENE_BYTES / (1024 * 1024)} MB once downscaled. That one is bigger.`,
+}
+
+/**
+ * ⚠️ **Reachable only through a bug, and kept for exactly that.** The thumbnail is made by
+ * this application from a blob it has already accepted, so a DM cannot produce one over the
+ * limit by choosing a bigger file. What this catches is a client that posted the *map* into
+ * the thumbnail argument — which is the one way those bytes get into storage twice — and
+ * that is a real class of mis-sequencing, the same one `files.discard` exists for.
+ */
+const SCENE_THUMB_LIMIT = {
+  maxBytes: MAX_THUMB_BYTES,
+  tooBig: `A map thumbnail has to be under ${MAX_THUMB_BYTES / 1024} KB. That one is bigger, which means it is not a thumbnail.`,
 }
 
 /**
@@ -95,6 +158,13 @@ export const create = mutation({
     dmCode: v.string(),
     name: v.string(),
     imageId: v.id('_storage'),
+    /**
+     * ⚠️ **Optional, and absent has to keep working for ever.** A browser with no WebP
+     * encoder, a derivative that failed to encode, and every scene uploaded before this
+     * existed all arrive the same way, and `dmScene` answers all three with the full map.
+     * Making it required would be a client-side failure that can refuse a map.
+     */
+    thumbnailId: v.optional(v.id('_storage')),
     imageWidth: v.number(),
     imageHeight: v.number(),
   },
@@ -115,21 +185,10 @@ export const create = mutation({
       })
     }
 
-    // Read from storage rather than taken as an argument, because the byte count is
-    // the one fact about the upload the client cannot be trusted to report — it is
-    // the client we are checking.
-    const blob = await ctx.db.system.get('_storage', args.imageId)
-    if (!blob) {
-      throw new ConvexError({
-        kind: 'BadInput',
-        message: 'That upload is no longer in storage. Try adding the map again.',
-      })
-    }
-    if (blob.size > MAX_SCENE_BYTES) {
-      throw new ConvexError({
-        kind: 'BadInput',
-        message: `Maps have to be under ${MAX_SCENE_BYTES / (1024 * 1024)} MB once downscaled. That one is bigger.`,
-      })
+    await requireStoredBlob(ctx, args.imageId, SCENE_IMAGE_LIMIT)
+    // Both blobs, or the derivative is the hole in invariant 6 that the map is not.
+    if (args.thumbnailId !== undefined) {
+      await requireStoredBlob(ctx, args.thumbnailId, SCENE_THUMB_LIMIT)
     }
 
     // The list is read with a bound, so the write needs the matching one: a scene
@@ -147,6 +206,12 @@ export const create = mutation({
       gameId: game._id,
       name,
       imageId: args.imageId,
+      // ⚠️ **Spread rather than written as `thumbnailId: args.thumbnailId`.** An optional
+      // Convex field spelled with an explicit `undefined` is a *different write* from an
+      // omitted one, and convex-test does not apply Convex's own value validation — so the
+      // explicit version passes the whole suite and misbehaves against a real deployment.
+      // `copyTokenRow` in lib/board.ts carries the long form of this warning.
+      ...(args.thumbnailId === undefined ? {} : { thumbnailId: args.thumbnailId }),
       imageWidth: args.imageWidth,
       imageHeight: args.imageHeight,
       // Floored at MIN_GRID_SIZE so `isUsableGrid` holds for every stored scene
@@ -355,6 +420,9 @@ export const remove = mutation({
     // blob once the scene is gone, so leaving it behind would be a slow leak
     // against the 1 GB ceiling that no screen in the app could ever show.
     await ctx.storage.delete(scene.imageId)
+    // The derivative goes with it, for the reason `deleteScenesInGame` states: a forgotten
+    // thumbnail leaves no gap on any screen, so nothing would ever report it.
+    if (scene.thumbnailId) await ctx.storage.delete(scene.thumbnailId)
     await ctx.db.delete('scenes', scene._id)
     return null
   },

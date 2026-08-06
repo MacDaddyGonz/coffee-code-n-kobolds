@@ -1394,7 +1394,11 @@ describe('board.addToken', () => {
     expect(await blobExists(t, imageId)).toBe(true)
 
     // The client's catch calls this, and it is the call that commits.
-    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId })
+    await t.mutation(api.files.discard, {
+      code: game.code,
+      dmCode: game.dmCode,
+      imageIds: [imageId],
+    })
     expect(await blobExists(t, imageId)).toBe(false)
   })
 
@@ -1422,7 +1426,11 @@ describe('board.addToken', () => {
     const game = await makeGame(t)
     const sceneId = await makeScene(t, game.code, game.dmCode)
     const imageId = await storeImage(t, 'gone-token')
-    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId })
+    await t.mutation(api.files.discard, {
+      code: game.code,
+      dmCode: game.dmCode,
+      imageIds: [imageId],
+    })
     expect(await blobExists(t, imageId)).toBe(false)
 
     await expectKind(addToken(t, game.code, game.dmCode, sceneId, { imageId }), 'BadInput')
@@ -1941,7 +1949,11 @@ describe('board.setArt', () => {
     expect(await blobExists(t, huge)).toBe(true)
 
     // The client's catch calls this, and it is the call that commits.
-    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId: huge })
+    await t.mutation(api.files.discard, {
+      code: game.code,
+      dmCode: game.dmCode,
+      imageIds: [huge],
+    })
     expect(await blobExists(t, huge)).toBe(false)
     // And the cleanup could not have taken the live art with it even if the client had
     // mis-sequenced it: `discard` refuses a blob a token still points at, which is the
@@ -1962,7 +1974,11 @@ describe('board.setArt', () => {
     const original = await storeImage(t, 'original-art')
     const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { imageId: original })
     const gone = await storeImage(t, 'gone-token')
-    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId: gone })
+    await t.mutation(api.files.discard, {
+      code: game.code,
+      dmCode: game.dmCode,
+      imageIds: [gone],
+    })
     expect(await blobExists(t, gone)).toBe(false)
 
     await expectKind(setArt(t, game, tokenId, gone), 'BadInput')
@@ -2082,7 +2098,7 @@ describe('board.setArt', () => {
       t.mutation(api.files.discard, {
         code: game.code,
         dmCode: game.dmCode,
-        imageId: replacement,
+        imageIds: [replacement],
       }),
       'BadInput',
     )
@@ -3159,7 +3175,7 @@ describe('two tokens sharing one picture', () => {
       t.mutation(api.files.discard, {
         code: fixture.code,
         dmCode: fixture.dmCode,
-        imageId: fixture.shared,
+        imageIds: [fixture.shared],
       }),
     )
     expect(refusal.kind).toBe('BadInput')
@@ -3178,7 +3194,7 @@ describe('two tokens sharing one picture', () => {
           t.mutation(api.files.discard, {
             code: fixture.code,
             dmCode: fixture.dmCode,
-            imageId: fixture.shared,
+            imageIds: [fixture.shared],
           }),
         )
       ).kind,
@@ -3203,7 +3219,11 @@ describe('files.discard refuses art that is still in use', () => {
     const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { imageId })
 
     await expectKind(
-      t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId }),
+      t.mutation(api.files.discard, {
+        code: game.code,
+        dmCode: game.dmCode,
+        imageIds: [imageId],
+      }),
       'BadInput',
     )
     expect(await blobExists(t, imageId)).toBe(true)
@@ -3227,7 +3247,11 @@ describe('files.discard refuses art that is still in use', () => {
     await addToken(t, game.code, game.dmCode, sceneId, { layer: 'gm', imageId })
 
     await expectKind(
-      t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId }),
+      t.mutation(api.files.discard, {
+        code: game.code,
+        dmCode: game.dmCode,
+        imageIds: [imageId],
+      }),
       'BadInput',
     )
     expect(await blobExists(t, imageId)).toBe(true)
@@ -3239,7 +3263,11 @@ describe('files.discard refuses art that is still in use', () => {
     const game = await makeGame(t)
     const imageId = await storeImage(t, 'orphan')
 
-    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId })
+    await t.mutation(api.files.discard, {
+      code: game.code,
+      dmCode: game.dmCode,
+      imageIds: [imageId],
+    })
     expect(await blobExists(t, imageId)).toBe(false)
   })
 })

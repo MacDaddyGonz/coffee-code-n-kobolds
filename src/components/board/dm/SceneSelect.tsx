@@ -11,12 +11,17 @@ import { cn } from '@/lib/utils'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import { MAX_SCENE_NAME_LENGTH } from '@convex/lib/codes'
-import type { PublicScene } from '@convex/lib/scenes'
+import type { DmScene } from '@convex/lib/scenes'
 
 export type SceneSelectProps = {
   code: string
   dmCode: string
-  scenes: PublicScene[]
+  /**
+   * `DmScene` and not `PublicScene`, which is the type saying what the payload says: this
+   * list comes from `scenes.list`, which throws for anybody without the DM code, and it
+   * carries a thumbnail URL no player's client is ever sent.
+   */
+  scenes: DmScene[]
   activeSceneId: Id<'scenes'> | null
 }
 
@@ -38,15 +43,22 @@ export type SceneSelectProps = {
  * which is a list rather than a search problem, so the combobox `native-select.tsx`
  * anticipated is not what this wanted after all.
  *
- * ⚠️ **The thumbnail is the full map, because there is no other image in the payload.**
- * `publicSceneValidator` carries one `imageUrl`, resolved from the blob `scenes.create`
- * stored — downscaled to 2560 px on its long edge in the browser, which is a megabyte or
- * two per map and not a thumbnail. So twenty-five rows are twenty-five full battle maps
- * to fetch and decode, and the two mitigations below are load-bearing rather than habit:
- * the list is a bounded scroll box, and every image is `loading="lazy"`. A real
- * derivative would mean a second blob per scene, generated on upload and projected
- * beside this one — a storage and payload change (CLAUDE.md invariant 6), and not one to
- * make on the way past.
+ * ✅ **The thumbnail is a real derivative now, and this is where the paragraph saying it
+ * was not used to be.** What stood here described the cost — `publicSceneValidator`
+ * carried one `imageUrl` and twenty-five rows were twenty-five full 2560 px battle maps to
+ * fetch and decode — and said a real one would mean a second blob per scene, generated on
+ * upload and projected beside this one, which is a storage and payload change and not one
+ * to make on the way past. It was made on purpose instead: `scenes.thumbnailId` is a 320 px
+ * WebP the browser derives from the map it is about to store, and `dmScene` resolves
+ * `thumbnailUrl` for it.
+ *
+ * Two things survive that change and are worth not deleting with the paragraph. The
+ * fallback is **resolved on the server**, so this component never asks whether a scene has
+ * a derivative — every row uploaded before the field existed simply has the map's own URL
+ * in `thumbnailUrl`, and those rows are permanent because nothing regenerates one. And the
+ * two mitigations below stay: the list is a bounded scroll box and every image is
+ * `loading="lazy"`, which is what keeps a game of pre-thumbnail maps behaving the way it
+ * did rather than getting worse.
  *
  * ⚠️ **Nothing here touches the camera, and that is the finding rather than an
  * omission.** `useBoardCamera` already remembers pan and zoom per `(code, sceneId)` in
@@ -84,7 +96,7 @@ export function SceneSelect({ code, dmCode, scenes, activeSceneId }: SceneSelect
 
   const busy = action.pending !== null
 
-  const switchTo = (scene: PublicScene) => {
+  const switchTo = (scene: DmScene) => {
     // The row that is already on the table does nothing. `setActive` would happily patch
     // the id that is already stored, and a patch is a write: every client at the table
     // would re-read the game document to learn that nothing had changed.
@@ -95,21 +107,19 @@ export function SceneSelect({ code, dmCode, scenes, activeSceneId }: SceneSelect
     )
   }
 
-  const rename = (scene: PublicScene, name: string) =>
+  const rename = (scene: DmScene, name: string) =>
     action.run(`rename:${scene._id}`, `Could not rename ${scene.name}.`, () =>
       renameScene({ code, dmCode, sceneId: scene._id, name }),
     )
 
-  const remove = (scene: PublicScene) =>
+  const remove = (scene: DmScene) =>
     action.run(`remove:${scene._id}`, `Could not delete ${scene.name}.`, () =>
       removeScene({ code, dmCode, sceneId: scene._id }),
     )
 
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-        Maps
-      </h3>
+      <h3 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">Maps</h3>
 
       {/* `max-h-64` is the ceiling the DM's other two lists use, and here it does a
           second job: `loading="lazy"` only defers what is out of view, so the bound is
@@ -218,23 +228,28 @@ export function SceneSelect({ code, dmCode, scenes, activeSceneId }: SceneSelect
  *
  * `object-cover` in a fixed box rather than a box that takes the map's aspect ratio: a
  * list whose rows are different heights is a list you cannot scan, and the crop loses
- * nothing a DM identifies a map by. See the ⚠️ on the component above for why the src is
- * a full-size battle map and what that costs.
+ * nothing a DM identifies a map by.
  *
  * **`alt=""` and no `aria-label`**, which is `TokenSwatch`'s reasoning: the name is
  * printed beside it, and a second announcement of the same word is noise. The picture is
  * a faster way to recognise a name you can already read.
  *
- * A null `imageUrl` means the blob has gone out from under the row — `publicScene` says
- * why that must not be an error — so the box is drawn empty rather than the row being
- * hidden. The scene still has a grid, and the DM can still delete it.
+ * ⚠️ **`thumbnailUrl` and never `imageUrl`, and there is deliberately no `??` here.** The
+ * fallback for a scene with no derivative is resolved in `dmScene` on the server, so this
+ * component cannot disagree with it — see the ⚠️ on that field. Reaching for `imageUrl` as
+ * a "safety net" would put a second opinion about which picture a row shows into the one
+ * place nobody would think to look for one.
+ *
+ * A null `thumbnailUrl` means the map's own blob has gone out from under the row —
+ * `publicScene` says why that must not be an error — so the box is drawn empty rather than
+ * the row being hidden. The scene still has a grid, and the DM can still delete it.
  */
-function SceneThumbnail({ scene }: { scene: PublicScene }) {
+function SceneThumbnail({ scene }: { scene: DmScene }) {
   return (
     <span className="bg-muted h-10 w-14 shrink-0 overflow-hidden rounded-md border">
-      {scene.imageUrl === null ? null : (
+      {scene.thumbnailUrl === null ? null : (
         <img
-          src={scene.imageUrl}
+          src={scene.thumbnailUrl}
           alt=""
           loading="lazy"
           decoding="async"
@@ -269,7 +284,7 @@ function SceneRenameForm({
   onCancel,
   onSubmit,
 }: {
-  scene: PublicScene
+  scene: DmScene
   busy: boolean
   onCancel: () => void
   /** Resolves false when the server refused, which keeps the field open to fix. */

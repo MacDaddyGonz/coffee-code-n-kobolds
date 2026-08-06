@@ -156,6 +156,75 @@ is inside no shape and is therefore published.
 dark. Neither is a bug and neither is a choice made anywhere: it is one behaviour read through two
 bases. Recorded here so a reader does not carry ADR 0012's half of it across.
 
+### A scene's second blob, and a storage guard that asks per field
+
+The scene picker fetched the full 2560 px battle map for every row, which `SceneSelect`'s own
+docblock had named and deferred: *a real derivative would mean a second blob per scene, generated
+on upload and projected beside this one — a storage and payload change, and not one to make on the
+way past.* It is made on purpose here. `scenes.thumbnailId` is a 320 px WebP at quality 0.7, derived
+in the browser **from the already-downscaled map blob** so a 23-megapixel source is decoded once and
+not twice.
+
+⚠️ **The interesting part is not the thumbnail. It is that `storageGuard.test.ts` would have passed
+on the commit that introduced the bug.** That guard derived one `…References…` predicate per
+*table*, so once `scenes` had `sceneReferencesImage` a **second** blob column on the same table
+satisfied it with nothing asking about those bytes — and `files.discard` would have cheerfully
+deleted the picture the DM was looking at. Green build, green suite, live data loss.
+
+So the derivation moved to the **field**: subject is the table minus a trailing `s`, object is the
+column minus a trailing `Id`, capitalised. Three things about that are worth keeping.
+
+- **It reproduces all four existing names exactly** and forces the fifth. No predicate was renamed
+  to fit the rule.
+- **It deletes a carve-out rather than adding one.** The old rule had to leave the suffix as `\w+`
+  and explain in prose that `tracks` holds the one blob that is not a picture, so its predicate is
+  `trackReferencesFile`. Under a field derivation the column is `fileId` and that name is what the
+  rule *produces*. A guard that stops needing its own exception has usually started asking the right
+  question.
+- **The roadmap asked for a positive control that "fails today", and that has no committable
+  form.** A red test cannot be committed, so the evidence would have lived in somebody's terminal.
+  Both halves are kept instead: the superseded derivation is reproduced in the test file and the
+  last test feeds both rules a synthetic two-blob table, asserting the old one is satisfied by an
+  importer covering one column while the new one demands two; and the genuinely red run — the new
+  guard against a `files.ts` with the predicate removed — is pasted into that commit's message,
+  which is where a red run belongs.
+
+`files.discard` takes `imageIds` now, capped at `MAX_DISCARD_IDS`. One catch is one transaction and
+one round trip, which is half as many ways for an error path to be partly right. ⚠️ **A referenced id
+refuses the whole call**, and the tempting alternative — delete the free ones, skip the held ones —
+is the bug: the id the caller most needs to hear about is the one it would be told nothing about. The
+transaction makes the *outcome* identical either way; what is being chosen is that the caller finds
+out.
+
+⚠️ **The orphaned-blob problem gets strictly worse and this milestone does not fix it.** A tab that
+crashes between the POST and `scenes.create` now leaks **two** blobs instead of one. That sweeper is
+still the game-editor milestone's, and it is named here rather than left implicit — the cap above
+bounds what one *call* can delete, and nothing at all reclaims bytes no row ever adopted.
+
+### `publicSceneValidator` forks, and it forked one commit before it had to
+
+`scenes.active` is **ungated**: it is the one board the whole table is looking at, so every player
+subscribes to it and anything on that validator is published to the table by construction. The
+thumbnail did not have to fork it — a second signed URL is not a secret, only waste. Notes do.
+
+So the projection split when the *cheap* field arrived rather than when the dangerous one did, and
+that ordering is the decision. `dmSceneValidator` extends `publicSceneValidator` with
+`thumbnailUrl`, and later with `notes` and `order`; its one consumer is `scenes.list`, which throws
+for a non-DM. The two facts are one fact: **that query refuses everybody else, therefore that query
+may say more.** A fork created for the field that needed it would have been a fork created in the
+same commit as a DM's private prep notes, reviewed together, with the reviewer's attention on the
+feature.
+
+The key set of the *player's* payload is pinned by a test against a fixture that genuinely has a
+thumbnail, for `games.list`'s reason: a subtractive spec across two audiences guarantees only the
+fields it names, and a scan for an absent key passes trivially against a row that never had one.
+
+⚠️ **The absent-thumbnail fallback is resolved in the projection**, which is `backgroundOf`'s
+discipline applied to a URL. A client writing `thumbnailUrl ?? imageUrl` for itself is a client that
+can disagree with the server about which picture a row shows, and there would be two of them the
+moment a second surface drew a scene list. Every scene uploaded before this field existed is
+permanently in that state, because nothing regenerates a derivative server-side.
+
 ## Consequences
 
 ### Good

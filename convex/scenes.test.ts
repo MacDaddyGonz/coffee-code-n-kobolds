@@ -8,6 +8,12 @@ import type { Id } from './_generated/dataModel'
 import { MAX_SCENE_NAME_LENGTH } from './lib/codes'
 import { MAX_SCENES_PER_GAME } from './lib/games'
 import { MAX_GRID_SIZE, MIN_GRID_SIZE } from './lib/grid'
+// Imported rather than re-stated, for `DEFAULT_SCENE_BACKGROUND`'s reason below: neither is
+// a promise to the DM about what may be uploaded. `MAX_DISCARD_IDS` bounds one call's
+// argument, and `MAX_THUMB_BYTES` guards a blob this application produces for itself — what
+// the assertions are for is that a ceiling exists and fires, not that it is any particular
+// number. `MAX_SCENE_BYTES` is the one that stays hand-written, and its note says why.
+import { MAX_DISCARD_IDS, MAX_THUMB_BYTES } from './lib/limits'
 // Imported rather than re-stated, unlike `MAX_SCENE_BYTES` above, and the difference is
 // what the value is. That one is a *promise* — changing it changes what a DM may upload,
 // so a test that imports it cannot notice the promise moving. This is a default nobody
@@ -293,10 +299,18 @@ describe('scenes.create', () => {
     expect(await blobExists(t, imageId)).toBe(true)
 
     // The client's catch calls this, and it is the call that commits.
-    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId })
+    await t.mutation(api.files.discard, {
+      code: game.code,
+      dmCode: game.dmCode,
+      imageIds: [imageId],
+    })
     expect(await blobExists(t, imageId)).toBe(false)
     // Idempotent, because the error path it is called from may itself be retried.
-    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId })
+    await t.mutation(api.files.discard, {
+      code: game.code,
+      dmCode: game.dmCode,
+      imageIds: [imageId],
+    })
     expect(await blobExists(t, imageId)).toBe(false)
   })
 
@@ -960,5 +974,259 @@ describe('files.generateUploadUrl', () => {
       t.mutation(api.files.generateUploadUrl, { code: 'ZZZZZZ', dmCode: game.dmCode }),
       'GameNotFound',
     )
+  })
+})
+
+describe('a scene’s thumbnail', () => {
+  /**
+   * ⚠️ **THE POSITIVE CONTROL FOR THE PROJECTION SPLIT, AND IT PINS AN EXACT KEY SET.**
+   *
+   * `scenes.active` is ungated — every player at the table subscribes to it — so anything
+   * that reaches `publicSceneValidator` is published to everybody. `scenes.list` is DM-only
+   * and returns a *wider* object, which is only defensible while the two really are two.
+   * A subtractive spec across two audiences guarantees only the fields it names, which is
+   * `games.list`'s reasoning about the join code, so this asserts the whole set rather than
+   * the absence of one key.
+   *
+   * The fixture is deliberately a scene that **has** a thumbnail: a scan for an absent key
+   * passes trivially against a row that never had one.
+   */
+  test('never reaches a player, and the player’s payload has exactly its old keys', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const thumbnailId = await storeImage(t, 'thumb')
+    await t.mutation(api.scenes.create, {
+      code: game.code,
+      dmCode: game.dmCode,
+      name: 'Admittance',
+      imageId: await storeImage(t, 'map'),
+      thumbnailId,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+    })
+
+    const seen = await t.query(api.scenes.active, { code: game.code })
+    expect(seen).not.toBeNull()
+    expect(Object.keys(seen!).sort()).toEqual(
+      [
+        '_id',
+        'backgroundColour',
+        'fogBase',
+        'gridOffsetX',
+        'gridOffsetY',
+        'gridSize',
+        'gridVisible',
+        'imageHeight',
+        'imageUrl',
+        'imageWidth',
+        'name',
+      ].sort(),
+    )
+    expect(JSON.stringify(seen)).not.toContain('thumbnail')
+
+    // And the DM's own list does carry it, so the assertion above is about the audience
+    // rather than about the field never being projected at all.
+    const [listed] = await t.query(api.scenes.list, { code: game.code, dmCode: game.dmCode })
+    expect(typeof listed.thumbnailUrl).toBe('string')
+    expect(listed.thumbnailUrl).not.toBe(listed.imageUrl)
+  })
+
+  /**
+   * The fallback is resolved server-side so no client branches — `dmScene`'s ⚠️. Every scene
+   * uploaded before this field existed is permanently in this state, because nothing
+   * regenerates a derivative.
+   */
+  test('falls back to the full map when there is none', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    await makeScene(t, game.code, game.dmCode, 'Old Map')
+
+    const [listed] = await t.query(api.scenes.list, { code: game.code, dmCode: game.dmCode })
+    expect(typeof listed.imageUrl).toBe('string')
+    expect(listed.thumbnailUrl).toBe(listed.imageUrl)
+  })
+
+  test('is stored, and refused when it is too big to be one', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const imageId = await storeImage(t, 'map')
+    const thumbnailId = await storeImage(t, 'thumb')
+
+    const { sceneId } = await t.mutation(api.scenes.create, {
+      code: game.code,
+      dmCode: game.dmCode,
+      name: 'Admittance',
+      imageId,
+      thumbnailId,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+    })
+    expect((await sceneRow(t, sceneId))?.thumbnailId).toBe(thumbnailId)
+
+    // A client that posted the map into the thumbnail argument, which is the one way those
+    // bytes get into storage twice. Invariant 6 is about what is in storage rather than
+    // about who wrote it.
+    const wrongWayRound = await storeImage(t, 'not-a-thumb', MAX_THUMB_BYTES + 1)
+    await expectKind(
+      t.mutation(api.scenes.create, {
+        code: game.code,
+        dmCode: game.dmCode,
+        name: 'Wrong Way Round',
+        imageId: await storeImage(t, 'second-map'),
+        thumbnailId: wrongWayRound,
+        imageWidth: MAP_WIDTH,
+        imageHeight: MAP_HEIGHT,
+      }),
+      'BadInput',
+    )
+  })
+
+  test('goes with the scene when the scene goes', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const imageId = await storeImage(t, 'map')
+    const thumbnailId = await storeImage(t, 'thumb')
+    const { sceneId } = await t.mutation(api.scenes.create, {
+      code: game.code,
+      dmCode: game.dmCode,
+      name: 'Admittance',
+      imageId,
+      thumbnailId,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+    })
+
+    await t.mutation(api.scenes.remove, { code: game.code, dmCode: game.dmCode, sceneId })
+    expect(await blobExists(t, imageId)).toBe(false)
+    // The one that would be missed: a forgotten thumbnail leaves no gap on any screen, so
+    // nothing in the application would ever report it.
+    expect(await blobExists(t, thumbnailId)).toBe(false)
+  })
+})
+
+describe('files.discard takes a list', () => {
+  test('clears both blobs of a refused map upload in one call', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const imageId = await storeImage(t, 'huge', MAX_SCENE_BYTES + 1)
+    const thumbnailId = await storeImage(t, 'thumb')
+
+    await expectKind(
+      t.mutation(api.scenes.create, {
+        code: game.code,
+        dmCode: game.dmCode,
+        name: 'Too Big',
+        imageId,
+        thumbnailId,
+        imageWidth: MAP_WIDTH,
+        imageHeight: MAP_HEIGHT,
+      }),
+      'BadInput',
+    )
+    // A rejecting mutation cannot delete what it refused: both survive the rollback.
+    expect(await blobExists(t, imageId)).toBe(true)
+    expect(await blobExists(t, thumbnailId)).toBe(true)
+
+    await t.mutation(api.files.discard, {
+      code: game.code,
+      dmCode: game.dmCode,
+      imageIds: [imageId, thumbnailId],
+    })
+    expect(await blobExists(t, imageId)).toBe(false)
+    expect(await blobExists(t, thumbnailId)).toBe(false)
+  })
+
+  test('a repeated id is one delete rather than two', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const imageId = await storeImage(t, 'twice')
+
+    // A second `ctx.storage.delete` of the same id throws a plain Error, not a
+    // ConvexError — see `deleteTokensInGame`. Passing an id twice must not reach that.
+    await t.mutation(api.files.discard, {
+      code: game.code,
+      dmCode: game.dmCode,
+      imageIds: [imageId, imageId],
+    })
+    expect(await blobExists(t, imageId)).toBe(false)
+  })
+
+  /**
+   * ⚠️ **The whole call is refused, and the unheld blob survives.** The tempting
+   * alternative is to delete the free one and skip the held one, which leaves the caller
+   * unable to tell what happened — and the id it most needs to know about is the one it
+   * would be told nothing about. See the ⚠️ on `files.discard`.
+   */
+  test('one referenced id refuses the whole call', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const scene = await makeScene(t, game.code, game.dmCode, 'Admittance')
+    const loose = await storeImage(t, 'loose')
+
+    await expectKind(
+      t.mutation(api.files.discard, {
+        code: game.code,
+        dmCode: game.dmCode,
+        imageIds: [loose, scene.imageId],
+      }),
+      'BadInput',
+    )
+    expect(await blobExists(t, scene.imageId)).toBe(true)
+    expect(await blobExists(t, loose)).toBe(true)
+  })
+
+  /**
+   * The predicate that would not have existed if `storageGuard.test.ts` still derived one
+   * per table: `scenes` already had `sceneReferencesImage`, so a second blob column on the
+   * same table would have gone unasked about and this call would have succeeded.
+   */
+  test('refuses a scene’s thumbnail, which is the column the old guard missed', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const thumbnailId = await storeImage(t, 'thumb')
+    await t.mutation(api.scenes.create, {
+      code: game.code,
+      dmCode: game.dmCode,
+      name: 'Admittance',
+      imageId: await storeImage(t, 'map'),
+      thumbnailId,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+    })
+
+    await expectKind(
+      t.mutation(api.files.discard, {
+        code: game.code,
+        dmCode: game.dmCode,
+        imageIds: [thumbnailId],
+      }),
+      'BadInput',
+    )
+    expect(await blobExists(t, thumbnailId)).toBe(true)
+  })
+
+  test('refuses more ids than MAX_DISCARD_IDS, and deletes none of them', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const ids: Id<'_storage'>[] = []
+    for (let i = 0; i <= MAX_DISCARD_IDS; i += 1) ids.push(await storeImage(t, `loose-${i}`))
+
+    await expectKind(
+      t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageIds: ids }),
+      'BadInput',
+    )
+    for (const id of ids) expect(await blobExists(t, id)).toBe(true)
+  })
+
+  test('an empty list is a no-op that succeeds', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    expect(
+      await t.mutation(api.files.discard, {
+        code: game.code,
+        dmCode: game.dmCode,
+        imageIds: [],
+      }),
+    ).toBeNull()
   })
 })

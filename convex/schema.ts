@@ -247,6 +247,22 @@ export default defineSchema({
     // *unrecognised* base, and lib/fogBase.ts's header explains why the two questions
     // deserve opposite answers.
     fogBase: v.optional(fogBaseValidator),
+    // A small derivative of the map, for the DM's scene picker and for nothing else.
+    //
+    // ⚠️ **THE SECOND BLOB IN THIS SCHEMA TO SHARE A TABLE WITH ANOTHER ONE, AND THAT IS
+    // WHY `storageGuard.test.ts` HAD TO BE REWRITTEN TO LAND IT.** That guard used to derive
+    // one `…References…` predicate per *table*, so `scenes` already having
+    // `sceneReferencesImage` would have let this field arrive with its bytes unprotected by
+    // `files.discard` — a green build, a passing suite, and a discard that cheerfully
+    // deletes the picture a DM is looking at. It now derives one predicate per **field**,
+    // which is what forces `sceneReferencesThumbnail` to exist.
+    //
+    // Optional for `backgroundColour`'s reason and for a second one it does not have: every
+    // scene stored before this field existed has no derivative and never will, because
+    // nothing regenerates one server-side. Absent is therefore a permanent state rather than
+    // a migration window, and `dmScene` in lib/scenes.ts is the one place it becomes a URL —
+    // falling back to the full map, so no client has to know this field exists.
+    thumbnailId: v.optional(v.id('_storage')),
   }).index('by_gameId', ['gameId']),
 
   // STABLE token data — art, name, size, layer, owning character. Low churn: this
