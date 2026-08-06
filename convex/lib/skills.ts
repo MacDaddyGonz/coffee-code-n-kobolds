@@ -121,7 +121,64 @@ export function passivePerception(
   level: number,
   proficiencies: SkillProficiencies,
 ): number {
-  return 10 + skillBonus(scores, level, proficiencies, 'perception')
+  return passiveScore(scores, level, proficiencies, 'perception')
+}
+
+/**
+ * The other two passive scores a 2024 sheet prints — **derived, storing nothing.**
+ *
+ * ⚠️ **They exist because change 4 gave the application the skills behind them and for no
+ * other reason.** Insight has been in `SKILL_KEYS` since Milestone 4 and Investigation
+ * arrived with the five 2024 skills, so both of these are `10 + skillBonus(...)` over a flag
+ * the sheet already carries. That is the whole of what a passive score is, which is why
+ * there is no field for either one anywhere in the schema and why adding one would be adding
+ * a copy to keep in step with the Wisdom score it comes from.
+ *
+ * ⚠️ **Nothing notices anybody with them.** No stealth roll is compared to a passive
+ * perception, no lie is checked against a passive insight, and nothing in `convex/` reads
+ * either return value to decide anything — they are printed on a sheet so the person running
+ * the game can say the number out loud. That is the same line ADR 0011 drew and the same one
+ * `spellSaveDcOf` is admitted under: the application announces, and the table adjudicates.
+ *
+ * ⚠️ **Neither has `passivePerceptionFor`'s two-halves problem, and that is why neither has a
+ * `…For` sibling.** A creature's passive perception is *stored* — the reduced sheet has no
+ * Wisdom to derive one from — so a function answering the question for a `CharacterSheet`
+ * had to reconcile a stored half with a derived one. The bestiary stores no passive insight
+ * and no passive investigation, so there is no second half to reconcile and no reason to
+ * offer a `CharacterSheet` signature that would answer `null` for every creature in the game.
+ * A caller holding a hero has the three arguments already.
+ */
+export function passiveInsight(
+  scores: AbilityScores,
+  level: number,
+  proficiencies: SkillProficiencies,
+): number {
+  return passiveScore(scores, level, proficiencies, 'insight')
+}
+
+export function passiveInvestigation(
+  scores: AbilityScores,
+  level: number,
+  proficiencies: SkillProficiencies,
+): number {
+  return passiveScore(scores, level, proficiencies, 'investigation')
+}
+
+/**
+ * Ten plus the skill's bonus, which is the definition of every passive score there is.
+ *
+ * Private, and shared by the three above rather than each spelling `10 + skillBonus(...)`:
+ * three copies of one line is three places for the floor of 10 to be edited in two of them,
+ * which is `clampHitDice`'s history exactly — arithmetic written out four times where the
+ * fourth had already drifted.
+ */
+function passiveScore(
+  scores: AbilityScores,
+  level: number,
+  proficiencies: SkillProficiencies,
+  key: SkillKey,
+): number {
+  return 10 + skillBonus(scores, level, proficiencies, key)
 }
 
 /**

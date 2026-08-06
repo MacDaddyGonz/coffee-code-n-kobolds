@@ -18,7 +18,8 @@ import {
   countCharactersInGame,
   deleteCharacter,
   longRest as takeLongRest,
-  setPerRestSpent,
+  shortRest as takeShortRest,
+  setUsesSpent,
   getCharacterInGame,
   insertCharacter,
   isReservedCharacter,
@@ -59,7 +60,8 @@ import {
   setSeatCharacter,
 } from './lib/players'
 import { SUBCLASS_LEVEL } from './lib/classes'
-import { perRestAbilities } from './lib/species'
+import { perRestAbilities, speciesKeyOf } from './lib/species'
+import { MAX_RESOURCE_USES } from './lib/rest'
 import { bestiaryOf, kindOf, presetOf, resolveSheet } from './lib/resolve'
 import type { BestiarySheet, PresetSheet, SheetProblem, StoredSheet } from './lib/sheet'
 import {
@@ -67,9 +69,11 @@ import {
   defaultSheetFor,
   isMonsterSheet,
   normaliseStoredSheet,
+  sheetEntriesOf,
   sheetProblem,
   storedSheetProblem,
   storedSheetValidator,
+  usesOf,
 } from './lib/sheet'
 
 // Not one row of the `characters` or `characterVitals` tables is read in this file.
@@ -905,17 +909,26 @@ export const longRest = mutation({
   },
 })
 
-/** Spend a once-per-long-rest ability, or hand it back if it was marked by mistake. */
-export const setPerRest = mutation({
+/**
+ * A short rest. **Whatever comes back on one comes back, and nothing else.**
+ *
+ * ⚠️ **It does not heal and it does not return hit dice** — spending hit dice is what a short
+ * rest is *for*. See `shortRest` in lib/characters.ts, where that argument lives, and
+ * `REST_LABELS` in lib/rest.ts, which is where both rests' wording comes from so that the
+ * button cannot promise something the mutation does not do.
+ *
+ * Beside `longRest` above and available on the same terms and for the same reason: a rest is
+ * a thing the party decides on together, and making it DM-only would put the DM in the loop
+ * for the most routine event in the game.
+ */
+export const shortRest = mutation({
   args: {
     code: v.string(),
     characterId: v.id('characters'),
-    key: v.string(),
-    spent: v.boolean(),
     playerId: v.optional(v.id('players')),
     dmCode: v.optional(v.string()),
   },
-  returns: v.object({ spentPerRest: v.array(v.string()) }),
+  returns: v.null(),
   handler: async (ctx, args) => {
     const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
     const character = await requireEditableCharacter(
@@ -926,25 +939,75 @@ export const setPerRest = mutation({
       args.playerId,
       { allowControl: true },
     )
+    await takeShortRest(ctx, character)
+    return null
+  },
+})
 
-    // Checked against the character's own race rather than taken as given, so the
-    // stored array cannot fill up with keys nothing will ever clear.
-    //
-    // **Only when spending.** Handing one back is always allowed, and the asymmetry
-    // is what stops a stale key becoming permanent: a DM who changes a character's
-    // race leaves whatever the old race had spent still marked, and a check that
-    // applied here too would make it unclearable by anything short of a long rest —
-    // refusing to undo a state it had been happy to create.
-    const preset = presetOf(character)
-    const known = preset ? perRestAbilities(preset.race).map((ability) => ability.key) : []
-    if (args.spent && !known.includes(args.key)) {
-      throw new ConvexError({
-        kind: 'BadInput',
-        message: 'That character has no such ability.',
-      })
+/**
+ * Spend uses of a limited-use thing, or hand some back if they were marked by mistake.
+ *
+ * `setPerRest`'s successor, and the rename is the point rather than tidying: that mutation
+ * took a **boolean**, because the only thing it could describe was *the one use this character
+ * had is gone*. 2024 is full of features with two, three or proficiency-bonus-many uses, so
+ * the argument is a count. A client handing back everything sends `spent: 0`.
+ */
+export const setUses = mutation({
+  args: {
+    code: v.string(),
+    characterId: v.id('characters'),
+    key: v.string(),
+    spent: v.number(),
+    playerId: v.optional(v.id('players')),
+    dmCode: v.optional(v.string()),
+  },
+  returns: v.object({ spentUses: v.array(v.object({ key: v.string(), spent: v.number() })) }),
+  handler: async (ctx, args) => {
+    if (!Number.isFinite(args.spent) || args.spent < 0 || args.spent > MAX_RESOURCE_USES) {
+      throw new ConvexError({ kind: 'BadInput', message: 'That is not a number of uses.' })
     }
 
-    return { spentPerRest: await setPerRestSpent(ctx, character, args.key, args.spent) }
+    const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
+    const character = await requireEditableCharacter(
+      ctx,
+      game,
+      args.characterId,
+      isDm,
+      args.playerId,
+      { allowControl: true },
+    )
+
+    // Checked against what the character actually has rather than taken as given, so the
+    // stored array cannot fill up with keys nothing will ever clear.
+    //
+    // **Only when spending.** Handing uses back is always allowed, and the asymmetry is what
+    // stops a stale key becoming permanent: a DM who changes a character's species, or deletes
+    // an entry, leaves whatever it had spent still marked, and a check that applied here too
+    // would make it unclearable by anything short of a long rest — refusing to undo a state it
+    // had been happy to create.
+    //
+    // ⚠️ **Two sources, `||`-ed rather than merged.** A species' once-per-long-rest ability is
+    // keyed by the species content; an entry's uses are keyed by the entry's own id. They are
+    // different vocabularies that happen to share a namespace on this row, and collapsing them
+    // into one list would mean deciding which wins on a collision — a question neither side
+    // asked. `spentUsesOf` folds them on read for exactly the same reason.
+    if (args.spent > 0) {
+      const preset = presetOf(character)
+      const fromSpecies = preset
+        ? perRestAbilities(speciesKeyOf(preset)).map((ability) => ability.key)
+        : []
+      const fromSheet = sheetEntriesOf(resolveSheet(character))
+        .filter((entry) => usesOf(entry) !== null)
+        .map((entry) => entry.id)
+      if (!fromSpecies.includes(args.key) && !fromSheet.includes(args.key)) {
+        throw new ConvexError({
+          kind: 'BadInput',
+          message: 'That character has no such ability.',
+        })
+      }
+    }
+
+    return { spentUses: await setUsesSpent(ctx, character, args.key, args.spent) }
   },
 })
 

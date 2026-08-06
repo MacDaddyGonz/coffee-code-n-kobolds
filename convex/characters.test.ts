@@ -9,6 +9,7 @@ import type { Id } from './_generated/dataModel'
 import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
 import { CLASSES, CLASS_KEYS, SUBCLASS_LEVEL } from './lib/classes'
 import { MAX_CHARACTERS_PER_GAME } from './lib/games'
+import { MAX_RESOURCE_USES } from './lib/rest'
 import { SPECIES_KEYS, species } from './lib/species'
 import { kindOf } from './lib/resolve'
 import type {
@@ -4808,6 +4809,18 @@ describe('hit points against a resolved sheet', () => {
   })
 })
 
+/**
+ * ⚠️ **`characters.setPerRest` is now `characters.setUses` and takes a COUNT.** The old
+ * mutation could only say *the one use this character had is gone*, because its argument was
+ * a boolean; 2024 is full of features with two, three or proficiency-bonus-many uses. Every
+ * test below reads the counted field for that reason, and `spent: 1` is what the old
+ * `spent: true` meant.
+ *
+ * ⚠️ **`spentPerRest` is still on the row and is deliberately NOT written by `setUses`.** It
+ * is folded in on *read* by `spentUsesOf`, so a row written by an older deployment keeps
+ * meaning what it meant, and it drains as characters take long rests. The narrowing commit
+ * deletes it. A test asserting that a spend landed therefore asserts on `spentUses`.
+ */
 describe('long rest and once-per-rest abilities', () => {
   test('a long rest restores hit points, hit dice and spent abilities in one call', async () => {
     const t = convexTest(schema, modules)
@@ -4824,17 +4837,17 @@ describe('long rest and once-per-rest abilities', () => {
       delta: -3,
       playerId: ana,
     })
-    await t.mutation(api.characters.setPerRest, {
+    await t.mutation(api.characters.setUses, {
       code,
       characterId,
       key: 'heroic-inspiration',
-      spent: true,
+      spent: 1,
       playerId: ana,
     })
     expect(await rawVitals(t, characterId)).toMatchObject({
       currentHp: FIGHTER_MAX_HP[5] - 20,
       hitDiceRemaining: 2,
-      spentPerRest: ['heroic-inspiration'],
+      spentUses: [{ key: 'heroic-inspiration', spent: 1 }],
     })
 
     // One call, all three — a rest that restored hit points and left the dice
@@ -4843,8 +4856,42 @@ describe('long rest and once-per-rest abilities', () => {
     expect(await rawVitals(t, characterId)).toMatchObject({
       currentHp: FIGHTER_MAX_HP[5],
       hitDiceRemaining: 5,
+      // Both fields, because a long rest is what drains the legacy one — see the ⚠️ on this
+      // describe block.
       spentPerRest: [],
+      spentUses: [],
     })
+  })
+
+  test('a long rest also clears the 2024 state, and leaves heroic inspiration alone', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ race: 'human', level: 5, subclassKey: 'champion' }))
+    const { code, dmCode, characterId } = fixture
+
+    // Written directly, because nothing on the sheet path sets a death save or a temporary
+    // hit point yet — the fields are the schema spine and the controls are another branch's.
+    const row = await rawVitals(t, characterId)
+    await t.run(async (ctx) => {
+      await ctx.db.patch('characterVitals', row!._id, {
+        temporaryHp: 12,
+        deathSaveSuccesses: 2,
+        deathSaveFailures: 1,
+        heroicInspiration: true,
+      })
+    })
+
+    await t.mutation(api.characters.longRest, { code, characterId, dmCode })
+    const rested = await rawVitals(t, characterId)
+    expect(rested).toMatchObject({
+      temporaryHp: 0,
+      deathSaveSuccesses: 0,
+      deathSaveFailures: 0,
+    })
+    // ⚠️ **The one that is deliberately untouched.** The 2024 Human *regains* Heroic
+    // Inspiration on a long rest, which is a species trait rather than a property of resting
+    // — granting it here would be the application inventing a rule for the eight species that
+    // do not have it, in a function with no way to know which one it is looking at.
+    expect(rested?.heroicInspiration).toBe(true)
   })
 
   test('the spent state travels on the vitals row, for the player and the DM alike', async () => {
@@ -4853,50 +4900,60 @@ describe('long rest and once-per-rest abilities', () => {
     const { code, dmCode, characterId, ana } = fixture
 
     expect(
-      await t.mutation(api.characters.setPerRest, {
+      await t.mutation(api.characters.setUses, {
         code,
         characterId,
         key: 'heroic-inspiration',
-        spent: true,
+        spent: 1,
         playerId: ana,
       }),
-    ).toEqual({ spentPerRest: ['heroic-inspiration'] })
+    ).toEqual({ spentUses: [{ key: 'heroic-inspiration', spent: 1 }] })
 
     for (const who of [{}, { dmCode }]) {
       const rows = await t.query(api.characters.vitals, { code, ...who })
       const row = rows.find((entry) => entry.characterId === characterId)
       expect(row?.kind).toBe('exact')
-      expect(row).toMatchObject({ spentPerRest: ['heroic-inspiration'] })
+      expect(row).toMatchObject({ spentUses: [{ key: 'heroic-inspiration', spent: 1 }] })
     }
 
-    // Handing it back is the same call with `spent: false`, because a mark made by
+    // Handing it back is the same call with `spent: 0`, because a mark made by
     // mistake has to be undoable.
     expect(
-      await t.mutation(api.characters.setPerRest, {
+      await t.mutation(api.characters.setUses, {
         code,
         characterId,
         key: 'heroic-inspiration',
-        spent: false,
+        spent: 0,
         playerId: ana,
       }),
-    ).toEqual({ spentPerRest: [] })
+    ).toEqual({ spentUses: [] })
+    // ⚠️ **Nought is ABSENCE from the array rather than `{ spent: 0 }`.** Two spellings of
+    // none is what every field-by-field rebuild then has to agree about, and
+    // `firstDifference` in scripts/board-smoke.mjs reports it as an extra element rather than
+    // as equality.
+    expect((await rawVitals(t, characterId))?.spentUses).toEqual([])
   })
 
-  test('spending the same ability twice is idempotent rather than cumulative', async () => {
+  test('setting the same count twice is absolute rather than cumulative', async () => {
     const t = convexTest(schema, modules)
     const fixture = await presetFixture(t, presetSheet({ race: 'human' }))
     const { code, characterId, ana } = fixture
 
     for (let i = 0; i < 3; i += 1) {
-      await t.mutation(api.characters.setPerRest, {
+      await t.mutation(api.characters.setUses, {
         code,
         characterId,
         key: 'heroic-inspiration',
-        spent: true,
+        spent: 1,
         playerId: ana,
       })
     }
-    expect((await rawVitals(t, characterId))?.spentPerRest).toEqual(['heroic-inspiration'])
+    // The argument is *how many have been spent*, not *spend one more* — the same stance
+    // `characters.setHp` takes against `adjustHp`, and the reason there is exactly one row
+    // per key rather than one per call.
+    expect((await rawVitals(t, characterId))?.spentUses).toEqual([
+      { key: 'heroic-inspiration', spent: 1 },
+    ])
   })
 
   test('a key the character’s race does not have is refused', async () => {
@@ -4906,18 +4963,58 @@ describe('long rest and once-per-rest abilities', () => {
 
     for (const key of ['relentless-endurance', 'lucky', '', 'heroic_inspiration']) {
       const refusal = await refusalOf(
-        t.mutation(api.characters.setPerRest, {
+        t.mutation(api.characters.setUses, {
           code,
           characterId,
           key,
-          spent: true,
+          spent: 1,
           playerId: ana,
         }),
       )
       expect(refusal.kind, key).toBe('BadInput')
       expect(refusal.message, key).toBe('That character has no such ability.')
     }
-    expect((await rawVitals(t, characterId))?.spentPerRest ?? []).toEqual([])
+    expect((await rawVitals(t, characterId))?.spentUses ?? []).toEqual([])
+
+    // ⚠️ **And handing one back is still allowed for every one of them**, which is the
+    // asymmetry stated on the mutation: a DM who changes a character's species, or deletes an
+    // entry, leaves whatever it had spent still marked, and a check that applied here too
+    // would make it unclearable by anything short of a long rest.
+    for (const key of ['relentless-endurance', 'lucky', '', 'heroic_inspiration']) {
+      expect(
+        await t.mutation(api.characters.setUses, {
+          code,
+          characterId,
+          key,
+          spent: 0,
+          playerId: ana,
+        }),
+      ).toEqual({ spentUses: [] })
+    }
+  })
+
+  test('a count of nonsense or of more than anything has is refused outright', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ race: 'human' }))
+    const { code, characterId, ana } = fixture
+
+    // Refused *before* the key is looked at, because these are shapes rather than
+    // permissions — `NaN` is a perfectly valid Convex float64 and would poison every
+    // comparison made against it afterwards, exactly as it does on `adjustHp`.
+    for (const spent of [Number.NaN, Number.POSITIVE_INFINITY, -1, MAX_RESOURCE_USES + 1]) {
+      const refusal = await refusalOf(
+        t.mutation(api.characters.setUses, {
+          code,
+          characterId,
+          key: 'heroic-inspiration',
+          spent,
+          playerId: ana,
+        }),
+      )
+      expect(refusal.kind, String(spent)).toBe('BadInput')
+      expect(refusal.message, String(spent)).toBe('That is not a number of uses.')
+    }
+    expect((await rawVitals(t, characterId))?.spentUses ?? []).toEqual([])
   })
 
   test('a Dwarf has nothing to spend, and an Orc has exactly one thing', async () => {
@@ -4931,33 +5028,33 @@ describe('long rest and once-per-rest abilities', () => {
 
     for (const key of ['heroic-inspiration', 'relentless-endurance', 'dwarven-toughness']) {
       await expectKind(
-        t.mutation(api.characters.setPerRest, {
+        t.mutation(api.characters.setUses, {
           code,
           characterId: dwarf,
           key,
-          spent: true,
+          spent: 1,
           dmCode,
         }),
         'BadInput',
       )
     }
-    expect((await rawVitals(t, dwarf))?.spentPerRest ?? []).toEqual([])
+    expect((await rawVitals(t, dwarf))?.spentUses ?? []).toEqual([])
 
     expect(
-      await t.mutation(api.characters.setPerRest, {
+      await t.mutation(api.characters.setUses, {
         code,
         characterId: orc,
         key: 'relentless-endurance',
-        spent: true,
+        spent: 1,
         dmCode,
       }),
-    ).toEqual({ spentPerRest: ['relentless-endurance'] })
+    ).toEqual({ spentUses: [{ key: 'relentless-endurance', spent: 1 }] })
     await expectKind(
-      t.mutation(api.characters.setPerRest, {
+      t.mutation(api.characters.setUses, {
         code,
         characterId: orc,
         key: 'heroic-inspiration',
-        spent: true,
+        spent: 1,
         dmCode,
       }),
       'BadInput',
@@ -4970,11 +5067,65 @@ describe('long rest and once-per-rest abilities', () => {
     const thorin = await makePc(t, code, 'Thorin', pcSheet())
 
     await expectKind(
-      t.mutation(api.characters.setPerRest, {
+      t.mutation(api.characters.setUses, {
         code,
         characterId: thorin,
         key: 'heroic-inspiration',
-        spent: true,
+        spent: 1,
+        dmCode,
+      }),
+      'BadInput',
+    )
+  })
+
+  /**
+   * ⚠️ **The second source of a key, and it is `||`-ed rather than merged.** A species'
+   * once-per-long-rest ability is keyed by species content; an entry's uses are keyed by the
+   * entry's own id. They are different vocabularies sharing one namespace on the row, and
+   * collapsing them would mean deciding which wins on a collision — a question neither side
+   * asked.
+   */
+  test('an entry that declares uses is a key a hand-built character may spend', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const bruenor = await makePc(
+      t,
+      code,
+      'Bruenor',
+      pcSheet({
+        feats: [
+          {
+            id: 'feat-rage',
+            name: 'Rage',
+            text: 'Bellow, and hit harder for a minute.',
+            roll: null,
+            level: null,
+            catalogueKey: null,
+            category: 'passive',
+            uses: { max: 3, recharge: 'long' },
+          },
+        ],
+      }),
+    )
+
+    expect(
+      await t.mutation(api.characters.setUses, {
+        code,
+        characterId: bruenor,
+        key: 'feat-rage',
+        spent: 2,
+        dmCode,
+      }),
+    ).toEqual({ spentUses: [{ key: 'feat-rage', spent: 2 }] })
+
+    // And an id that is not on the sheet is still refused, so the check is about *this*
+    // character rather than about entry ids being acceptable in general.
+    await expectKind(
+      t.mutation(api.characters.setUses, {
+        code,
+        characterId: bruenor,
+        key: 'feat-second-wind',
+        spent: 1,
         dmCode,
       }),
       'BadInput',
@@ -5037,18 +5188,224 @@ describe('long rest and once-per-rest abilities', () => {
     const fixture = await presetFixture(t, presetSheet({ race: 'human', level: 2, subclassKey: 'champion' }))
     const { code, dmCode, characterId, ana } = fixture
 
-    await t.mutation(api.characters.setPerRest, {
+    await t.mutation(api.characters.setUses, {
       code,
       characterId,
       key: 'heroic-inspiration',
-      spent: true,
+      spent: 1,
       playerId: ana,
     })
     await t.mutation(api.characters.setLevel, { code, dmCode, characterId, level: 4 })
     await update(t, code, characterId, presetSheet({ race: 'human', level: 4, subclassKey: 'battle-master' }), { dmCode })
 
     // A rest clears it; an edit does not touch it (ADR 0005).
-    expect((await rawVitals(t, characterId))?.spentPerRest).toEqual(['heroic-inspiration'])
+    expect((await rawVitals(t, characterId))?.spentUses).toEqual([
+      { key: 'heroic-inspiration', spent: 1 },
+    ])
+  })
+})
+
+/**
+ * ⚠️ **THE SHORT REST DOES NOT HEAL AND DOES NOT RETURN HIT DICE**, and both absences are
+ * asserted rather than left implicit. *Spending* hit dice is what a short rest is for, so
+ * returning them would undo the only thing the rest exists to let somebody do, and healing is
+ * what spending them achieves — one die at a time, by a person choosing how many to burn.
+ *
+ * `HitDiceControls` is the precedent: it shipped a button labelled *"Long rest"* that only
+ * returned hit dice, and it read as broken the first time somebody pressed it at 1 hit point,
+ * because the label promised the thing the button did not do. This is that trap pointing the
+ * other way, which is why both rests read their label **and their explanation** out of
+ * `REST_LABELS`.
+ */
+describe('the short rest', () => {
+  /** Three entries, one per outcome `shortRest` can reach. */
+  function restingSheet() {
+    return pcSheet({
+      hitDice: { count: 5, faces: 10 },
+      feats: [
+        {
+          id: 'feat-focus',
+          name: 'Focus Points',
+          text: 'A pool that comes back the moment you sit down.',
+          roll: null,
+          level: null,
+          catalogueKey: null,
+          category: 'passive',
+          uses: { max: 5, recharge: 'short' },
+        },
+        {
+          id: 'feat-second-wind',
+          name: 'Second Wind',
+          text: 'Regain one expended use on a short rest, all on a long rest.',
+          roll: null,
+          level: null,
+          catalogueKey: null,
+          category: 'passive',
+          uses: { max: 3, recharge: 'long', regainOnShortRest: 1 },
+        },
+        {
+          id: 'feat-rage',
+          name: 'Rage',
+          text: 'Nothing short of a night brings this back.',
+          roll: null,
+          level: null,
+          catalogueKey: null,
+          category: 'passive',
+          uses: { max: 3, recharge: 'long' },
+        },
+      ],
+    })
+  }
+
+  async function spendEverything(t: ReturnType<typeof convexTest>, code: string, dmCode: string, characterId: Id<'characters'>) {
+    for (const [key, spent] of [
+      ['feat-focus', 4],
+      ['feat-second-wind', 3],
+      ['feat-rage', 2],
+    ] as const) {
+      await t.mutation(api.characters.setUses, { code, characterId, key, spent, dmCode })
+    }
+  }
+
+  test('a short-rest pool comes back whole, a partial one by its stated amount, and a long-rest one not at all', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const monk = await makePc(t, code, 'Kaelen', restingSheet())
+    await spendEverything(t, code, dmCode, monk)
+
+    await t.mutation(api.characters.shortRest, { code, characterId: monk, dmCode })
+
+    // ⚠️ **The three outcomes, asserted together, because any one of them alone passes on a
+    // rest that did the same thing to everything.** A rest that cleared the array would
+    // satisfy the first; one that did nothing would satisfy the third.
+    expect((await rawVitals(t, monk))?.spentUses).toEqual([
+      // Regains one of the three spent — the 2024 normal case, and the reason
+      // `regainOnShortRest` exists at all rather than being rounded down to long-rest-only.
+      { key: 'feat-second-wind', spent: 2 },
+      { key: 'feat-rage', spent: 2 },
+    ])
+  })
+
+  test('it heals nobody and returns no hit dice', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const monk = await makePc(t, code, 'Kaelen', restingSheet())
+    const full = defaultPcSheet().maxHp
+
+    await t.mutation(api.characters.adjustHp, { code, characterId: monk, delta: -6, dmCode })
+    await t.mutation(api.characters.adjustHitDice, { code, characterId: monk, delta: -3, dmCode })
+    await spendEverything(t, code, dmCode, monk)
+
+    await t.mutation(api.characters.shortRest, { code, characterId: monk, dmCode })
+    const rested = await rawVitals(t, monk)
+    expect(rested?.currentHp, 'the short rest healed somebody').toBe(full - 6)
+    expect(rested?.hitDiceRemaining, 'the short rest handed hit dice back').toBe(2)
+
+    // The positive control, and it is the load-bearing half: without it both assertions above
+    // pass on a mutation that does nothing whatsoever.
+    expect(rested?.spentUses).toEqual([
+      { key: 'feat-second-wind', spent: 2 },
+      { key: 'feat-rage', spent: 2 },
+    ])
+
+    // And the long rest, on the same fixture, does all three — so the absence above is this
+    // rest's behaviour rather than a broken write path.
+    await t.mutation(api.characters.longRest, { code, characterId: monk, dmCode })
+    expect(await rawVitals(t, monk)).toMatchObject({
+      currentHp: full,
+      hitDiceRemaining: 5,
+      spentUses: [],
+    })
+  })
+
+  test('a key whose entry the sheet no longer has is left spent rather than cleared', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const monk = await makePc(t, code, 'Kaelen', restingSheet())
+    await t.mutation(api.characters.setUses, {
+      code,
+      characterId: monk,
+      key: 'feat-focus',
+      spent: 4,
+      dmCode,
+    })
+
+    // The entry goes, and the spent count stays behind — the state `setUses`' hand-back
+    // asymmetry exists to let somebody clear.
+    await update(t, code, monk, pcSheet({ feats: [] }), { dmCode })
+    await t.mutation(api.characters.shortRest, { code, characterId: monk, dmCode })
+
+    // ⚠️ **`restores`' fail-conservative direction applied to data rather than to a union.** A
+    // key with no declaration might have been anything: leaving it spent costs one click on a
+    // counter anybody can edit, where clearing it hands out a resource nobody asked for.
+    expect((await rawVitals(t, monk))?.spentUses).toEqual([{ key: 'feat-focus', spent: 4 }])
+  })
+
+  test('it leaves the legacy per-rest array entirely alone', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const human = await makePreset(t, code, 'Aldis', presetSheet({ race: 'human' }))
+
+    // Written directly, as an older deployment would have: everything in `spentPerRest` is a
+    // once-per-**long**-rest species ability by construction, so a short rest has nothing to
+    // say about it and saying nothing is the correct answer rather than an omission.
+    const row = await rawVitals(t, human)
+    await t.run(async (ctx) => {
+      await ctx.db.patch('characterVitals', row!._id, { spentPerRest: ['heroic-inspiration'] })
+    })
+
+    await t.mutation(api.characters.shortRest, { code, characterId: human, dmCode })
+    expect((await rawVitals(t, human))?.spentPerRest).toEqual(['heroic-inspiration'])
+
+    // And the folded view still shows it, so a client reading `spentUses` alone is correct
+    // for both fields.
+    const rows = await t.query(api.characters.vitals, { code, dmCode })
+    expect(rows.find((entry) => entry.characterId === human)).toMatchObject({
+      spentUses: [{ key: 'heroic-inspiration', spent: 1 }],
+    })
+  })
+
+  test('a rest is refused to a seat that is not playing the character, exactly as a long one is', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ race: 'human', level: 3, subclassKey: 'champion' }))
+    const { code, characterId, ben } = fixture
+
+    await expectKind(
+      t.mutation(api.characters.shortRest, { code, characterId, playerId: ben }),
+      'CharacterNotYours',
+    )
+    await expectKind(
+      t.mutation(api.characters.shortRest, { code, characterId }),
+      'CharacterNotYours',
+    )
+  })
+
+  test('a character with nothing spent is a no-op rather than a write', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const monk = await makePc(t, code, 'Kaelen', restingSheet())
+
+    const before = await rawVitals(t, monk)
+    await t.mutation(api.characters.shortRest, { code, characterId: monk, dmCode })
+    const after = await rawVitals(t, monk)
+
+    // Asserted on `_creationTime` staying put *and* the document being unchanged: a patch of
+    // the same value would invalidate the health-bar subscription for every client at the
+    // table every time somebody pressed a button that changed nothing.
+    expect(after).toEqual(before)
+  })
+
+  test('a Milestone 1 character with no vitals row at all survives one', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const legacy = await insertLegacyCharacter(t, code, 'Milestone One')
+    expect(await rawVitals(t, legacy)).toBeNull()
+
+    await t.mutation(api.characters.shortRest, { code, characterId: legacy, dmCode })
+    // ⚠️ And still none, unlike `longRest` which creates one: there is nothing for a short
+    // rest to restore on a character that has spent nothing, so inserting a row would be a
+    // write with no fact in it.
+    expect(await rawVitals(t, legacy)).toBeNull()
   })
 })
 

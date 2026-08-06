@@ -322,6 +322,16 @@ function customEntry(fields) {
  * round trip rather than being filled in. Neither half means anything without the
  * other: the first passes on a deployment that materialised a category for everything,
  * the second on one that discarded every new field it was sent.
+ *
+ * ⚠️ **THE SEVENTH OUTING OF THE FIELD-BY-FIELD REBUILD TRAP, AND ITS LARGEST SURFACE.**
+ * The 2024 conversion adds five optional fields to this sheet, two to an entry, two to a
+ * creature and two to a preset — and CLAUDE.md records that **only `npm run test:smoke`
+ * has ever caught this trap**, four times over. So the pairing above is repeated for every
+ * one of them: this sheet carries all five, `BARE_PC_SHEET` below carries none, and
+ * `feat-runeblade` carries a mastery and a use count while `feat-aether-bolt` carries
+ * neither. The presence half fails as `present on one side only`; the absence half is
+ * asserted on the KEY, because a deployment that materialised an empty array for every
+ * missing list would satisfy the first perfectly.
  */
 const PC_NAME = 'Sköll Emberkin 🎲'
 const PC_SHEET = {
@@ -333,6 +343,18 @@ const PC_SHEET = {
   armourClass: 18,
   maxHp: 84,
   hitDice: { count: 7, faces: 10 },
+  // THE 2024 FIVE. `spellcastingAbility` is the only one of them the sheet *derives*
+  // anything from — the spell save DC and the spell attack bonus are pure functions of it
+  // and neither is stored, which is the half of the acceptance criterion a round trip can
+  // check: if either turned up on the way back, something is storing it.
+  spellcastingAbility: 'cha',
+  // Three lists rather than one, so a rebuild that named two of the three fails on the
+  // third. Non-ASCII in one of them on purpose — a damage type is free text and the SRD's
+  // own phrases run long.
+  resistances: ['fire', 'cold'],
+  immunities: ['poison'],
+  vulnerabilities: ['bludgeoning from nonmagical attacks — 🜁'],
+  senses: 'Darkvision 60 ft., Blindsight 10 ft.',
   feats: [
     entryFrom(CATALOGUE.alert, 'feat-alert'),
     entryFrom(CATALOGUE.savageAttacker, 'feat-savage-attacker'),
@@ -358,8 +380,24 @@ const PC_SHEET = {
       catalogueKey: null,
       category: 'weapon',
       toHit: '1d20+STR+PROF',
+      // The mastery and the use count, on the one entry that already carries every other
+      // new field. `graze` rather than `push`, `slow` or `topple` — the three the
+      // movement-detriment exclusion names are asserted by `lib/mastery.test.ts`, and what
+      // this round trip is about is a *literal inside a union inside an optional field*
+      // surviving a real deployment.
+      mastery: 'graze',
+      // The 2024 normal case, spelled out: three uses, back on a long rest, one of them
+      // handed back by a short one. It is a nested object inside an optional field inside
+      // an array of objects — one level deeper than anything on this sheet before it.
+      uses: { max: 3, recharge: 'long', regainOnShortRest: 1 },
     },
     // The hand-written action: one roll, no to-hit, and it simply goes off.
+    //
+    // ⚠️ **A use count and NO mastery**, which is the pair that stops the two fields being
+    // asserted as one. Only a weapon carries a mastery — `entriesProblem` refuses one
+    // anywhere else — but any category may be limited, so an entry with `uses` and without
+    // `mastery` is the shape that proves the two travel independently. And its `uses` has
+    // no `regainOnShortRest`, so absence is checked one level down as well.
     {
       id: 'feat-verse-of-mending',
       name: 'Verse of Mending',
@@ -368,6 +406,7 @@ const PC_SHEET = {
       level: null,
       catalogueKey: null,
       category: 'action',
+      uses: { max: 2, recharge: 'short' },
     },
     // The hand-written passive: declared, not rolled.
     {
@@ -386,6 +425,50 @@ const PC_SHEET = {
     entryFrom(CATALOGUE.fireball, 'spell-fireball'),
   ],
 }
+
+/**
+ * THE NEGATIVE HALF OF THE PAIR: the same hero shaped exactly as every `pc` sheet in every
+ * existing game is — five fields poorer, and none of them spelled at all.
+ *
+ * ⚠️ **Built by naming what it keeps rather than by deleting from `PC_SHEET`**, and that is
+ * the whole reason it is a separate literal. A `const { senses, ...rest } = PC_SHEET` would
+ * drop the five *this list knows about today*, so a sixth field added to `PC_SHEET` next
+ * milestone would silently ride into the negative fixture and the absence check would start
+ * asserting nothing. Written out, a sixth field has to be *chosen* into this one.
+ *
+ * Its feats are the two that carry neither `mastery` nor `uses`, for the same reason: a
+ * legacy sheet is legacy all the way down.
+ */
+const BARE_PC_NAME = 'Marrow Quillfeather'
+const BARE_PC_SHEET = {
+  kind: 'pc',
+  level: 3,
+  className: 'Hedge Warden',
+  abilities: { str: 11, dex: 16, con: 13, int: 14, wis: 15, cha: 9 },
+  saveProficiencies: { str: false, dex: true, con: false, int: true, wis: false, cha: false },
+  armourClass: 15,
+  maxHp: 22,
+  hitDice: { count: 3, faces: 8 },
+  feats: PC_SHEET.feats.filter((each) =>
+    ['feat-aether-bolt', 'feat-stone-stance'].includes(each.id),
+  ),
+  spells: [],
+}
+
+/** Every field the 2024 conversion added to a `pc` sheet, for the absence half of the pair. */
+const NEW_PC_SHEET_FIELDS = [
+  'spellcastingAbility',
+  'resistances',
+  'immunities',
+  'vulnerabilities',
+  'senses',
+]
+
+/** The same for an entry, and for a creature. */
+const NEW_ENTRY_FIELDS = ['mastery', 'uses']
+const NEW_NPC_SHEET_FIELDS = ['abilities', 'saveProficiencies']
+/** And for a preset, whose two are the species rename and the sixth pick. */
+const NEW_PRESET_FIELDS = ['species', 'lineageKey']
 
 /**
  * The NPC the acceptance test is about. 271 and 137 are chosen to be searchable:
@@ -408,6 +491,16 @@ const NPC_SHEET = {
     entryFrom(CATALOGUE.multiattack, 'npc-multiattack'),
   ],
   notes: 'Waits under the third arch. Surfaces on a failed Perception check. 🐉',
+  // ⚠️ **AN ADDITION AND NOT A REPLACEMENT.** A 2024 stat block prints six scores *and* an
+  // initiative modifier, an attack bonus and a passive perception, and this creature carries
+  // all of them at once on purpose — the round trip below is what would notice if
+  // `normaliseSheet` had been "simplified" to derive the four from the six. `initiativeBonus`
+  // is negative and would be +1 if it were derived from this Dexterity, which is what makes
+  // that a check rather than a coincidence.
+  abilities: { str: 19, dex: 12, con: 17, int: 6, wis: 11, cha: 8 },
+  // Mixed on purpose, so a run of six booleans cannot come back collapsed into one — the
+  // same reason `saveProficiencies` on the hero above is mixed.
+  saveProficiencies: { str: true, dex: false, con: true, int: false, wis: true, cha: false },
 }
 
 /**
@@ -1926,6 +2019,90 @@ async function main() {
       `${storedFeats.length} feats, categories ${JSON.stringify(storedFeats.map((entry) => entry.category ?? null))}`,
     )
 
+    // ⚠️ **THE 2024 PAIRS, AND THE REASON THEY ARE ON THIS COMMIT RATHER THAN AFTER THE
+    // CONTENT.** `firstDifference` above already names a field the rebuild dropped — that is
+    // the presence half, and it fires for all five sheet fields and both entry fields for
+    // free. What it cannot do is tell a deployment that stores an omitted optional field as
+    // omitted from one that materialises it, and a materialised `resistances: []` or
+    // `uses: { max: 0 }` would look exactly like a correct round trip everywhere else in this
+    // script. So the absence half is asserted on the KEY, against fixtures built to carry
+    // none of them.
+    const legacyEntryClean =
+      legacyFeat && NEW_ENTRY_FIELDS.every((field) => !(field in legacyFeat))
+    check(
+      'an entry sent with neither a mastery nor a use count came back with neither key',
+      legacyEntryClean,
+      legacyFeat ? `keys: ${Object.keys(legacyFeat).sort().join(', ')}` : 'no legacy feat came back',
+    )
+    const mendingFeat = storedFeats.find((entry) => entry.id === 'feat-verse-of-mending')
+    check(
+      'its two siblings came back with exactly what each was sent, one field apart',
+      weaponFeat &&
+        weaponFeat.mastery === 'graze' &&
+        weaponFeat.uses &&
+        weaponFeat.uses.max === 3 &&
+        weaponFeat.uses.recharge === 'long' &&
+        weaponFeat.uses.regainOnShortRest === 1 &&
+        // ⚠️ The pair that stops the two fields being asserted as one: only a weapon carries
+        // a mastery, but any category may be limited — so this one has `uses` and no
+        // `mastery`, and its `uses` has no `regainOnShortRest`, which checks absence one
+        // level deeper than any other assertion in this script.
+        mendingFeat &&
+        !('mastery' in mendingFeat) &&
+        mendingFeat.uses &&
+        mendingFeat.uses.max === 2 &&
+        mendingFeat.uses.recharge === 'short' &&
+        !('regainOnShortRest' in mendingFeat.uses),
+      weaponFeat
+        ? `positive control — got mastery ${JSON.stringify(weaponFeat.mastery)} and uses ${JSON.stringify(weaponFeat.uses)}`
+        : 'no weapon feat came back',
+    )
+
+    // The sheet-level five, and the negative built by naming what it keeps rather than by
+    // deleting from `PC_SHEET` — see `BARE_PC_SHEET`.
+    const barePc = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: BARE_PC_NAME,
+      sheet: BARE_PC_SHEET,
+    })
+    createdCharacters.push(barePc.characterId)
+    const bareBack = await client.query('characters:sheet', {
+      code,
+      dmCode,
+      characterId: barePc.characterId,
+    })
+    const bareDrift = bareBack
+      ? firstDifference(BARE_PC_SHEET, bareBack.sheet, 'bareSheet')
+      : 'no sheet came back'
+    check(
+      'a hero sent without any of the 2024 five came back without any of them',
+      bareBack &&
+        bareDrift === null &&
+        NEW_PC_SHEET_FIELDS.every((field) => !(field in bareBack.sheet)),
+      bareDrift ?? `keys: ${Object.keys(bareBack.sheet).sort().join(', ')}`,
+    )
+    check(
+      'and its sibling carried all five across, lists and prose alike',
+      storedPc &&
+        storedPc.sheet.spellcastingAbility === 'cha' &&
+        Array.isArray(storedPc.sheet.resistances) &&
+        storedPc.sheet.resistances.length === 2 &&
+        storedPc.sheet.immunities.length === 1 &&
+        // Non-ASCII in a damage label, because a list of free text is exactly where the
+        // UTF-16 failure this whole script exists for would next appear.
+        storedPc.sheet.vulnerabilities[0].includes('🜁') &&
+        storedPc.sheet.senses === PC_SHEET.senses &&
+        // ⚠️ **And NOTHING derived came back stored.** The acceptance criterion is that a
+        // caster's sheet *prints* a spell save DC and a spell attack bonus and that neither
+        // is written down; this is the half a round trip can check.
+        !('spellSaveDc' in storedPc.sheet) &&
+        !('spellAttackBonus' in storedPc.sheet),
+      storedPc
+        ? `positive control — without it the check above passes on a deployment that discarded everything; senses ${JSON.stringify(storedPc.sheet.senses)}`
+        : 'no sheet came back',
+    )
+
     // 7. The forty-entry cap, which is the largest thing this application asks a
     // document to hold. Convex has opinions about document size and nesting depth
     // that convex-test does not, and eighty objects inside a union inside an
@@ -2104,6 +2281,34 @@ async function main() {
         !('max' in npcVitals),
       npcVitals ? `keys: ${Object.keys(npcVitals).sort().join(', ')}` : 'no row for the NPC',
     )
+    // ⚠️ **THE BAND VARIANT GAINED NOTHING, AND FIVE NEW FIELDS AT ONCE IS THE PRESSURE THAT
+    // ASSERTION EXISTS AGAINST.** Two of the five are not numbers at all —
+    // `heroicInspiration` is a boolean and `spentUses` an array — so `publicVitalsValidator`'s
+    // *no bare float64 on the band member* guarantee, which `vitals.test.ts` pins, does not
+    // reach either of them. This does, against a real deployment's serialisation.
+    const bandForbidden = [
+      'temporaryHp',
+      'deathSaveSuccesses',
+      'deathSaveFailures',
+      'heroicInspiration',
+      'spentUses',
+    ]
+    const dmExactRow = (await client.query('characters:vitals', { code, dmCode })).find(
+      (row) => row.characterId === npc.characterId,
+    )
+    check(
+      'none of the five 2024 state fields reached a player’s band row, and all five reached the DM’s',
+      npcVitals &&
+        bandForbidden.every((field) => !(field in npcVitals)) &&
+        // The positive control, and it is the load-bearing half: without it this passes on a
+        // deployment that stopped sending any of them to anybody, which would also be wrong.
+        dmExactRow &&
+        dmExactRow.kind === 'exact' &&
+        bandForbidden.every((field) => field in dmExactRow),
+      npcVitals
+        ? `band keys: ${Object.keys(npcVitals).sort().join(', ')} — positive control included`
+        : 'no row for the NPC',
+    )
 
     const playerList = await client.query('characters:list', { code })
     const playerNpcSheet = await client.query('characters:sheet', {
@@ -2145,11 +2350,23 @@ async function main() {
     // 11. And the count, which is the leak that is easy to miss: a band for every
     // prepared monster tells a player how many are waiting even when it tells them
     // nothing else.
+    // ⚠️ **Written out rather than spread from `NPC_SHEET`, and it is the negative half of
+    // the creature pair.** This is a creature shaped exactly as every `kind: 'npc'` sheet in
+    // every existing game is — no ability scores and no save column — so the absence check
+    // below has something real to be about. A spread of `NPC_SHEET` would inherit both fields
+    // and the pair would be two positives.
     const hidden = await client.mutation('characters:create', {
       code,
       dmCode,
       name: 'Wyrmling in the Rafters',
-      sheet: { ...NPC_SHEET, maxHp: 33, actions: [] },
+      sheet: {
+        kind: 'npc',
+        armourClass: 13,
+        maxHp: 33,
+        initiativeBonus: 1,
+        actions: [],
+        notes: '',
+      },
     })
     createdCharacters.push(hidden.characterId)
     const vitalsAfterHidden = await client.query('characters:vitals', { code })
@@ -2159,6 +2376,38 @@ async function main() {
       !vitalsAfterHidden.some((row) => row.characterId === hidden.characterId) &&
         dmVitalsAfterHidden.some((row) => row.characterId === hidden.characterId),
       `player ${vitalsAfterHidden.length} rows, DM ${dmVitalsAfterHidden.length} — positive control included`,
+    )
+
+    // ⚠️ **THE CREATURE HALF OF THE 2024 FIXTURE PAIR.** `firstDifference` names a *dropped*
+    // field; nothing but this names a *materialised* one, and a deployment that helpfully
+    // filled in six tens would satisfy every other assertion in this script. Asserted on the
+    // KEY, because `abilities: {}` is not how absence is said.
+    const hiddenBack = await client.query('characters:sheet', {
+      code,
+      dmCode,
+      characterId: hidden.characterId,
+    })
+    const statted = await client.query('characters:sheet', {
+      code,
+      dmCode,
+      characterId: npc.characterId,
+    })
+    check(
+      'a creature sent without ability scores came back without them, and its statted sibling kept all four pre-calculated numbers',
+      hiddenBack &&
+        NEW_NPC_SHEET_FIELDS.every((field) => !(field in hiddenBack.sheet)) &&
+        // The positive control, and it is the load-bearing half: without it this passes on a
+        // deployment that discarded everything it was sent. It also asserts the thing the
+        // roadmap's "simplification" would have deleted — the scores arrived *beside* the
+        // four printed numbers, not instead of them, and `initiativeBonus` is still the −2
+        // the DM wrote rather than the +1 this Dexterity would derive.
+        statted &&
+        statted.sheet.abilities.str === 19 &&
+        statted.sheet.saveProficiencies.wis === true &&
+        statted.sheet.initiativeBonus === NPC_SHEET.initiativeBonus,
+      hiddenBack
+        ? `bare keys: ${Object.keys(hiddenBack.sheet).sort().join(', ')}`
+        : 'no sheet came back',
     )
 
     // 12. Values the local suite cannot judge, because convex-test does not apply
@@ -2380,6 +2629,66 @@ async function main() {
         elfAtOne.preset.level === 1 &&
         elfAtOne.preset.locked === false,
       elfAtOne ? `preset ${JSON.stringify(elfAtOne.preset)}` : 'no sheet came back',
+    )
+
+    // ⚠️ **THE PRESET HALF OF THE 2024 FIXTURE PAIR — the fourth stored kind, and the one
+    // whose two new fields carry a rename across.** `species` is `race` under its 2024 name
+    // and is what the migration will backfill; `lineageKey` is the sixth pick. The Elf above
+    // is the negative: it was created the way every existing character was, so neither key
+    // may come back on it.
+    const woodElf = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: 'Faelar of the Deep Wood',
+      sheet: presetSheet({
+        race: 'elf',
+        species: 'elf',
+        lineageKey: 'wood',
+        classKey: 'rogue',
+        subclassKey: 'thief',
+        level: 3,
+      }),
+    })
+    createdCharacters.push(woodElf.characterId)
+    const woodElfBack = await readSheet(woodElf.characterId)
+    check(
+      'a preset carrying a species and a lineage round-tripped both, and the one without carried neither',
+      woodElfBack &&
+        woodElfBack.preset &&
+        woodElfBack.preset.species === 'elf' &&
+        woodElfBack.preset.lineageKey === 'wood' &&
+        // The negative half. A deployment that materialised `species` from `race` would look
+        // entirely correct on the row above and would make `speciesKeyOf` answer from the new
+        // field for every character in every game before the migration had run.
+        elfAtOne &&
+        elfAtOne.preset &&
+        NEW_PRESET_FIELDS.every((field) => !(field in elfAtOne.preset)),
+      woodElfBack
+        ? `preset ${JSON.stringify(woodElfBack.preset)} against ${JSON.stringify(elfAtOne && elfAtOne.preset)}`
+        : 'no sheet came back',
+    )
+
+    // ⚠️ **`null` is a THIRD state on `lineageKey` and it has to survive as one.** Absent
+    // means *nobody was ever asked*; `null` means *asked, and this species has no lineage to
+    // pick*. A deployment that dropped the key, or the client library turning it into an
+    // absent field, collapses two facts into one — and `firstDifference` reports exactly that
+    // as `present on one side only`, which is why the check is on the key rather than on the
+    // value.
+    const askedElf = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: 'Ilyra, Asked and Answered',
+      sheet: presetSheet({ race: 'elf', species: 'elf', lineageKey: null, classKey: 'rogue' }),
+    })
+    createdCharacters.push(askedElf.characterId)
+    const askedBack = await readSheet(askedElf.characterId)
+    check(
+      'an explicit null lineage came back as a null rather than as an absent key',
+      askedBack &&
+        askedBack.preset &&
+        'lineageKey' in askedBack.preset &&
+        askedBack.preset.lineageKey === null,
+      askedBack ? `preset ${JSON.stringify(askedBack.preset)}` : 'no sheet came back',
     )
 
     // None of this was sent in. `characters:create` was given a name, a race, a
@@ -2664,12 +2973,16 @@ async function main() {
       characterId: human.characterId,
       delta: -1,
     })
-    const perRestBack = await client.mutation('characters:setPerRest', {
+    // ⚠️ **`characters:setPerRest` is now `characters:setUses` and takes a COUNT**, and the
+    // returned array is objects rather than strings — a nested `v.object` inside a `v.array`
+    // inside an optional field, which is the shape convex-test waves through and a real
+    // deployment has opinions about.
+    const usesBack = await client.mutation('characters:setUses', {
       code,
       dmCode,
       characterId: human.characterId,
       key: 'heroic-inspiration',
-      spent: true,
+      spent: 1,
     })
     const hurt = await dmVitalsFor(human.characterId)
     check(
@@ -2680,39 +2993,117 @@ async function main() {
         hurt.current === FIGHTER.base.maxHp - 5 &&
         hurt.hitDiceCount === FIGHTER.base.hitDice.count &&
         hurt.hitDiceRemaining === 0 &&
-        hurt.spentPerRest.length === 1 &&
-        hurt.spentPerRest[0] === 'heroic-inspiration' &&
-        perRestBack.spentPerRest.length === 1,
+        hurt.spentUses.length === 1 &&
+        hurt.spentUses[0].key === 'heroic-inspiration' &&
+        hurt.spentUses[0].spent === 1 &&
+        usesBack.spentUses.length === 1,
       hurt
-        ? `${hurt.current}/${hurt.max}, ${hurt.hitDiceRemaining} of ${hurt.hitDiceCount} hit dice, spent ${JSON.stringify(hurt.spentPerRest)}`
+        ? `${hurt.current}/${hurt.max}, ${hurt.hitDiceRemaining} of ${hurt.hitDiceCount} hit dice, spent ${JSON.stringify(hurt.spentUses)}`
         : 'no vitals row',
     )
 
     await client.mutation('characters:longRest', { code, dmCode, characterId: human.characterId })
     const afterRest = await dmVitalsFor(human.characterId)
     check(
-      'characters:longRest reset hit points, hit dice and the per-rest array in one call',
+      'characters:longRest reset hit points, hit dice, the per-rest array and the 2024 state in one call',
       afterRest &&
         afterRest.kind === 'exact' &&
         afterRest.current === FIGHTER.base.maxHp &&
         afterRest.hitDiceRemaining === FIGHTER.base.hitDice.count &&
-        afterRest.spentPerRest.length === 0,
+        afterRest.spentPerRest.length === 0 &&
+        afterRest.spentUses.length === 0 &&
+        afterRest.temporaryHp === 0 &&
+        afterRest.deathSaveSuccesses === 0 &&
+        afterRest.deathSaveFailures === 0,
       afterRest
-        ? `${afterRest.current}/${afterRest.max}, ${afterRest.hitDiceRemaining} hit dice, spent ${JSON.stringify(afterRest.spentPerRest)}`
+        ? `${afterRest.current}/${afterRest.max}, ${afterRest.hitDiceRemaining} hit dice, spent ${JSON.stringify(afterRest.spentUses)}`
         : 'no vitals row',
     )
-    // Checked against the character's own race rather than taken as given, so the
-    // stored array cannot fill with keys nothing will ever clear. A Human has no
-    // Relentless Endurance to spend.
-    await refuses('characters:setPerRest refused a key this character’s race does not have', () =>
-      client.mutation('characters:setPerRest', {
+
+    // ⚠️ **THE SHORT REST, AS ONE POSITIVE AND TWO NEGATIVES.** It does not heal and does not
+    // return hit dice — *spending* hit dice is what a short rest is for — and a check that
+    // only asserted the restoration would pass on a mutation that reset the whole row. All
+    // three in one place, because any one of them alone is satisfied by the wrong mutation.
+    await client.mutation('characters:adjustHp', {
+      code,
+      dmCode,
+      characterId: human.characterId,
+      delta: -4,
+    })
+    await client.mutation('characters:adjustHitDice', {
+      code,
+      dmCode,
+      characterId: human.characterId,
+      delta: -1,
+    })
+    await client.mutation('characters:setUses', {
+      code,
+      dmCode,
+      characterId: human.characterId,
+      key: 'heroic-inspiration',
+      spent: 1,
+    })
+    await client.mutation('characters:shortRest', { code, dmCode, characterId: human.characterId })
+    const afterShort = await dmVitalsFor(human.characterId)
+    check(
+      'characters:shortRest healed nobody, returned no hit dice, and left a long-rest ability spent',
+      afterShort &&
+        afterShort.kind === 'exact' &&
+        afterShort.current === FIGHTER.base.maxHp - 4 &&
+        afterShort.hitDiceRemaining === FIGHTER.base.hitDice.count - 1 &&
+        // The positive control for the pair above: the rest ran and had something to do. A
+        // Human's Heroic Inspiration comes back on a *long* rest, so it must still be spent —
+        // a short rest that restored it would be the app inventing a rule, which is the same
+        // failure as a Wizard getting slots back from one.
+        afterShort.spentUses.length === 1 &&
+        afterShort.spentUses[0].key === 'heroic-inspiration',
+      afterShort
+        ? `${afterShort.current}/${afterShort.max}, ${afterShort.hitDiceRemaining} hit dice, spent ${JSON.stringify(afterShort.spentUses)}`
+        : 'no vitals row',
+    )
+    await client.mutation('characters:longRest', { code, dmCode, characterId: human.characterId })
+
+    // Checked against the character's own species and its own sheet rather than taken as
+    // given, so the stored array cannot fill with keys nothing will ever clear. A Human has
+    // no Relentless Endurance to spend.
+    await refuses('characters:setUses refused a key this character does not have', () =>
+      client.mutation('characters:setUses', {
         code,
         dmCode,
         characterId: human.characterId,
         key: 'relentless-endurance',
-        spent: true,
+        spent: 1,
       }),
     )
+    // ⚠️ **And handing one back is still allowed**, which is the asymmetry the mutation keeps
+    // deliberately: a DM who changes a character's species leaves whatever the old one had
+    // spent still marked, and a check that applied here too would make it unclearable by
+    // anything short of a long rest.
+    const handedBack = await client.mutation('characters:setUses', {
+      code,
+      dmCode,
+      characterId: human.characterId,
+      key: 'relentless-endurance',
+      spent: 0,
+    })
+    check(
+      'characters:setUses allowed a hand-back of the same key it refused a spend of',
+      handedBack && handedBack.spentUses.length === 0,
+      handedBack ? JSON.stringify(handedBack.spentUses) : 'no answer came back',
+    )
+    // A count that is not one. `NaN` and `Infinity` are perfectly valid Convex float64s, so
+    // this is exactly the class of value convex-test stores without a word.
+    for (const spent of [Number.NaN, Number.POSITIVE_INFINITY, -1, 21]) {
+      await refuses(`characters:setUses refused a spend of ${spent}`, () =>
+        client.mutation('characters:setUses', {
+          code,
+          dmCode,
+          characterId: human.characterId,
+          key: 'heroic-inspiration',
+          spent,
+        }),
+      )
+    }
 
     // 16. Selections the deployment has to refuse. The first two are the argument
     // validator's — a race and a class are unions of literals, so a key that is not
@@ -3064,6 +3455,14 @@ async function main() {
               catalogueKey: null,
               category: 'weapon',
               toHit: '1d20+9',
+              // The fourth stored kind's turn at the 2024 entry pair, reached through its
+              // override diff — the sixth array position `sheetEntryValidator` occupies and
+              // the only one where these two fields cross the wire on a `bestiary` document.
+              // `topple` deliberately: it is one of the three the movement-detriment
+              // exclusion names, and nothing in the codebase reads it. Nobody is knocked
+              // down, and this check is that the *word* survives a CR shift.
+              mastery: 'topple',
+              uses: { max: 2, recharge: 'short' },
             },
           ],
         },
@@ -3158,6 +3557,28 @@ async function main() {
       dmWeapon
         ? `${JSON.stringify(dmWeapon.toHit)} against the creature's ${DM_CREATURE_TO_HIT}`
         : `no DM action among ${wolfAtSix ? wolfAtSix.sheet.actions.map((entry) => entry.id).join(', ') : '—'}`,
+    )
+    // ⚠️ **THE 2024 ENTRY PAIR, ON THE FOURTH STORED KIND AND ACROSS TWO CR SHIFTS.** The
+    // corpus's own attacks are the negative — nothing in `lib/bestiary/` declares a mastery
+    // or a use count today — and the DM's own entry is the positive. A CR shift rebuilds
+    // every attack the corpus contributes and appends the DM's untouched, so this is the one
+    // place in the script where the two new fields have to survive a *resolution* rather than
+    // only a write.
+    check(
+      "the DM's entry kept its mastery and its use count across two shifts, and the corpus's own attacks grew neither",
+      dmWeapon &&
+        dmWeapon.mastery === 'topple' &&
+        dmWeapon.uses &&
+        dmWeapon.uses.max === 2 &&
+        dmWeapon.uses.recharge === 'short' &&
+        !('regainOnShortRest' in dmWeapon.uses) &&
+        // The negative, and it is what makes this a pair: a resolver that materialised a
+        // mastery on every weapon it built would satisfy the positive perfectly.
+        corpusAttacks.length > 0 &&
+        corpusAttacks.every((entry) => NEW_ENTRY_FIELDS.every((field) => !(field in entry))),
+      dmWeapon
+        ? `${JSON.stringify(dmWeapon.mastery)} / ${JSON.stringify(dmWeapon.uses)} against ${corpusAttacks.length} corpus attacks carrying neither`
+        : 'no DM action came back',
     )
     const rescaledAgain = await dmVitalsFor(wolf.characterId)
     check(

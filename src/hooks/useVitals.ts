@@ -117,7 +117,25 @@ export type HpActions = {
    * to notice.
    */
   longRest: (characterId: Id<'characters'>) => Promise<void>
-  /** Mark a once-per-long-rest ability spent, or hand it back if it was a misclick. */
+  /**
+   * A short rest: whatever comes back on one comes back, and **nothing else**.
+   *
+   * ⚠️ **It does not heal and does not return hit dice** — spending hit dice is what a short
+   * rest is for. `REST_LABELS` in `@convex/lib/rest` carries the wording for both rests so
+   * that a button cannot promise something the mutation does not do, which is the mistake
+   * `HitDiceControls` shipped once already in the other direction.
+   */
+  shortRest: (characterId: Id<'characters'>) => Promise<void>
+  /**
+   * Mark a once-per-long-rest ability spent, or hand it back if it was a misclick.
+   *
+   * ⚠️ **Still a boolean here, over a mutation that now takes a count.** `characters.setUses`
+   * replaced `characters.setPerRest` because 2024 has features with two, three or
+   * proficiency-bonus-many uses — but every control on screen today is a *toggle* for a
+   * species' one-per-long-rest ability, so widening this signature would change five call
+   * sites to pass `1` and `0` and say nothing new. It widens when a control that counts
+   * exists to want it.
+   */
   setPerRest: (characterId: Id<'characters'>, key: string, spent: boolean) => Promise<void>
   /** The last refusal, for the caller to toast. Cleared on the next successful call. */
   error: string | null
@@ -199,7 +217,8 @@ export function useHpActions(args: {
   // is a flicker rather than a saving — the reason `adjustHp` earns one is that a
   // health bar moves on every hit of every round.
   const longRestMutation = useMutation(api.characters.longRest)
-  const setPerRestMutation = useMutation(api.characters.setPerRest)
+  const shortRestMutation = useMutation(api.characters.shortRest)
+  const setUsesMutation = useMutation(api.characters.setUses)
 
   const [error, setError] = useState<string | null>(null)
 
@@ -253,13 +272,23 @@ export function useHpActions(args: {
     [longRestMutation, caller, code, run],
   )
 
-  const setPerRest = useCallback(
-    (characterId: Id<'characters'>, key: string, spent: boolean) =>
-      run('Could not change that ability.', () =>
-        setPerRestMutation({ code, characterId, key, spent, ...caller }),
-      ),
-    [setPerRestMutation, caller, code, run],
+  const shortRest = useCallback(
+    (characterId: Id<'characters'>) =>
+      run('Could not take that rest.', () => shortRestMutation({ code, characterId, ...caller })),
+    [shortRestMutation, caller, code, run],
   )
 
-  return { adjust, adjustHitDice, longRest, setPerRest, error }
+  const setPerRest = useCallback(
+    // The boolean is translated to a count here rather than at the five call sites — see the
+    // ⚠️ on `HpActions.setPerRest`. `0` rather than omitting the argument, because handing
+    // everything back is what unticking a once-per-rest box means and the mutation reads a
+    // count of zero as exactly that.
+    (characterId: Id<'characters'>, key: string, spent: boolean) =>
+      run('Could not change that ability.', () =>
+        setUsesMutation({ code, characterId, key, spent: spent ? 1 : 0, ...caller }),
+      ),
+    [setUsesMutation, caller, code, run],
+  )
+
+  return { adjust, adjustHitDice, longRest, shortRest, setPerRest, error }
 }

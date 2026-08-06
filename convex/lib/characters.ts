@@ -63,14 +63,22 @@ import {
   bestiarySheetValidator,
   characterGroupValidator,
   characterKindValidator,
+  clampDeathSaves,
   clampHitDice,
   clampHp,
+  clampTemporaryHp,
   defaultSheetFor,
   healthBand,
   presetSheetValidator,
   reconcileHp,
+  sheetEntriesOf,
   sheetValidator,
+  usesOf,
 } from './sheet'
+// The rest arithmetic, and the one place `restores` is asked in `convex/`. No mastery is
+// imported here and none may be — `masteryGuard.test.ts` allows lib/sheet.ts alone.
+import { restores } from './rest'
+import type { Resource } from './rest'
 
 /**
  * Deliberately indistinguishable from "no such character" and "character in
@@ -602,6 +610,29 @@ export const publicVitalsValidator = v.union(
     // *has* comes from their race, which the client can look up itself from
     // lib/species.ts — only which ones are gone has to travel.
     spentPerRest: v.array(v.string()),
+    // ⚠️ **THE 2024 STATE, AND EVERY LINE OF IT IS ON THIS MEMBER ONLY.** Five fields
+    // arrived on `characterVitals` and none of them appears on `band` below — which is the
+    // pressure the union exists against, arriving in its largest single instalment. Three of
+    // the five are bare numbers, so a copy-paste onto the wrong member is exactly the edit
+    // `vitals.test.ts`' *no member of the band variant is a bare float64* assertion refuses.
+    //
+    // They ride here rather than on a subscription of their own for `hitDiceRemaining`'s
+    // stated reason: this is what changes during play, the board already re-runs this query
+    // on every point of damage, and a sixth socket that idles is not worth opening.
+    //
+    // ⚠️ **This is NOT the third published *stat* `coinStatsOf` warns about.** That warning
+    // is about a *sheet* fact reaching a player who can see a coin — armour class was one,
+    // and a third would need its own ADR. Every field below is a *vitals* fact about a
+    // creature the caller is already being sent exact hit points for, so it publishes
+    // nothing to anybody who was not already receiving `current` and `max`.
+    temporaryHp: v.number(),
+    deathSaveSuccesses: v.number(),
+    deathSaveFailures: v.number(),
+    heroicInspiration: v.boolean(),
+    // The counted successor to `spentPerRest` above, which travels beside it until the
+    // narrowing. `spentUsesOf` folds the legacy array in, so a client reading this one alone
+    // is already correct for both.
+    spentUses: v.array(v.object({ key: v.string(), spent: v.number() })),
     // Published. See the ⚠️ above — on both members on purpose, and `null` is real.
     armourClass: v.union(v.number(), v.null()),
     passivePerception: v.union(v.number(), v.null()),
@@ -1066,6 +1097,10 @@ export async function visibleVitals(
       })
     } else {
       const isPc = sheet.kind === 'pc'
+      // One call for the pair, on `coinStatsOf`'s reason: this is the health-bar
+      // subscription and it re-runs on every point of damage, so two calls that clamp the
+      // same two numbers twice is work done once per character per hit for nothing.
+      const deathSaves = deathSavesOf(vitals)
       out.push({
         kind: 'exact',
         characterId: character._id,
@@ -1078,11 +1113,140 @@ export async function visibleVitals(
         // absent value means none have been spent, for the same reason a missing
         // row means undamaged.
         hitDiceRemaining: isPc ? hitDiceRemainingOf(vitals, sheet) : null,
+        // ⚠️ **Inside the `exact` arm and nowhere else.** Every one of these is read through
+        // its accessor rather than off the row, so an absent field means the same thing here
+        // as it does to the mutation that writes it — and, more to the point, so the losing
+        // side of the branch above assembles none of them. The band payload is built from
+        // values that never enter this scope, which is the property the whole union exists
+        // to keep and the reason five new fields cost it nothing.
+        //
+        // Not narrowed to `isPc`, unlike the two hit-dice fields above. A creature can be
+        // given temporary hit points and can be marked down as failing a death save if the
+        // DM is running a boss that way; only hit *dice* are a thing the reduced sheet has
+        // no room for, which is what `hitDiceRemainingOf` returns 0 for and the reason those
+        // two are `null` rather than 0 here.
+        temporaryHp: temporaryHpOf(vitals),
+        deathSaveSuccesses: deathSaves.successes,
+        deathSaveFailures: deathSaves.failures,
+        heroicInspiration: heroicInspirationOf(vitals),
+        spentUses: spentUsesOf(vitals),
         ...stats,
       })
     }
   }
 
+  return out
+}
+
+/**
+ * The only place the optional `temporaryHp` is read. **Zero when absent**, which is every
+ * row written before the 2024 conversion and most rows at any moment.
+ *
+ * ⚠️ **Zero rather than null, and that is not this file's usual answer.** `passivePerceptionOf`
+ * answers `null` for an absent number on the grounds that *absent* and *zero* are different
+ * facts — a creature whose DM never recorded one does not have a passive perception of nought.
+ * Temporary hit points are the opposite: **absent and zero are the same fact.** There is no
+ * such thing as a character with an unrecorded quantity of them, only one with none, so a
+ * `null` here would be a state the sheet would then have to decide how to print.
+ *
+ * ⚠️ **They are not part of `maxHp` and not healing.** `clampTemporaryHp` in lib/sheet.ts
+ * takes no ceiling off the sheet for exactly that reason — see its docblock, which is where
+ * that argument lives rather than being restated at every reader.
+ */
+export function temporaryHpOf(vitals: Doc<'characterVitals'> | null): number {
+  return clampTemporaryHp(vitals?.temporaryHp ?? 0)
+}
+
+/**
+ * The death-save tally: how many of each column are ticked.
+ *
+ * ⚠️ **A COUNTER, AND NOT AN ADJUDICATION — and this is the paragraph that reverses a stated
+ * never, so it is worth reading rather than skimming.** The milestone this one replaced put
+ * death saving throws out of scope in the words *"never in scope"*, in the same register as
+ * concentration and the action economy, and ADR 0016 reverses that deliberately and on the
+ * record. What makes the reversal admissible is the same test every previous one passed:
+ * **does something now change a number a player rolls against without a person asking it
+ * to?** It does not. Nothing here decides that the character dies at three failures, nothing
+ * stabilises them at three successes, nothing refuses a heal, nothing sets a marker, nothing
+ * is announced, and no die anywhere in the application rolls differently. Three ticked boxes
+ * is three ticked boxes — the same register as a condition pip on a coin, a creature's loot
+ * being a line of text, and a spell's casting time being printed and never counted.
+ *
+ * What it buys is the thing a table at 0 hit points genuinely loses track of, which is
+ * precisely the argument `spentPerRest` was admitted on.
+ *
+ * ⚠️ **The moment anything reads the return value to decide something, this stops being
+ * true** and needs an amendment and an ADR of its own, exactly as CR scaling would. A guard
+ * test is not written for it here because there is no vocabulary to grep for — the honest
+ * check is that no caller of this function branches on what it returns.
+ *
+ * Both columns come back from one accessor because they are one tally: two accessors would
+ * be two places to decide independently what an absent row means, and a sheet that showed
+ * three failures and no successes because one of them defaulted differently is a sheet
+ * somebody acts on.
+ */
+export function deathSavesOf(vitals: Doc<'characterVitals'> | null): {
+  successes: number
+  failures: number
+} {
+  return {
+    successes: clampDeathSaves(vitals?.deathSaveSuccesses ?? 0),
+    failures: clampDeathSaves(vitals?.deathSaveFailures ?? 0),
+  }
+}
+
+/**
+ * The only place the optional `heroicInspiration` flag is read. **False when absent**, which
+ * is every row written before the 2024 conversion.
+ *
+ * A boolean and nothing else: it is not spent by anything, not required by anything, and no
+ * reroll in this application consults it. The 2024 Human regains it on a long rest, which is
+ * the one place it touches another rule — and even that is species *content*, so it does not
+ * arrive here.
+ *
+ * ⚠️ **It is deliberately not folded into `spentUses`**, which is the obvious economy and the
+ * wrong one. A spent use is a count against a maximum somebody wrote down; this is a flag
+ * with no maximum and no owning entry, so expressing it as `{ key: 'heroic-inspiration',
+ * spent: 1 }` would make its absence indistinguishable from an unrecognised key and would
+ * hand the sheet renderer a row it has nothing to draw a stepper against.
+ */
+export function heroicInspirationOf(vitals: Doc<'characterVitals'> | null): boolean {
+  return vitals?.heroicInspiration ?? false
+}
+
+/**
+ * How many uses of each limited-use thing have been spent, **with the legacy array folded
+ * in.**
+ *
+ * ⚠️ **`spentPerRest` is kept rather than migrated in place, and this function is what makes
+ * that survivable.** That field is a list of *keys*, where a key present means the one thing
+ * the character had has been used; `spentUses` counts, because 2024 is full of features with
+ * two, three or proficiency-bonus-many uses. The fold is therefore a concatenation under one
+ * rule — **every legacy key is exactly one spent use** — which is what the old field always
+ * meant, said in the new field's vocabulary.
+ *
+ * The counted row wins on a collision. That is the direction that makes the eventual
+ * backfill idempotent and interruptible, for `speciesKeyOf`'s reason: a migration that has
+ * written the new field for half the rows leaves both halves answering correctly, and a
+ * re-run changes nothing. The other order would make the migration's own writes invisible
+ * until the narrowing commit deleted the legacy field.
+ *
+ * Legacy keys come first so that the order a client renders is stable across the migration —
+ * a character whose Relentless Endurance jumped to the bottom of the list on the day the
+ * backfill ran would look like something had been reset.
+ */
+export function spentUsesOf(
+  vitals: Doc<'characterVitals'> | null,
+): { key: string; spent: number }[] {
+  const counted = vitals?.spentUses ?? []
+  const byKey = new Map(counted.map((use) => [use.key, Math.max(0, Math.round(use.spent))]))
+
+  const out: { key: string; spent: number }[] = []
+  for (const key of vitals?.spentPerRest ?? []) {
+    if (byKey.has(key)) continue
+    out.push({ key, spent: 1 })
+  }
+  for (const use of counted) out.push({ key: use.key, spent: byKey.get(use.key) ?? 0 })
   return out
 }
 
@@ -1093,6 +1257,21 @@ export function hitDiceRemainingOf(
 ): number {
   if (sheet.kind !== 'pc') return 0
   return clampHitDice(vitals?.hitDiceRemaining ?? sheet.hitDice.count, sheet.hitDice.count)
+}
+
+/**
+ * What one writer may change about a vitals row: everything on it that is state, and
+ * neither of the two pointers.
+ */
+type VitalsPatch = {
+  currentHp?: number
+  hitDiceRemaining?: number
+  spentPerRest?: string[]
+  temporaryHp?: number
+  deathSaveSuccesses?: number
+  deathSaveFailures?: number
+  heroicInspiration?: boolean
+  spentUses?: { key: string; spent: number }[]
 }
 
 /**
@@ -1112,7 +1291,11 @@ export function hitDiceRemainingOf(
 async function upsertVitals(
   ctx: MutationCtx,
   character: Doc<'characters'>,
-  patch: { currentHp?: number; hitDiceRemaining?: number; spentPerRest?: string[] },
+  // Widened field by field rather than made `Partial<Doc<'characterVitals'>>`, which is the
+  // shorter thing to write and would let a caller patch `gameId` or `characterId` — the two
+  // fields on this row that must never move, since `visibleVitals` joins on the second and
+  // reads the whole table by the first.
+  patch: VitalsPatch,
 ): Promise<void> {
   const existing = await vitalsFor(ctx, character._id)
   if (existing) {
@@ -1190,35 +1373,123 @@ export async function changeHitDiceRemaining(
   return next
 }
 
+// ⚠️ **`setPerRestSpent` used to be here and is gone, deliberately — `spentPerRest` is now
+// READ-ONLY until the narrowing commit.** It marked a key spent by adding it to the legacy
+// array, and `setUsesSpent` below replaces it: 2024 has features with two, three or
+// proficiency-bonus-many uses, and a list of keys cannot say *two*.
+//
+// Deleted rather than kept beside it, and that is the important half. Two writers against one
+// fact is how the two fields would come to disagree — a spend through the old one and a
+// hand-back through the new one leaves a key present in `spentPerRest` and absent from
+// `spentUses`, which `spentUsesOf` then folds back into *one spent use* for ever. With one
+// writer, the legacy array only ever shrinks: `longRest` clears it, nothing adds to it, and
+// every existing row drains as characters sleep. That is what makes the narrowing a deletion
+// rather than a migration.
+
 /**
- * Mark a once-per-long-rest ability spent, or hand it back.
+ * Set how many uses of one thing have been spent, or hand some back.
  *
- * Keys are stored rather than counted, so a race with two of them tracks both
- * independently and a race that gains one later needs no migration — an absent key
- * is simply unspent. The set is bounded by what a race defines, which is at most a
- * couple, so there is no growth to worry about.
+ * `setPerRestSpent`'s successor, and it keeps that function's asymmetry deliberately — see
+ * `characters.setUses`, where the check lives: **a spend is validated against what the
+ * character actually has, and a hand-back never is.** That is what stops a stale key becoming
+ * permanent when a DM changes somebody's species or deletes an entry.
  *
- * The app never enforces the effect of any of these. It remembers whether one has
- * been used, which is the part a table actually forgets.
+ * ⚠️ **It writes the counted field and leaves `spentPerRest` alone.** The legacy array is
+ * folded in on *read* by `spentUsesOf`, and a write that also rewrote it would have to decide
+ * what a legacy key means when its count goes to two — which is a question the old field
+ * cannot answer. So the counted field is where every write from here lands, the legacy one
+ * drains as characters take long rests, and the narrowing commit deletes it.
+ *
+ * A count of zero is stored as **absence from the array** rather than as `{ spent: 0 }`, on
+ * this codebase's usual rule: two spellings of none is what every field-by-field rebuild then
+ * has to agree about, and `firstDifference` in scripts/board-smoke.mjs reports the difference
+ * as an extra element rather than as equality.
  */
-export async function setPerRestSpent(
+export async function setUsesSpent(
   ctx: MutationCtx,
   character: Doc<'characters'>,
   key: string,
-  spent: boolean,
-): Promise<string[]> {
+  spent: number,
+): Promise<{ key: string; spent: number }[]> {
   const vitals = await vitalsFor(ctx, character._id)
-  const current = new Set(vitals?.spentPerRest ?? [])
-  if (spent) current.add(key)
-  else current.delete(key)
+  const counted = (vitals?.spentUses ?? []).filter((use) => use.key !== key)
+  const whole = Number.isFinite(spent) ? Math.max(0, Math.round(spent)) : 0
+  const next = whole > 0 ? [...counted, { key, spent: whole }] : counted
 
-  const next = [...current]
   if (vitals) {
-    await ctx.db.patch('characterVitals', vitals._id, { spentPerRest: next })
+    await ctx.db.patch('characterVitals', vitals._id, { spentUses: next })
   } else {
-    await upsertVitals(ctx, character, { spentPerRest: next })
+    await upsertVitals(ctx, character, { spentUses: next })
   }
-  return next
+  // The folded view, so the caller's answer and the subscription's are the same shape and the
+  // same list — a client that read one from the mutation and the other from the query would
+  // otherwise see the legacy keys appear and disappear.
+  return spentUsesOf({ ...(vitals ?? ({} as Doc<'characterVitals'>)), spentUses: next })
+}
+
+/**
+ * A SHORT REST: whatever comes back on one comes back, and **nothing else happens.**
+ *
+ * ⚠️ **It does NOT heal and does NOT return hit dice, and both absences are the feature.**
+ * *Spending* hit dice is what a short rest is *for* — returning them would make the button
+ * undo the only thing the rest exists to let somebody do — and healing is what spending them
+ * achieves, one die at a time, by a person choosing how many to burn. A short rest that
+ * quietly restored hit points would take that choice away and would be the application
+ * adjudicating a rule rather than counting one.
+ *
+ * `HitDiceControls`' history is the precedent and it is worth carrying: it shipped a button
+ * labelled *"Long rest"* that only returned hit dice, and it read as broken the first time
+ * somebody pressed it at 1 hit point, because the label promised the thing the button did not
+ * do. This is the same trap pointing the other way, which is why both rests read their label
+ * **and their explanation** out of `REST_LABELS` in lib/rest.ts rather than out of whichever
+ * component drew them.
+ *
+ * What it does do is walk the counted uses and ask `restores` about each one. Three outcomes,
+ * and the third is the interesting one:
+ *
+ * - **Fully back** — the entry recharges on a short rest, so the row goes.
+ * - **Partly back** — the entry recharges on a long rest but hands one or more back on a
+ *   short one, which is the *normal* case in 2024 and the reason `regainOnShortRest` exists
+ *   at all. See `resourceValidator`.
+ * - **Left alone** — including, deliberately, every key whose entry this sheet no longer has.
+ *   That is `restores`' fail-conservative direction applied to data rather than to a union: a
+ *   key with no declaration might have been anything, and leaving it spent costs one click on
+ *   a counter anybody can edit, where clearing it hands out a resource nobody asked for.
+ *
+ * `spentPerRest` is untouched, because everything in it is a once-per-**long**-rest species
+ * ability by construction — a short rest has nothing to say about it, and saying nothing is
+ * the correct answer rather than an omission.
+ */
+export async function shortRest(ctx: MutationCtx, character: Doc<'characters'>): Promise<void> {
+  const vitals = await vitalsFor(ctx, character._id)
+  const counted = vitals?.spentUses ?? []
+  // Nothing spent is nothing to do. An early return rather than a patch of the same value,
+  // because a write here would invalidate the health-bar subscription for every client at the
+  // table every time somebody pressed a button that changed nothing.
+  if (counted.length === 0) return
+
+  const sheet = resolveSheet(character)
+  const declared = new Map<string, Resource>()
+  for (const entry of sheetEntriesOf(sheet)) {
+    const uses = usesOf(entry)
+    if (uses) declared.set(entry.id, uses)
+  }
+
+  const next: { key: string; spent: number }[] = []
+  for (const use of counted) {
+    const uses = declared.get(use.key)
+    if (uses === undefined) {
+      next.push(use)
+      continue
+    }
+    if (restores(uses.recharge, 'short')) continue
+    const remaining = Math.max(0, Math.round(use.spent) - (uses.regainOnShortRest ?? 0))
+    if (remaining > 0) next.push({ key: use.key, spent: remaining })
+  }
+
+  // A row always exists by here — `counted` came out of one — so this is a patch rather than
+  // an upsert, and the early return above is what makes that true rather than a guess.
+  if (vitals) await ctx.db.patch('characterVitals', vitals._id, { spentUses: next })
 }
 
 /**
@@ -1231,6 +1502,16 @@ export async function setPerRestSpent(
  * 5e, which returns only half a character's hit dice: the library spec asks for fast
  * levelling, minimal resource tracking and no edge cases, and "you get everything
  * back" is a rule a child can hold.
+ *
+ * ⚠️ **Three of the 2024 fields are cleared here and one deliberately is not.** Temporary hit
+ * points end, the death-save tally is wiped, and every counted use comes back, because all
+ * three are things a night's sleep undoes and a field the rest never touches is a field that
+ * accumulates until somebody notices. **`heroicInspiration` is left exactly as it was**, and
+ * that is the interesting one: the 2024 Human *regains* it on a long rest, which is a
+ * **species trait** rather than a property of resting — granting it to everybody here would
+ * be the application inventing a rule for the eight species that do not have it, in a
+ * function that has no way to know which one it is looking at. It belongs to species content,
+ * which is another branch's, and until then it is a flag a person ticks.
  */
 export async function longRest(
   ctx: MutationCtx,
@@ -1239,10 +1520,18 @@ export async function longRest(
   const sheet = resolveSheet(character)
   const vitals = await vitalsFor(ctx, character._id)
 
-  const patch = {
+  // `currentHp` required rather than merely permitted, because the else-branch below inserts
+  // this object as a whole row and the schema requires it there. Annotated rather than
+  // inferred so that a field added to `VitalsPatch` and forgotten here is a type error at the
+  // insert rather than a rest that quietly stops clearing something.
+  const patch: VitalsPatch & { currentHp: number } = {
     currentHp: sheet.maxHp,
     ...(sheet.kind === 'pc' ? { hitDiceRemaining: sheet.hitDice.count } : {}),
     spentPerRest: [],
+    temporaryHp: 0,
+    deathSaveSuccesses: 0,
+    deathSaveFailures: 0,
+    spentUses: [],
   }
 
   if (vitals) {

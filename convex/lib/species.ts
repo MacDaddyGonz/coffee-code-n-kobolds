@@ -37,7 +37,7 @@
 
 import { v } from 'convex/values'
 
-import type { ContentEntry } from './sheet'
+import type { ContentEntry, PresetSheet } from './sheet'
 
 export const SPECIES_KEYS = [
   'dragonborn',
@@ -769,7 +769,40 @@ export function speciesLabel(key: string): string {
  * somebody chooses again.
  */
 export const RETIRED_SPECIES: Record<string, string> = {
+  // ⚠️ **Written on one branch while the species still existed on another, and the two have
+  // since met.** This was the widen half of widen → migrate → narrow applied to a *label*: the
+  // name a retired Half-Orc would be shown by, spelled once and already wired into the one
+  // function that prints a stored key, so that retiring the content was one edit rather than
+  // one edit plus a bug report from whoever opened the first orphaned character.
+  //
+  // The content is gone now, so this is the answer rather than a spare: speciesLabel asks
+  // species() first, gets null, and lands here.
   'half-orc': 'Half-Orc',
+}
+
+/**
+ * WHICH SPECIES A STORED PRESET IS, whichever of the two fields it happens to carry.
+ *
+ * ⚠️ **The only place `species` and `race` are ever both read**, which is the whole of what
+ * makes a two-field transition survivable. `presetSheetValidator` carries `race` (required,
+ * every row has one) and `species` (optional, nothing writes one yet), because renaming a
+ * stored field in Convex is widen → migrate → narrow and this is the widen: the new name
+ * exists, one accessor answers the question, and every caller is already reading through it
+ * by the time the migration starts writing.
+ *
+ * **`species` wins when both are present.** That is the direction that makes the migration
+ * idempotent and interruptible — a run that stops half way leaves half the rows answering
+ * from the new field and half from the old, and both are right. The other order would make
+ * the migration's own writes invisible until the narrowing commit deleted `race`, which is
+ * exactly the window a migration wants to be able to verify.
+ *
+ * **Returns `string` and not `SpeciesKey`**, like `species()` and `findClass` take one: a
+ * caller holding a *stored* key by definition holds something the narrow type says cannot
+ * exist. Every consumer already goes through `species()` or `speciesLabel`, both of which
+ * take a `string` and neither of which throws on a key that has been retired.
+ */
+export function speciesKeyOf(preset: PresetSheet): string {
+  return preset.species ?? preset.race
 }
 
 // ─── TRANSITION ONLY ────────────────────────────────────────────────────────────────
