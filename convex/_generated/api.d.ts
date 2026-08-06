@@ -35,6 +35,7 @@ import type * as lib_creatures from "../lib/creatures.js";
 import type * as lib_dice from "../lib/dice.js";
 import type * as lib_feed from "../lib/feed.js";
 import type * as lib_fog from "../lib/fog.js";
+import type * as lib_fogBase from "../lib/fogBase.js";
 import type * as lib_games from "../lib/games.js";
 import type * as lib_grid from "../lib/grid.js";
 import type * as lib_layers from "../lib/layers.js";
@@ -100,6 +101,7 @@ declare const fullApi: ApiFromModules<{
   "lib/dice": typeof lib_dice;
   "lib/feed": typeof lib_feed;
   "lib/fog": typeof lib_fog;
+  "lib/fogBase": typeof lib_fogBase;
   "lib/games": typeof lib_games;
   "lib/grid": typeof lib_grid;
   "lib/layers": typeof lib_layers;

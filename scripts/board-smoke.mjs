@@ -7582,10 +7582,25 @@ async function main() {
       code,
       dmCode,
       sceneId: copy.sceneId,
-      x: 101.5,
-      y: 202.25,
-      width: 303.75,
-      height: 404.5,
+      shape: { kind: 'rect', x: 101.5, y: 202.25, width: 303.75, height: 404.5 },
+    })
+    // ⚠️ **A polygon as well, because the box and the outline are two representations of one
+    // shape and `replaceImage` has to move both.** Scaling the four numbers and leaving the
+    // vertices gives a correctly-sized bounding box around the old map's outline — a shape that
+    // hides the wrong part of the map, and one that looks like a rendering bug from either
+    // chair. Fractional on purpose: these are real float64s through a real deployment.
+    await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId: copy.sceneId,
+      shape: {
+        kind: 'polygon',
+        points: [
+          { x: 600.5, y: 300.25 },
+          { x: 800.25, y: 340.5 },
+          { x: 700.75, y: 520.5 },
+        ],
+      },
     })
 
     const differentShape = await uploadPng(client, code, dmCode)
@@ -7613,6 +7628,8 @@ async function main() {
     })
     const scaledMap = await listedAs(copy.sceneId)
     const scaledFog = await client.query('fog:list', { code, dmCode, sceneId: copy.sceneId })
+    const scaledRect = scaledFog.find((row) => row.points === undefined) ?? null
+    const scaledPolygon = scaledFog.find((row) => row.points !== undefined) ?? null
     check(
       'scenes:replaceImage put one factor through the grid and the fog, in real float64s',
       scaledMap !== null &&
@@ -7620,14 +7637,44 @@ async function main() {
         scaledMap.gridSize === GRID.gridSize * 2 &&
         scaledMap.gridOffsetX === GRID.gridOffsetX * 2 &&
         scaledMap.gridOffsetY === GRID.gridOffsetY * 2 &&
-        scaledFog.length === 1 &&
-        scaledFog[0].x === 203 &&
-        scaledFog[0].y === 404.5 &&
-        scaledFog[0].width === 607.5 &&
-        scaledFog[0].height === 809,
+        scaledFog.length === 2 &&
+        scaledRect !== null &&
+        scaledRect.x === 203 &&
+        scaledRect.y === 404.5 &&
+        scaledRect.width === 607.5 &&
+        scaledRect.height === 809,
       scaledMap
-        ? `grid ${scaledMap.gridSize} / ${scaledMap.gridOffsetX} / ${scaledMap.gridOffsetY}, fog ${JSON.stringify(scaledFog[0] ?? null)}`
+        ? `grid ${scaledMap.gridSize} / ${scaledMap.gridOffsetX} / ${scaledMap.gridOffsetY}, fog ${JSON.stringify(scaledRect)}`
         : 'the copy is not in the list',
+    )
+
+    // ⚠️ **The polygon's vertices moved by the same factor as its box, in real float64s.**
+    // Compared field for field rather than value-compared, so a deployment that scaled the box
+    // and left the outline is *named* rather than reported as an inequality — which is the one
+    // failure this whole fixture pair exists for, and the one that reads as a rendering bug
+    // rather than as a data bug from either chair.
+    const polygonScaleDrift = scaledPolygon
+      ? firstDifference(
+          {
+            _id: scaledPolygon._id,
+            x: 1201,
+            y: 600.5,
+            width: 399.5,
+            height: 440.5,
+            points: [
+              { x: 1201, y: 600.5 },
+              { x: 1600.5, y: 681 },
+              { x: 1401.5, y: 1041 },
+            ],
+          },
+          scaledPolygon,
+          'scaledPolygon',
+        )
+      : 'no polygon came back'
+    check(
+      'a polygon’s vertices scaled with its box, and both are the same one factor',
+      polygonScaleDrift === null,
+      polygonScaleDrift ?? JSON.stringify(scaledPolygon),
     )
 
     // 43. A MAP THAT STARTS COVERED, AND A SHAPE THAT IS NOT A RECTANGLE.
