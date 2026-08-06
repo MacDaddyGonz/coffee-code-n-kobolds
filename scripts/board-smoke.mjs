@@ -5575,7 +5575,12 @@ async function main() {
       width: FOG_REACH * 2,
       height: FOG_REACH * 2,
     }
-    const drawn = await client.mutation('fog:draw', { code, dmCode, sceneId, ...overCreature })
+    const drawn = await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId,
+      shape: { kind: 'rect', ...overCreature },
+    })
     const darkened = await fogState()
     check(
       'the rectangle took the placement, the band and both lines off the wire — and left the coin where it was',
@@ -5656,10 +5661,13 @@ async function main() {
       code,
       dmCode,
       sceneId,
-      x: overCreature.x + overCreature.width,
-      y: overCreature.y + overCreature.height,
-      width: -overCreature.width,
-      height: -overCreature.height,
+      shape: {
+        kind: 'rect',
+        x: overCreature.x + overCreature.width,
+        y: overCreature.y + overCreature.height,
+        width: -overCreature.width,
+        height: -overCreature.height,
+      },
     })
     const draggedRow =
       (await client.query('fog:list', { code, sceneId })).find((row) => row._id === dragged.fogId) ??
@@ -5697,12 +5705,17 @@ async function main() {
       width: FOG_REACH * 2,
       height: FOG_REACH * 2,
     }
-    const overHeroRect = await client.mutation('fog:draw', { code, dmCode, sceneId, ...overHero })
+    const overHeroRect = await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId,
+      shape: { kind: 'rect', ...overHero },
+    })
     const alsoOverCreature = await client.mutation('fog:draw', {
       code,
       dmCode,
       sceneId,
-      ...overCreature,
+      shape: { kind: 'rect', ...overCreature },
     })
     const bothDrawn = await client.query('board:positions', { code, sceneId })
     check(
@@ -5719,16 +5732,12 @@ async function main() {
     await client.mutation('fog:erase', { code, dmCode, fogId: alsoOverCreature.fogId })
 
     // (e) WHAT `fog:draw` REFUSES, against real value validation.
-    const badRect = (fields) =>
+    const badRect = ({ dmCode: badDm, ...fields }) =>
       client.mutation('fog:draw', {
         code,
-        dmCode,
+        dmCode: badDm ?? dmCode,
         sceneId,
-        x: 200,
-        y: 200,
-        width: 300,
-        height: 200,
-        ...fields,
+        shape: { kind: 'rect', x: 200, y: 200, width: 300, height: 200, ...fields },
       })
     // A zero-area rectangle looks like a usability refusal and is a data one: it covers no
     // point, so it hides nothing — and there is nothing on screen to click, so the DM cannot
@@ -5778,10 +5787,7 @@ async function main() {
       code,
       dmCode,
       sceneId: otherMap.sceneId,
-      x: 200,
-      y: 200,
-      width: 400,
-      height: 300,
+      shape: { kind: 'rect', x: 200, y: 200, width: 400, height: 300 },
     })
     const otherForPlayer = await client.query('fog:list', { code, sceneId: otherMap.sceneId })
     const otherForDm = await client.query('fog:list', { code, sceneId: otherMap.sceneId, dmCode })
@@ -5813,10 +5819,7 @@ async function main() {
       code,
       dmCode,
       sceneId,
-      x: 2100,
-      y: 1600,
-      width: 100,
-      height: 60,
+      shape: { kind: 'rect', x: 2100, y: 1600, width: 100, height: 60 },
     })
 
     // 33. HANDOUTS: A NEW `v.id('_storage')` TABLE, AND AN OPTIONAL POINTER ON A POPULATED ONE.
@@ -7410,6 +7413,166 @@ async function main() {
         )
       }
     }
+
+    // 42. A MAP THAT STARTS COVERED, AND A SHAPE THAT IS NOT A RECTANGLE.
+    //
+    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE, and there are three things here rather than
+    // one.**
+    //
+    //   - **An optional field whose absence has a meaning.** `scenes.fogBase` is absent on every
+    //     row this deployment already holds, and `fogBaseOf` answers `lit` for it. The local
+    //     suite creates its scenes through the same mutation, so it proves the *default* and
+    //     structurally cannot prove that a row written *before the field existed* still reads as
+    //     lit — because it has no such rows. This script talks to the deployment that does.
+    //   - **A discriminated union as an argument validator.** `fog:draw` takes `rect | polygon`
+    //     and Convex's own value validation is the only thing refusing a call that carries
+    //     neither, or both. `convex-test` does not apply it.
+    //   - **An array of float64 objects through a new optional column.** `points` is the first
+    //     nested array of records this schema stores, and floats through a real deployment are
+    //     this script's oldest speciality.
+    const baseSceneArt = await uploadPng(client, code, dmCode)
+    uploads.push(baseSceneArt)
+    const baseScene = await client.mutation('scenes:create', {
+      code,
+      dmCode,
+      name: 'Board Smoke — The Covered Vault',
+      imageId: baseSceneArt,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+    })
+    extraScenes.push(baseScene.sceneId)
+
+    // (a) THE ABSENT FIELD, RESOLVED BY THE SERVER. A brand-new scene is written with no
+    // `fogBase` at all, and the projection must still carry a real base — because the browser
+    // must never spell the absent-means-lit default a second time. A client that disagreed with
+    // the server about whether a map is covered is a client that paints the party a floor plan.
+    const freshScenes = await client.query('scenes:list', { code, dmCode })
+    const freshRow = freshScenes.find((row) => row._id === baseScene.sceneId) ?? null
+    check(
+      'a scene created with no fogBase comes back as lit, resolved server-side',
+      freshRow !== null && freshRow.fogBase === 'lit',
+      freshRow ? `fogBase ${JSON.stringify(freshRow.fogBase)}` : 'the new scene did not come back',
+    )
+
+    // (b) A POLYGON ROUND TRIP. Five points, deliberately not axis-aligned and deliberately
+    // fractional, so a deployment that rounded a coordinate or dropped the array is named. The
+    // bounding box is **computed server-side and never taken from the client**, so the four
+    // numbers that come back are an answer rather than an echo — which is the whole reason the
+    // union has two members instead of one shape with an optional point list.
+    const pentagon = [
+      { x: 300.5, y: 400.25 },
+      { x: 520.75, y: 360.5 },
+      { x: 610.25, y: 560.75 },
+      { x: 450.5, y: 700.25 },
+      { x: 280.75, y: 590.5 },
+    ]
+    const polygon = await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId: baseScene.sceneId,
+      shape: { kind: 'polygon', points: pentagon },
+    })
+    const polygonRows = await client.query('fog:list', { code, sceneId: baseScene.sceneId, dmCode })
+    const polygonRow = polygonRows.find((row) => row._id === polygon.fogId) ?? null
+    // The box the server should have computed, spelled out by hand rather than derived from the
+    // same helper the server used — a shared helper would agree with itself.
+    const expectedBox = { x: 280.75, y: 360.5, width: 329.5, height: 339.75 }
+    const polygonDrift = polygonRow
+      ? firstDifference(
+          { _id: polygon.fogId, ...expectedBox, points: pentagon },
+          polygonRow,
+          'polygon',
+        )
+      : 'no polygon came back'
+    check(
+      'a five-point polygon round-tripped with its points intact and a server-computed box',
+      polygonDrift === null,
+      polygonDrift ?? `stored ${JSON.stringify(polygonRow)}`,
+    )
+
+    // ⚠️ **THE FIXTURE PAIR.** `points` is optional, so the trap this script exists for is a
+    // rebuild that drops it — or, in the other direction, one that writes `points: undefined`
+    // onto a rectangle. `firstDifference` reports a key present on one side only, so a rectangle
+    // sent with no points must come back with **no `points` key at all**.
+    const alsoRect = await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId: baseScene.sceneId,
+      shape: { kind: 'rect', x: 1200, y: 900, width: 240, height: 180 },
+    })
+    const rectRow =
+      (await client.query('fog:list', { code, sceneId: baseScene.sceneId, dmCode })).find(
+        (row) => row._id === alsoRect.fogId,
+      ) ?? null
+    const rectDrift = rectRow
+      ? firstDifference(
+          { _id: alsoRect.fogId, x: 1200, y: 900, width: 240, height: 180 },
+          rectRow,
+          'rect',
+        )
+      : 'no rectangle came back'
+    check(
+      'a rectangle sent with no points came back with no points key — the fixture pair',
+      rectDrift === null,
+      rectDrift ?? `stored ${JSON.stringify(rectRow)}`,
+    )
+
+    // (c) WHAT THE UNION REFUSES. Neither member, both members, and a polygon below the three
+    // points a region needs — each refused by Convex's own validation or by the argument check
+    // in front of every read, and none of them reachable from the local suite.
+    for (const [label, shape] of [
+      ['a shape naming neither member', { x: 0, y: 0, width: 10, height: 10 }],
+      ['a shape naming both spellings', { kind: 'rect', x: 0, y: 0, width: 10, height: 10, points: pentagon }],
+      ['a polygon of two points', { kind: 'polygon', points: pentagon.slice(0, 2) }],
+      ['a polygon with a NaN vertex', { kind: 'polygon', points: [{ x: Number.NaN, y: 1 }, { x: 2, y: 3 }, { x: 4, y: 5 }] }],
+    ]) {
+      await refuses(`fog:draw refused ${label}`, () =>
+        client.mutation('fog:draw', { code, dmCode, sceneId: baseScene.sceneId, shape }),
+      )
+    }
+
+    // (d) THE BASE, FLIPPED — and the property the confirm dialog promises in words: **nothing
+    // is deleted.** Two shapes are on this scene; both must survive the flip and the flip back,
+    // which is what makes "flipping back returns it exactly as it is now" true rather than
+    // hopeful.
+    const beforeFlip = JSON.stringify(
+      await client.query('fog:list', { code, sceneId: baseScene.sceneId, dmCode }),
+    )
+    await client.mutation('scenes:setFogBase', {
+      code,
+      dmCode,
+      sceneId: baseScene.sceneId,
+      fogBase: 'dark',
+    })
+    const darkRow =
+      (await client.query('scenes:list', { code, dmCode })).find(
+        (row) => row._id === baseScene.sceneId,
+      ) ?? null
+    const afterFlip = JSON.stringify(
+      await client.query('fog:list', { code, sceneId: baseScene.sceneId, dmCode }),
+    )
+    check(
+      'flipping a map to dark kept both shapes byte for byte',
+      darkRow !== null && darkRow.fogBase === 'dark' && afterFlip === beforeFlip,
+      darkRow ? `base ${darkRow.fogBase}, shapes ${afterFlip === beforeFlip}` : 'no scene row',
+    )
+
+    await refuses('scenes:setFogBase refused a caller without the DM code', () =>
+      client.mutation('scenes:setFogBase', {
+        code,
+        dmCode: 'not-the-dm-code',
+        sceneId: baseScene.sceneId,
+        fogBase: 'lit',
+      }),
+    )
+    await refuses('scenes:setFogBase refused a base that is not one of the two', () =>
+      client.mutation('scenes:setFogBase', {
+        code,
+        dmCode,
+        sceneId: baseScene.sceneId,
+        fogBase: 'candlelit',
+      }),
+    )
   } catch (error) {
     const data = error && error.data ? ` ${JSON.stringify(error.data)}` : ''
     record('the run completed without an unexpected error', false, `${error.message ?? error}${data}`)
