@@ -780,12 +780,12 @@ describe('every combination resolves to a storable sheet', () => {
    * **The most valuable test in the file**, and the reason the library is
    * iterated rather than sampled. Everything above checks a sheet against one
    * bound at a time; this puts each of the seventy-two through the real
-   * resolver with each of the eight races and runs the function the mutation
-   * runs — 576 sheets, which is every character this milestone can produce.
+   * resolver with each of the nine species and runs the function the mutation
+   * runs — 648 sheets, which is every character this milestone can produce.
    *
    * The failures it is here for are the ones no single-sheet check sees: a
    * maximum that only breaks its bound once a Dwarf's per-level hit points are
-   * added, an entry id that only collides once a race appends its trait, a
+   * added, an entry id that only collides once a species appends its traits, a
    * roll that only the validator objects to.
    */
   test('for every class, archetype, level and race', () => {
@@ -799,8 +799,8 @@ describe('every combination resolves to a storable sheet', () => {
     expect(problems).toEqual([])
   })
 
-  /** 72 × 8, stated so a resolver that silently stopped returning PC sheets is visible. */
-  test('and there really are 576 of them, all player characters', () => {
+  /** 72 × 9, stated so a resolver that silently stopped returning PC sheets is visible. */
+  test('and there really are 648 of them, all player characters', () => {
     let count = 0
     for (const at of SHEETS) {
       for (const race of SPECIES_KEYS) {
@@ -808,7 +808,7 @@ describe('every combination resolves to a storable sheet', () => {
         count += 1
       }
     }
-    expect(count).toBe(576)
+    expect(count).toBe(648)
   })
 
   /**

@@ -1396,7 +1396,16 @@ describe('the advisory ceiling is real, and is not more than claimed', () => {
 /** The selections a premade character stores. A level 3 Human Fighter by default. */
 function presetSheet(
   overrides: Partial<{
-    race: 'human' | 'elf' | 'dwarf' | 'halfling' | 'half-orc' | 'tiefling' | 'dragonborn' | 'goliath'
+    race:
+      | 'dragonborn'
+      | 'dwarf'
+      | 'elf'
+      | 'gnome'
+      | 'goliath'
+      | 'halfling'
+      | 'human'
+      | 'orc'
+      | 'tiefling'
     classKey: 'barbarian' | 'bard' | 'cleric' | 'fighter' | 'paladin' | 'ranger' | 'rogue' | 'wizard'
     subclassKey: string | null
     level: number

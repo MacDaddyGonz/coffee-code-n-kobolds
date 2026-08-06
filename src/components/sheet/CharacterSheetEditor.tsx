@@ -313,6 +313,12 @@ export function CharacterSheetEditor({
     const built: StoredSheet = {
       kind: 'preset',
       race: selections.race,
+      // ⚠️ **A third field-by-field rebuild of a preset**, beside `candidateOf` in the
+      // builder and `normaliseStoredSheet` on the server. The note on `withOverrides`
+      // records this codebase dropping `skillProficiencies` and then `speed` by updating
+      // two of these and not the third; a lineage missed here would be a Wood Elf who
+      // confirms as an Elf and moves 30 feet, with the dropdown still showing Wood Elf.
+      lineageKey: selections.lineageKey,
       classKey: selections.classKey,
       subclassKey: selections.subclassKey,
       level: levelOf(draft),

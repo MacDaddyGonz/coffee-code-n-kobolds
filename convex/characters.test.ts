@@ -9,7 +9,7 @@ import type { Id } from './_generated/dataModel'
 import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
 import { CLASSES, CLASS_KEYS, SUBCLASS_LEVEL } from './lib/classes'
 import { MAX_CHARACTERS_PER_GAME } from './lib/games'
-import { SPECIES_KEYS } from './lib/species'
+import { SPECIES_KEYS, species } from './lib/species'
 import { kindOf } from './lib/resolve'
 import type {
   BestiarySheet,
@@ -3771,7 +3771,10 @@ describe('characters.create — a character built from the library', () => {
       armourClass: 18,
       maxHp: FIGHTER_MAX_HP[1],
       hitDice: { count: 1, faces: 10 },
-      speed: SPEED_FEET,
+      // ⚠️ **The Human's printed 30, not `SPEED_FEET`.** A 2024 species states its own
+      // speed and the resolver *sets* it, so the constant — still 35 — is reached only
+      // by a sheet with the field absent, which a resolved preset never is.
+      speed: 30,
     })
     // The library's allocation of the standard array, not the flat tens a
     // hand-built sheet starts on.
@@ -3893,7 +3896,13 @@ describe('characters.create — a character built from the library', () => {
     const { code } = await makeGame(t)
 
     for (const sheet of [
-      { ...presetSheet(), race: 'gnome' },
+      // ⚠️ **`half-orc`, which is the case that matters now that it is real.** This used
+      // to say `gnome`, which was an invented key until the 2024 conversion made it one of
+      // the nine — so the test would have gone on passing for entirely the wrong reason if
+      // nobody had looked. A *retired* key is the only key that can reach this boundary in
+      // anger: `species()` tolerates one on read, and this union is where the write is
+      // refused.
+      { ...presetSheet(), race: 'half-orc' },
       { ...presetSheet(), classKey: 'warlock' },
     ]) {
       const thrown = await t
@@ -3939,12 +3948,14 @@ describe('characters.create — a character built from the library', () => {
             const where = `${race}/${classKey}/${subclass.key}/${level}`
             expect(resolved.className, where).toContain(subclass.name)
             expect(resolved.maxHp, where).toBeGreaterThan(0)
-            // The race's own trait is on every sheet, whether or not it moves a
-            // number — a Halfling's Lucky is the whole of what makes them one.
-            expect(
-              resolved.feats.map((entry) => entry.id),
-              where,
-            ).toContain(`race:${race}`)
+            // Every one of the species' own traits is on every sheet, whether or
+            // not it moves a number — a Halfling's Luck is the whole of what makes
+            // them one. Three to five each since the 2024 conversion, so this is
+            // checked per trait rather than against one `race:<key>` id.
+            const names = resolved.feats.map((entry) => entry.name)
+            for (const trait of species(race)!.traits) {
+              expect(names, `${where}: ${trait.name}`).toContain(trait.name)
+            }
             // Ids are a React key set and Milestone 6's roll targets, merged
             // across both lists.
             const ids = [...resolved.feats, ...resolved.spells].map((entry) => entry.id)
@@ -4164,7 +4175,7 @@ describe('characters.updateSheet — the permission split over a premade charact
       playerId: fixture.ana,
     })
     expect(resolved.className).toBe('Rogue (Assassin)')
-    expect(resolved.feats.map((entry) => entry.id)).toContain('race:elf')
+    expect(resolved.feats.map((entry) => entry.name)).toContain('Elven Lineage')
   })
 
   test('a player may commit to their selections but may not undo the lock', async () => {
@@ -4902,11 +4913,14 @@ describe('long rest and once-per-rest abilities', () => {
     expect((await rawVitals(t, characterId))?.spentPerRest ?? []).toEqual([])
   })
 
-  test('a Dwarf has nothing to spend, and a Half-Orc has exactly one thing', async () => {
+  test('a Dwarf has nothing to spend, and an Orc has exactly one thing', async () => {
     const t = convexTest(schema, modules)
     const { code, dmCode } = await makeGame(t)
     const dwarf = await makePreset(t, code, 'Dwalin', presetSheet({ race: 'dwarf' }))
-    const halfOrc = await makePreset(t, code, 'Grash', presetSheet({ race: 'half-orc' }))
+    // The Half-Orc used to be the one holding `relentless-endurance`. The Orc holds it
+    // now, under the same key, which is what makes retiring that species cheap — a
+    // character who had already spent their survival keeps the flag stored for it.
+    const orc = await makePreset(t, code, 'Grash', presetSheet({ race: 'orc' }))
 
     for (const key of ['heroic-inspiration', 'relentless-endurance', 'dwarven-toughness']) {
       await expectKind(
@@ -4925,7 +4939,7 @@ describe('long rest and once-per-rest abilities', () => {
     expect(
       await t.mutation(api.characters.setPerRest, {
         code,
-        characterId: halfOrc,
+        characterId: orc,
         key: 'relentless-endurance',
         spent: true,
         dmCode,
@@ -4934,7 +4948,7 @@ describe('long rest and once-per-rest abilities', () => {
     await expectKind(
       t.mutation(api.characters.setPerRest, {
         code,
-        characterId: halfOrc,
+        characterId: orc,
         key: 'heroic-inspiration',
         spent: true,
         dmCode,
@@ -5127,8 +5141,11 @@ describe('characters built before the library existed', () => {
     expect(resolved.className).toBe('Fighter')
     expect(resolved.level).toBe(4)
     expect(resolved.hitDice).toEqual({ count: 4, faces: 10 })
-    // The race trait is still there: only the numbers it was borrowing are gone.
-    expect(resolved.feats.map((entry) => entry.id)).toEqual(['race:human'])
+    // The species traits are still there: only the numbers it was borrowing are gone.
+    // All three of the Human's, read off the species so this keeps saying what it means.
+    expect(resolved.feats.map((entry) => entry.name)).toEqual(
+      species('human')!.traits.map((trait) => trait.name),
+    )
     // And it is still a hero to everybody, rather than becoming unreadable.
     expect(rowFor(await t.query(api.characters.list, { code }), thorin).kind).toBe('pc')
   })

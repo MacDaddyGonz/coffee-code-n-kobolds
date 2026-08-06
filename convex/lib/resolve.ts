@@ -42,9 +42,8 @@ import {
   type TierNumber,
 } from './creatures'
 import { librarySheet } from './library'
-import { species, type Species } from './species'
+import { lineageOf, species, type Lineage, type Species, type SpeciesTrait } from './species'
 import type {
-  AbilityScores,
   BestiarySheet,
   CharacterGroup,
   CharacterKind,
@@ -406,15 +405,27 @@ function copySocial(social: BestiarySocial | undefined): CreatureSocial | null {
 }
 
 /**
- * Library, then race, then the DM. **The order is the design and cannot be
- * rearranged.**
+ * Library, then species, then lineage, then the DM. **The order is the design and
+ * cannot be rearranged**, and the lineage extends it by one rather than reshuffling it.
  *
- * The library is race-agnostic by construction, so race has to come second or an
- * Elf's +2 would be part of a base the next level overwrites. The DM comes last
- * because an override is the final word — that is what makes "the DM can always
- * change a player's sheet" true against a character whose stats are read live, and
- * what makes an override survive a level-up rather than being quietly discarded by
- * the next lookup.
+ * ```
+ * library sheet  →  species  →  lineage  →  the DM's overrides
+ * ```
+ *
+ * The library is species-agnostic by construction, so the species has to come second or
+ * a Dwarf's hit point per level would be part of a base the next level overwrites. **The
+ * lineage comes third because it is a modification of the species and not of the
+ * library**: a Wood Elf's 35 feet is written in the SRD as *"your Speed increases to 35"*
+ * against the Elf's printed 30, so applying it before the species would have `baseSpeed`
+ * overwrite it and produce an Elf who moves 30 — the acceptance criterion for this whole
+ * step, failing silently. The DM comes last because an override is the final word — that
+ * is what makes "the DM can always change a player's sheet" true against a character
+ * whose stats are read live, and what makes an override survive a level-up rather than
+ * being quietly discarded by the next lookup.
+ *
+ * ⚠️ **`lineageOf` is asked with the resolved species rather than with the stored key
+ * alone**, so a stored lineage that belongs to some other species contributes nothing.
+ * A Goliath carrying `wood` is a Goliath, not a Goliath who moves 35.
  */
 function resolvePreset(preset: PresetSheet): PcSheet {
   const definition = findClass(preset.classKey)
@@ -459,9 +470,28 @@ function resolvePreset(preset: PresetSheet): PcSheet {
   // `withOverrides` lives in lib/sheet.ts rather than here, so the override panel in
   // the browser can run the identical merge instead of maintaining a second copy of
   // it. Only the library lookup above is server-only.
-  return withOverrides(applySpecies(base, species(preset.race), level), preset.overrides)
+  const chosen = species(preset.race)
+  return withOverrides(
+    applyLineage(applySpecies(base, chosen, level), lineageOf(chosen, preset.lineageKey ?? null)),
+    preset.overrides,
+  )
 }
 
+/**
+ * The species layer. **No arithmetic on an ability score, and that absence is the
+ * milestone.**
+ *
+ * A 2024 species grants no ability score increase at all — those come from a background,
+ * which requirements.md excludes and whose numbers are absorbed into the premade sheet's
+ * stored `abilities`. So the loop that used to add an Elf's +2 is gone rather than
+ * emptied, and the *"allocated without considering race"* note on `LibrarySheet.abilities`
+ * is now true by construction instead of by discipline.
+ *
+ * ⚠️ **Speed is SET, not added.** `baseSpeed` is the number the SRD prints, so a Goliath
+ * reads 35 because the SRD says 35 and not because 30 plus five is. The formulation this
+ * replaces — `sheet.speed + speedBonus` — meant writing the same +5 in two places the
+ * moment the default moved, and invited the next reader to add a lineage's on top of it.
+ */
 function applySpecies(sheet: PcSheet, chosen: Species | null, level: number): PcSheet {
   // ⚠️ **A retired species contributes nothing rather than throwing, which is the whole point
   // of `species()` returning null.** The character keeps its level, its name, its hit points and
@@ -472,42 +502,81 @@ function applySpecies(sheet: PcSheet, chosen: Species | null, level: number): Pc
   // paints the whole party.
   if (chosen === null) return sheet
 
-  const abilities: AbilityScores = { ...sheet.abilities }
-  for (const [key, bonus] of Object.entries(chosen.abilityBonus ?? {})) {
-    abilities[key as keyof AbilityScores] += bonus
-  }
-
-  // The trait always appears, whether or not it changes a number — a Halfling's
-  // Lucky is the whole of what makes them a Halfling and would otherwise be invisible
-  // on their own sheet.
-  const trait: SheetEntry = {
-    id: entryId('race', chosen.key),
-    name: chosen.traitName,
-    text: chosen.traitText,
-    roll: null,
-    level: null,
-    catalogueKey: null,
-    // A trait is built from `traitName` and `traitText` and has no roll by
-    // construction, so `passive` is the only coherent answer rather than a choice. A
-    // race whose trait rolls something grants a feat or a spell instead — which is
-    // what the Dragonborn's breath weapon already does.
-    category: 'passive',
-  }
-
   return {
     ...sheet,
-    abilities,
     maxHp: sheet.maxHp + (chosen.hpPerLevel ?? 0) * level,
-    speed: (sheet.speed ?? SPEED_FEET) + (chosen.speedBonus ?? 0),
+    speed: chosen.baseSpeed ?? sheet.speed ?? SPEED_FEET,
+    // ⚠️ **The traits and the granted feats share one `race` prefix, deliberately.** A
+    // trait whose name matched a granted feat's used to produce two rows a player could
+    // not tell apart, with only one of them rollable, and `sheetProblem`'s uniqueness
+    // check said nothing because the two ids differed. Under one prefix that collision is
+    // a duplicate *id*, which the same check refuses outright — so the failure the
+    // Dragonborn shipped is now mechanical rather than cosmetic, and `species.test.ts`
+    // catches it before a deployment does.
     feats: [
       ...sheet.feats,
-      trait,
-      ...(chosen.grantedFeats ?? []).map((entry, index) => withId(entry, `race-${chosen.key}`, index)),
+      ...chosen.traits.map((trait, index) => withId(traitEntry(trait), 'race', index)),
+      ...(chosen.grantedFeats ?? []).map((entry, index) => withId(entry, 'race', index)),
     ],
     spells: [
       ...sheet.spells,
-      ...(chosen.grantedSpells ?? []).map((entry, index) => withId(entry, `race-${chosen.key}`, index)),
+      ...(chosen.grantedSpells ?? []).map((entry, index) => withId(entry, 'race', index)),
     ],
+  }
+}
+
+/**
+ * The lineage layer — a Drow, a Rock Gnome, a Red Dragonborn, a Stone Giant's descendant.
+ *
+ * The same three moves `applySpecies` makes, under their own `lineage` prefix so that the
+ * two layers cannot collide with each other however the content is edited, and with the
+ * same null-means-nothing stance: an unchosen lineage, an unknown key and a species with
+ * no lineages at all are one case here, exactly as `subclassOf` returning null is one case
+ * in the class layer.
+ *
+ * **The speed is an absolute again**, and it overwrites the species' because that is what
+ * *"your Speed increases to 35 feet"* means against a printed 30. `?? sheet.speed` rather
+ * than `?? SPEED_FEET`, so a lineage that says nothing about speed leaves the species'
+ * answer standing rather than reaching past it to a constant.
+ */
+function applyLineage(sheet: PcSheet, chosen: Lineage | null): PcSheet {
+  if (chosen === null) return sheet
+
+  return {
+    ...sheet,
+    speed: chosen.speed ?? sheet.speed,
+    feats: [
+      ...sheet.feats,
+      withId(traitEntry({ name: chosen.traitName, text: chosen.traitText }), 'lineage', 0),
+      ...(chosen.grantedFeats ?? []).map((entry, index) => withId(entry, 'lineage', index)),
+    ],
+    spells: [
+      ...sheet.spells,
+      ...(chosen.grantedSpells ?? []).map((entry, index) => withId(entry, 'lineage', index)),
+    ],
+  }
+}
+
+/**
+ * A trait as a line on the sheet. **Always a `passive`, and that is the only coherent
+ * answer rather than a choice.**
+ *
+ * A `SpeciesTrait` is a name and a sentence and has nowhere to put a roll, so
+ * `entriesProblem`'s arity rule would refuse it as anything else. A species whose trait
+ * genuinely rolls something grants a feat or a spell instead — which is what the
+ * Dragonborn's ancestry does with its breath.
+ *
+ * The trait always appears, whether or not it changes a number: a Halfling's Luck is the
+ * whole of what makes them a Halfling and would otherwise be invisible on their own sheet.
+ */
+function traitEntry(trait: SpeciesTrait): ContentEntry {
+  return {
+    name: trait.name,
+    text: trait.text,
+    roll: null,
+    level: null,
+    catalogueKey: null,
+    category: 'passive',
   }
 }
 
