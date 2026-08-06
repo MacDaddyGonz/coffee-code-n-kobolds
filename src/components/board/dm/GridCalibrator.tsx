@@ -4,6 +4,7 @@ import { FieldError } from '@/components/FieldError'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useBoardTool } from '@/hooks/useBoardTool'
 import type { GridTool } from '@/hooks/useGridTrace'
 import { GRID_TOOLS, useGridTrace } from '@/hooks/useGridTrace'
 import { useGridWrite } from '@/hooks/useGridWrite'
@@ -169,6 +170,10 @@ export function GridCalibrator({ code, dmCode, scene }: GridCalibratorProps) {
    * cell holds numbers.
    */
   const { tool, box: traceBox, across: traceAcross, down: traceDown, setTrace } = useGridTrace(code)
+
+  // Whether the chosen tool is actually on the board, which is the board's own armed-tool
+  // cell and not this picker's business to change — see the ⚠️ beside the hint below.
+  const armed = useBoardTool(code).tool === 'grid'
 
   const [traceAcrossText, setTraceAcrossText] = useState(() => trim(traceAcross))
   const [traceDownText, setTraceDownText] = useState(() => trim(traceDown))
@@ -427,10 +432,25 @@ export function GridCalibrator({ code, dmCode, scene }: GridCalibratorProps) {
         <p className="text-muted-foreground text-xs">{TOOL_LABELS[tool].hint}</p>
         {/* ⚠️ Said rather than left to be discovered — see the ⚠️ on this component. This
             picker chooses a tool; the grid button over the map is what puts it in your hand,
-            and while it is out the map answers the tool instead of the coins. */}
+            and while it is out the map answers the tool instead of the coins.
+
+            ⚠️ **The one place this panel reads the board's armed tool**, and it reads it to
+            say which of two true sentences applies. A picker that looked like a switch and
+            said "press the button" while the tool was already on the board would be the
+            feature reading as broken in the other direction. It arms nothing: `BoardTool`'s
+            docblock argues why the handles-or-trace choice above stays a preference. */}
         <p className="text-muted-foreground text-xs">
-          Press the grid button at the top left of the map to put this on the board. Escape puts
-          it away, and coins are locked while it is out.
+          {armed ? (
+            <>
+              This is on the board now. Escape puts it away, and coins are locked while it is
+              out.
+            </>
+          ) : (
+            <>
+              Press the grid button at the top left of the map to put this on the board. Escape
+              puts it away, and coins are locked while it is out.
+            </>
+          )}
         </p>
       </div>
 

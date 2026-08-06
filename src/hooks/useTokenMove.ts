@@ -8,7 +8,7 @@ import type { Layer as KonvaLayer } from 'konva/lib/Layer'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import type { Cell, Point } from '@convex/lib/grid'
-import { moveByCells, snapToGrid } from '@convex/lib/grid'
+import { moveByCells, pathCrossesAnyWall, snapToGrid } from '@convex/lib/grid'
 import type { PublicScene } from '@convex/lib/scenes'
 import { errorMessage } from '@/lib/errors'
 import { MOVE_THROTTLE_MS, throttle } from '@/lib/throttle'
@@ -139,6 +139,27 @@ export type TokenMove = {
  * this hook only records where it got to; during a run of arrow keys the node is
  * moved imperatively. React sees a position change when a write goes out — ten
  * times a second — and never in between.
+ *
+ * ⚠️⚠️ **WALLS LIVE HERE AND THE SERVER ONLY BACKSTOPS THEM, WHICH IS THE DESIGN AND NOT A
+ * SHORTCUT.** `board.moveToken` checks the settling write and nothing else, because a
+ * `walls` range read on a handler that runs ten times a second would turn every barrier the
+ * DM traced into an OCC conflict against every in-flight drag (CLAUDE.md invariant 2, and
+ * `requireMovableToken`'s docblock). So the *feel* is this file's job: each frame is tested
+ * against the last point this browser **accepted**, and a blocked frame is simply not
+ * accepted — the node is put back and nothing is pushed. The coin slides up to the wall and
+ * stops, which is what Roll20 does and is the entire user-facing feature.
+ *
+ * ⭐ **Testing against the last accepted point rather than against where the drag started is
+ * the whole of why walking round a wall works**, and it makes the block *path-dependent*,
+ * which is what a person expects: you cannot reach the far side of a barrier in one straight
+ * line, and you can reach it by going round the end. A test against the drag origin would
+ * refuse the second half of every journey round a corner.
+ *
+ * ⚠️ **Skipped entirely for the DM**, who places creatures inside sealed rooms and drags the
+ * party through doors they have just narrated open. And **not applied to the arrow keys**:
+ * a keypress is a whole square at once, so there is nothing to slide, and those moves reach
+ * `board.moveToken` and are refused there — see `nudge` and `WallTools`' copy, without which
+ * the difference between the two input methods reads as a bug.
  */
 export function useTokenMove(args: {
   code: string
@@ -147,8 +168,14 @@ export function useTokenMove(args: {
   scene: PublicScene | null
   tokens: BoardToken[]
   containerRef: RefObject<HTMLElement | null>
+  /**
+   * The barriers on this board, as bare geometry — `useWallPaths`. Every client is sent
+   * them, because a browser cannot stop a drag against geometry it does not have; see the
+   * header of `convex/walls.ts`.
+   */
+  walls: readonly Point[][]
 }): TokenMove {
-  const { code, dmCode, playerId, scene, tokens, containerRef } = args
+  const { code, dmCode, playerId, scene, tokens, containerRef, walls } = args
 
   const [heldTokenId, setHeldTokenId] = useState<Id<'tokens'> | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -170,9 +197,27 @@ export function useTokenMove(args: {
   const tokensRef = useRef(byId)
   tokensRef.current = byId
 
+  const wallsRef = useRef(walls)
+  wallsRef.current = walls
+
   /** This browser's own answer for one token, which the server has not confirmed yet. */
   const localRef = useRef<{ tokenId: Id<'tokens'>; point: Point } | null>(null)
   const heldRef = useRef<Id<'tokens'> | null>(null)
+
+  /**
+   * The last point of the gesture in progress that was **not** refused by a wall — where
+   * the coin is actually allowed to be.
+   *
+   * ⚠️ **A second ref beside `localRef` rather than a reading of it**, and the two genuinely
+   * differ for the length of one frame: `localRef` is *what this browser is drawing*, which
+   * the blocked branch below deliberately puts back to the accepted point, while this is
+   * *what this browser has agreed to*. They coincide after every frame and diverge during
+   * one, and collapsing them would make the wall test compare the candidate against itself.
+   *
+   * Seeded at the start of a gesture and cleared at the end of one, so a coin that was
+   * released against a barrier last minute does not start its next drag already blocked.
+   */
+  const acceptedRef = useRef<{ tokenId: Id<'tokens'>; point: Point } | null>(null)
 
   const moveToken = useMutation(api.board.moveToken)
 
@@ -261,6 +306,44 @@ export function useTokenMove(args: {
     [containerRef],
   )
 
+  /**
+   * Would going from the accepted point to `point` cross a barrier?
+   *
+   * Three short-circuits before the arithmetic, in the order that makes a board without
+   * walls cost nothing: **the DM is never blocked**, a map with no walls has nothing to
+   * cross, and a gesture that has not been seeded has no journey to measure. The same
+   * `pathCrossesAnyWall` the server runs on the settling write, imported rather than
+   * re-implemented — which is what makes the coin's stop and the server's refusal one
+   * function rather than two that agreed when they were written.
+   */
+  const blocked = useCallback((tokenId: Id<'tokens'>, point: Point): boolean => {
+    if (dmCodeRef.current !== null) return false
+    if (wallsRef.current.length === 0) return false
+    const accepted = acceptedRef.current
+    if (accepted === null || accepted.tokenId !== tokenId) return false
+    return pathCrossesAnyWall(wallsRef.current, accepted.point, point)
+  }, [])
+
+  /**
+   * Take a candidate point, or refuse it and hand back the one already accepted.
+   *
+   * **The one place a wall changes what a drag does**, and it is written as a function of a
+   * point rather than as a branch in each handler so that the drop is literally one more
+   * frame of the drag. Advancing the accepted point *only* on the clear branch is what makes
+   * the block path-dependent — see the ⭐ on the hook.
+   */
+  const accept = useCallback(
+    (tokenId: Id<'tokens'>, point: Point): Point => {
+      const accepted = acceptedRef.current
+      if (accepted !== null && accepted.tokenId === tokenId && blocked(tokenId, point)) {
+        return accepted.point
+      }
+      acceptedRef.current = { tokenId, point }
+      return point
+    },
+    [blocked],
+  )
+
   const hold = useCallback((tokenId: Id<'tokens'>) => {
     if (heldRef.current === tokenId) return
     heldRef.current = tokenId
@@ -278,6 +361,10 @@ export function useTokenMove(args: {
     if (heldRef.current === null) return
     heldRef.current = null
     setHeldTokenId(null)
+    // The accepted point belongs to the gesture and not to the token, so it goes with the
+    // hold rather than with the local answer above. A coin let go of against a barrier must
+    // start its next drag from wherever it now stands, not from where the last one stopped.
+    acceptedRef.current = null
   }, [])
 
   /**
@@ -318,6 +405,13 @@ export function useTokenMove(args: {
     (token: BoardToken) => {
       hold(token._id)
       if (token.position) localRef.current = { tokenId: token._id, point: token.position }
+      // Seeded from the **stored** placement, which is the only point on this board a wall
+      // has already been satisfied about. A gesture on a coin with no placement — one that
+      // is not on this scene — is left unseeded, so `blocked` answers false and the drag
+      // behaves exactly as it did before walls existed.
+      acceptedRef.current = token.position
+        ? { tokenId: token._id, point: token.position }
+        : null
     },
     [hold],
   )
@@ -326,6 +420,26 @@ export function useTokenMove(args: {
     (token: BoardToken, point: Point) => {
       const currentScene = sceneRef.current
       if (!currentScene) return
+
+      /*
+        The wall, and the whole of the feel. A blocked frame is **not accepted**: the node is
+        put back where the coin is allowed to be and nothing is pushed, so the token slides
+        up to the barrier and stops there rather than being yanked back after a round trip.
+
+        Konva recomputes the node's position from the pointer on the *next* frame rather than
+        from what we set here, so this correction is applied per frame for as long as the
+        pointer stays past the wall — which is what makes the coin sit still against it
+        instead of accumulating an offset.
+
+        `placeLocally` rather than a bare `node.position`: the local answer is what the next
+        render hands Konva, and leaving it pointing past the wall would let a re-render put
+        the coin back on the far side between frames.
+      */
+      const allowed = accept(token._id, point)
+      if (allowed !== point) {
+        placeLocally(token._id, allowed)
+        return
+      }
 
       // Konva has already moved the node for this frame and it keeps it: no React
       // state is touched per mouse-move, which is the first half of invariant 2.
@@ -340,14 +454,30 @@ export function useTokenMove(args: {
         settle: false,
       })
     },
-    [throttled],
+    [accept, placeLocally, throttled],
   )
 
+  /**
+   * The drop, which is one more frame of the drag and is written as one.
+   *
+   * ⚠️ **`accept` is applied here too, and it is not belt and braces.** Konva does not move
+   * the node again on `dragend`, so in the ordinary case this returns the point the last
+   * frame already accepted and the call is free. What it closes is the case where the DM's
+   * pointer is somewhere past the wall when the button comes up: without it, a browser whose
+   * last `dragmove` never fired would settle at a position the server is about to refuse.
+   *
+   * ⚠️ **What it cannot close is the snap**, and that is the honest boundary between the
+   * client's feel and the server's authority. `settle` rounds the accepted point to a square
+   * centre, and on a wall drawn along a grid line — which is every wall the DM's own snap
+   * produces — a point on the near side rounds to the near side's centre. Where the two can
+   * disagree, `board.moveToken` refuses and the coin springs back with the server's own
+   * words. One rule, checked twice, and the second check is the one that is authoritative.
+   */
   const onDragEnd = useCallback(
     (token: BoardToken, point: Point) => {
-      settle(token._id, point)
+      settle(token._id, accept(token._id, point))
     },
-    [settle],
+    [accept, settle],
   )
 
   const nudge = useCallback(
@@ -363,12 +493,39 @@ export function useTokenMove(args: {
       const from = localRef.current?.tokenId === tokenId ? localRef.current.point : token.position
       if (!from) return
 
+      // Seeded on the first press of a run, from the **stored** placement rather than from
+      // the local answer above: a run of keys is one gesture, and what a wall has already
+      // been satisfied about is where the coin actually stands.
+      if (heldRef.current !== tokenId && token.position) {
+        acceptedRef.current = { tokenId, point: token.position }
+      }
+
       hold(tokenId)
       // `moveByCells` snaps before it steps, so an interrupted drag is corrected by
       // the first keypress instead of carrying its offset along for every square
       // after it.
       const point = moveByCells(from, currentScene, token.sizeSquares, delta)
       placeLocally(tokenId, point)
+
+      /*
+        ⚠️ **The arrow keys get no slide-and-stop, and this is the whole of the difference.**
+        A drag is held frame by frame and comes to rest against the barrier; a keypress is a
+        whole square at once, so there is nothing to slide up to — the coin moves where the
+        key says and `endNudge`'s settling write is refused by `board.moveToken`, which puts
+        it back with the server's own words. `WallTools` says so in a sentence, because
+        without one the two input methods behaving differently reads as a bug.
+
+        What this clause does is stop the *intermediate* write, and it is what makes that
+        refusal actually happen. Those writes are unchecked by design (see `board.moveToken`
+        on the advisory ceiling) and they move the `from` point the settling check measures
+        from — so pushing one here would walk the coin through the wall on every other
+        client and then hand the server a perfectly legal hop to accept. The gesture is still
+        blocked as a whole, because `acceptedRef` is not advanced: every later step of the
+        same run is measured from the same place and suppressed too.
+      */
+      if (blocked(tokenId, point)) return
+      acceptedRef.current = { tokenId, point }
+
       throttled({
         tokenId,
         sceneId: currentScene._id,
@@ -377,7 +534,7 @@ export function useTokenMove(args: {
         settle: false,
       })
     },
-    [hold, placeLocally, throttled],
+    [blocked, hold, placeLocally, throttled],
   )
 
   const endNudge = useCallback(() => {

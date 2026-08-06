@@ -3,6 +3,7 @@ import type Konva from 'konva'
 
 import { useStagePointer } from '@/hooks/useStagePointer'
 import type { Point } from '@convex/lib/grid'
+import { MAX_FOG_POLYGON_POINTS } from '@convex/lib/limits'
 
 export type PolygonDrawOptions = {
   /**
@@ -87,11 +88,17 @@ const NO_POINTS: readonly Point[] = []
  *   write anything. Bound only while an outline is in progress, so this hook adds no listener
  *   to a board where nobody is drawing.
  *
- * **There is no vertex cap here, and that is the same decision `FogTools` already made about
- * the shape cap.** The number lives in `convex/lib/games.ts`, which is a server module
- * carrying `requireDm`, and importing it for one integer would put that in the bundle. So the
- * refusal is the server's and it arrives as a toast naming the way out — draw it as two
- * shapes — at the moment it applies, which is where that panel argues a cap belongs.
+ * ⚠️ **The vertex cap IS here, and it is the one place this hook departs from `FogTools`'
+ * argument about the shape cap.** That panel refuses to import a bound for one integer and
+ * lets `fog.draw`'s refusal arrive as a toast naming the way out, because the shape cap is met
+ * after two hundred *successful* draws and the DM loses nothing by discovering it late.
+ *
+ * A vertex cap is met **during one gesture**, and losing it late means losing the gesture:
+ * forty corners traced round a cave, a toast on release, and no way to get the outline back.
+ * So the thirty-third click is refused as it happens. The constant moved to
+ * `convex/lib/limits.ts` to make that possible — the file whose whole job is a bound both
+ * sides need — and the server's copy is still the enforcement, exactly as CLAUDE.md invariant
+ * 6 has it: the browser's is a courtesy that saves a round trip.
  */
 export function usePolygonDraw({ enabled, snap, onCommit }: PolygonDrawOptions): PolygonDraw {
   const { press, track, release } = useStagePointer()
@@ -161,6 +168,20 @@ export function usePolygonDraw({ enabled, snap, onCommit }: PolygonDrawOptions):
       // so the count the server sees is the count the DM drew — the cap is on corners, and a
       // wobble is not one.
       if (last !== undefined && samePoint(last, placed)) return
+
+      // ⚠️ **The cap is refused as it is reached rather than on release, and that is the whole
+      // reason `MAX_FOG_POLYGON_POINTS` lives in lib/limits.ts instead of beside the shape
+      // count in lib/games.ts.** `fog.draw` refuses an over-long outline too and that refusal
+      // is the enforcement — a client-side bound is a bound a client bug removes (invariant 6's
+      // rule, and invariant 7's). But it arrives on *release*, by which point the DM has drawn
+      // forty corners round a cave and gets a toast and nothing else: the outline is gone and
+      // there is no way to get it back. Stopping here costs them one click that does nothing
+      // and keeps the thirty-two they have.
+      //
+      // Silent rather than toasted, for `useRubberBand`'s reason about a zero-area drag: the
+      // preview *is* the feedback, and a corner that does not appear is a corner that was not
+      // taken. The panel carries the number so it is not a surprise.
+      if (pointsRef.current.length >= MAX_FOG_POLYGON_POINTS) return
 
       pointsRef.current = [...pointsRef.current, placed]
       setPoints(pointsRef.current)

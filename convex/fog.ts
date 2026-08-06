@@ -13,7 +13,6 @@ import {
 } from './lib/fog'
 import { fogActReveals, fogBaseOf } from './lib/fogBase'
 import {
-  MAX_FOG_POLYGON_POINTS,
   MAX_FOG_RECTS_PER_SCENE,
   activeSceneId,
   findGameByCode,
@@ -22,6 +21,7 @@ import {
   stampReveal,
 } from './lib/games'
 import { boundsOf, type Point, type Rect } from './lib/grid'
+import { MAX_FOG_POLYGON_POINTS } from './lib/limits'
 import { findSceneInGame, getSceneInGame } from './lib/scenes'
 
 // WHERE THE MAP IS BLACKED OUT — the public surface over the `fogRects` table.

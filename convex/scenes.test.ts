@@ -1701,6 +1701,72 @@ describe('scenes.duplicate', () => {
   })
 
   /**
+   * ⚠️ **A WALL COMES ACROSS WHETHER OR NOT THE CONTENTS WERE ASKED FOR**, which is the one
+   * asymmetry in this mutation and the sentence that decides it: *a wall is a property of the
+   * map; a placement and a fog shape are where things are tonight.*
+   *
+   * The `includeContents: false` half is the whole test. A DM copying a dungeon level to lay
+   * out the next encounter wants the same rooms with the same doorways and none of tonight's
+   * coins — and re-tracing every corridor is exactly the work this button exists to avoid.
+   * Asserting only the `true` case would pass for a `copySceneWalls` sitting inside the branch.
+   */
+  test('takes the walls whether the contents were asked for or not', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const source = await furnishedScene(t, game)
+
+    const corridor = [
+      { x: 400, y: 400 },
+      { x: 400, y: 900 },
+      { x: 950, y: 900 },
+    ]
+    await t.mutation(api.walls.add, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId: source.sceneId,
+      points: corridor,
+    })
+
+    const emptied = await t.mutation(api.scenes.duplicate, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId: source.sceneId,
+      includeContents: false,
+    })
+
+    // With the DM code, because the copy is not the active scene and `walls.list` withholds a
+    // board nobody is looking at from a non-DM — a wall sketch of an unreached map is a floor
+    // plan too, which is `fog.list`'s guard restated rather than borrowed.
+    const walls = await t.query(api.walls.list, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId: emptied.sceneId,
+    })
+    expect(walls).toHaveLength(1)
+    expect(walls[0].points).toEqual(corridor)
+
+    // The control on the same copy: the contents genuinely were not taken, so the line above
+    // is about walls being unconditional rather than about `includeContents` being ignored.
+    expect(await placementsOn(t, emptied.sceneId)).toEqual([])
+    expect(
+      await t.query(api.fog.list, {
+        code: game.code,
+        dmCode: game.dmCode,
+        sceneId: emptied.sceneId,
+      }),
+    ).toEqual([])
+
+    // And the source keeps its own, so this is a copy rather than a move.
+    expect(
+      await t.query(api.walls.list, {
+        code: game.code,
+        dmCode: game.dmCode,
+        sceneId: source.sceneId,
+      }),
+    ).toHaveLength(1)
+  })
+
+  /**
    * ⚠️ **The Milestone 1 lone-surrogate bug, third occurrence and first where the *app*
    * supplies the over-long part.** ` (copy)` on a 58-character name is 65, past the limit,
    * and no field's `maxLength` could have stopped it because nobody typed it. Cut by code
@@ -1891,6 +1957,41 @@ describe('scenes.replaceImage', () => {
         { x: 1880, y: 1120 },
       ],
     })
+  })
+
+  /**
+   * ⚠️ **A WALL LEFT AT THE OLD SCALE IS WORSE THAN A WALL THAT VANISHED**, which is why this
+   * is its own test rather than a clause on the one above. The map redraws at the new size and
+   * the barriers stay where they were on the old one, so the party is stopped by nothing
+   * visible and walks through a door that is plainly open. A missing wall at least looks like
+   * a missing wall.
+   */
+  test('scales the walls by the same one factor as everything else', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const source = await furnishedScene(t, game)
+
+    await t.mutation(api.walls.add, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId: source.sceneId,
+      points: [
+        { x: 400, y: 400 },
+        { x: 400, y: 900 },
+      ],
+    })
+
+    await replace(t, game, source.sceneId, { width: MAP_WIDTH * 2, height: MAP_HEIGHT * 2 })
+
+    const [wall] = await t.query(api.walls.list, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId: source.sceneId,
+    })
+    expect(wall.points).toEqual([
+      { x: 800, y: 800 },
+      { x: 800, y: 1800 },
+    ])
   })
 
   test('refuses a map of a different shape and changes nothing', async () => {

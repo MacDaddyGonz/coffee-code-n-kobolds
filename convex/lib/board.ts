@@ -789,6 +789,18 @@ export async function visiblePositions(
  * other clients see nothing, which is the same asymmetry a GM-layer token already has. That
  * is also correct on its own terms: a monster walking into the dark is what the DM is doing
  * on purpose, and refusing the write would be enforcing a *view* on *board state*.
+ *
+ * ⚠️ **Walls are not tested here either, for the second reason above rather than the first,
+ * and they are `&&`-ed at the call site in `board.moveToken` instead.** Unlike fog, a barrier
+ * genuinely is a rule about a *move* and would look at home in this function — which is
+ * exactly why the omission is written down. The read is the problem: a `walls` range read
+ * here would join the read set of a handler that runs ten times a second during a drag, and
+ * every wall the DM traced would become an OCC conflict against every in-flight drag, on the
+ * one write path invariant 2 exists for. So the check goes on the **settling** write alone,
+ * where a drag pays for it once rather than twenty times, and `placementOf` has already been
+ * read inside that transaction so the *from* point is free. What that leaves advisory is
+ * spelled out at the call site and in ADR 0015, and it is affordable for a reason that does
+ * not apply anywhere else in this file: **nothing behind a wall is a secret.**
  */
 export async function requireMovableToken(
   ctx: QueryCtx,

@@ -6,6 +6,7 @@ import type { Id } from './_generated/dataModel'
 import { copyScenePlacements, deleteScenePlacements, scaleScenePlacements } from './lib/board'
 import { colourProblem } from './lib/colour'
 import { deleteSceneFog } from './lib/fog'
+import { copySceneWalls, deleteSceneWalls, scaleSceneWalls } from './lib/walls'
 import { fogBaseOf, fogBaseValidator } from './lib/fogBase'
 import { MAX_SCENES_PER_GAME, findGameByCode, requireDm, stampReveal } from './lib/games'
 import { MIN_GRID_SIZE, gridSizeFor, isUsableGrid } from './lib/grid'
@@ -485,8 +486,8 @@ export const reorder = mutation({
  * sentence answers every case a DM actually has: *the same room, laid out again* or *the
  * same room, empty*.
  *
- * (Walls do not exist yet. When they do they belong on the unconditional side, and
- * `copySceneFog`'s header names the polygon field that the same merge has to bring with it.)
+ * Walls arrived on a parallel branch and are on the unconditional side, exactly where that
+ * sentence puts them — `copySceneWalls` is called outside the `includeContents` branch.
  *
  * ⚠️ **It does not become active and it does not stamp.** Copying a map is preparation, and
  * a duplicate that put itself on the table would move the whole party onto a board the DM
@@ -547,6 +548,13 @@ export const duplicate = mutation({
       ...(source.fogBase === undefined ? {} : { fogBase: source.fogBase }),
       ...(source.notes === undefined ? {} : { notes: source.notes }),
     })
+
+    // ⚠️ **The walls come across unconditionally, and the sentence in the docblock is why:**
+    // a wall is a property of the map. A DM copying a dungeon level wants the same rooms with
+    // the same doorways; re-tracing every corridor is exactly the work this button exists to
+    // avoid. So this sits OUTSIDE the branch below, beside the fields on the insert rather
+    // than beside the placements.
+    await copySceneWalls(ctx, source._id, sceneId)
 
     if (args.includeContents) {
       await copyScenePlacements(ctx, source._id, sceneId)
@@ -681,6 +689,11 @@ export const replaceImage = mutation({
     if (k !== 1) {
       await scaleScenePlacements(ctx, scene._id, k)
       await scaleSceneFog(ctx, scene._id, k)
+      // ⚠️ **And the walls, which is the one of the four whose omission is worse than a
+      // deletion.** A barrier left at the old map's scale stops the party where nothing is
+      // drawn and lets them through a door that is plainly open — a missing wall at least
+      // looks like a missing wall.
+      await scaleSceneWalls(ctx, scene._id, k)
     }
 
     // Reclaimed only if no duplicate is still drawing them, and only if the swap actually
@@ -759,6 +772,9 @@ export const remove = mutation({
     // returned to — leaving it would be leaving a row nothing in the app can name, reach or
     // delete. `deleteScenesInGame` pairs these two calls the same way.
     await deleteSceneFog(ctx, scene._id)
+    // And the walls, which are keyed on the scene in exactly the same way and would
+    // otherwise outlive every reader that could ever name them.
+    await deleteSceneWalls(ctx, scene._id)
 
     // Cleared rather than moved to another scene. Choosing the next board is the
     // DM's decision, and every client would follow this one silently.

@@ -13,8 +13,10 @@ import {
 } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { FogMode } from '@/hooks/useFog'
-import { FOG_MODES, useFog, useFogMode } from '@/hooks/useFog'
+import { useBoardTool } from '@/hooks/useBoardTool'
+import { useFog } from '@/hooks/useFog'
+import type { FogTool } from '@/lib/boardTool'
+import { FOG_TOOLS, isFogTool } from '@/lib/boardTool'
 import { api } from '@convex/_generated/api'
 import type { FogBase } from '@convex/lib/fogBase'
 import { FOG_BASES, FOG_BASE_LABELS } from '@convex/lib/fogBase'
@@ -35,25 +37,31 @@ export type FogToolsProps = {
  * map would describe the exact opposite of covering the whole board.
  *
  * So every one of these is a `Record<FogBase, …>`: a third base fails to compile here rather
- * than arriving as copy somebody has to remember to write. `FOG_MODES` and `FOG_BASES` are
+ * than arriving as copy somebody has to remember to write. `FOG_TOOLS` and `FOG_BASES` are
  * both iterated below rather than written out, for `TOKEN_LAYERS`' reason — a member cannot
  * arrive with nowhere to be pressed.
+ *
+ * ⚠️ **Keyed by `FogTool` and not by `BoardTool`.** The armed tool is now one cell shared by
+ * every overlay on the board, so keying this by the whole union would demand fog copy for the
+ * grid tracer and the wall eraser. `FOG_TOOLS` is the fog panel's own slice of it, hand-spelled
+ * so that this `Record` stays a compile-time refusal, and `boardTool.test.ts` sweeps the slice
+ * against the surface map in both directions — which is the part the compiler cannot see.
  */
-const MODE_LABELS: Record<FogBase, Record<FogMode, { label: string; hint: string }>> = {
+const MODE_LABELS: Record<FogBase, Record<FogTool, { label: string; hint: string }>> = {
   lit: {
     off: {
       label: 'Off',
       hint: 'The board behaves normally: coins are yours to pick up and the fog is scenery.',
     },
-    draw: {
+    'fog-draw': {
       label: 'Black out',
       hint: 'Drag a rectangle on the map. It snaps to whole squares, and the table goes dark the moment you let go — not while you are dragging.',
     },
-    polygon: {
+    'fog-polygon': {
       label: 'Black out a shape',
       hint: 'Click a corner at a time to trace an area that is not a rectangle. Corners snap to whole squares. Click the white dot you started on, or double-click, to close it; Esc throws it away.',
     },
-    erase: {
+    'fog-erase': {
       label: 'Rub out',
       hint: 'Click a blacked-out area to lift it. That is the moment the party walks into the room, so anything standing in it appears for them at once.',
     },
@@ -63,15 +71,15 @@ const MODE_LABELS: Record<FogBase, Record<FogMode, { label: string; hint: string
       label: 'Off',
       hint: 'The board behaves normally: coins are yours to pick up and the cover is scenery.',
     },
-    draw: {
+    'fog-draw': {
       label: 'Reveal',
       hint: 'Drag a rectangle on the map to open it up. It snaps to whole squares, and the party sees that room — and everything standing in it — the moment you let go.',
     },
-    polygon: {
+    'fog-polygon': {
       label: 'Reveal a shape',
       hint: 'Click a corner at a time to open up an area that is not a rectangle. Corners snap to whole squares. Click the white dot you started on, or double-click, to close it; Esc throws it away.',
     },
-    erase: {
+    'fog-erase': {
       label: 'Cover back up',
       hint: 'Click a revealed area to close it again. Anything standing in it disappears from the party’s board.',
     },
@@ -157,11 +165,17 @@ const FLIP_LABELS: Record<FogBase, { title: string; description: string; confirm
  * two ways out — cover the map with one bigger rectangle, or clear it and start again.
  * The second of those is the control at the bottom of this card.
  *
- * **The mode does not leave this component as a prop.** It goes into `useFogMode`, a cell
+ * **The mode does not leave this component as a prop.** It goes into `useBoardTool`, a cell
  * keyed by game code, because the control is here in the right-hand pane and the gesture
  * is inside the Konva tree in the map pane — `useBoardLayers`' arrangement, for
  * `useBoardLayers`' reason, and the alternative of hoisting it to `GameShell` would put a
  * board concern in the props of the component whose job is to arrange two panes.
+ *
+ * ⚠️ **That cell is shared with the grid tracer and the wall tool now, and it holds exactly
+ * one value.** Arming a brush here puts either of those down by construction rather than by
+ * three effects agreeing to — which was a real bug, because all three mount a draw surface
+ * spanning the whole image and the last one rendered took every press. The visible
+ * consequence in this panel is that arming a fog tool un-lights the grid button on the map.
  *
  * ⚠️ **The base is the opposite: it goes to the server.** It is a fact about the map that
  * every client has to agree on — `scenes.active` carries it, resolved through `fogBaseOf` —
@@ -183,25 +197,31 @@ export function FogTools({ code, dmCode }: FogToolsProps) {
   const base: FogBase = active?.fogBase ?? 'lit'
 
   const fog = useFog(code, sceneId, dmCode)
-  const { mode, setMode } = useFogMode(code)
+  const { tool, setTool, putDown } = useBoardTool(code)
+  // The armed tool is one cell shared by every overlay on the board, so it may perfectly well
+  // be holding the grid tracer or a wall tool. This panel then reads `off`, which is the honest
+  // answer: no button of *its* is lit. `isFogTool` is what keeps the `Record` lookups total.
+  const mode: FogTool = isFogTool(tool) ? tool : 'off'
 
   /**
    * ⚠️ **Put down on the way out, and this is `useFog`'s own rule applied to the second way
    * of losing sight of these buttons.**
    *
-   * That hook refuses to write the mode to `localStorage` because an armed eraser is one
-   * click from deleting the ambush the DM spent the afternoon drawing, and a tool still armed
-   * after a refresh nobody remembers doing is exactly how that click happens. The cell is
-   * module-level, though, and `DmToolsTab`'s sub-tab strip is uncontrolled with a subtree that
-   * is not force-mounted — so arming the eraser, glancing at the Feed and coming back reached
-   * the same place without needing a refresh: an armed tool, no lit button anywhere on screen,
-   * and presses on the map that delete fog.
+   * `src/lib/boardTool.ts` refuses to write the armed tool to `localStorage` because an armed
+   * eraser is one click from deleting the ambush the DM spent the afternoon drawing, and a tool
+   * still armed after a refresh nobody remembers doing is exactly how that click happens. The
+   * cell is module-level, though, and `DmToolsTab`'s sub-tab strip is uncontrolled with a
+   * subtree that is not force-mounted — so arming the eraser, glancing at the Feed and coming
+   * back reached the same place without needing a refresh: an armed tool, no lit button
+   * anywhere on screen, and presses on the map that delete fog.
    *
-   * Three lines here rather than relocating the controls somewhere permanent, which is the
-   * other fix and a much larger one. Off is the only safe thing to arrive at, and now the only
-   * thing to come back to.
+   * ⚠️ **It is `putDown('fog')` and not `setTool('off')`, and the difference arrived with the
+   * merge.** While this panel owned its own cell, putting it down unconditionally could only
+   * ever affect fog. Now one cell holds every tool, so an unconditional put-down here would
+   * disarm the *grid tracer* on the way out of the Fog tab, from a component that has nothing
+   * to do with it. `putDownBoardSurface` asks whether the armed tool is this panel's first.
    */
-  useEffect(() => () => setMode('off'), [setMode])
+  useEffect(() => () => putDown('fog'), [putDown])
 
   const clearFog = useMutation(api.fog.clear)
   const setFogBase = useMutation(api.scenes.setFogBase)
@@ -289,7 +309,7 @@ export function FogTools({ code, dmCode }: FogToolsProps) {
             <div className="flex flex-col gap-2">
               <Label>Tool</Label>
               <div className="flex flex-wrap gap-2">
-                {FOG_MODES.map((choice) => (
+                {FOG_TOOLS.map((choice) => (
                   <Button
                     key={choice}
                     type="button"
@@ -299,7 +319,7 @@ export function FogTools({ code, dmCode }: FogToolsProps) {
                     // Never disabled while a call is in flight, unlike the controls
                     // beside it: putting a tool down is the way out of a mistake, and a
                     // refused draw is exactly the moment somebody reaches for it.
-                    onClick={() => setMode(choice)}
+                    onClick={() => setTool(choice)}
                   >
                     {labels[choice].label}
                   </Button>

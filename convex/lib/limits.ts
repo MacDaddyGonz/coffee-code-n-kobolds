@@ -162,3 +162,46 @@ export const MAX_DUPLICATE_COUNT = 10
  * imports, and this is where a bound with no game in it goes.
  */
 export const MAX_DISCARD_IDS = 4
+
+/**
+ * How many vertices one fog polygon may have.
+ *
+ * ⚠️ **The roadmap gives no number for this, and the arithmetic is why there has to be
+ * one.** `MAX_ROLL_DICE`'s docblock is the model — the constant carries the sum, so the next
+ * person to move it can see what they are buying.
+ *
+ * `visiblePositions` asks `anyShapeCovers` once per placement, so the floor is
+ * `MAX_PLACEMENTS_PER_SCENE × MAX_FOG_RECTS_PER_SCENE` = **40,000 bounding-box comparisons
+ * per execution**, which is what fog already cost before polygons and is four multiplications
+ * of nothing. The box is what keeps it there: `shapeCovers` rejects a shape on its bounds
+ * before it visits an edge, so on a map where the DM has outlined separate rooms the ray-cast
+ * runs once per token, or not at all.
+ *
+ * The number bounds the case where that is not true — two hundred polygons stacked over one
+ * corner of the map, every box containing the point. Then it is
+ * `200 × 200 × MAX_FOG_POLYGON_POINTS` edge visits, and at 32 that is **1.28 million per
+ * execution of a query on the drag path**, which is bad and finite. Unbounded, it is whatever
+ * the client's last request said, on the one query CLAUDE.md invariant 2 exists to protect.
+ *
+ * Thirty-two is generous for the intended use by a wide margin: a hand-traced room outline is
+ * a dozen clicks, and Roll20's polygon tool in practice is fewer. It is deliberately not
+ * higher — a DM who needs a hundred-vertex cave wall wants two polygons, which the shape count
+ * has room for.
+ *
+ * ⚠️ **Three is the floor and it is a grammar rather than a courtesy.** Two points describe a
+ * line, `boundsOf` gives it a zero extent in one axis, and `rectCovers` then answers false for
+ * every point in the plane — a shape drawn on every screen that hides nothing, which is
+ * `normaliseFogRect`'s failure exactly. `requireDrawablePolygon` refuses both ends.
+ *
+ * ⚠️ **It lives in this file rather than beside the shape count in lib/games.ts, and the
+ * difference is which side of the wire has to agree.** Every other fog bound is a fact about a
+ * *game* that only the server enforces, and the DM meets it as a refusal they can act on —
+ * *cover the map with one bigger rectangle*. This one is a fact about a *gesture*, and a
+ * refusal on release costs the DM the whole outline with no way to get it back. So
+ * `usePolygonDraw` refuses the thirty-third corner as it is clicked, which means the browser
+ * needs the number — and lib/games.ts carries `requireDm`, so `src/` deliberately never
+ * imports it. That is `MAX_DISCARD_IDS`' taxonomy above, arrived at from the other direction:
+ * the server's copy is still the enforcement, and the client's is still only a courtesy that
+ * saves a round trip.
+ */
+export const MAX_FOG_POLYGON_POINTS = 32

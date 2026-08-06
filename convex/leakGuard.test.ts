@@ -189,6 +189,29 @@ for (const guard of GUARDS) {
       expect(paths, 'convex/lib/fog.ts is not being swept for table reads').toContain(
         './lib/fog.ts',
       )
+      /**
+       * ⚠️ **`convex/lib/walls.ts` joins `lib/fog.ts` here and gets no `GUARDS` entry
+       * either, and the argument is the same one twice with a stronger middle.** Every wall
+       * goes to every client verbatim — it *has* to, because the feature is a token that
+       * stops when it reaches a barrier and a browser cannot stop a drag against geometry it
+       * has not been sent. So a wall row has no non-secret twin to be confused with, and
+       * there is no predicate for a reader to be the home of. An entry below would pass,
+       * which is precisely why omitting it is argued rather than left implicit.
+       *
+       * Where the parallel with fog *stops* is one step downstream. Fog's confined thing is
+       * real: turning a rectangle into a set of withheld token ids needs `tokenPositions`,
+       * and `foggedTokenIds` therefore lives in `lib/board.ts` under the first entry above.
+       * A wall crosses nothing. It is read by one mutation deciding whether a write may
+       * proceed, and the answer changes no payload, withholds no row and hides no field.
+       *
+       * The one thing worth asserting is therefore that this module is in the glob: until
+       * line of sight, per-player fog or reveal-as-you-walk makes a stored line a statement
+       * about one caller — the day `walls` needs a fourth row and a predicate — it is still
+       * swept against every table it must not read.
+       */
+      expect(paths, 'convex/lib/walls.ts is not being swept for table reads').toContain(
+        './lib/walls.ts',
+      )
       for (const [path, text] of scanned) {
         expect(typeof text, `${path} did not load as text`).toBe('string')
         expect(text.length, `${path} loaded empty`).toBeGreaterThan(0)

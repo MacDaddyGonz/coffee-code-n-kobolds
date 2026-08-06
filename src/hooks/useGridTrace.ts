@@ -2,7 +2,16 @@ import { useCallback, useSyncExternalStore } from 'react'
 
 import type { Rect } from '@convex/lib/grid'
 
-// WHICH GRID TOOL THE DM IS HOLDING, AND THE BOX THEY HAVE TRACED WITH IT.
+// WHICH GRID TOOL THE DM HAS CHOSEN, AND THE BOX THEY HAVE TRACED WITH IT.
+//
+// ⚠️ **A choice and not an arming, and the distinction became load-bearing when the three
+// armed-tool cells were merged into one.** *Is a grid tool on the board?* is one member of
+// `BoardTool` in `src/lib/boardTool.ts`, shared with the fog brush and the wall tool so that
+// arming any of them puts the others down. *Which of the two grid tools would the button give
+// me?* is this cell, because `GridCalibrator`'s picker deliberately arms nothing and the
+// button in the board's own toolbar is what puts the chosen tool on the map. Folding the
+// choice into the union would have given that button two things to mean and left the picker
+// silently arming the board — `BoardTool`'s docblock argues the asymmetry.
 //
 // Nothing in this file decides anything anybody may see or do. It is a browser's own choice
 // of tool and one rectangle of geometry the DM dragged; every write it leads to goes through
@@ -29,7 +38,7 @@ export type GridTool = 'handles' | 'trace'
 
 /**
  * The tools, in the order they are offered. Iterated by the picker rather than two buttons
- * being written out — `FOG_MODES`' rule and CLAUDE.md invariant 9's: a third tool arrives
+ * being written out — `FOG_TOOLS`' rule and CLAUDE.md invariant 9's: a third tool arrives
  * with somewhere to be pressed rather than with nowhere.
  */
 export const GRID_TOOLS: readonly GridTool[] = ['handles', 'trace']
@@ -73,7 +82,7 @@ const INITIAL: TraceState = {
 type Store = { state: TraceState; listeners: Set<() => void> }
 
 /**
- * ⚠️ **A module-level store rather than `useState`, and it is `useFogMode`'s argument with
+ * ⚠️ **A module-level store rather than `useState`, and it is `useBoardTool`'s argument with
  * the same two halves of the screen in it.** The tool picker and the two count fields are in
  * `GridCalibrator`, deep inside the right-hand pane; the box they describe is dragged in
  * `TraceBoxLayer`, inside the Konva tree in the map pane. Two `useState`s cannot be that, and
@@ -83,7 +92,7 @@ type Store = { state: TraceState; listeners: Set<() => void> }
  * Keyed by game code, so a browser that has been in two games does not carry the first one's
  * traced box into the second.
  *
- * **Nothing is written to `localStorage`**, which is `useFogMode`'s departure from
+ * **Nothing is written to `localStorage`**, which is `useBoardTool`'s departure from
  * `useBoardLayers` for a reason that applies here too: a box traced over last week's map is
  * measured against art that is no longer on the table, and a stale one restored after a
  * refresh nobody remembers doing would be a measurement of nothing sitting over a picture of
@@ -118,7 +127,7 @@ export type GridTraceControls = TraceState & {
 /**
  * The trace tool as this browser is holding it.
  *
- * ⚠️ **A view and never a permission**, on ADR 0004's terms and word for word `useFogMode`'s:
+ * ⚠️ **A view and never a permission**, on ADR 0004's terms and word for word `useBoardTool`'s:
  * choosing a tool decides which Konva layer is mounted on *this* screen, and the refusal
  * behind every write it leads to is `requireDm` inside `scenes.updateGrid`.
  */

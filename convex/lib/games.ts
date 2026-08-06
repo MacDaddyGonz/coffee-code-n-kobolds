@@ -49,37 +49,46 @@ export const MAX_PLACEMENTS_PER_SCENE = 200
  */
 export const MAX_FOG_RECTS_PER_SCENE = 200
 
+// `MAX_FOG_POLYGON_POINTS` used to live here and now lives in lib/limits.ts, by the taxonomy
+// `MAX_DISCARD_IDS` states at the bottom of that file: this module is the authorisation choke
+// point `src/` deliberately never imports, and a bound the *browser* has to agree with cannot
+// sit behind `requireDm`. The polygon gesture refuses the thirty-third corner as it is drawn,
+// because a DM who loses a whole outline to a toast on release has lost the outline.
+
 /**
- * How many vertices one fog polygon may have.
+ * How many walls one scene may hold, and how many vertices one wall may have.
  *
- * ⚠️ **The roadmap gives no number for this, and the arithmetic is why there has to be
- * one.** `MAX_ROLL_DICE`'s docblock is the model — the constant carries the sum, so the next
- * person to move it can see what they are buying.
+ * ⚠️ **Both are write checks and not merely read bounds, and `fog.draw`'s recorded reason
+ * applies to them word for word.** Nothing structurally caps walls — a DM tracing the
+ * corridors of a dungeon produces one row per gesture, all evening — so a scene past the
+ * read window would hold barriers that `pathCrossesAnyWall` sees on some passes and not
+ * others, depending on which rows the `take` happened to return. That failure is worse here
+ * than it is for fog: a refusal that fires intermittently reads as a rendering glitch, gets
+ * explained away, and the DM stops trusting the feature rather than reporting it.
+ * `walls.add` therefore refuses at the boundary, the way `board.addToken` enforces
+ * `MAX_TOKENS_PER_GAME`, and the refusal names the way out.
  *
- * `visiblePositions` asks `anyShapeCovers` once per placement, so the floor is
- * `MAX_PLACEMENTS_PER_SCENE × MAX_FOG_RECTS_PER_SCENE` = **40,000 bounding-box comparisons
- * per execution**, which is what fog already cost before polygons and is four multiplications
- * of nothing. The box is what keeps it there: `shapeCovers` rejects a shape on its bounds
- * before it visits an edge, so on a map where the DM has outlined separate rooms the ray-cast
- * runs once per token, or not at all.
+ * The arithmetic behind the pair, in `MAX_ROLL_DICE`'s register — the constant carries the
+ * sum so the next person to move it can see what they are buying. The barrier test is
+ * `walls × (points − 1)` segment intersections, each four cross products, so the ceiling is
+ * `100 × 63` ≈ **6,300 segment tests per checked move**. That is once per settling write on
+ * the server and once per drag frame in the browser, and it is deliberately *not* inside a
+ * query: `requireMovableToken`'s docblock argues why a `walls` read may not go on the path
+ * that runs ten times a second.
  *
- * The number bounds the case where that is not true — two hundred polygons stacked over one
- * corner of the map, every box containing the point. Then it is
- * `200 × 200 × MAX_FOG_POLYGON_POINTS` edge visits, and at 32 that is **1.28 million per
- * execution of a query on the drag path**, which is bad and finite. Unbounded, it is whatever
- * the client's last request said, on the one query CLAUDE.md invariant 2 exists to protect.
+ * A hundred walls is generous for the intended use, which is the doors and outer edges of
+ * one dungeon level, and sixty-four vertices is a long corridor traced in one go. The two
+ * numbers are separate because they bound different mistakes: one is a DM who keeps
+ * drawing, the other is a DM who traces a cave wall click by click without letting go.
  *
- * Thirty-two is generous for the intended use by a wide margin: a hand-traced room outline is
- * a dozen clicks, and Roll20's polygon tool in practice is fewer. It is deliberately not
- * higher — a DM who needs a hundred-vertex cave wall wants two polygons, which the shape count
- * has room for.
- *
- * ⚠️ **Three is the floor and it is a grammar rather than a courtesy.** Two points describe a
- * line, `boundsOf` gives it a zero extent in one axis, and `rectCovers` then answers false for
- * every point in the plane — a shape drawn on every screen that hides nothing, which is
- * `normaliseFogRect`'s failure exactly. `requireDrawablePolygon` refuses both ends.
+ * ⚠️ **Two is the floor for `MAX_WALL_POINTS` and it is a grammar rather than a courtesy.**
+ * One point is not a line, has no segment, blocks nothing and cannot be seen on the map — so
+ * it would sit on the scene for ever counting against the wall count, reachable only by
+ * clearing the whole map. That is `MAX_FOG_POLYGON_POINTS`' three-corner floor, one shape
+ * kind down: a fog shape needs a region and a wall needs only a direction.
  */
-export const MAX_FOG_POLYGON_POINTS = 32
+export const MAX_WALLS_PER_SCENE = 100
+export const MAX_WALL_POINTS = 64
 
 /**
  * How many handouts and how many tracks one game may hold.

@@ -235,9 +235,11 @@ function BoardView({ code }: { code: string }) {
         </Button>
       </div>
       <p className="text-muted-foreground text-xs">
-        Yours alone, and nothing moves: hiding your own layer changes what this browser paints
-        and not one row of what anybody was sent. Nobody else's board flickers, and the coins
-        come straight back.
+        Yours alone, and nothing moves: this hides your own layer{' '}
+        <span className="font-medium">and applies the fog</span>, which changes what this
+        browser paints and not one row of what anybody was sent. Nobody else's board flickers,
+        and the coins come straight back. While it is on, a badge sits over the map — it is easy
+        to forget you are looking at somebody else's board.
       </p>
     </div>
   )

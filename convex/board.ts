@@ -54,7 +54,12 @@ import { layerOf, tokenLayerValidator } from './lib/layers'
 import { TOKEN_MARKERS, normaliseMarkers, tokenMarkerValidator } from './lib/markers'
 import { getSeatInGame, listSeats } from './lib/players'
 import type { Point } from './lib/grid'
-import { isUsableTokenSize, snapToGrid } from './lib/grid'
+import { isUsableTokenSize, pathCrossesAnyWall, snapToGrid } from './lib/grid'
+// The barrier backstop, and the only thing this file takes from the walls surface. The read
+// is confined to lib/walls.ts the way every other table read here is confined to its module,
+// though for a table with nothing secret in it — that module's header argues why it gets no
+// leak-guard entry rather than assuming it.
+import { WALL_BLOCKS, sceneWalls } from './lib/walls'
 import { MAX_DUPLICATE_COUNT, MAX_TOKEN_BYTES } from './lib/limits'
 import { duplicateNamesProblem, requireText } from './lib/names'
 import { findSceneInGame, getSceneInGame } from './lib/scenes'
@@ -392,6 +397,45 @@ export const addToken = mutation({
  * Ungated beyond `resolveDmAccess`, because a player has to be able to move their
  * own character. `requireMovableToken` decides what "their own" means, and refuses
  * a DM-layer token with the same error it gives for one that does not exist.
+ *
+ * ⚠️⚠️ **THE WALL CHECK IS HERE, ON THE SETTLING WRITE ALONE, AND THE SPLIT BETWEEN THIS
+ * AND THE BROWSER IS THE WHOLE DESIGN OF THE FEATURE RATHER THAN AN OPTIMISATION.**
+ *
+ * The *feel* is the client's: `useTokenMove` tests each frame against the last point it
+ * accepted and simply declines a blocked one, so the coin slides up to the barrier and
+ * stops. That is what Roll20 does and it is the entire user-facing feature. This is the
+ * backstop — one check, on the write that settles, `&&`-ed beside the layer and control
+ * rules rather than folded into `requireMovableToken`, whose docblock argues at length why a
+ * range read may not go on a handler that runs ten times a second.
+ *
+ * So a drag produces roughly twenty unchecked writes and exactly one checked one, and the
+ * three things that leaves advisory are stated rather than glossed:
+ *
+ * - **Intermediate positions are unchecked, stored and broadcast**, so a client that never
+ *   settles can park a token anywhere and everybody watches it walk through the wall.
+ * - **Those unchecked writes move the *from* point**, so a client that wants to cross a wall
+ *   crosses it in unchecked steps and the check below then sees a perfectly legal hop.
+ * - **A token is tested by its centre**, so a 2×2 ogre's body can overlap a wall its centre
+ *   missed. `pathCrossesAnyWall` carries the reason no size and no grid enter the arithmetic.
+ *
+ * ⭐ **Checked against the threat model that is clean rather than a compromise, and this is
+ * the sentence that matters: unlike `playerId`, and unlike fog, nothing behind a wall is a
+ * secret.** A wall withholds no row, no field and no payload, so CLAUDE.md invariant 1 does
+ * not enter at all and the advisory ceiling costs nothing in the register where cost is
+ * measured. *"Server-side refusals that stop a misclick are worth having and are not claimed
+ * to be more than that"* is already the written rule, and this is the first feature to which
+ * it applies with no residual worth arguing about.
+ *
+ * Three consequences of the ordering below, each deliberate:
+ *
+ * - **The DM is not blocked.** They place creatures inside sealed rooms, drag the party
+ *   through a door they have just narrated open, and rearrange scenery. A wall the DM cannot
+ *   cross is a wall the DM cannot use. The `isDm` term is first, so their drags pay no read.
+ * - **A token with no placement on this scene skips the check**, because there is no *from*
+ *   to draw a path out of. Joining a board is not a journey across it.
+ * - **Background-layer tokens are moot and needed no predicate.** Players already may not
+ *   move them (`mayPlayersMove`), so nobody subject to walls can move one, and
+ *   `convex/lib/layers.ts` is untouched. Scenery is placed, not walked.
  */
 export const moveToken = mutation({
   args: {
@@ -419,6 +463,21 @@ export const moveToken = mutation({
     const point = args.settle
       ? snapToGrid({ x: args.x, y: args.y }, scene, token.sizeSquares)
       : { x: args.x, y: args.y }
+
+    // The barrier backstop. Settling writes only, non-DM only, and the `from` point is the
+    // placement `placeToken` is about to read anyway — the same document in the same
+    // transaction, so it costs no second read. The `walls` range read is the one thing this
+    // adds, and it lands here rather than in `requireMovableToken` for the reason that
+    // function's docblock gives. Checked against the **snapped** destination because that is
+    // the write actually being made; the browser has already refused every frame on the way
+    // to it, so the two only ever disagree at the snap.
+    if (args.settle && !isDm) {
+      const from = await placementOf(ctx, scene._id, token._id)
+      if (from !== null && pathCrossesAnyWall(await sceneWalls(ctx, scene._id), from, point)) {
+        throw new ConvexError(WALL_BLOCKS)
+      }
+    }
+
     // Creates the row if this token was not on this scene yet, which is how a
     // token from another board joins this one: the row's existence is the
     // placement.
