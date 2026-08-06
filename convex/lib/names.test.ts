@@ -1,7 +1,19 @@
 import { describe, expect, test } from 'vitest'
 
-import { MAX_CHARACTER_NAME_LENGTH } from './codes'
-import { duplicateBase, duplicateNames, duplicateNamesProblem, highestNumbered } from './names'
+import {
+  MAX_CHARACTER_NAME_LENGTH,
+  MAX_SCENE_NAME_LENGTH,
+  MAX_SCENE_NOTES_LENGTH,
+  hasLoneSurrogate,
+} from './codes'
+import {
+  duplicateBase,
+  duplicateNames,
+  duplicateNamesProblem,
+  highestNumbered,
+  requireSceneNotes,
+  sceneCopyName,
+} from './names'
 
 /**
  * THE NAMING RULE BEHIND *DUPLICATE* AND *ADD FIVE OF THESE*.
@@ -286,5 +298,78 @@ describe('over-length names are refused rather than cut', () => {
     const dragons = Math.floor(MAX_CHARACTER_NAME_LENGTH / 2)
     expect(duplicateNamesProblem(['🐉'.repeat(dragons)])).toBeNull()
     expect(duplicateNamesProblem(['🐉'.repeat(dragons + 1)])).not.toBeNull()
+  })
+})
+
+/**
+ * THE MAP-SHAPED HALVES OF THIS MODULE, WHICH BORROW NEITHER OF THE COIN RULES ABOVE.
+ *
+ * Both are pure for a different reason from `duplicateNames`': nothing renders a preview of
+ * either, and they are here because this file is where a refusal about a name lives. What
+ * they share with everything above is the unit — UTF-16 `.length`, which is what the
+ * textarea's `maxLength` and Convex's own validation both count in.
+ */
+describe('the DM’s notes for a map', () => {
+  test('a blank is legal, and is how notes are cleared', () => {
+    // Unlike every `require…Name` above, which refuses one. A nameless row is unusable in a
+    // list; a note nobody has written is the ordinary state of a map.
+    expect(requireSceneNotes('')).toBe('')
+    expect(requireSceneNotes('   \n  ')).toBe('')
+  })
+
+  test('the ends are trimmed and the middle is not collapsed', () => {
+    // ⚠️ The difference from `requireText` that matters most. `collapseWhitespace` would
+    // turn this into one line, and prose written in paragraphs is the whole of what the
+    // field is for.
+    expect(requireSceneNotes('  Two rooms.\n\nThe second is trapped.  ')).toBe(
+      'Two rooms.\n\nThe second is trapped.',
+    )
+  })
+
+  test('refuses past the limit rather than truncating, and counts UTF-16 units', () => {
+    expect(requireSceneNotes('x'.repeat(MAX_SCENE_NOTES_LENGTH))).toHaveLength(
+      MAX_SCENE_NOTES_LENGTH,
+    )
+    expect(() => requireSceneNotes('x'.repeat(MAX_SCENE_NOTES_LENGTH + 1))).toThrow()
+    // Half the dragons, because each is two code units — the same measure the field applies.
+    const dragons = Math.floor(MAX_SCENE_NOTES_LENGTH / 2)
+    expect(requireSceneNotes('🐉'.repeat(dragons))).toHaveLength(MAX_SCENE_NOTES_LENGTH)
+    expect(() => requireSceneNotes('🐉'.repeat(dragons + 1))).toThrow()
+  })
+})
+
+describe('what a copy of a map is called', () => {
+  test('a short name simply gains the suffix', () => {
+    expect(sceneCopyName('Cellar')).toBe('Cellar (copy)')
+  })
+
+  test('a trailing number is kept, unlike a coin’s', () => {
+    // ⚠️ The deliberate divergence from `duplicateBase` above. A DM with `Cellar 2` wants
+    // `Cellar 2 (copy)` and not `Cellar 3`; a numbered run of maps is not a thing the scene
+    // picker has, and borrowing the coin rule would silently rename the copy.
+    expect(sceneCopyName('Cellar 2')).toBe('Cellar 2 (copy)')
+  })
+
+  test('a long name is cut to fit and still ends in the suffix', () => {
+    const long = 'a'.repeat(MAX_SCENE_NAME_LENGTH)
+    const copy = sceneCopyName(long)
+    expect(copy).toHaveLength(MAX_SCENE_NAME_LENGTH)
+    expect(copy.endsWith(' (copy)')).toBe(true)
+    // The suffix's budget is reserved *before* the cut. Truncating the whole result instead
+    // would take the suffix off and produce a second map called almost what the first is.
+    expect(copy.startsWith('a'.repeat(MAX_SCENE_NAME_LENGTH - ' (copy)'.length))).toBe(true)
+  })
+
+  test('the cut never splits an emoji — the Milestone 1 bug, third occurrence', () => {
+    // The app supplies the over-long part here, so no field's `maxLength` could have caught
+    // it. A `slice` at this boundary leaves a lone surrogate that `requireSceneName` accepts
+    // — it is neither blank nor over-length — and that a real deployment then refuses.
+    for (let dragons = 1; dragons <= 6; dragons += 1) {
+      const name = `${'a'.repeat(MAX_SCENE_NAME_LENGTH - 8)}${'🐉'.repeat(dragons)}`
+      const copy = sceneCopyName(name)
+      expect(copy.length).toBeLessThanOrEqual(MAX_SCENE_NAME_LENGTH)
+      expect(hasLoneSurrogate(copy), `${dragons} dragons produced half a dragon`).toBe(false)
+      expect(copy.endsWith(' (copy)')).toBe(true)
+    }
   })
 })
