@@ -178,7 +178,7 @@ const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
 
 /**
- * Six catalogue entries, copied out of `convex/lib/rules.ts` word for word.
+ * Seven catalogue entries, copied out of `convex/lib/rules.ts` word for word.
  *
  * Restated rather than imported for the reason `snapToGrid` below is restated: this
  * is plain .mjs on purpose, so it cannot import a .ts module, and a script that
@@ -215,18 +215,32 @@ const CATALOGUE = {
     level: 3,
     category: 'action',
   },
-  secondWind: {
-    key: 'second-wind',
-    name: 'Second Wind',
-    text: 'A bonus action, once per rest, to catch your breath and regain hit points. Add your fighter level to the die.',
-    roll: '1d10',
+  // ⚠️ **Re-copied when `FEATS` was rebuilt from the 2024 SRD.** These two used to be
+  // `second-wind` and `action-surge`, which were never feats at all — they are class
+  // features and left the catalogue with six others. A stale copy would fail this
+  // script over a change that was correct, which is the trap the greatclub comment
+  // below already records.
+  //
+  // ⚠️ **One shape of round trip went with them and is worth naming rather than
+  // quietly losing: a `level: null` entry that carries a roll and NO to-hit.**
+  // `second-wind` was that shape, and there is no replacement in `FEATS`, because not
+  // one of the ten SRD feats reachable at levels 1–5 rolls dice — every one of them
+  // grants a proficiency, a bonus, or permission. `npc-fire-breath` is the same shape
+  // and could be added here if that coverage is ever wanted back; it is left out
+  // because this fixture is a sheet somebody could plausibly have, and a hero does not
+  // have Fire Breath.
+  alert: {
+    key: 'alert',
+    name: 'Alert',
+    text: 'Origin feat. You add your proficiency bonus to initiative, and once the order is rolled you may swap your place in it with a willing ally\'s — neither of you being incapacitated at the time.',
+    roll: null,
     level: null,
-    category: 'action',
+    category: 'passive',
   },
-  actionSurge: {
-    key: 'action-surge',
-    name: 'Action Surge',
-    text: 'Once per rest, take one extra action on your turn — a whole second action, not a bonus action.',
+  savageAttacker: {
+    key: 'savage-attacker',
+    name: 'Savage Attacker',
+    text: 'Origin feat. Once a turn, when you hit with a weapon, reroll the damage dice and keep whichever total you prefer.',
     roll: null,
     level: null,
     category: 'passive',
@@ -320,8 +334,8 @@ const PC_SHEET = {
   maxHp: 84,
   hitDice: { count: 7, faces: 10 },
   feats: [
-    entryFrom(CATALOGUE.secondWind, 'feat-second-wind'),
-    entryFrom(CATALOGUE.actionSurge, 'feat-action-surge'),
+    entryFrom(CATALOGUE.alert, 'feat-alert'),
+    entryFrom(CATALOGUE.savageAttacker, 'feat-savage-attacker'),
     // THE NEGATIVE. Neither new field, exactly as every entry written before
     // Milestone 6 is, and the one this script asserts comes back with neither key
     // present. See `LEGACY_FEAT_ID` and the check in section 6.

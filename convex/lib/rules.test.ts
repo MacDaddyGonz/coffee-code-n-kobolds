@@ -18,6 +18,7 @@ import {
   normaliseSheet,
   rollShapeOf,
   sheetProblem,
+  toHitProblem,
 } from './sheet'
 import type { NpcSheet, PcSheet, SheetEntry, SheetEntryCategory } from './sheet'
 
@@ -109,17 +110,44 @@ describe('CATALOGUE', () => {
 
   /**
    * An accidentally emptied list would make almost every other test in this file
-   * pass vacuously — a `for` loop over nothing asserts nothing. The counts are
-   * the ones the module documents; the upper bound matters too, because a list
-   * longer than `MAX_SHEET_ENTRIES` could not be taken wholesale onto a sheet.
+   * pass vacuously — a `for` loop over nothing asserts nothing.
+   *
+   * **`SPELLS` is pinned exactly and the other two are floors**, which is the shape
+   * the corpora have: the spell list is a transcription of a fixed source at a fixed
+   * level cap, so its length is a fact about the SRD and a number moving is a
+   * transcription error rather than an editorial decision. 27 cantrips and the 57 /
+   * 57 / 42 of levels 1–3 is 183, and `a spread over the levels the module claims`
+   * below pins the four numbers that make it up.
+   *
+   * ⚠️ **The roadmap said 15 cantrips and 171 spells. It is wrong** — the source has
+   * 27 cantrips, counted twice from `spells.md`, and the milestone's table was a
+   * snapshot its own text says must be regenerated rather than trusted.
    */
-  test('each list holds roughly the documented number of entries', () => {
-    expect(SPELLS.length).toBeGreaterThanOrEqual(24)
-    expect(FEATS.length).toBeGreaterThanOrEqual(16)
+  test('each list holds the documented number of entries', () => {
+    expect(SPELLS).toHaveLength(183)
+    expect(FEATS).toHaveLength(10)
     expect(NPC_ACTIONS.length).toBeGreaterThanOrEqual(12)
-    for (const [name, list] of LISTS) {
-      expect(list.length, name).toBeLessThanOrEqual(MAX_SHEET_ENTRIES)
-    }
+  })
+
+  /**
+   * ⚠️ **`SPELLS` is deliberately absent from this, and the absence is the change
+   * rather than an oversight.**
+   *
+   * Every earlier version of the catalogue was short enough to be taken onto one sheet
+   * wholesale, and this assertion ran over all three lists. `SPELLS` is now 183 long
+   * against a `MAX_SHEET_ENTRIES` of 40, and that is correct in both directions: a
+   * character prepares a handful of spells, not the whole SRD, and the cap belongs to
+   * the sheet rather than to the corpus. Loosening it to fit a transcription would be
+   * the wrong repair — 183 entries at ~400 bytes each is 73 KB on a document that also
+   * holds feats, against Convex's 1 MB limit, and nobody wants the list.
+   *
+   * The other two are still capped and still meant to be: a DM really does take a
+   * monster's whole action list, and a hero's feat list is short by construction.
+   */
+  test('the two lists a sheet might take entire still fit on one', () => {
+    expect(FEATS.length).toBeLessThanOrEqual(MAX_SHEET_ENTRIES)
+    expect(NPC_ACTIONS.length).toBeLessThanOrEqual(MAX_SHEET_ENTRIES)
+    expect(SPELLS.length).toBeGreaterThan(MAX_SHEET_ENTRIES)
   })
 
   test('no two entries share a name within a list', () => {
@@ -214,8 +242,8 @@ describe('categories', () => {
    * here is a decision somebody has to make on purpose.
    */
   test('each list holds the categories the catalogue was written with', () => {
-    expect(tally(SPELLS)).toEqual({ weapon: 5, action: 10, passive: 9 })
-    expect(tally(FEATS)).toEqual({ weapon: 0, action: 5, passive: 11 })
+    expect(tally(SPELLS)).toEqual({ weapon: 18, action: 44, passive: 121 })
+    expect(tally(FEATS)).toEqual({ weapon: 0, action: 0, passive: 10 })
     expect(tally(NPC_ACTIONS)).toEqual({ weapon: 7, action: 4, passive: 1 })
     // And the tallies really do account for every entry, so a list that gained one
     // in a category nobody counted cannot hide in the arithmetic.
@@ -273,7 +301,10 @@ describe('categories', () => {
       expect(toHit, `${entry.key} has no to-hit`).toBeDefined()
       expect(isValidRoll(toHit as string), `${entry.key} → ${toHit}`).toBe(true)
       expect(normaliseRoll(toHit as string), entry.key).toBe(toHit)
-      expect((toHit as string).startsWith('1d20'), `${entry.key} → ${toHit}`).toBe(true)
+      // Through the server's own predicate rather than a `startsWith` here, which is
+      // what this line used to be: `toHitProblem` is what the mutation runs, and it
+      // refuses `1d200` on a prefix match that a hand-written check happily accepts.
+      expect(toHitProblem(toHit as string), `${entry.key} → ${toHit}`).toBeNull()
       expect(entry.roll, `${entry.key} has no damage`).not.toBeNull()
     }
   })
@@ -385,12 +416,135 @@ describe('names, text and levels', () => {
     }
   })
 
-  /** The list is meant to run cantrips through 3rd level; a stray 9th would be out of scope. */
-  test('the spell list stays inside the levels the module claims', () => {
+  /**
+   * The list runs cantrips through 3rd level, because characters stop at level 5 and a
+   * level 5 character has no slot above 3rd. A stray 4th would be a spell nobody in
+   * this application can cast, offered by the picker to everybody.
+   *
+   * ⚠️ **Pinned as four exact counts rather than as a ceiling**, for the reason the
+   * category tally is: a ceiling is satisfied by a corpus that dropped every 3rd-level
+   * spell, and a transcription's failure mode is a level going missing rather than one
+   * arriving. The numbers are the SRD's own — 27 cantrips, then 57 / 57 / 42 — and they
+   * sum to the 183 pinned above, which is asserted here rather than trusted so that two
+   * numbers cannot be edited into agreement one at a time.
+   */
+  test('the spell list has the spread over levels 0 to 3 that the module claims', () => {
+    const byLevel = new Map<number, number>()
     for (const entry of SPELLS) {
-      expect(entry.level as number, entry.key).toBeLessThanOrEqual(3)
+      const level = entry.level as number
+      byLevel.set(level, (byLevel.get(level) ?? 0) + 1)
     }
-    expect(SPELLS.some((entry) => entry.level === 0)).toBe(true)
+    expect(Object.fromEntries(byLevel)).toEqual({ 0: 27, 1: 57, 2: 57, 3: 42 })
+    expect([...byLevel.values()].reduce((a, b) => a + b, 0)).toBe(SPELLS.length)
+
+    // And the ceiling itself, stated separately: the counts above would still pass if
+    // a 4th-level spell were added *and* the expectation updated, so this is the line
+    // that says the cap is a rule rather than a tally.
+    const tooHigh = SPELLS.filter((entry) => (entry.level as number) > 3).map((e) => e.key)
+    expect(tooHigh).toEqual([])
+  })
+})
+
+describe('the feats are feats', () => {
+  /**
+   * ⭐ **The split, pinned by name.** `FEATS` used to hold sixteen entries of which
+   * eight were **class features** — a different thing, with a different home and a
+   * different recharge story — and six more were feats that appear in no SRD, 2014 or
+   * 2024, written from general knowledge.
+   *
+   * Named individually rather than counted, because a count is satisfied by any ten
+   * entries: the failure this guards against is somebody restoring Rage to the picker
+   * because a character sheet mentions it, which a length assertion would never notice.
+   * The class features belong on the library sheet for the level that grants them.
+   */
+  const CLASS_FEATURES = [
+    'second-wind',
+    'action-surge',
+    'rage',
+    'sneak-attack',
+    'divine-smite',
+    'lay-on-hands',
+    'bardic-inspiration',
+    'wild-shape',
+  ]
+
+  const NON_SRD_FEATS = [
+    'great-weapon-master',
+    'sharpshooter',
+    'tough',
+    'lucky',
+    'mobile',
+    'resilient',
+  ]
+
+  test('no class feature and no invented feat is offered as a feat', () => {
+    expect(CLASS_FEATURES).toHaveLength(8)
+    const offered = FEATS.map((feat) => feat.key)
+    for (const key of [...CLASS_FEATURES, ...NON_SRD_FEATS]) {
+      expect(offered, `${key} is back in FEATS`).not.toContain(key)
+    }
+  })
+
+  /**
+   * And gone from the catalogue *entirely*, which is the stronger claim and the one
+   * that matters for the picker — `catalogueEntry` is the lookup every badge goes
+   * through. Divine Smite is the single exception and has its own test below.
+   */
+  test('thirteen of the fourteen retired keys resolve to nothing at all', () => {
+    const retired = [...CLASS_FEATURES, ...NON_SRD_FEATS].filter((key) => key !== 'divine-smite')
+    expect(retired).toHaveLength(13)
+    for (const key of retired) {
+      expect(catalogueEntry(key), `${key} is back in the catalogue`).toBeUndefined()
+    }
+  })
+
+  /**
+   * ⚠️ **The eighth retired class feature is not retired — it MOVED**, and it is here
+   * rather than in the list above so that the difference is impossible to miss. 2024
+   * makes Divine Smite a level 1 Paladin *spell*, so the key still resolves and now
+   * answers a spell. A character holding the old feat copy keeps a working badge.
+   */
+  test('divine-smite moved to the spell list rather than retiring', () => {
+    const entry = catalogueEntry('divine-smite')
+    expect(entry).toBeDefined()
+    expect(entry?.level).toBe(1)
+    expect(SPELLS).toContain(entry)
+    expect(FEATS.map((feat) => feat.key)).not.toContain('divine-smite')
+  })
+
+  /** The ten that are left, named, and in the three SRD categories that reach level 5. */
+  test('the ten SRD feats reachable at levels 1 to 5 are exactly what is offered', () => {
+    expect(FEATS.map((feat) => feat.key)).toEqual([
+      // Origin
+      'alert',
+      'magic-initiate',
+      'savage-attacker',
+      'skilled',
+      // Fighting Style
+      'archery',
+      'defense',
+      'great-weapon-fighting',
+      'two-weapon-fighting',
+      // General
+      'ability-score-improvement',
+      'grappler',
+    ])
+  })
+
+  /**
+   * Every one of the ten grants a proficiency, a bonus to a number already on the sheet,
+   * or permission to do something — none has dice of its own. That was not true before:
+   * the five rolling entries this list used to hold were all class features, and they
+   * left with the rest. Asserted so that a future feat with a roll is a decision
+   * somebody makes rather than a line somebody adds.
+   */
+  test('no feat rolls anything and none carries a to-hit', () => {
+    for (const feat of FEATS) {
+      expect(feat.roll, feat.key).toBeNull()
+      expect(feat.toHit, feat.key).toBeUndefined()
+      expect(feat.category, feat.key).toBe('passive')
+      expect(feat.level, feat.key).toBeNull()
+    }
   })
 })
 
@@ -447,12 +601,36 @@ describe('the catalogue and the validator agree', () => {
     }
   })
 
-  /** And the whole list at once, which is what "add them all" from the picker would do. */
-  test('a whole list can be taken onto one sheet', () => {
+  /**
+   * A full sheet at once, which is the state the picker can actually put one in.
+   *
+   * ⚠️ **`SPELLS` is sliced and the other two are not, and the slice is the point
+   * rather than a convenience.** A hero can hold `MAX_SHEET_ENTRIES` spells and no
+   * more, so the interesting case is a sheet filled *to* the cap out of the corpus —
+   * which is what the picker produces after forty clicks — and the two lists that fit
+   * entire are still taken entire. Passing all 183 would only assert that
+   * `entriesProblem` refuses 183, which `sheet.test.ts` already pins directly.
+   *
+   * Taken from the end as well as the beginning, because the corpus is alphabetical
+   * and a first-40 slice is every spell between Acid Arrow and Bless.
+   */
+  test('a sheet filled to the cap from each list is storable', () => {
+    for (const window of [
+      SPELLS.slice(0, MAX_SHEET_ENTRIES),
+      SPELLS.slice(-MAX_SHEET_ENTRIES),
+      SPELLS.filter((entry) => entry.category === 'weapon').slice(0, MAX_SHEET_ENTRIES),
+    ]) {
+      const sheet: PcSheet = {
+        ...defaultPcSheet(),
+        spells: window.map((entry, i) => asSheetEntry(entry, i)),
+      }
+      expect(sheetProblem(sheet)).toBeNull()
+    }
+
     const pcSheet: PcSheet = {
       ...defaultPcSheet(),
-      spells: SPELLS.map((entry, i) => asSheetEntry(entry, i)),
-      feats: FEATS.map((entry, i) => asSheetEntry(entry, i + SPELLS.length)),
+      spells: SPELLS.slice(0, MAX_SHEET_ENTRIES).map((entry, i) => asSheetEntry(entry, i)),
+      feats: FEATS.map((entry, i) => asSheetEntry(entry, i + MAX_SHEET_ENTRIES)),
     }
     expect(sheetProblem(pcSheet)).toBeNull()
 
@@ -469,6 +647,8 @@ describe('the catalogue and the validator agree', () => {
    * this one" comparison would be against a string nobody stored.
    */
   test('normalising a sheet full of catalogue entries changes nothing', () => {
+    // Every spell, not a window: `normaliseSheet` has no length rule to trip over, so
+    // this is the one place the whole corpus goes through the real normaliser.
     const sheet: PcSheet = {
       ...defaultPcSheet(),
       spells: SPELLS.map((entry, i) => asSheetEntry(entry, i)),

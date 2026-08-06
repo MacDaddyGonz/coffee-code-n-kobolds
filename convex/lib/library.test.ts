@@ -12,7 +12,7 @@ import { LIBRARY, librarySheet } from './library'
 import type { LibraryEntry, LibrarySheet } from './library'
 import { SPECIES_KEYS } from './species'
 import { resolveSheet } from './resolve'
-import { catalogueEntry } from './rules'
+import { FEATS, catalogueEntry } from './rules'
 import { SKILL_KEYS } from './skills'
 import {
   MAX_ENTRY_ID_LENGTH,
@@ -580,21 +580,96 @@ describe('the category on a premade entry', () => {
 })
 
 describe('entries taken from the catalogue', () => {
+  /**
+   * ⚠️ **THE EIGHT CLASS FEATURES THE CATALOGUE STOPPED PRETENDING WERE FEATS, AND THIS
+   * BLOCK DELETES ITSELF WHEN THE LIBRARY CATCHES UP.**
+   *
+   * `convex/lib/rules.ts` used to call sixteen things `FEATS` and only eight of them
+   * were: Second Wind, Action Surge, Rage, Sneak Attack, Divine Smite, Lay on Hands,
+   * Bardic Inspiration and Wild Shape are **class features**, which have a different
+   * home — the library sheet for the level that grants them, which is where they
+   * already are. The 5e (2024) conversion split the one list into two and these eight
+   * left the catalogue; the library's own rebuild, which drops the now-meaningless
+   * `catalogueKey` from them, is a later step of the same milestone and is not this
+   * commit.
+   *
+   * **A dangling key is not corruption and never was.** rules.ts calls `catalogueKey`
+   * "a breadcrumb recording where a copy came from, not a foreign key", and
+   * `catalogueEntry` returns `undefined` rather than throwing precisely so that a
+   * retired key costs a badge and nothing else. So the assertion that *every* key
+   * resolves was always stronger than the design promised; it held only because both
+   * corpora used to be written together.
+   *
+   * ⚠️ **This is a tripwire in BOTH directions rather than an exemption**, which is the
+   * only formulation worth having:
+   *
+   * - a key that is **not** on this list must still resolve, so a new dangling key
+   *   fails exactly as before;
+   * - every key on this list must still be **in use** by a library sheet, so the list
+   *   cannot rot into a permanent excuse; and
+   * - every key on this list must still be **absent** from `FEATS`, so the day the
+   *   library rebuild lands — or the day somebody puts Rage back in the picker — this
+   *   block fails and forces its own removal.
+   */
+  const CLASS_FEATURES_THE_LIBRARY_STATES_ITSELF = [
+    'second-wind',
+    'action-surge',
+    'rage',
+    'sneak-attack',
+    'divine-smite',
+    'lay-on-hands',
+    'bardic-inspiration',
+    'wild-shape',
+  ]
+
   const KEYED = SHEETS.flatMap(({ label, sheet }) =>
     entriesOf(sheet)
       .filter((entry) => entry.catalogueKey !== null)
       .map((entry) => ({ label, entry })),
   )
 
+  /** The keys that still name something the picker offers, which is most of them. */
+  const CATALOGUED = KEYED.filter(
+    ({ entry }) =>
+      !CLASS_FEATURES_THE_LIBRARY_STATES_ITSELF.includes(entry.catalogueKey as string),
+  )
+
   /** Vacuity again: the library does lean on the catalogue, and should keep doing so. */
   test('there are some, and every key names a catalogue entry that exists', () => {
-    expect(KEYED.length).toBeGreaterThan(10)
-    for (const { label, entry } of KEYED) {
+    expect(CATALOGUED.length).toBeGreaterThan(10)
+    for (const { label, entry } of CATALOGUED) {
       expect(
         catalogueEntry(entry.catalogueKey as string),
         `${label}: ${entry.name} → ${entry.catalogueKey}`,
       ).toBeDefined()
     }
+  })
+
+  /** The other two directions of the tripwire above. See its note. */
+  test('every dangling key is one of the eight, and the eight are all out of FEATS', () => {
+    expect(CLASS_FEATURES_THE_LIBRARY_STATES_ITSELF).toHaveLength(8)
+    const offered = new Set(FEATS.map((feat) => feat.key))
+    for (const key of CLASS_FEATURES_THE_LIBRARY_STATES_ITSELF) {
+      expect(offered.has(key), `${key} is back in FEATS — delete this list`).toBe(false)
+    }
+
+    // Not vacuous and not open-ended. The library really does still key entries at
+    // things the picker no longer offers — so the skip above is doing work — and every
+    // one of them is on the list, so a *new* dangling key fails here as well as in the
+    // test above. The day the library rebuild drops the last of them, the first
+    // expectation fails and this whole block goes.
+    //
+    // Fewer than eight is expected rather than a discrepancy: `wild-shape` is stated on
+    // the druid sheets without a `catalogueKey` at all, and `divine-smite` still
+    // resolves because 2024 makes it a spell.
+    const dangling = [...new Set(KEYED.map(({ entry }) => entry.catalogueKey as string))].filter(
+      (key) => catalogueEntry(key) === undefined,
+    )
+    expect(dangling.length, 'nothing dangles any more — delete this list').toBeGreaterThan(0)
+    expect(
+      dangling.filter((key) => !CLASS_FEATURES_THE_LIBRARY_STATES_ITSELF.includes(key)),
+      'a library key names a catalogue entry that does not exist',
+    ).toEqual([])
   })
 
   /**
@@ -660,7 +735,13 @@ describe('entries taken from the catalogue', () => {
    */
   test('match the catalogue on name, level and category, but may tailor text, roll and to-hit', () => {
     const drifted: string[] = []
-    for (const { label, entry } of KEYED) {
+    // `CATALOGUED` rather than `KEYED`: the eight class features named above are keyed
+    // to entries the picker no longer offers, and `divine-smite` is the one of them
+    // whose key still *resolves* — 2024 makes Divine Smite a level 1 Paladin spell, so
+    // the identity check would compare a paladin's class feature against a spell and
+    // report a level that is correct on both sides. See the note at the top of this
+    // block; that comparison comes back when the library rebuild does.
+    for (const { label, entry } of CATALOGUED) {
       const source = catalogueEntry(entry.catalogueKey as string)
       if (!source) continue
       const where = `${label}: ${entry.catalogueKey}`
