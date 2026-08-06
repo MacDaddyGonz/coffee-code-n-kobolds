@@ -51,7 +51,7 @@ export type ChallengeRating = (typeof CR_VALUES)[number]
 
 /**
  * Hand-written in parallel with the array above, which is this codebase's established
- * shape for a key union — `raceKeyValidator` and `classKeyValidator` both do it, and a
+ * shape for a key union — `speciesKeyValidator` and `classKeyValidator` both do it, and a
  * test pins the two halves in agreement. Convex has no way to build a literal union
  * validator from a `readonly` tuple without losing the literal types on the way, so
  * the duplication is real and is checked by machine rather than by memory.
@@ -263,7 +263,7 @@ export const CREATURE_ROLES: readonly CreatureRole[] = [
  * Typed as a `ReadonlyMap` rather than a `Map`, and that is not decoration. This is
  * module state, and a Convex isolate outlives the request that warmed it — a caller
  * that reached in and set a key would redefine a role for every later query until the
- * next deploy. `RACES` carries the same warning in prose; here the type says it.
+ * next deploy. `SPECIES` carries the same warning in prose; here the type says it.
  */
 export const ROLE_BY_KEY: ReadonlyMap<RoleKey, CreatureRole> = new Map(
   CREATURE_ROLES.map((role) => [role.key, role]),

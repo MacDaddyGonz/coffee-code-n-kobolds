@@ -3,7 +3,7 @@ import { BedDouble } from 'lucide-react'
 import { SheetCheckbox } from '@/components/sheet/SheetFields'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import type { PerRestAbility } from '@convex/lib/races'
+import type { PerRestAbility } from '@convex/lib/species'
 
 export type RestControlsProps = {
   /** Everything this character's race lets them spend once between long rests. */

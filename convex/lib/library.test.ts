@@ -10,7 +10,7 @@ import {
 } from './classes'
 import { LIBRARY, librarySheet } from './library'
 import type { LibraryEntry, LibrarySheet } from './library'
-import { RACE_KEYS } from './races'
+import { SPECIES_KEYS } from './species'
 import { resolveSheet } from './resolve'
 import { catalogueEntry } from './rules'
 import { SKILL_KEYS } from './skills'
@@ -791,7 +791,7 @@ describe('every combination resolves to a storable sheet', () => {
   test('for every class, archetype, level and race', () => {
     const problems: string[] = []
     for (const at of SHEETS) {
-      for (const race of RACE_KEYS) {
+      for (const race of SPECIES_KEYS) {
         const problem = sheetProblem(resolvedAt(at, race))
         if (problem) problems.push(`${at.label} + ${race}: ${problem.path} — ${problem.message}`)
       }
@@ -803,7 +803,7 @@ describe('every combination resolves to a storable sheet', () => {
   test('and there really are 576 of them, all player characters', () => {
     let count = 0
     for (const at of SHEETS) {
-      for (const race of RACE_KEYS) {
+      for (const race of SPECIES_KEYS) {
         expect(resolvedAt(at, race).kind).toBe('pc')
         count += 1
       }

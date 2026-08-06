@@ -9,7 +9,7 @@ import { describe, expect, test } from 'vitest'
  * — in a bundle that is already close to a megabyte, and not one byte of it is
  * data a client reads. The server resolves a character and sends a finished
  * `PcSheet` over the wire, so all the picker needs to draw its two dropdowns is
- * `lib/classes.ts` and `lib/races.ts`: eight class names, eight race names and a
+ * `lib/classes.ts` and `lib/species.ts`: eight class names, eight race names and a
  * blurb each. Both of those files say so at the top, and `lib/library/types.ts`
  * says in as many words that "a test asserts the separation, because it is
  * exactly the sort of thing one convenient import quietly undoes".
@@ -153,7 +153,7 @@ describe('the server-only modules are kept out of the browser bundle', () => {
     // being separate from them.
     const text = scanned.map(([, body]) => body).join('\n')
     expect(text).toContain('@convex/lib/classes')
-    expect(text).toContain('@convex/lib/races')
+    expect(text).toContain('@convex/lib/species')
     // The bestiary's own browser half. Without this the sweep below would pass
     // over a client that had stopped drawing a CR stepper at all, which is also
     // the state in which somebody is about to reach for the corpus by hand.
@@ -232,7 +232,7 @@ describe('the server-only modules are kept out of the browser bundle', () => {
 
     const innocent = [
       "import { CLASSES } from '@convex/lib/classes'",
-      "import { RACES } from '@convex/lib/races'",
+      "import { SPECIES } from '@convex/lib/species'",
       "import { SKILLS } from '@convex/lib/skills'",
       "import { sheetProblem } from '@convex/lib/sheet'",
       // ⚠️ **The browser's half of the bestiary, which is the whole reason it is

@@ -14,14 +14,14 @@ import {
   findClass,
   subclassOf,
 } from '@convex/lib/classes'
-import type { RaceKey } from '@convex/lib/races'
-import { RACES, race as raceByKey } from '@convex/lib/races'
+import type { SpeciesKey } from '@convex/lib/species'
+import { SPECIES, species as speciesByKey } from '@convex/lib/species'
 import type { PresetSheet, SheetProblem } from '@convex/lib/sheet'
 import { MAX_LEVEL, MIN_LEVEL, storedSheetProblem } from '@convex/lib/sheet'
 
 /** What the three dropdowns come to. Everything else about a preset is not chosen here. */
 export type BuilderSelections = {
-  race: RaceKey
+  race: SpeciesKey
   classKey: ClassKey
   subclassKey: string | null
 }
@@ -103,7 +103,7 @@ export function CharacterBuilder({
   const readOnly = locked && !isDm
   const disabled = busy || readOnly
 
-  const chosenRace = chosen.race === null ? null : raceByKey(chosen.race)
+  const chosenRace = chosen.race === null ? null : speciesByKey(chosen.race)
   const chosenClass = chosen.classKey === null ? null : findClass(chosen.classKey)
   const chosenSubclass =
     chosen.classKey === null ? null : subclassOf(chosen.classKey, chosen.subclassKey)
@@ -165,13 +165,13 @@ export function CharacterBuilder({
             value={chosen.race ?? ''}
             disabled={disabled}
             onChange={(event) =>
-              setChosen({ ...chosen, race: event.target.value as RaceKey })
+              setChosen({ ...chosen, race: event.target.value as SpeciesKey })
             }
           >
             <option value="" disabled>
               Choose a race…
             </option>
-            {RACES.map((race) => (
+            {SPECIES.map((race) => (
               <option key={race.key} value={race.key}>
                 {race.name} — {race.blurb}
               </option>
@@ -359,7 +359,7 @@ function LevelControl({
 }
 
 type PartialSelections = {
-  race: RaceKey | null
+  race: SpeciesKey | null
   classKey: ClassKey | null
   subclassKey: string | null
 }

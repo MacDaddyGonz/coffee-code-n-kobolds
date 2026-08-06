@@ -9,7 +9,7 @@ import type { Id } from './_generated/dataModel'
 import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
 import { CLASSES, CLASS_KEYS, SUBCLASS_LEVEL } from './lib/classes'
 import { MAX_CHARACTERS_PER_GAME } from './lib/games'
-import { RACE_KEYS } from './lib/races'
+import { SPECIES_KEYS } from './lib/species'
 import { kindOf } from './lib/resolve'
 import type {
   BestiarySheet,
@@ -3931,7 +3931,7 @@ describe('characters.create — a character built from the library', () => {
       const definition = CLASSES.find((entry) => entry.key === classKey)!
       for (const subclass of definition.subclasses) {
         for (const level of [2, 3, 4, 5]) {
-          for (const race of RACE_KEYS) {
+          for (const race of SPECIES_KEYS) {
             const sheet = presetSheet({ race, classKey, subclassKey: subclass.key, level })
             await update(t, code, thorin, sheet, { dmCode })
 
@@ -3961,7 +3961,7 @@ describe('characters.create — a character built from the library', () => {
     const thorin = await makePreset(t, code, 'Sweep')
 
     for (const classKey of CLASS_KEYS) {
-      for (const race of RACE_KEYS) {
+      for (const race of SPECIES_KEYS) {
         await update(t, code, thorin, presetSheet({ race, classKey, level: 1 }), { dmCode })
         const resolved = await resolvedSheet(t, code, thorin, { dmCode })
         expect(resolved.level, `${race}/${classKey}`).toBe(1)

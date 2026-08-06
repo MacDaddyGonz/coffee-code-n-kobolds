@@ -22,7 +22,7 @@ import { collapseWhitespace, hasLoneSurrogate } from './codes'
 // here without dragging the bestiary corpus behind it — the same relationship
 // lib/classes.ts has to lib/library/.
 import { crIndex, crValidator } from './creatures'
-import { raceKeyValidator } from './races'
+import { speciesKeyValidator } from './species'
 // Type-only, and it has to stay that way: skills.ts imports `abilityModifier` and
 // `proficiencyBonus` from this module at runtime, so a value import back would close
 // a cycle. See the note on `skillProficienciesValidator`.
@@ -326,7 +326,7 @@ export type SaveProficiencies = Infer<typeof saveProficienciesValidator>
  * `proficiencyBonus` from this module, so skills.ts imports values from sheet.ts —
  * and a validator here that imported values back would close a runtime cycle at
  * module scope, where both sides are evaluated eagerly and one of them would see an
- * empty object. `SKILL_KEYS` and these thirteen fields are asserted to agree by a
+ * empty object. `SKILL_KEYS` and these eighteen fields are asserted to agree by a
  * test, so the one thing the split costs is checked by machine rather than by
  * memory.
  */
@@ -337,9 +337,21 @@ export const skillProficienciesValidator = v.object({
   stealth: v.boolean(),
   arcana: v.boolean(),
   investigation: v.boolean(),
+  // ⚠️ **The five 2024 skills, OPTIONAL where the thirteen above are required, and the
+  // difference is this table's age rather than the skills' importance.** `characters` has
+  // held `pc` sheets since Milestone 3 and every one of them carries thirteen booleans, so
+  // making these required fails the schema push — the trap `games.status`, `speed` and
+  // `skillProficiencies` itself each hit in turn. They are read through
+  // `skillProficienciesOf`, which fills them in, and they become required in the narrowing
+  // commit after the sweep. Widen → migrate → narrow, as always.
+  history: v.optional(v.boolean()),
+  nature: v.optional(v.boolean()),
+  religion: v.optional(v.boolean()),
   animalHandling: v.boolean(),
   insight: v.boolean(),
   perception: v.boolean(),
+  medicine: v.optional(v.boolean()),
+  survival: v.optional(v.boolean()),
   deception: v.boolean(),
   intimidation: v.boolean(),
   performance: v.boolean(),
@@ -349,7 +361,7 @@ export const skillProficienciesValidator = v.object({
 /**
  * A creature's skills: **skill → pre-calculated bonus**, sparse.
  *
- * Not the thirteen booleans a hero carries, and the two are not interchangeable. A
+ * Not the eighteen booleans a hero carries, and the two are not interchangeable. A
  * monster has no Dexterity, no Wisdom and no level, so `skillBonus` in lib/skills.ts
  * has nothing to work from — the bonus is stored ready-made, which is the same trade
  * `initiativeBonus` made when the reduced sheet was designed and the same reasoning.
@@ -375,9 +387,14 @@ export const creatureSkillsValidator = v.object({
   stealth: v.optional(v.number()),
   arcana: v.optional(v.number()),
   investigation: v.optional(v.number()),
+  history: v.optional(v.number()),
+  nature: v.optional(v.number()),
+  religion: v.optional(v.number()),
   animalHandling: v.optional(v.number()),
   insight: v.optional(v.number()),
   perception: v.optional(v.number()),
+  medicine: v.optional(v.number()),
+  survival: v.optional(v.number()),
   deception: v.optional(v.number()),
   intimidation: v.optional(v.number()),
   performance: v.optional(v.number()),
@@ -386,10 +403,10 @@ export const creatureSkillsValidator = v.object({
 export type CreatureSkills = Infer<typeof creatureSkillsValidator>
 
 /**
- * The thirteen keys, read off the validator rather than listed a second time.
+ * The eighteen keys, read off the validator rather than listed a second time.
  *
  * `SKILL_KEYS` is the list everything else uses and this module may not import it as a
- * value, so the choice was between a third hand-written copy of the thirteen names and
+ * value, so the choice was between a third hand-written copy of the eighteen names and
  * deriving them from the one copy that is already here. Derived cannot drift.
  */
 const CREATURE_SKILL_KEYS = Object.keys(
@@ -513,7 +530,7 @@ export type SheetEntry = Infer<typeof sheetEntryValidator>
  * literal is a habit this codebase does not want. That a weapon has one is enforced
  * by `entriesProblem`, which every entry in all three corpora already goes through.
  *
- * Declared here rather than in `library/types.ts` so that `lib/races.ts` can take it
+ * Declared here rather than in `library/types.ts` so that `lib/species.ts` can take it
  * too: that module is imported by the browser for its dropdown, and `bundleGuard`
  * and `corpusGuard` both refuse a specifier naming a corpus directory.
  */
@@ -806,7 +823,7 @@ export type PresetOverrides = Infer<typeof presetOverridesValidator>
  */
 export const presetSheetValidator = v.object({
   kind: v.literal('preset'),
-  race: raceKeyValidator,
+  race: speciesKeyValidator,
   classKey: classKeyValidator,
   /** Null below level 2, when no archetype has been chosen yet. */
   subclassKey: v.union(v.string(), v.null()),
@@ -1149,7 +1166,7 @@ export function toHitFromBonus(bonus: number): string {
   return isValidRoll(out) ? out : TO_HIT_PREFIX
 }
 
-/** All thirteen false. A fresh object each call — see the note on `defaultPcSheet`. */
+/** All eighteen false. A fresh object each call — see the note on `defaultPcSheet`. */
 export function noSkills(): SkillProficiencies {
   return {
     athletics: false,
@@ -1158,9 +1175,14 @@ export function noSkills(): SkillProficiencies {
     stealth: false,
     arcana: false,
     investigation: false,
+    history: false,
+    nature: false,
+    religion: false,
     animalHandling: false,
     insight: false,
     perception: false,
+    medicine: false,
+    survival: false,
     deception: false,
     intimidation: false,
     performance: false,
@@ -1168,9 +1190,25 @@ export function noSkills(): SkillProficiencies {
   }
 }
 
-/** The only place the optional `skillProficiencies` is read. */
+/**
+ * The only place the optional `skillProficiencies` is read.
+ *
+ * ⚠️ **It normalises rather than passing the stored object through, and that is the whole of
+ * the widen half of the skills migration.** `SkillProficiencies` is a `Record<SkillKey,
+ * boolean>` over eighteen keys; a sheet stored before the five 2024 skills existed carries
+ * thirteen. Handing that back unchanged would be a type that lies — every caller believes it
+ * holds eighteen booleans and five of them are `undefined`, which reads as `false` at a
+ * comparison and as *missing* to `Object.keys`, `board-smoke.mjs`' key-set walk and the
+ * renderer's `SKILLS.map`.
+ *
+ * Spread over `noSkills()` rather than `??`-ed field by field, so a nineteenth skill needs no
+ * edit here. The five become required after the sweep, at which point this collapses back to
+ * the pass-through it used to be — but not before, because a schema push is not atomic and a
+ * row written by an older deployment can be read by a newer one in the window between.
+ */
 export function skillProficienciesOf(sheet: CharacterSheet): SkillProficiencies {
-  return sheet.kind === 'pc' ? sheet.skillProficiencies ?? noSkills() : noSkills()
+  if (sheet.kind !== 'pc' || sheet.skillProficiencies === undefined) return noSkills()
+  return { ...noSkills(), ...sheet.skillProficiencies }
 }
 
 /**

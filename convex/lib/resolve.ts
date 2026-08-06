@@ -42,7 +42,7 @@ import {
   type TierNumber,
 } from './creatures'
 import { librarySheet } from './library'
-import { race, type Race } from './races'
+import { species, type Species } from './species'
 import type {
   AbilityScores,
   BestiarySheet,
@@ -334,7 +334,7 @@ export type CreatureSocial = {
  * ⚠️ **Every array here is copied, not shared, and this is the function where that
  * matters.** The corpus is module state and a Convex isolate outlives the request that
  * warmed it, so an array handed straight out of an entry is an array a caller could sort in
- * place and change for every later query until the next deploy. `RACES` copies its granted
+ * place and change for every later query until the next deploy. `SPECIES` copies its granted
  * abilities for precisely this reason, and `ROLE_BY_KEY` is a `ReadonlyMap` against the same
  * hazard.
  *
@@ -459,10 +459,10 @@ function resolvePreset(preset: PresetSheet): PcSheet {
   // `withOverrides` lives in lib/sheet.ts rather than here, so the override panel in
   // the browser can run the identical merge instead of maintaining a second copy of
   // it. Only the library lookup above is server-only.
-  return withOverrides(applyRace(base, race(preset.race), level), preset.overrides)
+  return withOverrides(applySpecies(base, species(preset.race), level), preset.overrides)
 }
 
-function applyRace(sheet: PcSheet, chosen: Race, level: number): PcSheet {
+function applySpecies(sheet: PcSheet, chosen: Species, level: number): PcSheet {
   const abilities: AbilityScores = { ...sheet.abilities }
   for (const [key, bonus] of Object.entries(chosen.abilityBonus ?? {})) {
     abilities[key as keyof AbilityScores] += bonus

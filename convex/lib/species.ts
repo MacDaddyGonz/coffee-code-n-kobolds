@@ -15,7 +15,7 @@ import { v } from 'convex/values'
 
 import type { AbilityKey, ContentEntry } from './sheet'
 
-export const RACE_KEYS = [
+export const SPECIES_KEYS = [
   'human',
   'elf',
   'dwarf',
@@ -25,9 +25,9 @@ export const RACE_KEYS = [
   'dragonborn',
   'goliath',
 ] as const
-export type RaceKey = (typeof RACE_KEYS)[number]
+export type SpeciesKey = (typeof SPECIES_KEYS)[number]
 
-export const raceKeyValidator = v.union(
+export const speciesKeyValidator = v.union(
   v.literal('human'),
   v.literal('elf'),
   v.literal('dwarf'),
@@ -56,8 +56,8 @@ export type PerRestAbility = {
   text: string
 }
 
-export type Race = {
-  key: RaceKey
+export type Species = {
+  key: SpeciesKey
   name: string
   /** One line for the dropdown, written for somebody who has never played. */
   blurb: string
@@ -83,7 +83,7 @@ export type Race = {
   perRest?: PerRestAbility[]
 }
 
-export const RACES: readonly Race[] = [
+export const SPECIES: readonly Species[] = [
   {
     key: 'human',
     name: 'Human',
@@ -203,22 +203,22 @@ export const RACES: readonly Race[] = [
   },
 ]
 
-const RACE_BY_KEY = new Map(RACES.map((race) => [race.key, race]))
+const SPECIES_BY_KEY = new Map(SPECIES.map((entry) => [entry.key, entry]))
 
-/** Non-null: `RaceKey` is derived from the same list, so an unknown key cannot exist. */
-export function race(key: RaceKey): Race {
-  return RACE_BY_KEY.get(key)!
+/** Non-null: `SpeciesKey` is derived from the same list, so an unknown key cannot exist. */
+export function species(key: SpeciesKey): Species {
+  return SPECIES_BY_KEY.get(key)!
 }
 
 /**
  * Every once-per-rest ability a race brings. Flat, because the sheet shows one list
  * and a race with two of them should not need the caller to know that.
  */
-export function perRestAbilities(key: RaceKey): PerRestAbility[] {
-  // Copied, not handed out. `RACES` is module state and a Convex isolate outlives
+export function perRestAbilities(key: SpeciesKey): PerRestAbility[] {
+  // Copied, not handed out. `SPECIES` is module state and a Convex isolate outlives
   // the request that warmed it, so a caller that sorted or pushed to this array
   // would corrupt the race definition for every later query until the next deploy.
   // Nothing does today; `defaultPcSheet` and `noSkills` both build fresh objects for
   // exactly this reason and have a test pinning it.
-  return [...(race(key).perRest ?? [])]
+  return [...(species(key).perRest ?? [])]
 }

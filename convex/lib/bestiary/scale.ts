@@ -174,7 +174,7 @@ function scaleWith(
     // first, and re-sorting a scaled creature's skills would change what its sheet looks
     // like for no reason. Fresh pair objects rather than mutated ones: this array belongs
     // to the corpus, which is module state that outlives the isolate that warmed it, and
-    // `RACES` copies its granted abilities for exactly that reason.
+    // `SPECIES` copies its granted abilities for exactly that reason.
     skills: combat.skills.map((skill) => ({
       key: skill.key,
       bonus: bound(Math.round(skill.bonus + dSkill), -MAX_SKILL_BONUS, MAX_SKILL_BONUS),

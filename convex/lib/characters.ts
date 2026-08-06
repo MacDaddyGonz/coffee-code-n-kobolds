@@ -600,7 +600,7 @@ export const publicVitalsValidator = v.union(
     hitDiceCount: v.union(v.number(), v.null()),
     // Keys of once-per-long-rest abilities already spent. Which abilities a character
     // *has* comes from their race, which the client can look up itself from
-    // lib/races.ts — only which ones are gone has to travel.
+    // lib/species.ts — only which ones are gone has to travel.
     spentPerRest: v.array(v.string()),
     // Published. See the ⚠️ above — on both members on purpose, and `null` is real.
     armourClass: v.union(v.number(), v.null()),

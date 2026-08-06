@@ -20,7 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import type { PublicSheet, PublicVitals } from '@convex/lib/characters'
 import { MAX_CHARACTER_NAME_LENGTH, collapseWhitespace } from '@convex/lib/codes'
 import type { ChallengeRating } from '@convex/lib/creatures'
-import { perRestAbilities } from '@convex/lib/races'
+import { perRestAbilities } from '@convex/lib/species'
 import type { NpcSheet, PcSheet, StoredSheet } from '@convex/lib/sheet'
 import {
   normaliseStoredSheet,
@@ -584,7 +584,7 @@ export function CharacterSheetEditor({
             applied.
 
             Which abilities a character *has* comes from their race, which this client
-            looks up itself out of `lib/races.ts`; only which ones are gone has to
+            looks up itself out of `lib/species.ts`; only which ones are gone has to
             travel. A hand-built sheet stores no race and so has none to spend — the
             empty list is a case `RestControls` already handles, because six of the eight
             races have nothing either and the button belongs to all of them. A band

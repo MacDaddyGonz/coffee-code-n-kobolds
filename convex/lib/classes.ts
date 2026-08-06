@@ -4,7 +4,7 @@
 // **Deliberately just the labels.** The 72 premade sheets live in `lib/library/`
 // and are never imported by the browser: the server resolves a character and sends
 // a finished sheet over the wire, so all a client needs to draw the two dropdowns
-// is this file and `lib/races.ts`. Keeping the two apart is what stops ~150 KB of
+// is this file and `lib/species.ts`. Keeping the two apart is what stops ~150 KB of
 // stat blocks landing in a bundle that is already close to a megabyte, for data no
 // client ever reads.
 //

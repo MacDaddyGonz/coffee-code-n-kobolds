@@ -33,9 +33,14 @@ export const SKILL_KEYS = [
   'stealth',
   'arcana',
   'investigation',
+  'history',
+  'nature',
+  'religion',
   'animalHandling',
   'insight',
   'perception',
+  'medicine',
+  'survival',
   'deception',
   'intimidation',
   'performance',
@@ -46,7 +51,7 @@ export type SkillKey = (typeof SKILL_KEYS)[number]
 /**
  * Ordered by ability rather than alphabetically, because that is how the sheet
  * groups them and how a player looks one up — "what do I roll for sneaking" is
- * answered by finding the Dexterity block, not by scanning thirteen names.
+ * answered by finding the Dexterity block, not by scanning eighteen names.
  */
 export const SKILLS: readonly Skill[] = [
   { key: 'athletics', name: 'Athletics', ability: 'str' },
@@ -55,9 +60,14 @@ export const SKILLS: readonly Skill[] = [
   { key: 'stealth', name: 'Stealth', ability: 'dex' },
   { key: 'arcana', name: 'Arcana', ability: 'int' },
   { key: 'investigation', name: 'Investigation', ability: 'int' },
+  { key: 'history', name: 'History', ability: 'int' },
+  { key: 'nature', name: 'Nature', ability: 'int' },
+  { key: 'religion', name: 'Religion', ability: 'int' },
   { key: 'animalHandling', name: 'Animal Handling', ability: 'wis' },
   { key: 'insight', name: 'Insight', ability: 'wis' },
   { key: 'perception', name: 'Perception', ability: 'wis' },
+  { key: 'medicine', name: 'Medicine', ability: 'wis' },
+  { key: 'survival', name: 'Survival', ability: 'wis' },
   { key: 'deception', name: 'Deception', ability: 'cha' },
   { key: 'intimidation', name: 'Intimidation', ability: 'cha' },
   { key: 'performance', name: 'Performance', ability: 'cha' },
@@ -72,7 +82,7 @@ export function skill(key: SkillKey): Skill {
   return SKILL_BY_KEY.get(key)!
 }
 
-/** Every skill keyed to whether the character is proficient. All thirteen, always. */
+/** Every skill keyed to whether the character is proficient. All eighteen, always. */
 export type SkillProficiencies = Record<SkillKey, boolean>
 
 // There is deliberately no `noSkillProficiencies` here. `noSkills` in lib/sheet.ts

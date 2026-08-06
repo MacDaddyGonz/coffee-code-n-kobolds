@@ -59,7 +59,7 @@ import {
   setSeatCharacter,
 } from './lib/players'
 import { SUBCLASS_LEVEL } from './lib/classes'
-import { perRestAbilities } from './lib/races'
+import { perRestAbilities } from './lib/species'
 import { bestiaryOf, kindOf, presetOf, resolveSheet } from './lib/resolve'
 import type { BestiarySheet, PresetSheet, SheetProblem, StoredSheet } from './lib/sheet'
 import {

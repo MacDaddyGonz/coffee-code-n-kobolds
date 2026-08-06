@@ -5,8 +5,9 @@ import { describe, expect, test } from 'vitest'
 import { kindOf, resolveSheet } from './resolve'
 
 import { CLASSES, SUBCLASS_LEVEL } from './classes'
-import { RACE_KEYS } from './races'
+import { SPECIES_KEYS } from './species'
 import { SKILL_KEYS } from './skills'
+import type { SkillKey, SkillProficiencies } from './skills'
 import {
   HEALTH_BANDS,
   HIT_DIE_FACES,
@@ -1149,19 +1150,66 @@ describe('skillProficienciesValidator', () => {
    * store, and a skill in the validator but not `SKILL_KEYS` is a flag the
    * sheet never shows and `noSkillProficiencies` never sets.
    */
-  test('has exactly the thirteen fields of SKILL_KEYS', () => {
+  test('has exactly the eighteen fields of SKILL_KEYS', () => {
     const fields = Object.keys(skillProficienciesValidator.fields)
     expect([...fields].sort()).toEqual([...SKILL_KEYS].sort())
-    expect(fields).toHaveLength(13)
-    expect(SKILL_KEYS).toHaveLength(13)
+    expect(fields).toHaveLength(18)
+    expect(SKILL_KEYS).toHaveLength(18)
   })
 
-  /** Every one of them a required boolean — an optional flag would be a fourth state. */
-  test('declares every skill as a required boolean', () => {
+  /**
+   * ⚠️ **THE WIDEN HALF OF THE SKILLS MIGRATION, PINNED IN BOTH DIRECTIONS.**
+   *
+   * This test used to say *every one of them a required boolean — an optional flag would be a
+   * fourth state*, and that argument is still right. It is suspended for exactly five fields
+   * and exactly as long as the migration takes.
+   *
+   * `characters` has held `pc` sheets since Milestone 3 and every one of them carries thirteen
+   * booleans, so making the five 2024 skills required fails the schema push outright — the trap
+   * `games.status`, `speed` and `skillProficiencies` itself each hit in turn. The fourth state
+   * the old comment warns about is real and is handled where it has to be: `skillProficienciesOf`
+   * spreads over `noSkills()`, so **nothing downstream of the accessor ever sees an absent
+   * flag** and the union `SkillProficiencies` describes is still eighteen booleans.
+   *
+   * Both halves are pinned so the migration cannot half-finish in either direction:
+   *
+   * - The **thirteen** that predate 2024 must stay required. One of them turning optional would
+   *   be a real fourth state on a field nothing is migrating.
+   * - The **five** must be optional *now* and required *after the sweep*. When the narrowing
+   *   commit lands, this test fails and its whole point is to be the thing that says so —
+   *   move the five names into `ALWAYS_REQUIRED` and delete `WIDENED_FOR_2024`.
+   */
+  const WIDENED_FOR_2024 = ['history', 'nature', 'religion', 'medicine', 'survival']
+  const ALWAYS_REQUIRED = SKILL_KEYS.filter((key) => !WIDENED_FOR_2024.includes(key))
+
+  test('every skill is a boolean, and only the five being migrated are optional', () => {
     for (const [key, field] of Object.entries(skillProficienciesValidator.fields)) {
       expect(field.kind, key).toBe('boolean')
-      expect(field.isOptional, key).toBe('required')
+      expect(field.isOptional, key).toBe(
+        WIDENED_FOR_2024.includes(key) ? 'optional' : 'required',
+      )
     }
+    // Anti-vacuity in the direction the loop cannot check: if somebody widened all eighteen,
+    // every assertion above would still pass for whichever list they also edited.
+    expect(ALWAYS_REQUIRED).toHaveLength(13)
+    expect(WIDENED_FOR_2024).toHaveLength(5)
+  })
+
+  /**
+   * ⚠️ **The accessor is what makes the widening safe, so it is asserted next to it.** A sheet
+   * stored with the thirteen old flags reads back as eighteen booleans — no `undefined`, which
+   * would be the fourth state the paragraph above is about, and which `Object.keys`,
+   * `board-smoke.mjs`' key-set walk and the renderer's `SKILLS.map` would each see differently.
+   */
+  test('skillProficienciesOf fills the five in for a sheet stored before they existed', () => {
+    const legacy = Object.fromEntries(ALWAYS_REQUIRED.map((key) => [key, true]))
+    const sheet = { ...defaultPcSheet(), skillProficiencies: legacy as SkillProficiencies }
+
+    const filled = skillProficienciesOf(sheet)
+    expect(Object.keys(filled).sort()).toEqual([...SKILL_KEYS].sort())
+    for (const key of WIDENED_FOR_2024) expect(filled[key as SkillKey], key).toBe(false)
+    // And the stored answers survive, which is what makes it a fill rather than a reset.
+    for (const key of ALWAYS_REQUIRED) expect(filled[key], key).toBe(true)
   })
 
   /** And `noSkills` fills every field the validator declares, with nothing left over. */
@@ -1257,7 +1305,7 @@ describe('storedSheetProblem on a preset', () => {
         ).toBeNull()
       }
     }
-    for (const race of RACE_KEYS) {
+    for (const race of SPECIES_KEYS) {
       expect(storedSheetProblem(preset({ race })), race).toBeNull()
     }
   })

@@ -3,7 +3,7 @@
 //
 // **Nothing under lib/library/ may ever be imported by the browser.** The server
 // resolves a character and sends a finished `PcSheet` over the wire, so a client
-// needs `lib/classes.ts` and `lib/races.ts` for its two dropdowns and none of this.
+// needs `lib/classes.ts` and `lib/species.ts` for its two dropdowns and none of this.
 // Seventy-two stat blocks is a meaningful slice of a bundle that is already close to
 // a megabyte, for data no client ever reads. A test asserts the separation, because
 // it is exactly the sort of thing one convenient import quietly undoes.

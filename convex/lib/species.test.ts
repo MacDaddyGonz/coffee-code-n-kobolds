@@ -2,8 +2,8 @@ import { describe, expect, test } from 'vitest'
 
 import { CLASS_KEYS, findClass } from './classes'
 import { LIBRARY, librarySheet } from './library'
-import { RACES, RACE_KEYS, perRestAbilities, race } from './races'
-import type { Race } from './races'
+import { SPECIES, SPECIES_KEYS, perRestAbilities, species } from './species'
+import type { Species } from './species'
 import { resolveSheet } from './resolve'
 import {
   MAX_ENTRY_ID_LENGTH,
@@ -45,13 +45,13 @@ function source(sheet: PresetSheet) {
 // ---------------------------------------------------------------------------
 
 describe('the eight races', () => {
-  test('RACES and RACE_KEYS describe the same eight, keyed by themselves', () => {
-    expect(RACES).toHaveLength(8)
-    expect(RACES.map((entry) => entry.key)).toEqual([...RACE_KEYS])
-    for (const key of RACE_KEYS) {
-      expect(race(key).key, key).toBe(key)
+  test('SPECIES and SPECIES_KEYS describe the same eight, keyed by themselves', () => {
+    expect(SPECIES).toHaveLength(8)
+    expect(SPECIES.map((entry) => entry.key)).toEqual([...SPECIES_KEYS])
+    for (const key of SPECIES_KEYS) {
+      expect(species(key).key, key).toBe(key)
     }
-    expect(new Set(RACES.map((entry) => entry.name)).size).toBe(8)
+    expect(new Set(SPECIES.map((entry) => entry.name)).size).toBe(8)
   })
 
   /**
@@ -61,7 +61,7 @@ describe('the eight races', () => {
    * `sheetProblem` would blame the entry rather than the race.
    */
   test('every trait fits the entry it becomes', () => {
-    for (const entry of RACES) {
+    for (const entry of SPECIES) {
       expect(entry.traitName.trim(), entry.key).not.toBe('')
       expect(entry.traitName.length, entry.key).toBeLessThanOrEqual(MAX_ENTRY_NAME_LENGTH)
       expect(entry.traitText.trim(), entry.key).not.toBe('')
@@ -71,7 +71,7 @@ describe('the eight races', () => {
   })
 
   test('every granted entry is a storable entry with a valid roll', () => {
-    for (const entry of RACES) {
+    for (const entry of SPECIES) {
       for (const granted of [...(entry.grantedFeats ?? []), ...(entry.grantedSpells ?? [])]) {
         const where = `${entry.key}: ${granted.name}`
         expect(granted.name.trim(), where).not.toBe('')
@@ -155,13 +155,13 @@ describe('a race changes its numbers exactly once', () => {
    * arithmetic.
    */
   test('a race with no numeric modifier leaves every number exactly as the library had it', () => {
-    const numeric: Race[] = RACES.filter(
+    const numeric: Species[] = SPECIES.filter(
       (entry) => entry.abilityBonus || entry.hpPerLevel || entry.speedBonus,
     )
     // Vacuity: three of the eight do touch arithmetic, and the other five must not.
     expect(numeric.map((entry) => entry.key).sort()).toEqual(['dwarf', 'elf', 'goliath'])
 
-    for (const key of RACE_KEYS) {
+    for (const key of SPECIES_KEYS) {
       if (numeric.some((entry) => entry.key === key)) continue
       const selections = preset({ race: key })
       const base = source(selections)
@@ -190,8 +190,8 @@ describe('a race changes its numbers exactly once', () => {
       ] as const) {
         const selections = preset({ classKey, subclassKey, level })
         const base = source(selections)
-        for (const key of RACE_KEYS) {
-          const chosen = race(key)
+        for (const key of SPECIES_KEYS) {
+          const chosen = species(key)
           const resolved = resolve({ ...selections, race: key })
           const where = `${classKey}/${subclassKey}/${level} + ${key}`
           for (const ability of ABILITIES) {
@@ -220,8 +220,8 @@ describe('the trait lands on the sheet', () => {
   test("every race's trait appears exactly once, on every class and level", () => {
     for (const classKey of CLASS_KEYS) {
       for (const level of [1, 3, 5]) {
-        for (const key of RACE_KEYS) {
-          const chosen = race(key)
+        for (const key of SPECIES_KEYS) {
+          const chosen = species(key)
           const resolved = resolve(
             preset({
               classKey,
@@ -259,8 +259,8 @@ describe('the trait lands on the sheet', () => {
    * would read as every roll target moving.
    */
   test("every race's trait keeps one id across resolutions, levels and classes", () => {
-    for (const key of RACE_KEYS) {
-      const chosen = race(key)
+    for (const key of SPECIES_KEYS) {
+      const chosen = species(key)
       const ids = new Set<string>()
       for (const classKey of CLASS_KEYS) {
         for (const level of [1, 2, 5]) {
@@ -291,7 +291,7 @@ describe('the trait lands on the sheet', () => {
     expect(matching[0].level).toBe(0)
     expect(resolved.feats.some((entry) => entry.name === 'Thaumaturgy')).toBe(false)
     // And nobody else does.
-    for (const key of RACE_KEYS) {
+    for (const key of SPECIES_KEYS) {
       if (key === 'tiefling') continue
       expect(
         resolve(preset({ race: key })).spells.some((entry) => entry.name === 'Thaumaturgy'),
@@ -306,7 +306,7 @@ describe('the trait lands on the sheet', () => {
     expect(granted).toHaveLength(1)
     expect(granted[0].name).toBe('Breath Weapon')
     expect(granted[0].id).toBe('race-dragonborn:breath-weapon')
-    for (const key of RACE_KEYS) {
+    for (const key of SPECIES_KEYS) {
       if (key === 'dragonborn') continue
       expect(
         resolve(preset({ race: key })).feats.some((entry) => entry.name === 'Breath Weapon'),
@@ -334,7 +334,7 @@ describe('the trait lands on the sheet', () => {
    */
   test('no race puts two entries with the same name on a sheet', () => {
     const offenders: string[] = []
-    for (const key of RACE_KEYS) {
+    for (const key of SPECIES_KEYS) {
       const resolved = resolve(preset({ race: key }))
       const names = [...resolved.feats, ...resolved.spells].map((entry) => entry.name)
       for (const [index, name] of names.entries()) {
@@ -355,7 +355,7 @@ describe('the trait lands on the sheet', () => {
     for (const classKey of CLASS_KEYS) {
       for (const subclass of findClass(classKey)!.subclasses) {
         for (const level of [2, 5]) {
-          for (const key of RACE_KEYS) {
+          for (const key of SPECIES_KEYS) {
             const resolved = resolve(
               preset({ classKey, subclassKey: subclass.key, level, race: key }),
             )
@@ -385,10 +385,10 @@ describe('perRestAbilities', () => {
    * flag somebody had already spent.
    */
   test('returns entries for the Human and the Half-Orc, and nothing for the other six', () => {
-    const withAbilities = RACE_KEYS.filter((key) => perRestAbilities(key).length > 0)
+    const withAbilities = SPECIES_KEYS.filter((key) => perRestAbilities(key).length > 0)
     expect([...withAbilities].sort()).toEqual(['half-orc', 'human'])
 
-    for (const key of RACE_KEYS) {
+    for (const key of SPECIES_KEYS) {
       const abilities = perRestAbilities(key)
       expect(Array.isArray(abilities), key).toBe(true)
       if (key === 'human' || key === 'half-orc') {
@@ -407,13 +407,13 @@ describe('perRestAbilities', () => {
    * Human's spent Inspiration read as a Half-Orc's spent Endurance.
    */
   test('every per-rest key is unique across all eight races and is a usable id', () => {
-    const keys = RACE_KEYS.flatMap((key) => perRestAbilities(key).map((entry) => entry.key))
+    const keys = SPECIES_KEYS.flatMap((key) => perRestAbilities(key).map((entry) => entry.key))
     expect(new Set(keys).size).toBe(keys.length)
     for (const key of keys) {
       expect(key).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/)
       expect(key.length).toBeLessThanOrEqual(MAX_ENTRY_ID_LENGTH)
     }
-    for (const key of RACE_KEYS) {
+    for (const key of SPECIES_KEYS) {
       for (const ability of perRestAbilities(key)) {
         expect(ability.name.trim(), key).not.toBe('')
         expect(ability.text.trim(), key).not.toBe('')
@@ -422,8 +422,8 @@ describe('perRestAbilities', () => {
   })
 
   /**
-   * DEFECT (races.ts:200), minor. `perRestAbilities` returns `race(key).perRest`
-   * itself — the live array on the module-level `RACES` constant — so a caller
+   * DEFECT (races.ts:200), minor. `perRestAbilities` returns `species(key).perRest`
+   * itself — the live array on the module-level `SPECIES` constant — so a caller
    * that sorts, splices or pushes is editing the race definition rather than a
    * copy of it. On Convex that is worse than it sounds: the isolate outlives the
    * request, so one mutating caller changes what every subsequent query in that
@@ -432,7 +432,7 @@ describe('perRestAbilities', () => {
    * The rest of this codebase is careful about exactly this. `defaultPcSheet`
    * and `noSkills` build a fresh object every call and sheet.test.ts pins it;
    * `sheetEntriesOf` spreads its two lists for the stated reason that "a caller
-   * sorting the result must not reorder the sheet". `[...(race(key).perRest ??
+   * sorting the result must not reorder the sheet". `[...(species(key).perRest ??
    * [])]` would put this accessor on the same footing.
    */
   test('hands back a list the caller cannot use to edit the race', () => {
@@ -442,9 +442,9 @@ describe('perRestAbilities', () => {
       expect(perRestAbilities('human')).toHaveLength(1)
     } finally {
       // Put it back whatever happens. While the defect stands this test really
-      // does edit `RACES`, and leaving it edited would make every suite that
+      // does edit `SPECIES`, and leaving it edited would make every suite that
       // ran afterwards in the same worker read a race that does not exist.
-      race('human').perRest!.length = 1
+      species('human').perRest!.length = 1
     }
   })
 })
@@ -462,7 +462,7 @@ describe('races and the library stay out of each other', () => {
    */
   test('no library entry is named after a race trait or a granted entry', () => {
     const racial = new Set(
-      RACES.flatMap((entry) => [
+      SPECIES.flatMap((entry) => [
         entry.traitName,
         ...(entry.grantedFeats ?? []).map((granted) => granted.name),
         ...(entry.grantedSpells ?? []).map((granted) => granted.name),
@@ -483,7 +483,7 @@ describe('races and the library stay out of each other', () => {
 
   /** And the ids the resolver mints for the two sources cannot collide either. */
   test('a race id and a library id never share a namespace', () => {
-    for (const key of RACE_KEYS) {
+    for (const key of SPECIES_KEYS) {
       for (const classKey of CLASS_KEYS) {
         const resolved = resolve(
           preset({ classKey, race: key, subclassKey: findClass(classKey)!.subclasses[1].key }),

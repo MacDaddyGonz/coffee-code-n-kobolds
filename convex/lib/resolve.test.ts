@@ -8,7 +8,7 @@ import {
   type ClassKey,
 } from './classes'
 import { LIBRARY, librarySheet } from './library'
-import { RACE_KEYS, race } from './races'
+import { SPECIES_KEYS, species } from './species'
 // Reached from a test file, which `corpusGuard.test.ts` excludes from its sweep on
 // purpose: the confinement rule is about production modules crossing the boundary, and
 // a test that checks `groupOf` against the corpus has to be able to see the corpus.
@@ -492,8 +492,12 @@ describe('a resolved sheet is complete', () => {
         const resolved = resolve(preset({ classKey, subclassKey, level }))
         expect(resolved.skillProficiencies, `${classKey}/${level}`).toBeDefined()
         expect(resolved.speed, `${classKey}/${level}`).toBeDefined()
+        // Eighteen, not the thirteen this asserted before the 2024 skills arrived. The point is
+        // unchanged and is why it counts rather than spot-checking: a resolved sheet carries
+        // EVERY flag, so a library entry that forgot one would resolve to a sheet the renderer
+        // maps over and finds a hole in.
         expect(Object.keys(resolved.skillProficiencies ?? {}), `${classKey}/${level}`).toHaveLength(
-          13,
+          18,
         )
       }
     }
@@ -502,13 +506,13 @@ describe('a resolved sheet is complete', () => {
   /**
    * The fallback path is the exception, and it is worth stating rather than
    * leaving to be discovered. A retired archetype takes the `defaultPcSheet()`
-   * branch, which sets no `skillProficiencies`; `applyRace` spreads the sheet
+   * branch, which sets no `skillProficiencies`; `applySpecies` spreads the sheet
    * without adding one and `applyOverrides` returns early when there are no
    * overrides, so the field is absent on the sheet the server hands over.
    *
    * Harmless today only because every reader goes through
    * `skillProficienciesOf` — asserted here, since that is the property the app
-   * actually depends on. `speed`, by contrast, `applyRace` always sets, so the
+   * actually depends on. `speed`, by contrast, `applySpecies` always sets, so the
    * two optional fields behave differently on this one path.
    */
   test('and a fallback resolution still reads as thirteen untrained skills', () => {
@@ -580,7 +584,7 @@ describe('a preset the store would accept always resolves to a sheet it would ac
       const source = librarySheet(classKey, null, 1)
       const elf = resolve(preset({ classKey, subclassKey: null, level: 1, race: 'elf' }))
       expect(elf.abilities.dex, classKey).toBe((source?.abilities.dex ?? 0) + 2)
-      expect(elf.feats.some((e) => e.name === race('elf').traitName), classKey).toBe(true)
+      expect(elf.feats.some((e) => e.name === species('elf').traitName), classKey).toBe(true)
     }
   })
 })
@@ -597,7 +601,7 @@ describe('a preset the store would accept always resolves to a sheet it would ac
 // ---------------------------------------------------------------------------
 
 describe('the category survives every layer of resolution', () => {
-  /** The trait `applyRace` mints for every race, whichever race it is. */
+  /** The trait `applySpecies` mints for every race, whichever race it is. */
   function traitOf(sheet: PcSheet, key: string): SheetEntry {
     const found = sheet.feats.find((line) => line.id === `race:${key}`)
     if (!found) throw new Error(`no trait line for ${key}`)
@@ -616,27 +620,27 @@ describe('the category survives every layer of resolution', () => {
    * every game at once.
    */
   test('every race trait resolves to a passive that carries no rolls', () => {
-    for (const key of RACE_KEYS) {
+    for (const key of SPECIES_KEYS) {
       const sheet = resolve(preset({ race: key }))
       const trait = traitOf(sheet, key)
       const built = trait as unknown as Record<string, unknown>
       expect(trait.category, key).toBe('passive')
       expect(trait.roll, key).toBeNull()
       expect('toHit' in built, `${key} trait carries a to-hit`).toBe(false)
-      expect(trait.name, key).toBe(race(key).traitName)
+      expect(trait.name, key).toBe(species(key).traitName)
     }
   })
 
   /** Anti-vacuity: eight races, eight traits, and the lookup really found them. */
   test('and there is a trait line for every one of the eight', () => {
-    expect(RACE_KEYS.length).toBe(8)
-    const found = RACE_KEYS.map((key) => traitOf(resolve(preset({ race: key })), key).name)
-    expect(new Set(found).size).toBe(RACE_KEYS.length)
+    expect(SPECIES_KEYS.length).toBe(8)
+    const found = SPECIES_KEYS.map((key) => traitOf(resolve(preset({ race: key })), key).name)
+    expect(new Set(found).size).toBe(SPECIES_KEYS.length)
   })
 
   /**
    * ⚠️ **The granted entries, which are the ones that could actually lose a
-   * category.** The trait is built inside `applyRace` with `category: 'passive'`
+   * category.** The trait is built inside `applySpecies` with `category: 'passive'`
    * written in the literal, so it cannot be dropped; a granted feat or spell is
    * declared in `races.ts` and copied through `withId`, which is a spread — and a
    * spread is exactly what stops being one when somebody "tidies" it into a
@@ -649,8 +653,8 @@ describe('the category survives every layer of resolution', () => {
    */
   test('a granted feat or spell keeps the category its race declared', () => {
     let checked = 0
-    for (const key of RACE_KEYS) {
-      const chosen = race(key)
+    for (const key of SPECIES_KEYS) {
+      const chosen = species(key)
       const sheet = resolve(preset({ race: key }))
       const granted = [
         ...(chosen.grantedFeats ?? []).map((source) => ({ source, list: sheet.feats })),
@@ -819,7 +823,7 @@ describe('the category survives every layer of resolution', () => {
    */
   test('and every resolved combination satisfies the arity rule', () => {
     const problems: string[] = []
-    for (const key of RACE_KEYS) {
+    for (const key of SPECIES_KEYS) {
       for (const definition of CLASSES) {
         for (const level of [MIN_LEVEL, SUBCLASS_LEVEL, MAX_LIBRARY_LEVEL]) {
           const subclassKey = level < SUBCLASS_LEVEL ? null : definition.subclasses[0].key
