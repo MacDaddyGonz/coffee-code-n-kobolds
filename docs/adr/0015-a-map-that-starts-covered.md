@@ -3,10 +3,16 @@
 - **Status:** Accepted
 - **Date:** 2026-08-06
 
-> ⚠️ **This record is being written as the milestone lands.** The fog base is decided and built;
-> the sections below it arrive with the commits they record. That is deliberate — the decisions
-> worth writing down here are the ones building it forced, and several of them were not visible
-> from the plan.
+> **Written as the milestone landed**, one section per commit across five branches, and finished at
+> the merge. That is why it is long: the decisions worth recording here turned out to be the ones
+> building it forced rather than the ones the plan anticipated, and several of them — the inverted
+> reveal stamp, the two different fixes for two "unconditional" deletes, the scene note one line
+> from a leak — were invisible until the code existed.
+>
+> ⚠️ **One thing this record cannot claim.** Every canvas-facing decision in it is held by argument
+> and by hand-written reasoning, and **nothing has been driven in a browser.** There is nothing in
+> `npm test` that can look at a canvas, and each of the paint sections below says so where it
+> applies. Every previous milestone in this project found something by opening the app.
 
 ## Context
 
@@ -852,6 +858,34 @@ already on the board is the feature reading as broken in the other direction.
 - **`ROLL_PATTERN`-style arithmetic now exists for two caps that nothing profiles.**
   `MAX_WALLS_PER_SCENE × MAX_WALL_POINTS` bounds a per-settle cost at roughly 6,300 segment
   tests. Generous, finite, and a guess about what a dungeon level needs.
-- **`MapSetupPanel`'s copy for the toggle still describes the layer half alone.** The control now
-  does more than its own hint says, and the badge is the only thing on screen that mentions the fog
-  half. Worth a sentence in that panel the next time it is open.
+- ~~**`MapSetupPanel`'s copy for the toggle still describes the layer half alone.**~~ Fixed at the
+  merge: the hint says the toggle applies the fog and points at the badge. Left struck through
+  rather than deleted because it is a worked example of the cost below.
+
+### What building it in parallel cost, which is the thing to carry into the next milestone
+
+Five branches, four of them written by agents who could not see each other's work, merged into one.
+That was the right shape — the file sets were genuinely disjoint and the alternative was a serial
+build of a milestone with seven independent sections — and it has a **specific, repeatable failure
+mode** worth naming, because the next milestone is larger and will be built the same way.
+
+**Every gap was at a seam, and none of them was a mistake in anybody's own work.**
+
+| Gap | Why neither branch could see it |
+| --- | --- |
+| `copySceneFog`/`scaleSceneFog` ignored a polygon's `points` | written while `points` did not exist yet |
+| `scenes.duplicate` did not copy walls; `replaceImage` did not scale them | written while `walls` did not exist yet |
+| `MAX_FOG_POLYGON_POINTS` sat behind `requireDm` where the browser could not reach it | correct against the precedent that branch could see; the *gesture* cap is a different question from the *shape* cap |
+| Two stale `fog:draw` call sites in `board-smoke.mjs` | one branch changed the signature, another forked before it and merged after |
+
+⚠️ **`npm run lint` and `npm test` were green for all four.** The suite calls the typed API through
+`convex-test`, so it moves with a signature change and cannot see a caller assembled by hand; and a
+function that quietly drops an optional field type-checks perfectly. **Only `npm run test:smoke`
+caught the last one**, which is the sixth outing of that class and the first where the staleness was
+created by two *branches* rather than by a rebuild.
+
+The rule this suggests, and it is cheap: **a merge of parallel branches is a review step and not a
+mechanical one.** Every branch's report was asked what it thought the merge would have to fix, and
+two of the four gaps above were named by the branch that created them — which is where the fix came
+from. The two that were not named were the two where the branch had no reason to suspect a seam
+existed.
