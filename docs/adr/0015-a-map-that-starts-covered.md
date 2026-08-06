@@ -156,6 +156,156 @@ is inside no shape and is therefore published.
 dark. Neither is a bug and neither is a choice made anywhere: it is one behaviour read through two
 bases. Recorded here so a reader does not carry ADR 0012's half of it across.
 
+### A shape is a rectangle or a polygon, and the edge convention is the keystone
+
+Roll20 offers two shapes and there is no third, so this does too. A polygon is stored on the
+existing row: `points` is optional, and the four numbers `x/y/width/height` are **reinterpreted as
+the bounding box, computed server-side by `boundsOf` and never taken from the client.**
+
+⚠️⚠️ **THE POINT-IN-POLYGON EDGE CONVENTION HAS TO AGREE WITH THE RECTANGLE ONE EXACTLY, AND THAT
+EQUIVALENCE IS A TEST RATHER THAN A PARAGRAPH.** `rectCovers` is half-open — top-left inclusive,
+bottom-right exclusive — so that abutting shapes tile with no seam and without both claiming the
+line between them. A polygon spelling out a rectangle has to answer **identically at all four edges
+and all four corners**, and a polygon abutting a rectangle has to tile with it.
+
+It does, and the reason is two details of the crossing-number rule that look arbitrary:
+
+| Detail | What it buys |
+| --- | --- |
+| `(yi > py) !== (yj > py)` — a strict `>` on both ends | An edge whose *lower* vertex sits on the scan line counts as crossed and one whose *upper* vertex does not, so a ray passes through the top of a shape and under the bottom: **top-inclusive, bottom-exclusive**. |
+| `px <` the intersection — strict | A point on a left edge has that edge to its right and is counted; one on a right edge has it to the left and is not: **left-inclusive, right-exclusive**. |
+
+Neither is obvious by reading, and getting either wrong is quietly wrong for a year — a polygon
+claiming one extra row of pixels hides a token the rectangle beside it also hides, and one claiming
+one fewer opens a one-pixel corridor of visibility through a wall the DM believes is solid. Neither
+is visible on a screen.
+
+So `grid.test.ts` asserts the two functions **against each other** rather than against a list of
+expected booleans: at all four edges, all four corners and a thousandth of a pixel either side, in
+both winding directions, plus two abutting shapes of different kinds where exactly one claims every
+point on the seam. The claim is the equivalence, so the equivalence is what is pinned — a
+hand-written truth table would have to be got right by the same reasoning that could have got the
+implementation wrong.
+
+**The bounding box is what makes a polygon cheap, and that is why the client cannot supply it.**
+`shapeCovers` runs `rectCovers` on the box *first*, so a scene of two hundred polygons costs two
+hundred rectangle comparisons and a ray-cast for the handful whose box actually contains the point.
+A box a client sent and got wrong is a shape drawn on every screen that hides nothing — which is
+`normaliseFogRect`'s failure arriving through a second door — so there is no argument on `fog.draw`
+that could carry one.
+
+⚠️ **The bounds-first ordering is load-bearing for the fail-open branch as well, and that is the
+second reason it is not merely a short-circuit.** A NaN never reaches the ray-cast, so there is
+**one** fail-open branch in the fog design and not one per shape kind. The section above extends
+unchanged: under a covered base it inverts to fail-*closed*, for every shape.
+
+**The draw argument is a discriminated union and the stored row is not**, which sounds inconsistent
+and is two different questions. A client states which of two gestures it made, and there the two
+shapes have no field in common — so the union buys a `never` arm in `fog.draw` and a second in
+`insertFogShape`, at the two places a wrong answer does damage: the checker that would let an
+unknown kind past unvalidated, and the writer that would store it. A stored row is asked whether it
+has a point list and either does or does not, which is CLAUDE.md invariant 9's optional-field
+convention. The additive alternative — four numbers plus an optional `points` — accepts a call
+carrying *both* spellings and silently prefers one, which is two states for one meaning and the
+failure [ADR 0008](0008-one-shell-and-what-a-sheet-entry-is.md) settled.
+
+**New cap: `MAX_FOG_POLYGON_POINTS = 32`.** The roadmap gives no number and the arithmetic is why
+there has to be one — `200 shapes × 200 placements × vertices` of edge visits inside
+`visiblePositions`, which is the query on the drag path. The constant's docblock carries the sum the
+way `MAX_ROLL_DICE`'s does. Three is the floor, and it is a grammar rather than a courtesy: two
+points are a line, `boundsOf` gives it a zero extent, and `rectCovers` then answers false for every
+point in the plane.
+
+⚠️ **Concave, collinear and self-intersecting outlines are accepted rather than refused**, and that
+is a decision with a test on it. A DM tracing a cave wall produces all three by accident; the
+even-odd rule answers all three coherently; and a validity check would refuse a gesture that works.
+Winding order is not normalised either, because `polygonCovers` counts crossings rather than turns.
+
+⚠️ **The table is still called `fogRects` and the name is now a misnomer.** Renaming a Convex table
+is a widen-migrate-narrow across two deploys and the whole of what it buys is a better word. The
+schema pushes in this project that were worth that are the ones where the old shape could publish a
+secret; a table whose every row goes to every client verbatim has no such argument behind it. The
+correction lives in the schema comment, in `lib/fog.ts`'s header and in CLAUDE.md.
+
+⚠️ **The gesture is `usePolygonDraw`, a second hook over `useStagePointer` and deliberately not a
+third setting of `useRubberBand`.** A band is press-drag-release with one commit; a polygon is an
+unbounded sequence of clicks with a live segment and two ways to finish, and the mouse button is
+down for none of it. Teaching the band about vertices would give both callers a `mode` and give the
+fog tool an `onCommit` that fires on `mouseup` sometimes and on a double-click other times.
+`useStagePointer`'s docblock predicted this split before either polygon or wall existed.
+
+**This is the commit that spends the previous one's acceptance criterion, and it is spent
+deliberately.** The section above records that `convex/fog.test.ts`'s existing 1270 lines passed
+untouched. `fog.draw`'s argument is now a union, so six call sites across four suites moved to it —
+`fog.test.ts`, `feed.test.ts`, `vitals.test.ts`, `board.test.ts` and two helpers. **The call sites
+moved and not one assertion did**, which is the weaker claim that is still worth making: what the
+union changed is how a shape is spelled on the way in, and nothing at all about what fog does.
+
+### The DM's view of the board applies the fog, and a badge says so
+
+"Your view of the board" already showed the DM the party's *layers*. It now also applies the
+*fog*: the veil is painted at the party's opacity rather than the DM's, and the coins the party
+has lost sight of are left out of the picture.
+
+**No new state.** `view === 'player'` means both, because both are the same act — *show me their
+screen* — and a second switch would let the DM sit in a state that is neither screen while being
+sure they had previewed something they had not. `useBoardLayers` grew one derived member,
+`tableView`, beside `shown` and on `shown`'s terms: derived from `view`, stored nowhere, because
+two spellings of one fact is how a toggle comes to disagree with the board it toggles.
+
+⚠️⚠️ **IT IS A PREFERENCE AND NEVER A PERMISSION, AND THE FOG CASE IS THE ONE WHERE SOMEBODY WILL
+CALL IT A FILTER.** That hook's docblock already said it of the layer half; the sentence is
+inherited verbatim and the fog half needs it stated harder, so it is written at all three
+consumers rather than once.
+
+**This is the browser choosing what to paint of a payload it is fully entitled to.** The DM was
+sent every position row, every health band and every feed line on that board, because
+`resolveDmAccess` said so. Nothing is withheld from this client, and nothing is being withheld *by*
+this cell. Leaving a coin unpainted is a drawing decision in exactly the register `shown` already
+occupies.
+
+**It is not a filter and must never be described as one.** The withholding that matters happened in
+`visiblePositions` and `boardCharacterAccess`, server-side, before the party's payload existed. If
+this cell were ever the thing keeping something off a screen, the secret would already have been
+sent to the browser that must not have it — the inversion CLAUDE.md invariant 1 forbids. A
+hand-edited `localStorage` key reveals nothing here, because there is nothing on this payload this
+client was not entitled to.
+
+Stated the other way round, because it is the honest half: **the preview is an approximation and
+says so.** It answers *what would the party's board look like* by re-running the server's own
+predicates over the DM's payload — `hiddenFromParty` shares `anyShapeCovers` with `veiled` for
+exactly that reason, and is read off the token rather than recomputed at the canvas — rather than
+by asking the server for a player's payload, which would need a second subscription keyed by a seat
+this browser does not hold.
+
+⚠️ **A persistent badge on the map, and Roll20's own documentation is the argument for it.** GMs
+there lose track of this mode constantly, and the reason is that the toggle is not visible from the
+map: the DM previews, gets distracted, and then wonders where their ambush went — or places three
+creatures onto a board missing half of what is on it. So `TableViewBadge` sits on the top-right of
+the board pane whenever `isDm && tableView`, and clicking it returns to Everything. The control
+that turns a mode on and the notice that it is on are two different jobs, and only one of them has
+to be on the thing being modified.
+
+It is **HTML and not Konva**, which is not a preference: it has to be legible at any zoom and it
+has to be clickable, and a Konva node is neither for free — it would scale with the camera, need
+its own hit target, and sit inside a stage whose layers this very mode is rearranging. It reuses
+`BOARD_OVERLAY_SURFACE` and is positioned by its caller, exactly as `ZoomControls` is. It is
+deliberately **not** a fifth button in `BoardToolbar` opposite it: that bar holds controls that are
+always there, and a notice sharing a surface with four permanent buttons is one the eye stops
+reading after the second session.
+
+⚠️ **`LayerView` and its `localStorage` key are unrenamed on purpose.** The union now decides more
+than layers and `BoardView` would be a better name for it, but renaming a persisted key silently
+resets the preference for everybody who had one — a cost with no upside, paid by people who did not
+ask.
+
+Two smaller things worth knowing. The fogged coins are dropped in `TokenLayers`' bucketing pass
+rather than at the render, so an emptied layer is **absent** rather than a transparent second canvas
+— that file's own rule, and it matters more here, since a GM layer holding nothing but fogged coins
+should not exist at all on a preview of the party's board. And the opacity switch stays on the
+`Layer` rather than moving to the shapes, because `destination-out` composites against the layer's
+own canvas and a hole in a covered map has to stay a hole rather than becoming a lighter patch.
+
 ## Consequences
 
 ### Good
@@ -179,3 +329,20 @@ bases. Recorded here so a reader does not carry ADR 0012's half of it across.
   `board.tokens` — what fog takes is where something is, how hurt it is and what it just rolled. A
   creature that must not be known about goes on the GM layer. ADR 0012's *partial guard described as
   a whole one is worse than no guard* is unchanged and now has a second base to be true of.
+- **A polygon costs a ray-cast that a rectangle does not**, bounded by
+  `MAX_FOG_POLYGON_POINTS × MAX_FOG_RECTS_PER_SCENE` per placement in the pathological case where
+  every box contains the point. The box is what keeps the ordinary case free, and the number is what
+  keeps the bad case finite.
+- **A polygon cannot be edited, only rubbed out and redrawn.** No vertex handles, no dragging a
+  corner. `fog.erase` deletes a row and `fog.draw` writes one, which is the whole of the surface —
+  editing wants a mutation, a hit target per vertex and an opinion about two DMs dragging the same
+  corner, and none of that is what the milestone is for.
+- **The table's name no longer describes its rows**, and the correction is three comments rather
+  than a migration.
+- **The table-view preview is held by a hand check too**, for the same reason the paint inversion
+  is: there is nothing in `npm test` that can look at a canvas, and what this mode does is entirely
+  a matter of what is painted. What *can* be tested is underneath it and already is —
+  `hiddenFromParty` shares its predicate with `veiled`, and `fog.test.ts` pins the server half.
+- **`MapSetupPanel`'s copy for the toggle still describes the layer half alone.** The control now
+  does more than its own hint says, and the badge is the only thing on screen that mentions the fog
+  half. Worth a sentence in that panel the next time it is open.

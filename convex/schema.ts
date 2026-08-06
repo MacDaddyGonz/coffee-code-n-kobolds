@@ -378,7 +378,16 @@ export default defineSchema({
     .index('by_gameId', ['gameId'])
     .index('by_tokenId', ['tokenId']),
 
-  // FOG OF WAR — the rectangles the DM has blacked out on one scene.
+  // FOG OF WAR — the shapes the DM has blacked out on one scene.
+  //
+  // ⚠️ **THE TABLE NAME IS NOW A MISNOMER AND IT STAYS.** A row here is a rectangle *or* a
+  // polygon, and `fogShapes` is what it would be called if it were being written today.
+  // Renaming a Convex table is a widen-migrate-narrow across two deploys — a second table,
+  // a copy of every row in every game, a window where both are live and every reader has
+  // to consult both, then a narrow — and the whole of what it buys is a better word. The
+  // schema pushes in this project that were worth that are the ones where the old shape
+  // could publish a secret; a table whose every row goes to every client verbatim has no
+  // such argument behind it. So the name is history and this comment is the correction.
   //
   // ⚠️ **These rows are not the secret, and that is the unusual thing about this table.**
   // Every rectangle is sent to every client verbatim, because a blacked-out map is the
@@ -398,9 +407,13 @@ export default defineSchema({
   // belongs to one game, and every reader already holds a scene that the caller's game has
   // vouched for through `findSceneInGame`.
   //
-  // Every field required with no optionals — `feed`'s inversion argument below applies
-  // verbatim, because the pressure that makes a field optional in this schema is *rows that
-  // already exist*, and this table is new.
+  // ⚠️ **`points` is the one optional field, and it is optional for this schema's usual
+  // reason — rows that already exist.** Every row written before polygons is a rectangle,
+  // and **absence means rectangle** rather than a stored `kind` beside it: CLAUDE.md
+  // invariant 9's convention, where an optional field already has a spelling for none and a
+  // second one is two states for one meaning. `fog.draw`'s *argument* is a discriminated
+  // union, which is a different question — a client says which gesture it made, and a row
+  // is asked whether it has a point list.
   fogRects: defineTable({
     sceneId: v.id('scenes'),
     // Image-space pixel floats, top-left corner plus extent — the same coordinate space
@@ -412,10 +425,24 @@ export default defineSchema({
     // a stored row with a negative width silently fails every containment test — fog that
     // looks drawn and hides nothing, which is the worst failure this feature has and the
     // one a DM would never think to check for.
+    //
+    // ⚠️⚠️ **FOR A POLYGON THESE FOUR ARE THE BOUNDING BOX, COMPUTED SERVER-SIDE BY
+    // `boundsOf` AND NEVER TAKEN FROM THE CLIENT.** They are still required, still
+    // non-negative, and still what every containment test consults first — `shapeCovers`
+    // rejects a shape on the box before it visits an edge, which is the whole reason a
+    // polygon costs what a rectangle costs on the drag path. A box a client supplied and
+    // got wrong is a shape drawn on every screen that hides nothing, which is
+    // `normaliseFogRect`'s failure arriving through a second door, so there is no route by
+    // which one reaches this table.
     x: v.number(),
     y: v.number(),
     width: v.number(),
     height: v.number(),
+    // The polygon's vertices, in the order the DM clicked them. **Winding order is not
+    // normalised and must not be**: `polygonCovers` counts crossings rather than turns, so
+    // clockwise and anticlockwise are the same region, and a normaliser would be arithmetic
+    // nothing reads.
+    points: v.optional(v.array(v.object({ x: v.number(), y: v.number() }))),
   }).index('by_sceneId', ['sceneId']),
 
   // WHAT HAPPENED, AND WHO MAY HEAR ABOUT IT — the game feed.

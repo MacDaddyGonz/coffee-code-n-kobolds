@@ -3,6 +3,8 @@ import { describe, expect, test } from 'vitest'
 import {
   MAX_GRID_SIZE,
   MIN_GRID_SIZE,
+  anyShapeCovers,
+  boundsOf,
   centreOfCell,
   cellOf,
   gridLines,
@@ -10,10 +12,13 @@ import {
   isUsableGrid,
   isUsableTokenSize,
   moveByCells,
+  polygonCovers,
+  rectCovers,
+  shapeCovers,
   snapToGrid,
   squaresDown,
 } from './grid'
-import type { Grid, Point } from './grid'
+import type { Grid, Point, Rect, Shape } from './grid'
 
 /**
  * Every number here is exactly representable in binary floating point — 140 and
@@ -369,5 +374,409 @@ describe('gridLines', () => {
     expect(gridLines({ gridSize: 140, gridOffsetX: Number.NaN, gridOffsetY: 0 }, 2240, 1680)).toEqual(
       { vertical: [], horizontal: [] },
     )
+  })
+})
+
+/**
+ * ⚠️⚠️ **THE KEYSTONE OF THE MILESTONE'S GEOMETRY, AND IT IS A TEST RATHER THAN A
+ * PARAGRAPH ON PURPOSE.**
+ *
+ * `rectCovers` is half-open — inclusive of the top-left, exclusive of the bottom-right — so
+ * that abutting shapes tile with no seam and without both claiming the line between them.
+ * `polygonCovers` has to answer **identically**, and the reason it does is two details of the
+ * crossing-number rule that look arbitrary: a strict `>` on both ends of the scan-line test,
+ * and a strict `<` against the intersection.
+ *
+ * Nothing about that is obvious by reading, and it is the sort of thing that is quietly wrong
+ * for a year: a fog polygon that claims one extra row of pixels down its bottom edge hides a
+ * token standing on the line that the rectangle beside it also hides, and one that claims one
+ * fewer opens a one-pixel corridor of visibility through a wall the DM believes is solid.
+ * Neither is visible on a screen.
+ *
+ * So the assertions below compare the two functions against **each other** rather than against
+ * a list of expected booleans. The claim is the equivalence, so the equivalence is what is
+ * pinned — a hand-written truth table would have to be got right by the same reasoning that
+ * could have got the implementation wrong.
+ */
+const SQUARE: Rect = { x: 100, y: 200, width: 140, height: 140 }
+
+/** The same region as a point list, clockwise from the top-left. */
+const SQUARE_POINTS: Point[] = [
+  { x: 100, y: 200 },
+  { x: 240, y: 200 },
+  { x: 240, y: 340 },
+  { x: 100, y: 340 },
+]
+
+/** And anticlockwise, because winding must not change the answer. */
+const SQUARE_WIDDERSHINS: Point[] = [...SQUARE_POINTS].reverse()
+
+/**
+ * A pixel is far too coarse to probe an edge with, and a float too small vanishes into the
+ * mantissa of a coordinate in the hundreds. A thousandth of a pixel is fine at this magnitude
+ * and is well inside any square.
+ */
+const EPSILON = 0.001
+
+describe('boundsOf', () => {
+  test('is the smallest rectangle containing every point', () => {
+    expect(boundsOf(SQUARE_POINTS)).toEqual(SQUARE)
+  })
+
+  test('finds the extremes wherever they sit in the list, and takes negatives', () => {
+    expect(
+      boundsOf([
+        { x: 40, y: -12.25 },
+        { x: -63.5, y: 90 },
+        { x: 10, y: 200.5 },
+        { x: 511.25, y: 3 },
+      ]),
+    ).toEqual({ x: -63.5, y: -12.25, width: 574.75, height: 212.75 })
+  })
+
+  test('a single point and a straight line both have a zero extent', () => {
+    expect(boundsOf([{ x: 7, y: 9 }])).toEqual({ x: 7, y: 9, width: 0, height: 0 })
+    expect(
+      boundsOf([
+        { x: 0, y: 5 },
+        { x: 100, y: 5 },
+        { x: 50, y: 5 },
+      ]),
+    ).toEqual({ x: 0, y: 5, width: 100, height: 0 })
+  })
+
+  /**
+   * ⚠️ **Not a curiosity — it is the reason `requireDrawablePolygon` refuses an empty list
+   * before this is ever called.** A zero-extent rectangle at the origin covers no point at
+   * all, which is the fail-closed answer, but a row holding one would be fog the DM drew and
+   * cannot see, cannot click and cannot rub out.
+   */
+  test('an empty list is a zero-extent rectangle at the origin, which covers nothing', () => {
+    const empty = boundsOf([])
+    expect(empty).toEqual({ x: 0, y: 0, width: 0, height: 0 })
+    expect(rectCovers(empty, { x: 0, y: 0 })).toBe(false)
+  })
+})
+
+describe('polygonCovers agrees with rectCovers, exactly', () => {
+  /** Every point worth asking about on a square: the four edges, and just either side. */
+  function probes(rect: Rect): Point[] {
+    const left = rect.x
+    const right = rect.x + rect.width
+    const top = rect.y
+    const bottom = rect.y + rect.height
+    const midX = rect.x + rect.width / 2
+    const midY = rect.y + rect.height / 2
+
+    return [
+      // The four corners, which are where the two axes' conventions meet.
+      { x: left, y: top },
+      { x: right, y: top },
+      { x: right, y: bottom },
+      { x: left, y: bottom },
+      // The four edges, away from a corner.
+      { x: midX, y: top },
+      { x: right, y: midY },
+      { x: midX, y: bottom },
+      { x: left, y: midY },
+      // A thousandth of a pixel inside each edge …
+      { x: left + EPSILON, y: midY },
+      { x: right - EPSILON, y: midY },
+      { x: midX, y: top + EPSILON },
+      { x: midX, y: bottom - EPSILON },
+      // … and outside it.
+      { x: left - EPSILON, y: midY },
+      { x: right + EPSILON, y: midY },
+      { x: midX, y: top - EPSILON },
+      { x: midX, y: bottom + EPSILON },
+      // And the middle, so a pair agreeing on nothing but "false" would fail.
+      { x: midX, y: midY },
+    ]
+  }
+
+  test('at all four edges, all four corners and a thousandth of a pixel either side', () => {
+    for (const point of probes(SQUARE)) {
+      expect([point, polygonCovers(SQUARE_POINTS, point)]).toEqual([
+        point,
+        rectCovers(SQUARE, point),
+      ])
+    }
+  })
+
+  /**
+   * The convention spelled out, so a future reader can see *which* answer the pair agreed on
+   * rather than only that they agreed. Top-left in, bottom-right out.
+   */
+  test('and the convention they agree on is top-left inclusive, bottom-right exclusive', () => {
+    expect(polygonCovers(SQUARE_POINTS, { x: 100, y: 200 })).toBe(true)
+    expect(polygonCovers(SQUARE_POINTS, { x: 100, y: 270 })).toBe(true)
+    expect(polygonCovers(SQUARE_POINTS, { x: 170, y: 200 })).toBe(true)
+    expect(polygonCovers(SQUARE_POINTS, { x: 240, y: 270 })).toBe(false)
+    expect(polygonCovers(SQUARE_POINTS, { x: 170, y: 340 })).toBe(false)
+    expect(polygonCovers(SQUARE_POINTS, { x: 240, y: 340 })).toBe(false)
+  })
+
+  /**
+   * The DM's polygon tool emits vertices in whatever order they clicked, and nothing anywhere
+   * normalises the winding — `polygonCovers` counts crossings rather than turns, so it must
+   * not care. If it ever did, half of every DM's shapes would answer the opposite way.
+   */
+  test('and it does not care which way round the points were clicked', () => {
+    for (const point of probes(SQUARE)) {
+      expect([point, polygonCovers(SQUARE_WIDDERSHINS, point)]).toEqual([
+        point,
+        rectCovers(SQUARE, point),
+      ])
+    }
+  })
+})
+
+describe('shapeCovers', () => {
+  test('a shape with no points is its bounding box and nothing else', () => {
+    for (const point of [
+      { x: 100, y: 200 },
+      { x: 170, y: 270 },
+      { x: 240, y: 340 },
+      { x: 99.999, y: 270 },
+    ]) {
+      expect(shapeCovers(SQUARE, point)).toBe(rectCovers(SQUARE, point))
+    }
+  })
+
+  /**
+   * ⚠️ **The bounds test is not merely an optimisation — it is the whole reason the box is
+   * stored, and a wrong box is the failure the schema comment is about.** A polygon whose
+   * points reach outside its recorded box is invisible in the part that sticks out, so this
+   * asserts the *composition* rather than the ray-cast: a point genuinely inside the outline
+   * but outside the box answers false.
+   */
+  test('the box wins — a point outside it is never ray-cast', () => {
+    const inside: Point = { x: 170, y: 270 }
+    const wrongBox: Shape = { x: 0, y: 0, width: 1, height: 1, points: SQUARE_POINTS }
+
+    expect(polygonCovers(SQUARE_POINTS, inside)).toBe(true)
+    expect(shapeCovers(wrongBox, inside)).toBe(false)
+    expect(shapeCovers({ ...boundsOf(SQUARE_POINTS), points: SQUARE_POINTS }, inside)).toBe(true)
+  })
+
+  /**
+   * ⚠️ **The one documented fail-open branch in the fog design, extended to shapes.** Every
+   * NaN comparison is false, so `rectCovers` answers false for a broken coordinate and
+   * `shapeCovers` returns before the ray-cast ever sees one — which is why the bounds test
+   * runs first rather than second. There is **one** fail-open branch, not one per shape kind.
+   *
+   * ⚠️ **Under a covered base that same answer inverts to fail-CLOSED**, because being inside
+   * no shape is being in the dark, so a token with a broken position is withheld rather than
+   * published. ADR 0012 records the fail-open half and ADR 0015 records the inversion; both
+   * are true of a polygon for exactly this reason — one containment test, read through two
+   * bases in `veiled`.
+   */
+  test('fails open on a non-finite coordinate, for both kinds, without ray-casting', () => {
+    const polygon: Shape = { ...boundsOf(SQUARE_POINTS), points: SQUARE_POINTS }
+
+    for (const broken of [
+      { x: Number.NaN, y: 270 },
+      { x: 170, y: Number.NaN },
+      { x: Number.NaN, y: Number.NaN },
+    ]) {
+      expect(rectCovers(SQUARE, broken)).toBe(false)
+      expect(shapeCovers(SQUARE, broken)).toBe(false)
+      expect(shapeCovers(polygon, broken)).toBe(false)
+    }
+  })
+
+  /** A shape whose own points are broken is refused on the write path; it hides nothing here. */
+  test('a shape with a non-finite vertex covers nothing at all', () => {
+    const points: Point[] = [
+      { x: 100, y: 200 },
+      { x: Number.NaN, y: 200 },
+      { x: 240, y: 340 },
+    ]
+    expect(shapeCovers({ ...boundsOf(points), points }, { x: 170, y: 270 })).toBe(false)
+  })
+})
+
+/**
+ * ⚠️ **The second half of the keystone: two abutting shapes of *different kinds* must tile.**
+ *
+ * The equivalence above says a polygon and a rectangle agree about one region's edges. This
+ * says the consequence the feature actually depends on — a DM who blacks out a room with a
+ * rectangle and the corridor beside it with a polygon gets one continuous dark region, with no
+ * seam a token can stand in and no line both shapes claim.
+ */
+describe('shapes of different kinds tile without a seam', () => {
+  const room: Shape = { x: 0, y: 0, width: 100, height: 100 }
+  const corridorPoints: Point[] = [
+    { x: 100, y: 0 },
+    { x: 200, y: 0 },
+    { x: 200, y: 100 },
+    { x: 100, y: 100 },
+  ]
+  const corridor: Shape = { ...boundsOf(corridorPoints), points: corridorPoints }
+
+  /** Points down the shared line, including both ends of it. */
+  const seam: Point[] = [0, 0.001, 25, 50, 99.999].map((y) => ({ x: 100, y }))
+
+  test('exactly one of them claims every point on the line between', () => {
+    for (const point of seam) {
+      expect([point, shapeCovers(room, point), shapeCovers(corridor, point)]).toEqual([
+        point,
+        false,
+        true,
+      ])
+    }
+  })
+
+  test('so the pair covers the whole span with no gap and no overlap', () => {
+    for (let x = 0; x < 200; x += 0.5) {
+      const point = { x, y: 50 }
+      const claims = [room, corridor].filter((shape) => shapeCovers(shape, point)).length
+      expect([point, claims]).toEqual([point, 1])
+    }
+    // And the far edge of the pair is exclusive, exactly as one rectangle's would be.
+    expect(anyShapeCovers([room, corridor], { x: 200, y: 50 })).toBe(false)
+  })
+
+  test('the same holds with the kinds the other way round', () => {
+    const roomPoints: Point[] = [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+      { x: 0, y: 100 },
+    ]
+    const shapes: Shape[] = [
+      { ...boundsOf(roomPoints), points: roomPoints },
+      { x: 100, y: 0, width: 100, height: 100 },
+    ]
+    for (const point of seam) {
+      expect([point, shapes.filter((shape) => shapeCovers(shape, point)).length]).toEqual([
+        point,
+        1,
+      ])
+    }
+  })
+})
+
+/**
+ * The shapes a DM actually draws by accident. None of these is refused on the write path —
+ * `requireDrawablePolygon` checks finiteness, a corner count and a non-degenerate box, and
+ * deliberately nothing about validity — so the even-odd rule has to answer all of them
+ * sensibly rather than the tool having to prevent them.
+ */
+describe('polygonCovers on the shapes a hand actually draws', () => {
+  /** An L-shaped room: 200×200 with the bottom-right quarter cut out. */
+  const ELL: Point[] = [
+    { x: 0, y: 0 },
+    { x: 200, y: 0 },
+    { x: 200, y: 100 },
+    { x: 100, y: 100 },
+    { x: 100, y: 200 },
+    { x: 0, y: 200 },
+  ]
+
+  test('a concave outline excludes the notch and includes both arms', () => {
+    expect(polygonCovers(ELL, { x: 50, y: 50 })).toBe(true)
+    expect(polygonCovers(ELL, { x: 150, y: 50 })).toBe(true)
+    expect(polygonCovers(ELL, { x: 50, y: 150 })).toBe(true)
+    // The cut-out quarter, which the bounding box contains and the outline does not.
+    expect(polygonCovers(ELL, { x: 150, y: 150 })).toBe(false)
+    expect(rectCovers(boundsOf(ELL), { x: 150, y: 150 })).toBe(true)
+    expect(shapeCovers({ ...boundsOf(ELL), points: ELL }, { x: 150, y: 150 })).toBe(false)
+  })
+
+  /**
+   * A DM tracing a wall clicks along a straight run and produces three collinear points. The
+   * shape is a perfectly good rectangle; the middle vertex is simply a corner with no angle
+   * at it, and the crossing rule must not count the degenerate edge twice.
+   */
+  test('collinear points on an edge change nothing', () => {
+    const withMidpoints: Point[] = [
+      { x: 100, y: 200 },
+      { x: 170, y: 200 },
+      { x: 240, y: 200 },
+      { x: 240, y: 270 },
+      { x: 240, y: 340 },
+      { x: 100, y: 340 },
+    ]
+    for (const point of [
+      { x: 100, y: 200 },
+      { x: 170, y: 200 },
+      { x: 170, y: 270 },
+      { x: 240, y: 270 },
+      { x: 170, y: 340 },
+      { x: 99.999, y: 270 },
+    ]) {
+      expect([point, polygonCovers(withMidpoints, point)]).toEqual([
+        point,
+        rectCovers(SQUARE, point),
+      ])
+    }
+  })
+
+  /**
+   * A bowtie — the outline crosses itself, which happens the moment a DM clicks their corners
+   * out of order. Under the even-odd rule the two lobes are inside and the notch either side
+   * of the crossing is not, and that is a coherent answer rather than a bug: it is *a* region,
+   * it is the one drawn, and refusing it would refuse a gesture that works.
+   */
+  test('a self-intersecting outline is answered by the even-odd rule rather than refused', () => {
+    const bowtie: Point[] = [
+      { x: 0, y: 0 },
+      { x: 100, y: 100 },
+      { x: 0, y: 100 },
+      { x: 100, y: 0 },
+    ]
+    expect(polygonCovers(bowtie, { x: 50, y: 10 })).toBe(true)
+    expect(polygonCovers(bowtie, { x: 50, y: 90 })).toBe(true)
+    expect(polygonCovers(bowtie, { x: 10, y: 50 })).toBe(false)
+    expect(polygonCovers(bowtie, { x: 90, y: 50 })).toBe(false)
+  })
+
+  /**
+   * A shape pinched to a point in the middle — two lobes joined at one vertex, which is what
+   * a DM gets by routing a figure back through the square they started in. Both lobes are
+   * inside.
+   */
+  test('an outline that touches itself at one vertex still has an inside', () => {
+    const pinched: Point[] = [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 50, y: 50 },
+      { x: 100, y: 100 },
+      { x: 0, y: 100 },
+      { x: 50, y: 50 },
+    ]
+    expect(polygonCovers(pinched, { x: 50, y: 10 })).toBe(true)
+    expect(polygonCovers(pinched, { x: 50, y: 90 })).toBe(true)
+    expect(polygonCovers(pinched, { x: 95, y: 50 })).toBe(false)
+  })
+
+  /** Fewer than three points is not a region, whatever the box says. */
+  test('a line and a single point cover nothing', () => {
+    expect(polygonCovers([{ x: 0, y: 0 }], { x: 0, y: 0 })).toBe(false)
+    expect(
+      polygonCovers(
+        [
+          { x: 0, y: 0 },
+          { x: 100, y: 100 },
+        ],
+        { x: 50, y: 50 },
+      ),
+    ).toBe(false)
+    expect(polygonCovers([], { x: 0, y: 0 })).toBe(false)
+  })
+})
+
+describe('anyShapeCovers', () => {
+  const shapes: Shape[] = [
+    { x: 0, y: 0, width: 50, height: 50 },
+    { ...boundsOf(SQUARE_POINTS), points: SQUARE_POINTS },
+  ]
+
+  test('is true when any one of them covers, and false for an empty list', () => {
+    expect(anyShapeCovers(shapes, { x: 10, y: 10 })).toBe(true)
+    expect(anyShapeCovers(shapes, { x: 170, y: 270 })).toBe(true)
+    expect(anyShapeCovers(shapes, { x: 1000, y: 1000 })).toBe(false)
+    expect(anyShapeCovers([], { x: 10, y: 10 })).toBe(false)
   })
 })

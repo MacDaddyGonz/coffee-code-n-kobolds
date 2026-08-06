@@ -2370,10 +2370,7 @@ describe('conditions on a coin', () => {
       code: f.code,
       dmCode: f.dmCode,
       sceneId: f.sceneId,
-      x: 0,
-      y: 0,
-      width: 2000,
-      height: 2000,
+      shape: { kind: 'rect', x: 0, y: 0, width: 2000, height: 2000 },
     })
 
     // Its placement is gone from the player's payload — that is fog working …

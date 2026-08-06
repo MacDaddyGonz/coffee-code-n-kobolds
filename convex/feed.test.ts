@@ -2360,10 +2360,7 @@ describe('a creature in the dark is not heard from', () => {
       code: fixture.code,
       dmCode: fixture.dmCode,
       sceneId: fixture.sceneId,
-      x: at.x - 40,
-      y: at.y - 40,
-      width: 80,
-      height: 80,
+      shape: { kind: 'rect', x: at.x - 40, y: at.y - 40, width: 80, height: 80 },
     })
     return fogId
   }
@@ -2455,10 +2452,13 @@ describe('a creature in the dark is not heard from', () => {
       code,
       dmCode: fixture.dmCode,
       sceneId: fixture.sceneId,
-      x: Math.min(hero.x, creature.x) - 100,
-      y: Math.min(hero.y, creature.y) - 100,
-      width: Math.abs(creature.x - hero.x) + 200,
-      height: Math.abs(creature.y - hero.y) + 200,
+      shape: {
+        kind: 'rect',
+        x: Math.min(hero.x, creature.x) - 100,
+        y: Math.min(hero.y, creature.y) - 100,
+        width: Math.abs(creature.x - hero.x) + 200,
+        height: Math.abs(creature.y - hero.y) + 200,
+      },
     })
 
     const heard = await t.query(api.feed.list, { code })
