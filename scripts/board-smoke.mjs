@@ -517,8 +517,13 @@ const NPC_SHEET = {
  *
  * `featCount` is the length of the library's own feat list. Every resolved sheet
  * carries one more than that, because a race always contributes its trait — see the
- * `+ 1` at each use, which is `applyRace` being asserted rather than assumed.
+ * ⚠️ **`+ ELF_TRAIT_ENTRIES` at each use, and it used to be `+ 1`.** That one was the single
+ * trait a Milestone 4 race contributed — a Halfling's Lucky, an Elf's Fey Ancestry — and a
+ * 2024 species has up to five. The Elf has five, so the sum is the library's own feat list
+ * plus every trait the species appends, which is `applySpecies` being asserted rather than
+ * assumed. If a species ever grants a feat as well as its traits this stops being one number.
  */
+const ELF_TRAIT_ENTRIES = 5
 const ROGUE_SKILLS = {
   athletics: false,
   acrobatics: true,
@@ -526,9 +531,14 @@ const ROGUE_SKILLS = {
   stealth: true,
   arcana: false,
   investigation: true,
+  history: false,
+  nature: false,
+  religion: false,
   animalHandling: false,
   insight: false,
   perception: true,
+  medicine: false,
+  survival: false,
   deception: true,
   intimidation: false,
   performance: false,
@@ -2714,7 +2724,7 @@ async function main() {
         built.maxHp === ROGUE.base.maxHp &&
         built.hitDice.count === ROGUE.base.hitDice.count &&
         built.hitDice.faces === ROGUE.base.hitDice.faces &&
-        built.feats.length === ROGUE.base.featCount + 1,
+        built.feats.length === ROGUE.base.featCount + ELF_TRAIT_ENTRIES,
       abilityDrift ??
         skillDrift ??
         (built
@@ -2824,7 +2834,7 @@ async function main() {
         atTwoThief.sheet.className === 'Rogue (Thief)' &&
         atTwoThief.sheet.maxHp === ROGUE.thief2.maxHp &&
         atTwoThief.sheet.hitDice.count === ROGUE.thief2.hitDice.count &&
-        atTwoThief.sheet.feats.length === ROGUE.thief2.featCount + 1,
+        atTwoThief.sheet.feats.length === ROGUE.thief2.featCount + ELF_TRAIT_ENTRIES,
       atTwo && atTwoThief
         ? `undecided ${atTwo.sheet.maxHp} hp, then ${atTwoThief.sheet.maxHp} hp and ${atTwoThief.sheet.feats.length} feats as a ${atTwoThief.sheet.className}`
         : 'no sheet came back',
@@ -2844,7 +2854,7 @@ async function main() {
         atFour.sheet.maxHp === ROGUE.thief4.maxHp &&
         atFour.sheet.maxHp !== atTwoThief.sheet.maxHp &&
         atFour.sheet.hitDice.count === ROGUE.thief4.hitDice.count &&
-        atFour.sheet.feats.length === ROGUE.thief4.featCount + 1 &&
+        atFour.sheet.feats.length === ROGUE.thief4.featCount + ELF_TRAIT_ENTRIES &&
         atFour.sheet.feats.some((entry) => entry.name === 'Uncanny Dodge'),
       atFour
         ? `${atFour.sheet.maxHp} hp, ${atFour.sheet.hitDice.count} hit dice, ${atFour.sheet.feats.length} feats`
@@ -3211,7 +3221,7 @@ async function main() {
         untouched.preset.overrides &&
         untouched.preset.overrides.armourClass === DM_ARMOUR_CLASS &&
         untouched.preset.overrides.extraFeats === undefined &&
-        untouched.sheet.feats.length === ROGUE.base.featCount + 1,
+        untouched.sheet.feats.length === ROGUE.base.featCount + ELF_TRAIT_ENTRIES,
       untouched
         ? `${JSON.stringify(untouched.preset)}, ${untouched.sheet.feats.length} feats`
         : 'no sheet came back',
