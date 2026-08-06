@@ -12,6 +12,7 @@ import { ZoomControls } from '@/components/board/ZoomControls'
 import { GridHandlesLayer } from '@/components/board/dm/GridHandlesLayer'
 import { TokenDeleteDialog } from '@/components/board/dm/TokenDeleteDialog'
 import { TokenDuplicateDialog } from '@/components/board/dm/TokenDuplicateDialog'
+import { TraceBoxLayer } from '@/components/board/dm/TraceBoxLayer'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BoardToken } from '@/hooks/useBoard'
 import { useBoard } from '@/hooks/useBoard'
@@ -20,6 +21,7 @@ import { useBoardKeys } from '@/hooks/useBoardKeys'
 import { useBoardLayers } from '@/hooks/useBoardLayers'
 import type { Dm } from '@/hooks/useDm'
 import { useFogMode } from '@/hooks/useFog'
+import { useGridTrace } from '@/hooks/useGridTrace'
 import { useGridWrite } from '@/hooks/useGridWrite'
 import { useHpTarget } from '@/hooks/useHpTarget'
 import { useSmoothPositions, useTokenMove } from '@/hooks/useTokenMove'
@@ -213,13 +215,21 @@ export function Board({
   const hpToken = hpTarget.hpToken
 
   /**
-   * Grid calibration: whether the handles are out, and the box the DM is dragging.
+   * Grid calibration: whether a tool is out, which of the two it is, and the box the DM is
+   * dragging.
    *
    * Owned here rather than by `GridCalibrator` in the Map panel, because the two live in
    * different halves of the screen and this is the half the gesture happens in. They are
    * not two settings to keep in step — the *stored* grid is the single fact, and both
    * write it through `useGridWrite`. The draft below is the only thing local to a drag,
    * and it lasts about a tenth of a second.
+   *
+   * ⚠️ **Two tools and never both.** `calibrating` says a tool is in the DM's hand;
+   * `useGridTrace`'s cell says which one, because the picker for it is in the other pane.
+   * The handles box is square by construction and anchored to the grid origin; the trace box
+   * is free-aspect and anchored wherever the map's printed squares are legible — see
+   * `GridTool` for why widening one of them into the other was never on the table. Both end
+   * up in the same `setDraftGrid` and the same `gridWrite`.
    *
    * `useGridWrite` is called unconditionally with a nullable code and scene, so a player's
    * board runs the same hooks in the same order as the DM's and simply never sends
@@ -228,6 +238,10 @@ export function Board({
    */
   const [calibrating, setCalibrating] = useState(false)
   const [draftGrid, setDraftGrid] = useState<Grid | null>(null)
+
+  const trace = useGridTrace(code)
+  const setTrace = trace.setTrace
+  const tracing = calibrating && trace.tool === 'trace'
 
   const gridWrite = useGridWrite({ code, dmCode: dm.dmCode, sceneId: scene?._id ?? null })
 
@@ -283,13 +297,45 @@ export function Board({
     if (next !== null) gridWrite.settle(next, gridVisibleRef.current)
   }, [gridWrite.settle])
 
+  /**
+   * The trace box's two rates, and they are the same two the handles use one screen over.
+   *
+   * `onTracePreview` runs on every frame of the drag, so the table watches the grid settle
+   * onto the printed one *while the box is being drawn* — which is the whole feedback loop of
+   * that tool, and is why it is `push` and not silence until the drop. `onTraceSettle` is the
+   * drop. Neither is ever handed a `null`: `TraceBoxLayer` simply does not call while the box
+   * describes no drawable grid, which is most of the first few frames of every trace.
+   *
+   * The draft is set from both, exactly as the handles set it, so `BoardStage` draws the new
+   * grid this frame rather than after a round trip.
+   */
+  const onTracePreview = useCallback(
+    (next: Grid) => {
+      setDraftGrid(next)
+      gridWrite.push(next, gridVisibleRef.current)
+    },
+    [gridWrite.push],
+  )
+
+  const onTraceSettle = useCallback(
+    (next: Grid) => {
+      setDraftGrid(next)
+      gridWrite.settle(next, gridVisibleRef.current)
+    },
+    [gridWrite.settle],
+  )
+
   const onToggleCalibrate = useCallback(() => {
     setCalibrating((on) => !on)
     // Cleared in both directions. Leaving drops a draft that has already been written
     // anyway; entering makes sure the handles start from the stored grid rather than from
     // a refused write left over from last time.
     setDraftGrid(null)
-  }, [])
+    // The traced box goes the same way and for a sharper version of the same reason: it is a
+    // measurement of a block of *this* map, and one still on screen when the tool next comes
+    // out would be numbers in the panel that nobody in this session traced.
+    setTrace({ box: null })
+  }, [setTrace])
 
   // Hand the grid back to the subscription once the server agrees, which is the discipline
   // `useSmoothPositions` applies to a token and is needed for the same reason: a draft that
@@ -315,9 +361,14 @@ export function Board({
   }, [scene, draftGrid])
 
   // A draft belongs to the map it was dragged on, so switching maps drops it rather than
-  // laying the old map's numbers over the new one's art.
+  // laying the old map's numbers over the new one's art. The traced box belongs to a map far
+  // more literally — it is a rectangle measured off one particular picture — so it goes too,
+  // rather than sitting over the new map claiming to have measured something on it.
   const sceneId = scene?._id ?? null
-  useEffect(() => setDraftGrid(null), [sceneId])
+  useEffect(() => {
+    setDraftGrid(null)
+    setTrace({ box: null })
+  }, [sceneId, setTrace])
 
   // Hoisted out of the JSX so `TokenLayers` is handed the same function every render.
   // A fresh arrow there would have been a changed prop on every coin on every frame
@@ -449,25 +500,44 @@ export function Board({
     hpTarget.clear()
   }, [selection.clear, hpTarget.clear])
 
-  // Innermost first. Escape leaves calibration if the handles are out, closes the hit
-  // point editor if it is open, and clears the selection otherwise — so one press undoes
-  // one thing and the token you were moving is still selected afterwards.
+  // Innermost first. Escape rubs out a traced box if there is one, leaves calibration if a
+  // tool is out, closes the hit point editor if it is open, and clears the selection
+  // otherwise — so one press undoes one thing and the token you were moving is still
+  // selected afterwards.
   //
-  // ⚠️ **There are three cases and there used to be two, and the sentence that used to
+  // ⚠️ **There are four cases and there used to be two, and the sentence that used to
   // stand here explained why there could never be a third: a dialog or sheet opened from a
   // panel portals out of this subtree and handles its own Escape before either of these
   // hears about it.** That is still true of a dialog and is no longer the whole story,
   // because a Konva layer does not portal. Calibration is a mode of *this* board, drawn
   // inside this stage, with nothing above it to swallow the key — so it has to be
-  // dismissed here, and it goes first because it is the outermost thing the DM is holding
-  // and the one that has changed what every other gesture on the board does.
+  // dismissed here, and it goes near the front because it is the outermost thing the DM is
+  // holding and the one that has changed what every other gesture on the board does.
+  //
+  // ⚠️ **The traced box goes in front of calibration rather than with it**, which is the
+  // "innermost first" rule taken seriously rather than a fourth branch bolted on. A box on
+  // screen is a thing the DM made *inside* the tool, and it is the thing they most often want
+  // rid of: a trace over the wrong block of squares is corrected by rubbing it out and doing
+  // it again, and folding it into the branch below would make that cost putting the tool down
+  // and picking it back up. Two presses still leave calibration, in the order they were
+  // entered in.
   const onEscape = useCallback(() => {
-    if (calibrating) {
+    if (tracing && trace.box !== null) setTrace({ box: null })
+    else if (calibrating) {
       setCalibrating(false)
       setDraftGrid(null)
+      setTrace({ box: null })
     } else if (hpTarget.hpTokenId !== null) hpTarget.clear()
     else selection.clear()
-  }, [calibrating, hpTarget.hpTokenId, hpTarget.clear, selection.clear])
+  }, [
+    tracing,
+    trace.box,
+    setTrace,
+    calibrating,
+    hpTarget.hpTokenId,
+    hpTarget.clear,
+    selection.clear,
+  ])
 
   useBoardKeys({
     containerRef,
@@ -599,15 +669,42 @@ export function Board({
               Last, and that is the whole of how it wins the pointer — see `BoardStage`.
               Rendered only when the DM has asked for it, so on every other board the
               stage is exactly the tree it was before.
+
+              ⚠️ **One of the two, never both, and the ternary is what says so.** They are
+              different objects rather than two settings of one tool — `GridTool` carries the
+              argument — and two blue rectangles over one map would leave nothing on screen to
+              say which of them the grid is currently following. Both write through the same
+              `gridWrite` and set the same `draftGrid`, so what changes between them is the
+              gesture and not the consequence.
+
+              ⚠️ **The tracer and an armed fog tool can both be out, and the tracer wins the
+              pointer — deliberately, and worth knowing before reaching for a mutual
+              exclusion.** This layer is mounted last, so its draw surface takes every press on
+              the map and the fog band underneath never starts. The handles never collided this
+              way because they cover four squares rather than the whole image. It is left as it
+              is because the failure is *not* the silent one `FogLayer`'s docblock is about: two
+              buttons are lit, and a drag produces a blue measuring box rather than a dark
+              rectangle, which says which tool answered. Making one mode turn the other off is a
+              rule about two panes' controls and wants deciding rather than inferring here.
             */}
-            {board.isDm && calibrating && box ? (
-              <GridHandlesLayer
-                box={box}
-                scale={camera.camera.scale}
-                onGrab={onGrab}
-                onMove={onHandleMove}
-                onRelease={onHandleRelease}
-              />
+            {board.isDm && calibrating ? (
+              tracing ? (
+                <TraceBoxLayer
+                  code={code}
+                  scene={scene}
+                  scale={camera.camera.scale}
+                  onPreview={onTracePreview}
+                  onSettle={onTraceSettle}
+                />
+              ) : box ? (
+                <GridHandlesLayer
+                  box={box}
+                  scale={camera.camera.scale}
+                  onGrab={onGrab}
+                  onMove={onHandleMove}
+                  onRelease={onHandleRelease}
+                />
+              ) : null
             ) : null}
           </BoardStage>
           {/*
