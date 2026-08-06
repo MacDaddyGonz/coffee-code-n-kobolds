@@ -1645,16 +1645,52 @@ async function main() {
     uploads.push(imageId)
     check('files:generateUploadUrl accepted a POST and returned a storageId', Boolean(imageId))
 
+    // A SECOND BLOB FOR THE SAME ROW, which is what makes this the interesting upload in the
+    // file rather than a repeat of the one above. `scenes.thumbnailId` is a *new optional
+    // column on a populated table*, and that is the shape of change this script exists for:
+    // convex-test does not apply Convex's own value validation, so an insert that spells the
+    // field with an explicit `undefined` rather than omitting it passes the whole suite and
+    // is a different write against a real deployment.
+    const thumbnailId = await uploadPng(client, code, dmCode)
+    uploads.push(thumbnailId)
+
     const scene = await client.mutation('scenes:create', {
       code,
       dmCode,
       name: 'Admittance',
       imageId,
+      thumbnailId,
       imageWidth: MAP_WIDTH,
       imageHeight: MAP_HEIGHT,
     })
     sceneId = scene.sceneId
     check('scenes:create stored a scene', Boolean(sceneId))
+
+    // 1b. THE PROJECTION SPLIT, ASSERTED AS A PAIR AGAINST THE REAL DEPLOYMENT. `scenes:list`
+    // is DM-only and carries a signed URL for the derivative; `scenes:active` is ungated and
+    // must carry no trace of it, because every player at the table subscribes to it. Either
+    // half alone proves nothing — a payload with no thumbnail anywhere would satisfy the
+    // second, so the first is the positive control for it.
+    const dmScenes = await client.query('scenes:list', { code, dmCode })
+    const listedScene = dmScenes.find((row) => row._id === sceneId)
+    const tableScene = await client.query('scenes:active', { code })
+    check(
+      'scenes:list gave the DM a thumbnail URL, and scenes:active gave the table none',
+      listedScene &&
+        typeof listedScene.thumbnailUrl === 'string' &&
+        listedScene.thumbnailUrl !== listedScene.imageUrl &&
+        tableScene !== null &&
+        !Object.prototype.hasOwnProperty.call(tableScene, 'thumbnailUrl'),
+      listedScene
+        ? `DM keys ${Object.keys(listedScene).length}, table keys ${tableScene ? Object.keys(tableScene).length : 0}`
+        : 'the DM’s list did not contain the scene it just made',
+    )
+    // AND THE OTHER HALF OF `files.discard`'s NEW COLUMN. `sceneReferencesThumbnail` is the
+    // predicate `storageGuard.test.ts` had to be rewritten per-field to force into existence;
+    // without it this call would delete the bytes of a picture the picker is drawing.
+    await refuses('files:discard refused a blob a scene holds as its thumbnail', () =>
+      client.mutation('files:discard', { code, dmCode, imageIds: [thumbnailId] }),
+    )
 
     // 2. Non-integer floats through the real value validation. 37.5 and −12.25
     // are exact in binary; a deployment that mangled them would break every snap.
@@ -4212,14 +4248,14 @@ async function main() {
     // through `tokenReferencesImage`, so the only transaction allowed to delete the outgoing
     // art is the one that stopped referencing it.
     await refuses('files:discard refused the new blob, because the coin now references it', () =>
-      client.mutation('files:discard', { code, dmCode, imageId: secondArt }),
+      client.mutation('files:discard', { code, dmCode, imageIds: [secondArt] }),
     )
     // The other half of that, and the property the cleanup registry at the bottom of this
     // file rests on: `discard` returns early when the blob is not in storage, so discarding
     // one `setArt` has already deleted is a no-op rather than a second error on top of the
     // first. Asserted through what it did *not* disturb, because "it did not throw" is a
     // claim the run's own catch already makes.
-    await client.mutation('files:discard', { code, dmCode, imageId: firstArt })
+    await client.mutation('files:discard', { code, dmCode, imageIds: [firstArt] })
     const artAfterDiscard = await tokensOf(editable.tokenId)
     const liveArtFetch = newArtUrl ? await fetch(newArtUrl) : null
     check(
@@ -5575,7 +5611,12 @@ async function main() {
       width: FOG_REACH * 2,
       height: FOG_REACH * 2,
     }
-    const drawn = await client.mutation('fog:draw', { code, dmCode, sceneId, ...overCreature })
+    const drawn = await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId,
+      shape: { kind: 'rect', ...overCreature },
+    })
     const darkened = await fogState()
     check(
       'the rectangle took the placement, the band and both lines off the wire — and left the coin where it was',
@@ -5656,10 +5697,13 @@ async function main() {
       code,
       dmCode,
       sceneId,
-      x: overCreature.x + overCreature.width,
-      y: overCreature.y + overCreature.height,
-      width: -overCreature.width,
-      height: -overCreature.height,
+      shape: {
+        kind: 'rect',
+        x: overCreature.x + overCreature.width,
+        y: overCreature.y + overCreature.height,
+        width: -overCreature.width,
+        height: -overCreature.height,
+      },
     })
     const draggedRow =
       (await client.query('fog:list', { code, sceneId })).find((row) => row._id === dragged.fogId) ??
@@ -5697,12 +5741,17 @@ async function main() {
       width: FOG_REACH * 2,
       height: FOG_REACH * 2,
     }
-    const overHeroRect = await client.mutation('fog:draw', { code, dmCode, sceneId, ...overHero })
+    const overHeroRect = await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId,
+      shape: { kind: 'rect', ...overHero },
+    })
     const alsoOverCreature = await client.mutation('fog:draw', {
       code,
       dmCode,
       sceneId,
-      ...overCreature,
+      shape: { kind: 'rect', ...overCreature },
     })
     const bothDrawn = await client.query('board:positions', { code, sceneId })
     check(
@@ -5719,16 +5768,12 @@ async function main() {
     await client.mutation('fog:erase', { code, dmCode, fogId: alsoOverCreature.fogId })
 
     // (e) WHAT `fog:draw` REFUSES, against real value validation.
-    const badRect = (fields) =>
+    const badRect = ({ dmCode: badDm, ...fields }) =>
       client.mutation('fog:draw', {
         code,
-        dmCode,
+        dmCode: badDm ?? dmCode,
         sceneId,
-        x: 200,
-        y: 200,
-        width: 300,
-        height: 200,
-        ...fields,
+        shape: { kind: 'rect', x: 200, y: 200, width: 300, height: 200, ...fields },
       })
     // A zero-area rectangle looks like a usability refusal and is a data one: it covers no
     // point, so it hides nothing — and there is nothing on screen to click, so the DM cannot
@@ -5778,10 +5823,7 @@ async function main() {
       code,
       dmCode,
       sceneId: otherMap.sceneId,
-      x: 200,
-      y: 200,
-      width: 400,
-      height: 300,
+      shape: { kind: 'rect', x: 200, y: 200, width: 400, height: 300 },
     })
     const otherForPlayer = await client.query('fog:list', { code, sceneId: otherMap.sceneId })
     const otherForDm = await client.query('fog:list', { code, sceneId: otherMap.sceneId, dmCode })
@@ -5813,10 +5855,7 @@ async function main() {
       code,
       dmCode,
       sceneId,
-      x: 2100,
-      y: 1600,
-      width: 100,
-      height: 60,
+      shape: { kind: 'rect', x: 2100, y: 1600, width: 100, height: 60 },
     })
 
     // 33. HANDOUTS: A NEW `v.id('_storage')` TABLE, AND AN OPTIONAL POINTER ON A POPULATED ONE.
@@ -5961,7 +6000,7 @@ async function main() {
     // half alone is meaningless — a `discard` that refused unconditionally would satisfy the
     // first, and one that never asked any table would satisfy the second.
     const discardWhileLive = await refusalOf(() =>
-      client.mutation('files:discard', { code, dmCode, imageId: handoutBlob }),
+      client.mutation('files:discard', { code, dmCode, imageIds: [handoutBlob] }),
     )
     check(
       'files:discard refused the blob while the handout still pointed at it',
@@ -6010,7 +6049,7 @@ async function main() {
     // whole upload list in `finally` safe rather than a list of guesses about which uploads
     // survived a run that failed halfway.
     const discardAfterRemove = await refusalOf(() =>
-      client.mutation('files:discard', { code, dmCode, imageId: handoutBlob }),
+      client.mutation('files:discard', { code, dmCode, imageIds: [handoutBlob] }),
     )
     check(
       'the same files:discard call accepted once the handout was gone',
@@ -6154,7 +6193,7 @@ async function main() {
     // the blob could be ten megabytes — which is the other half of why `discard` matters more to
     // `music.create` than to the two mutations it copies.
     await refuses('files:discard refused the audio while the track still pointed at it', () =>
-      client.mutation('files:discard', { code, dmCode, imageId: trackBlob }),
+      client.mutation('files:discard', { code, dmCode, imageIds: [trackBlob] }),
     )
 
     // AND THE DELETE, with the track put back on first so the pointer repair is exercised too.
@@ -7410,6 +7449,589 @@ async function main() {
         )
       }
     }
+
+    // 42. MANAGING THE MAPS: TWO OPTIONAL COLUMNS ON A POPULATED TABLE, A SHARED BLOB, AND
+    // A REWRITE OF EVERY COORDINATE ON A BOARD.
+    //
+    // ⚠️ **Worked on a scene of its own rather than on `sceneId`**, and that is not tidiness:
+    // `scenes:replaceImage` multiplies every placement and every fog rectangle on the board
+    // it is given, so running it on the run's main scene would move the coins forty earlier
+    // checks are about. The scene made here is pushed to `extraScenes` and swept in `finally`.
+    //
+    // What the suite cannot answer, in the order the checks come:
+    //
+    //   - **`notes` and `order` are new optional columns on a populated table**, and
+    //     `dmSceneValidator` declares both as *required* over them. A deployment that
+    //     returned the raw fields for a scene nobody has written notes on or reordered would
+    //     fail its own `returns:` validation, and convex-test does not apply it.
+    //   - **The leak.** `scenes:active` is ungated and every player subscribes to it, so the
+    //     notes are scanned for out of a real payload fetched with no DM code at all, with
+    //     the DM's own list as the positive control.
+    //   - **A duplicate shares the map blob**, so deleting one map must not blank the other —
+    //     the bug that made two unconditional `ctx.storage.delete` calls conditional. Asserted
+    //     by re-fetching the copy's signed URL after the original goes, which is the only
+    //     version of that claim a real deployment can make.
+    //   - **Real float64s through the rescale.** The grid offsets here are fractional on
+    //     purpose, so the multiplication is arithmetic over the same doubles the position
+    //     table stores rather than over integers that would survive any bug.
+    const mapAdminImage = await uploadPng(client, code, dmCode)
+    uploads.push(mapAdminImage)
+    const mapAdminThumb = await uploadPng(client, code, dmCode)
+    uploads.push(mapAdminThumb)
+    const managed = await client.mutation('scenes:create', {
+      code,
+      dmCode,
+      name: 'The Sunken Chapel',
+      imageId: mapAdminImage,
+      thumbnailId: mapAdminThumb,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+    })
+    extraScenes.push(managed.sceneId)
+
+    const listedAs = async (id) =>
+      (await client.query('scenes:list', { code, dmCode })).find((row) => row._id === id) ?? null
+
+    const beforeNotes = await listedAs(managed.sceneId)
+    check(
+      'scenes:list declares notes and order as required over two absent columns',
+      beforeNotes !== null &&
+        beforeNotes.notes === '' &&
+        Number.isInteger(beforeNotes.order) &&
+        beforeNotes.order >= 0,
+      beforeNotes
+        ? `notes ${JSON.stringify(beforeNotes.notes)}, order ${beforeNotes.order}`
+        : 'not listed',
+    )
+
+    const PREP = 'the lich behind the altar is invisible until somebody casts detect magic'
+    await client.mutation('scenes:setNotes', { code, dmCode, sceneId: managed.sceneId, notes: PREP })
+    await client.mutation('scenes:setActive', { code, dmCode, sceneId: managed.sceneId })
+
+    const asTheTable = await client.query('scenes:active', { code })
+    const asTheDm = await listedAs(managed.sceneId)
+    check(
+      'the DM’s prep reached the DM and reached nobody else',
+      asTheDm !== null &&
+        asTheDm.notes === PREP &&
+        asTheTable !== null &&
+        !JSON.stringify(asTheTable).includes('lich') &&
+        !Object.prototype.hasOwnProperty.call(asTheTable, 'notes'),
+      asTheDm ? `${asTheDm.notes.length} characters to the DM, ${Object.keys(asTheTable ?? {}).length} keys to the table` : 'not listed',
+    )
+    // Put the table back on the board every other section is about, before anything below
+    // starts moving this one around.
+    await client.mutation('scenes:setActive', { code, dmCode, sceneId })
+
+    // REORDER: THE WHOLE LIST, ONE TRANSACTION. A permutation check the deployment performs
+    // over its own rows, which is why the refusal below is worth a round trip.
+    const allSceneIds = (await client.query('scenes:list', { code, dmCode })).map((row) => row._id)
+    const reversed = [...allSceneIds].reverse()
+    await client.mutation('scenes:reorder', { code, dmCode, sceneIds: reversed })
+    const afterReorder = (await client.query('scenes:list', { code, dmCode })).map((row) => row._id)
+    check(
+      'scenes:reorder stored the whole ordering and the list came back in it',
+      JSON.stringify(afterReorder) === JSON.stringify(reversed),
+      `${afterReorder.length} maps, reversed`,
+    )
+    await refuses('scenes:reorder refused a partial list', () =>
+      client.mutation('scenes:reorder', { code, dmCode, sceneIds: [managed.sceneId] }),
+    )
+
+    // DUPLICATE: THE SHARED BLOB, AND THE DELETE THAT MUST NOT RECLAIM IT.
+    const copy = await client.mutation('scenes:duplicate', {
+      code,
+      dmCode,
+      sceneId: managed.sceneId,
+      includeContents: false,
+    })
+    extraScenes.push(copy.sceneId)
+    const copyRow = await listedAs(copy.sceneId)
+    check(
+      'scenes:duplicate copied the notes and the grid and did not go on the table',
+      copyRow !== null &&
+        copyRow.name === 'The Sunken Chapel (copy)' &&
+        copyRow.notes === PREP &&
+        copyRow._id !== (await client.query('scenes:active', { code }))?._id,
+      copyRow ? copyRow.name : 'the copy is not in the list',
+    )
+
+    // Deleting the original: the copy's picture has to survive, and the only honest way to
+    // ask a deployment that is to fetch the bytes.
+    await client.mutation('scenes:remove', { code, dmCode, sceneId: managed.sceneId })
+    extraScenes.splice(extraScenes.indexOf(managed.sceneId), 1)
+    const copyAfterDelete = await listedAs(copy.sceneId)
+    const sharedFetch = copyAfterDelete?.imageUrl ? await fetch(copyAfterDelete.imageUrl) : null
+    check(
+      'deleting the original left the duplicate’s shared map image in storage',
+      sharedFetch !== null && sharedFetch.ok,
+      sharedFetch ? `${sharedFetch.status} from the copy’s image URL` : 'no image URL to fetch',
+    )
+
+    // REPLACE: ONE FACTOR THROUGH THE GRID, THE PLACEMENTS AND THE FOG.
+    await client.mutation('scenes:updateGrid', {
+      code,
+      dmCode,
+      sceneId: copy.sceneId,
+      gridSize: GRID.gridSize,
+      gridOffsetX: GRID.gridOffsetX,
+      gridOffsetY: GRID.gridOffsetY,
+      gridVisible: true,
+    })
+    await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId: copy.sceneId,
+      shape: { kind: 'rect', x: 101.5, y: 202.25, width: 303.75, height: 404.5 },
+    })
+    // ⚠️ **A polygon as well, because the box and the outline are two representations of one
+    // shape and `replaceImage` has to move both.** Scaling the four numbers and leaving the
+    // vertices gives a correctly-sized bounding box around the old map's outline — a shape that
+    // hides the wrong part of the map, and one that looks like a rendering bug from either
+    // chair. Fractional on purpose: these are real float64s through a real deployment.
+    await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId: copy.sceneId,
+      shape: {
+        kind: 'polygon',
+        points: [
+          { x: 600.5, y: 300.25 },
+          { x: 800.25, y: 340.5 },
+          { x: 700.75, y: 520.5 },
+        ],
+      },
+    })
+
+    const differentShape = await uploadPng(client, code, dmCode)
+    uploads.push(differentShape)
+    await refuses('scenes:replaceImage refused a map of a different shape', () =>
+      client.mutation('scenes:replaceImage', {
+        code,
+        dmCode,
+        sceneId: copy.sceneId,
+        imageId: differentShape,
+        imageWidth: MAP_HEIGHT,
+        imageHeight: MAP_WIDTH,
+      }),
+    )
+
+    const doubled = await uploadPng(client, code, dmCode)
+    uploads.push(doubled)
+    await client.mutation('scenes:replaceImage', {
+      code,
+      dmCode,
+      sceneId: copy.sceneId,
+      imageId: doubled,
+      imageWidth: MAP_WIDTH * 2,
+      imageHeight: MAP_HEIGHT * 2,
+    })
+    const scaledMap = await listedAs(copy.sceneId)
+    const scaledFog = await client.query('fog:list', { code, dmCode, sceneId: copy.sceneId })
+    const scaledRect = scaledFog.find((row) => row.points === undefined) ?? null
+    const scaledPolygon = scaledFog.find((row) => row.points !== undefined) ?? null
+    check(
+      'scenes:replaceImage put one factor through the grid and the fog, in real float64s',
+      scaledMap !== null &&
+        scaledMap.imageWidth === MAP_WIDTH * 2 &&
+        scaledMap.gridSize === GRID.gridSize * 2 &&
+        scaledMap.gridOffsetX === GRID.gridOffsetX * 2 &&
+        scaledMap.gridOffsetY === GRID.gridOffsetY * 2 &&
+        scaledFog.length === 2 &&
+        scaledRect !== null &&
+        scaledRect.x === 203 &&
+        scaledRect.y === 404.5 &&
+        scaledRect.width === 607.5 &&
+        scaledRect.height === 809,
+      scaledMap
+        ? `grid ${scaledMap.gridSize} / ${scaledMap.gridOffsetX} / ${scaledMap.gridOffsetY}, fog ${JSON.stringify(scaledRect)}`
+        : 'the copy is not in the list',
+    )
+
+    // ⚠️ **The polygon's vertices moved by the same factor as its box, in real float64s.**
+    // Compared field for field rather than value-compared, so a deployment that scaled the box
+    // and left the outline is *named* rather than reported as an inequality — which is the one
+    // failure this whole fixture pair exists for, and the one that reads as a rendering bug
+    // rather than as a data bug from either chair.
+    const polygonScaleDrift = scaledPolygon
+      ? firstDifference(
+          {
+            _id: scaledPolygon._id,
+            x: 1201,
+            y: 600.5,
+            width: 399.5,
+            height: 440.5,
+            points: [
+              { x: 1201, y: 600.5 },
+              { x: 1600.5, y: 681 },
+              { x: 1401.5, y: 1041 },
+            ],
+          },
+          scaledPolygon,
+          'scaledPolygon',
+        )
+      : 'no polygon came back'
+    check(
+      'a polygon’s vertices scaled with its box, and both are the same one factor',
+      polygonScaleDrift === null,
+      polygonScaleDrift ?? JSON.stringify(scaledPolygon),
+    )
+
+    // 43. A MAP THAT STARTS COVERED, AND A SHAPE THAT IS NOT A RECTANGLE.
+    //
+    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE, and there are three things here rather than
+    // one.**
+    //
+    //   - **An optional field whose absence has a meaning.** `scenes.fogBase` is absent on every
+    //     row this deployment already holds, and `fogBaseOf` answers `lit` for it. The local
+    //     suite creates its scenes through the same mutation, so it proves the *default* and
+    //     structurally cannot prove that a row written *before the field existed* still reads as
+    //     lit — because it has no such rows. This script talks to the deployment that does.
+    //   - **A discriminated union as an argument validator.** `fog:draw` takes `rect | polygon`
+    //     and Convex's own value validation is the only thing refusing a call that carries
+    //     neither, or both. `convex-test` does not apply it.
+    //   - **An array of float64 objects through a new optional column.** `points` is the first
+    //     nested array of records this schema stores, and floats through a real deployment are
+    //     this script's oldest speciality.
+    const baseSceneArt = await uploadPng(client, code, dmCode)
+    uploads.push(baseSceneArt)
+    const baseScene = await client.mutation('scenes:create', {
+      code,
+      dmCode,
+      name: 'Board Smoke — The Covered Vault',
+      imageId: baseSceneArt,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+    })
+    extraScenes.push(baseScene.sceneId)
+
+    // (a) THE ABSENT FIELD, RESOLVED BY THE SERVER. A brand-new scene is written with no
+    // `fogBase` at all, and the projection must still carry a real base — because the browser
+    // must never spell the absent-means-lit default a second time. A client that disagreed with
+    // the server about whether a map is covered is a client that paints the party a floor plan.
+    const freshScenes = await client.query('scenes:list', { code, dmCode })
+    const freshRow = freshScenes.find((row) => row._id === baseScene.sceneId) ?? null
+    check(
+      'a scene created with no fogBase comes back as lit, resolved server-side',
+      freshRow !== null && freshRow.fogBase === 'lit',
+      freshRow ? `fogBase ${JSON.stringify(freshRow.fogBase)}` : 'the new scene did not come back',
+    )
+
+    // (b) A POLYGON ROUND TRIP. Five points, deliberately not axis-aligned and deliberately
+    // fractional, so a deployment that rounded a coordinate or dropped the array is named. The
+    // bounding box is **computed server-side and never taken from the client**, so the four
+    // numbers that come back are an answer rather than an echo — which is the whole reason the
+    // union has two members instead of one shape with an optional point list.
+    const pentagon = [
+      { x: 300.5, y: 400.25 },
+      { x: 520.75, y: 360.5 },
+      { x: 610.25, y: 560.75 },
+      { x: 450.5, y: 700.25 },
+      { x: 280.75, y: 590.5 },
+    ]
+    const polygon = await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId: baseScene.sceneId,
+      shape: { kind: 'polygon', points: pentagon },
+    })
+    const polygonRows = await client.query('fog:list', { code, sceneId: baseScene.sceneId, dmCode })
+    const polygonRow = polygonRows.find((row) => row._id === polygon.fogId) ?? null
+    // The box the server should have computed, spelled out by hand rather than derived from the
+    // same helper the server used — a shared helper would agree with itself.
+    const expectedBox = { x: 280.75, y: 360.5, width: 329.5, height: 339.75 }
+    const polygonDrift = polygonRow
+      ? firstDifference(
+          { _id: polygon.fogId, ...expectedBox, points: pentagon },
+          polygonRow,
+          'polygon',
+        )
+      : 'no polygon came back'
+    check(
+      'a five-point polygon round-tripped with its points intact and a server-computed box',
+      polygonDrift === null,
+      polygonDrift ?? `stored ${JSON.stringify(polygonRow)}`,
+    )
+
+    // ⚠️ **THE FIXTURE PAIR.** `points` is optional, so the trap this script exists for is a
+    // rebuild that drops it — or, in the other direction, one that writes `points: undefined`
+    // onto a rectangle. `firstDifference` reports a key present on one side only, so a rectangle
+    // sent with no points must come back with **no `points` key at all**.
+    const alsoRect = await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId: baseScene.sceneId,
+      shape: { kind: 'rect', x: 1200, y: 900, width: 240, height: 180 },
+    })
+    const rectRow =
+      (await client.query('fog:list', { code, sceneId: baseScene.sceneId, dmCode })).find(
+        (row) => row._id === alsoRect.fogId,
+      ) ?? null
+    const rectDrift = rectRow
+      ? firstDifference(
+          { _id: alsoRect.fogId, x: 1200, y: 900, width: 240, height: 180 },
+          rectRow,
+          'rect',
+        )
+      : 'no rectangle came back'
+    check(
+      'a rectangle sent with no points came back with no points key — the fixture pair',
+      rectDrift === null,
+      rectDrift ?? `stored ${JSON.stringify(rectRow)}`,
+    )
+
+    // (c) WHAT THE UNION REFUSES. Neither member, both members, and a polygon below the three
+    // points a region needs — each refused by Convex's own validation or by the argument check
+    // in front of every read, and none of them reachable from the local suite.
+    for (const [label, shape] of [
+      ['a shape naming neither member', { x: 0, y: 0, width: 10, height: 10 }],
+      ['a shape naming both spellings', { kind: 'rect', x: 0, y: 0, width: 10, height: 10, points: pentagon }],
+      ['a polygon of two points', { kind: 'polygon', points: pentagon.slice(0, 2) }],
+      ['a polygon with a NaN vertex', { kind: 'polygon', points: [{ x: Number.NaN, y: 1 }, { x: 2, y: 3 }, { x: 4, y: 5 }] }],
+    ]) {
+      await refuses(`fog:draw refused ${label}`, () =>
+        client.mutation('fog:draw', { code, dmCode, sceneId: baseScene.sceneId, shape }),
+      )
+    }
+
+    // (d) THE BASE, FLIPPED — and the property the confirm dialog promises in words: **nothing
+    // is deleted.** Two shapes are on this scene; both must survive the flip and the flip back,
+    // which is what makes "flipping back returns it exactly as it is now" true rather than
+    // hopeful.
+    const beforeFlip = JSON.stringify(
+      await client.query('fog:list', { code, sceneId: baseScene.sceneId, dmCode }),
+    )
+    await client.mutation('scenes:setFogBase', {
+      code,
+      dmCode,
+      sceneId: baseScene.sceneId,
+      fogBase: 'dark',
+    })
+    const darkRow =
+      (await client.query('scenes:list', { code, dmCode })).find(
+        (row) => row._id === baseScene.sceneId,
+      ) ?? null
+    const afterFlip = JSON.stringify(
+      await client.query('fog:list', { code, sceneId: baseScene.sceneId, dmCode }),
+    )
+    check(
+      'flipping a map to dark kept both shapes byte for byte',
+      darkRow !== null && darkRow.fogBase === 'dark' && afterFlip === beforeFlip,
+      darkRow ? `base ${darkRow.fogBase}, shapes ${afterFlip === beforeFlip}` : 'no scene row',
+    )
+
+    await refuses('scenes:setFogBase refused a caller without the DM code', () =>
+      client.mutation('scenes:setFogBase', {
+        code,
+        dmCode: 'not-the-dm-code',
+        sceneId: baseScene.sceneId,
+        fogBase: 'lit',
+      }),
+    )
+    await refuses('scenes:setFogBase refused a base that is not one of the two', () =>
+      client.mutation('scenes:setFogBase', {
+        code,
+        dmCode,
+        sceneId: baseScene.sceneId,
+        fogBase: 'candlelit',
+      }),
+    )
+
+    // 44. WALLS: A NEW TABLE, AN ARRAY OF RECORDS, AND A REFUSAL ON THE SETTLING WRITE ONLY.
+    //
+    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE.** Three things, and the third is the one
+    // that matters:
+    //
+    //   - **A brand-new table whose only column is an array of float64 records.** `points` is
+    //     required here — the table is new, so the pressure that makes a field optional in this
+    //     schema never applied — and a polyline of real fractional coordinates through real
+    //     value validation is this script's oldest speciality.
+    //   - **A refusal kind that is deliberately NOT `TokenNotFound`.** Every wall goes to every
+    //     client, so a blocked player has been sent the thing that blocked them and there is
+    //     nothing to enumerate — answering *not found* about a coin on their own screen would
+    //     be a lie that reads as a bug. The suite asserts the kind; this asserts that a real
+    //     deployment carries it across the wire as a `ConvexError` payload rather than as a
+    //     generic server error.
+    //   - ⚠️ **THE SPLIT: the backstop fires on the settling write and on nothing else.** That
+    //     is the whole design — `requireMovableToken` runs ten times a second and a range read
+    //     there would turn every wall the DM draws into a conflict against every in-flight
+    //     drag — and it means an *unsettled* move through a wall is accepted. That is the
+    //     advisory ceiling, and it is asserted here as a **positive** rather than described,
+    //     because a documented hole no test names becomes a bug report.
+    const wallScene = baseScene.sceneId
+    const wallSeat = await client.mutation('players:join', {
+      code,
+      displayName: 'Board Smoke Wall Walker',
+    })
+    seats.push(wallSeat.playerId)
+    const wallChar = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: 'Board Smoke Wall Walker',
+    })
+    createdCharacters.push(wallChar.characterId)
+    await client.mutation('characters:claim', {
+      code,
+      playerId: wallSeat.playerId,
+      characterId: wallChar.characterId,
+    })
+    const walker = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId: wallScene,
+      name: 'Wall Walker',
+      layer: 'player',
+      sizeSquares: 1,
+      tint: '#2c3e50',
+      characterId: wallChar.characterId,
+      x: 400,
+      y: 400,
+    })
+    created.push(walker.tokenId)
+
+    // A wall straight down the map between where the coin stands and where it is sent.
+    const wall = await client.mutation('walls:add', {
+      code,
+      dmCode,
+      sceneId: wallScene,
+      points: [
+        { x: 700.5, y: 100.25 },
+        { x: 700.5, y: 1500.75 },
+      ],
+    })
+    const wallRows = await client.query('walls:list', { code, dmCode, sceneId: wallScene })
+    const wallRow = wallRows.find((row) => row._id === wall.wallId) ?? null
+    const wallDrift = wallRow
+      ? firstDifference(
+          {
+            _id: wall.wallId,
+            points: [
+              { x: 700.5, y: 100.25 },
+              { x: 700.5, y: 1500.75 },
+            ],
+          },
+          wallRow,
+          'wall',
+        )
+      : 'no wall came back'
+    check(
+      'a two-point wall round-tripped with its fractional coordinates intact',
+      wallDrift === null,
+      wallDrift ?? JSON.stringify(wallRow),
+    )
+
+    // ⚠️ **Ungated, but only about the board in front of you** — `fog.list`'s guard restated
+    // rather than borrowed, and closing the same hole for a different payload. Every wall on
+    // the *active* scene goes to every client, because the client cannot block a drag against
+    // geometry it does not have. A wall sketch of a map the party has not reached is a floor
+    // plan, and that is withheld. This scene is not the active one, so a player gets nothing.
+    check(
+      'a wall on a board nobody is looking at reached the DM and not the table',
+      wallRow !== null &&
+        (await client.query('walls:list', { code, sceneId: wallScene })).length === 0,
+      `${wallRows.length} to the DM`,
+    )
+
+    // THE BACKSTOP. A settling move from one side of the wall to the other, as the seat rather
+    // than as the DM, because walls do not block the DM.
+    const blocked = await refusalOf(() =>
+      client.mutation('board:moveToken', {
+        code,
+        playerId: wallSeat.playerId,
+        sceneId: wallScene,
+        tokenId: walker.tokenId,
+        x: 1100,
+        y: 400,
+        settle: true,
+      }),
+    )
+    check(
+      'board:moveToken refused a settling move across a wall, as WallBlocks and not TokenNotFound',
+      blocked !== null && blocked.kind === 'WallBlocks',
+      blocked ? JSON.stringify(blocked) : 'the deployment let the coin through',
+    )
+
+    // ⚠️ **THE ADVISORY CEILING, ASSERTED AS A POSITIVE.** The same move unsettled is accepted:
+    // the check is on the settling write only, so a client that never settles can park a coin
+    // anywhere. That is written into ADR 0015's costs, and a hole nobody tests is a hole
+    // somebody reports.
+    const unsettled = await refusalOf(() =>
+      client.mutation('board:moveToken', {
+        code,
+        playerId: wallSeat.playerId,
+        sceneId: wallScene,
+        tokenId: walker.tokenId,
+        x: 1100,
+        y: 400,
+        settle: false,
+      }),
+    )
+    check(
+      'and accepted the identical move unsettled — the advisory ceiling, on the record',
+      unsettled === null,
+      unsettled ? JSON.stringify(unsettled) : 'the unsettled write went through, as designed',
+    )
+
+    // The DM is not blocked. They place creatures inside sealed rooms and drag the party
+    // through a door they have just narrated open.
+    const asDm = await refusalOf(() =>
+      client.mutation('board:moveToken', {
+        code,
+        dmCode,
+        sceneId: wallScene,
+        tokenId: walker.tokenId,
+        x: 1400,
+        y: 400,
+        settle: true,
+      }),
+    )
+    check(
+      'a wall does not block the DM',
+      asDm === null,
+      asDm ? JSON.stringify(asDm) : 'the DM crossed it',
+    )
+
+    await refuses('walls:add refused a one-point wall', () =>
+      client.mutation('walls:add', {
+        code,
+        dmCode,
+        sceneId: wallScene,
+        points: [{ x: 10, y: 10 }],
+      }),
+    )
+    await refuses('walls:add refused a NaN vertex', () =>
+      client.mutation('walls:add', {
+        code,
+        dmCode,
+        sceneId: wallScene,
+        points: [
+          { x: Number.NaN, y: 10 },
+          { x: 20, y: 20 },
+        ],
+      }),
+    )
+    await refuses('walls:add refused a caller without the DM code', () =>
+      client.mutation('walls:add', {
+        code,
+        dmCode: 'not-the-dm-code',
+        sceneId: wallScene,
+        points: [
+          { x: 10, y: 10 },
+          { x: 20, y: 20 },
+        ],
+      }),
+    )
+    await refuses('walls:remove refused a caller without the DM code', () =>
+      client.mutation('walls:remove', { code, dmCode: 'not-the-dm-code', wallId: wall.wallId }),
+    )
+
+    const wallsCleared = await client.mutation('walls:clear', { code, dmCode, sceneId: wallScene })
+    check(
+      'walls:clear swept the scene and said how many',
+      wallsCleared.removed === 1 &&
+        (await client.query('walls:list', { code, sceneId: wallScene })).length === 0,
+      JSON.stringify(wallsCleared),
+    )
   } catch (error) {
     const data = error && error.data ? ` ${JSON.stringify(error.data)}` : ''
     record('the run completed without an unexpected error', false, `${error.message ?? error}${data}`)
@@ -7528,7 +8150,7 @@ async function main() {
       // running it over the whole list safe rather than a list of guesses about which
       // uploads survived a run that failed halfway.
       for (const imageId of uploads) {
-        await quietly(() => client.mutation('files:discard', { code, dmCode, imageId }))
+        await quietly(() => client.mutation('files:discard', { code, dmCode, imageIds: [imageId] }))
       }
       console.log(
         `\n  cleaned up ${1 + extraScenes.length} scenes, ${created.length} tokens, ${createdCharacters.length} characters and ${seats.length} seats, and swept ${uploads.length} uploads`,
@@ -7572,7 +8194,7 @@ async function main() {
           client.mutation('files:discard', {
             code: foreign.code,
             dmCode: foreign.dmCode,
-            imageId: foreign.imageId,
+            imageIds: [foreign.imageId],
           }),
         )
       }

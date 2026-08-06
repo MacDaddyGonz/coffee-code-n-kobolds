@@ -2,7 +2,13 @@ import { useCallback, useRef, useState } from 'react'
 import { useMutation } from 'convex/react'
 
 import type { Downscaled } from '@/lib/images'
-import { downscaleMap, downscaleModal, downscaleToken, formatBytes } from '@/lib/images'
+import {
+  downscaleMap,
+  downscaleModal,
+  downscaleThumbnail,
+  downscaleToken,
+  formatBytes,
+} from '@/lib/images'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import type { Size } from '@convex/lib/grid'
@@ -30,6 +36,23 @@ export type Prepared = {
   dimensions: Size | null
   originalBytes: number
   bytes: number
+  /**
+   * A second, smaller blob to store beside the first — or **null for the three kinds that
+   * have none**, which is all of them but `map`.
+   *
+   * ⚠️ **Produced at `choose` time and not at `commit` time**, which is the same decision
+   * `prepare` already makes and for the same reason: the derivative is made from a decoded
+   * image, that costs real milliseconds on a 2560 px map, and doing it during `commit`
+   * would put it between the DM pressing the button and the first byte leaving. It also
+   * means a browser that cannot encode one fails in the picker, where there is a field to
+   * say so in, rather than half way through an upload.
+   *
+   * `bytes` above deliberately does **not** include it. That number is what the kind's
+   * ceiling is checked against and what the picker prints as *21.2 MB → 1.4 MB*, and a
+   * thumbnail is neither — it is tens of kilobytes the server checks against a ceiling of
+   * its own (`MAX_THUMB_BYTES`).
+   */
+  derived: Blob | null
 }
 
 /**
@@ -67,6 +90,22 @@ type UploadSpec = {
    */
   prepare: (file: File) => Promise<Prepared>
   /**
+   * A second blob to store beside the first, made from **the blob `prepare` produced**.
+   *
+   * ⚠️ **Optional, and set on the `map` arm alone — which is why it is a field on the
+   * record rather than an argument to `imageSpec`.** Three of the four kinds are built by
+   * that helper, so a `derive` parameter on it would be a parameter three call sites pass
+   * `undefined` to and a fifth kind could inherit by copying the wrong line. Spelled once,
+   * on the one arm that has one, it is a fact about maps rather than a capability of
+   * uploads: a token is already 256 px and a handout is looked at whole, so neither has a
+   * list of twenty-five rows to fetch.
+   *
+   * Fed `Prepared.blob` and never the file the DM picked. `downscaleThumbnail`'s own
+   * docblock carries that argument — the original may be 23 megapixels and decoding it
+   * twice is the cost the whole downscaler is written to avoid.
+   */
+  derive?: (blob: Blob) => Promise<Blob>
+  /**
    * What `prepare` is doing, in the present participle, for the line the picker shows while
    * it runs. Per kind because it is the difference between the truth and a euphemism: a
    * 21 MB map genuinely is being *shrunk*, over the seconds where saying nothing makes the
@@ -94,6 +133,9 @@ function imageSpec(downscale: (file: Blob) => Promise<Downscaled>, maxBytes: num
         dimensions: { width: shrunk.width, height: shrunk.height },
         originalBytes: shrunk.originalBytes,
         bytes: shrunk.bytes,
+        // Filled in by `choose`, which is the only place that knows whether this kind has a
+        // `derive`. Null here rather than left off, so `Prepared` has one shape.
+        derived: null,
       }
     },
     preparing: 'Shrinking',
@@ -103,7 +145,12 @@ function imageSpec(downscale: (file: Blob) => Promise<Downscaled>, maxBytes: num
 }
 
 const UPLOAD_SPECS: Record<UploadKind, UploadSpec> = {
-  map: imageSpec(downscaleMap, MAX_SCENE_BYTES),
+  // The one kind with a derivative — see the ⚠️ on `UploadSpec.derive` for why it is
+  // written here and not threaded through `imageSpec`.
+  map: {
+    ...imageSpec(downscaleMap, MAX_SCENE_BYTES),
+    derive: downscaleThumbnail,
+  },
   token: imageSpec(downscaleToken, MAX_TOKEN_BYTES),
   modal: imageSpec(downscaleModal, MAX_MODAL_BYTES),
   music: {
@@ -118,6 +165,7 @@ const UPLOAD_SPECS: Record<UploadKind, UploadSpec> = {
         dimensions: null,
         originalBytes: file.size,
         bytes: file.size,
+        derived: null,
       }),
     preparing: 'Reading',
     // No "once shrunk", because nothing was, and the advice has to be about the file rather
@@ -138,6 +186,15 @@ const UPLOAD_SPECS: Record<UploadKind, UploadSpec> = {
  */
 export type StoredUpload = {
   imageId: Id<'_storage'>
+  /**
+   * The derivative's id, or **null for the three kinds with no `derive`**.
+   *
+   * Null rather than absent, for `Prepared.dimensions`' reason one level up: *this kind has
+   * none* and *this one failed to make one* would otherwise be spelled the same, and only
+   * one of those is a bug. `scenes.create` takes it as an optional argument and the three
+   * mutations that do not take it at all simply never read this field.
+   */
+  thumbnailId: Id<'_storage'> | null
   /** Zero for a kind with no pixels. Nothing branches on it; audio's mutation reads neither. */
   width: number
   height: number
@@ -169,13 +226,19 @@ export type Upload = {
    * (CLAUDE.md invariant 6).
    *
    * ⚠️ **This sequence is why there is one hook and not one per kind.** Generate a URL,
-   * POST the bytes, call the mutation, discard on refusal — four steps in a fixed order,
-   * three of which are identical for every kind, and the fourth is the one holding
-   * invariant 6 up. A `useAudioUpload` written beside this because audio needs no
-   * downscaler would be a second copy of the discard path, and the copy that gets it
-   * wrong is the one nobody notices until the storage quota is gone. What genuinely
-   * differs between kinds is a limit, an `accept` and a `prepare`, and all three are data
-   * in `UPLOAD_SPECS` rather than control flow here.
+   * POST the bytes, do it again for a derivative if this kind has one, call the mutation,
+   * discard everything stored on refusal — a fixed order, most of which is identical for
+   * every kind, and the last step is the one holding invariant 6 up. A `useAudioUpload`
+   * written beside this because audio needs no downscaler would be a second copy of the
+   * discard path, and the copy that gets it wrong is the one nobody notices until the
+   * storage quota is gone. What genuinely differs between kinds is a limit, an `accept`, a
+   * `prepare` and now a `derive`, and all four are data in `UPLOAD_SPECS` rather than
+   * control flow here.
+   *
+   * ⚠️ **A map stores two blobs, so the cleanup is one call with a list rather than two
+   * calls.** Two `discard`s would be two transactions and two chances for the second to be
+   * skipped by a `return` added to the first one's catch — which is the shape of bug this
+   * whole hook exists to have exactly one copy of.
    */
   commit: <T>(create: (stored: StoredUpload) => Promise<T>) => Promise<T>
 }
@@ -244,7 +307,12 @@ export function useUpload(args: { code: string; dmCode: string; kind: UploadKind
             setError(spec.tooBig(ready.bytes))
             return
           }
-          setPrepared(ready)
+          // After the ceiling check, deliberately: there is no point deriving a thumbnail
+          // of a map that is about to be refused. The derivative comes from `ready.blob`,
+          // which is the blob that will actually be stored — see `downscaleThumbnail`.
+          const derived = spec.derive ? await spec.derive(ready.blob) : null
+          if (latest.current !== mine) return
+          setPrepared({ ...ready, derived })
         } catch (thrown) {
           if (latest.current !== mine) return
           // Not a ConvexError — nothing has reached the server yet — so the message
@@ -262,32 +330,55 @@ export function useUpload(args: { code: string; dmCode: string; kind: UploadKind
     async <T>(create: (stored: StoredUpload) => Promise<T>): Promise<T> => {
       if (!prepared) throw new Error('Choose a file first.')
       setStage('uploading')
-      try {
+
+      // Everything this call has put into storage, in the order it went in. The catch below
+      // hands the whole list to one `discard`, so a map and its thumbnail are cleaned up in
+      // one transaction — see the ⚠️ on `files.discard`. Empty until the first POST returns,
+      // which is what makes a failure of *that* POST need no cleanup at all.
+      const stored: Id<'_storage'>[] = []
+
+      const put = async (blob: Blob): Promise<Id<'_storage'>> => {
         const url = await generateUploadUrl({ code, dmCode })
         const response = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': prepared.blob.type },
-          body: prepared.blob,
+          headers: { 'Content-Type': blob.type },
+          body: blob,
         })
         if (!response.ok) throw new Error('The upload did not go through. Try again.')
-        const { storageId } = (await response.json()) as { storageId: Id<'_storage'> }
-
-        try {
-          return await create({
-            imageId: storageId,
-            width: prepared.dimensions?.width ?? 0,
-            height: prepared.dimensions?.height ?? 0,
-          })
-        } catch (thrown) {
-          // Best effort, and deliberately swallowed: a failure to tidy up must not
-          // replace the refusal the DM actually needs to read.
-          try {
-            await discard({ code, dmCode, imageId: storageId })
-          } catch {
-            // Nothing to say. The blob outlives us; the real error matters more.
-          }
-          throw thrown
+        const { storageId } = (await response.json()) as {
+          storageId: Id<'_storage'>
         }
+        stored.push(storageId)
+        return storageId
+      }
+
+      try {
+        const imageId = await put(prepared.blob)
+        // ⚠️ **A failed thumbnail POST fails the whole upload rather than falling back to
+        // no thumbnail, and that is the argued call.** The forgiving version stores a scene
+        // with no derivative and says nothing, which is indistinguishable from a scene
+        // uploaded before this feature existed — so a deployment where the second POST
+        // always fails looks exactly like a game full of old maps, for ever. A refusal the
+        // DM can retry is the only version anybody would notice.
+        const thumbnailId = prepared.derived === null ? null : await put(prepared.derived)
+
+        return await create({
+          imageId,
+          thumbnailId,
+          width: prepared.dimensions?.width ?? 0,
+          height: prepared.dimensions?.height ?? 0,
+        })
+      } catch (thrown) {
+        // Best effort, and deliberately swallowed: a failure to tidy up must not
+        // replace the refusal the DM actually needs to read.
+        if (stored.length > 0) {
+          try {
+            await discard({ code, dmCode, imageIds: stored })
+          } catch {
+            // Nothing to say. The blobs outlive us; the real error matters more.
+          }
+        }
+        throw thrown
       } finally {
         setStage(null)
       }

@@ -2297,7 +2297,69 @@ refused with the grammar's own message.
 
 ---
 
-## Milestone 13 — Maps, fog and barriers
+## ✅ Milestone 13 — Maps, fog and barriers
+
+**Done.** The decisions are recorded in
+[ADR 0015](adr/0015-a-map-that-starts-covered.md). Seven things it settled that the section below
+planned differently or did not plan at all, so read them together:
+
+- **The reveal stamp inverted, and it would have shipped as the failure ADR 0012 built the timestamp
+  to prevent.** The section below predicted this and it was still the highest-value catch:
+  `convex/fog.ts`' header stated *draw narrows, erase and clear widen* as a fact about fog rather
+  than as a fact about a **lit** base. One predicate, `fogActReveals`, and its runtime default is
+  **stamp** — the opposite direction from every other fail-closed default in this codebase, because
+  a stamp too many costs one flourish and a stamp too few replays an evening.
+- ⚠️ **"Both deletes become conditional" was right for one of the two, and the other needed the
+  opposite fix.** `deleteScenesInGame` removes *every* scene in the game, so `otherSceneReferences…`
+  answers `true` for a duplicate that is also on its way out — it would keep the blob for ever. Its
+  real failure is a **second `ctx.storage.delete` of the same id**, which throws a plain `Error` and
+  aborts the whole purge; `deleteTokensInGame` had already hit that and documented it. Deduplication,
+  not a condition.
+- 🚨 **Scene notes were one line away from an invariant-1 leak that this section does not mention.**
+  `scenes.active` is ungated and every player subscribes to it, so `notes` on `publicSceneValidator`
+  publishes the DM's prep to the table — in the milestone whose whole subject is what players may
+  know. The projection is split, and a positive-control test scans a real player payload for it.
+- ⚠️ **The arrow-key promise below is false as written.** *"Intermediate positions are unchecked"*
+  plus a **leading-edge** throttle means the first keypress of a run fires an unchecked write
+  immediately, that write crosses the wall, and the settling write then measures `from` from the far
+  side and accepts. Arrow keys walked through walls entirely until `nudge` learned to suppress its
+  intermediate write for a blocked step.
+- **A third gesture hook was unavoidable, and the reason is a doorway.** A wall needs a *two*-point
+  minimum and must not drop a trailing duplicate of the first vertex — which for a polyline is how a
+  DM seals a room. Reusing `usePolygonDraw` would have put an invisible gap in every sealed room.
+- ⚠️ **`storageGuard.test.ts`'s "positive control is that it fails today" has no committable form**,
+  because a red test cannot be committed. Delivered as both halves: an instrument test that keeps the
+  superseded table-level derivation and feeds both a synthetic two-blob table, and the failing run
+  pasted into the commit body.
+- ⚠️ **Three parallel branches left three gaps that only the merge could close**, and they are worth
+  naming because the next milestone is larger and will be built the same way: `copySceneFog` and
+  `scaleSceneFog` did not know about polygons, `scenes.duplicate` did not copy walls and
+  `replaceImage` did not scale them, and `MAX_FOG_POLYGON_POINTS` sat behind `requireDm` where the
+  browser could not reach it. **`npm run test:smoke` caught two stale `fog:draw` call sites that
+  `npm run lint` and `npm test` were both green over** — the sixth outing of that class, and the
+  first where the staleness was created by two branches rather than by a rebuild.
+
+**Acceptance, as met:** `convex/fog.test.ts`'s existing 1270 lines pass **untouched**, which is a
+mechanical check rather than a promise — every fixture in that file creates its scene with `fogBase`
+absent. A scene set to dark withholds a DM-placed creature's position row, health band and feed
+lines with **no shape drawn at all**, each asserted in the suite that owns that payload and each with
+its positive control. A polygon spelling out a rectangle answers **identically to `rectCovers`** at
+all four edges, all four corners and ±0.001, in both windings, and a rectangle abutting a polygon has
+exactly one of them claim every point on the seam. A player cannot drag a token across a wall and the
+DM can, **and the advisory ceiling is asserted as a positive** — the identical move unsettled is
+accepted, because a documented hole no test names becomes a bug report. Duplicating a map and
+deleting the original leaves the copy's image intact, and `purgeGame` over two scenes sharing a blob
+deletes it exactly once. 1682 tests over 42 files; **`npm run test:smoke` passes 312/312 against the
+real dev deployment**, including the fog base, both shape kinds, the fixture pair in both directions,
+and walls.
+
+⚠️ **One acceptance item is NOT met and is outstanding: nothing has been driven in a browser.**
+Every canvas-facing claim in this milestone — the `destination-out` punch-out under a covered base,
+overlapping shapes, the polygon and polyline gestures, the trace box, the table-view badge — is held
+by reasoning and by hand-written argument, and **there is nothing in `npm test` that can look at a
+canvas**. Every previous milestone found something by opening the app. This one has not been opened.
+
+**The original plan follows.**
 
 **Inserted after Milestone 10 shipped.** The decisions go in **ADR 0015**.
 

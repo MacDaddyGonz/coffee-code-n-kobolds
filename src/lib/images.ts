@@ -47,6 +47,23 @@ export const TOKEN_MAX_EDGE = 256
 export const MODAL_MAX_EDGE = 1920
 
 /**
+ * The map again, small enough to be a row in a list.
+ *
+ * 320 because `SceneSelect` draws a scene into a 56 × 40 CSS box and a desktop browser may
+ * be at 2× or 3×, so 320 on the long edge covers the densest display this project targets
+ * with a little left over — and it is the *long* edge of a landscape map, so the short one
+ * lands near 240 and the crop `object-cover` performs has something to crop.
+ *
+ * ⚠️ **Not a fourth entry in the list above, and the difference is what it is made from.**
+ * The three edges above cap a file *the DM chose*; this one caps a derivative **this
+ * application produced from one of them**, so there is no unknown source to defend against
+ * and the number is chosen against a CSS box rather than against a monitor. That is also
+ * why `downscaleThumbnail` takes the already-downscaled blob and never the original — see
+ * its own note.
+ */
+export const THUMB_MAX_EDGE = 320
+
+/**
  * Lossy quality. Maps are photographic and forgiving, so 0.82 buys most of the
  * saving. Tokens are small enough that the extra bytes at 0.9 are irrelevant,
  * and their hard edges against transparency show artefacts far more readily.
@@ -58,6 +75,22 @@ export const MODAL_MAX_EDGE = 1920
 export const MAP_QUALITY = 0.82
 export const TOKEN_QUALITY = 0.9
 export const MODAL_QUALITY = 0.82
+
+/**
+ * Lower than any of the three above, deliberately.
+ *
+ * A thumbnail is 320 px of a picture whose job is *which map is this?*, looked at for as
+ * long as it takes to find a row. 0.7 is where WebP stops being free and starts being
+ * visible at full size, and at a fourteenth of the linear scale it is not full size. The
+ * saving is the point: 25 rows fetched at once is the failure this whole derivative exists
+ * to fix, so the bytes per row are the number that matters and not the fidelity.
+ *
+ * ⚠️ **Applied on top of `MAP_QUALITY`, not instead of it.** The source is a blob that has
+ * already been through a lossy encoder once, so this is a second generation and the
+ * artefacts compound. That is the honest cost of decoding the 23-megapixel original once
+ * rather than twice, and at 320 px there is nothing left to see them in.
+ */
+export const THUMB_QUALITY = 0.7
 
 /**
  * The server's own limit, not a copy of it: `convex/lib/limits.ts` holds the one
@@ -246,6 +279,36 @@ function intoCanvas(canvas: OffscreenCanvas, bitmap: ImageBitmap): void {
 
 export function downscaleMap(file: Blob): Promise<Downscaled> {
   return downscaleImage(file, { maxEdge: MAP_MAX_EDGE, quality: MAP_QUALITY })
+}
+
+/**
+ * The map's row in the scene picker, derived from **the blob that is about to be stored**.
+ *
+ * ⚠️ **The argument is the already-downscaled map and never the file the DM picked, and
+ * that is the whole design of this function rather than a caller's convenience.**
+ * `downscaleImage` is written around the fact that `farmershall_1stfloor.png` is 23
+ * megapixels and decoding it costs ~93 MB of pixel buffer; running it twice over the
+ * original — once for 2560 and once for 320 — pays that twice for a picture 1/64th of the
+ * area. The 2560 px blob is already the same image, already in memory as bytes, and
+ * decoding *it* at 320 costs almost nothing. `useUpload`'s map arm is the only caller and
+ * it passes `Prepared.blob`.
+ *
+ * The rejected alternative was deriving both from one decode of the original — one
+ * `createImageBitmap` at 2560 and a second draw down to 320 from that bitmap. It saves one
+ * decode of a 2560 px image, which is milliseconds, and it costs `downscaleImage`'s
+ * transfer path: the bitmap is *consumed* by `transferFromImageBitmap`, so a second
+ * consumer means keeping the copying path alive for the map as well. Not worth it.
+ *
+ * Returns a bare `Blob` rather than a `Downscaled`, because nothing needs a thumbnail's
+ * dimensions: `scenes` stores the map's size and the picker draws into a fixed box. A pair
+ * of numbers nothing reads is a pair of numbers that later disagrees with the map's.
+ */
+export async function downscaleThumbnail(downscaledMap: Blob): Promise<Blob> {
+  const { blob } = await downscaleImage(downscaledMap, {
+    maxEdge: THUMB_MAX_EDGE,
+    quality: THUMB_QUALITY,
+  })
+  return blob
 }
 
 export function downscaleToken(file: Blob): Promise<Downscaled> {

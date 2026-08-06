@@ -77,22 +77,37 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    ⚠️ **This invariant has a read side, and fog of war is where it first bites.** `tokenPositions` is
    written ten times a second, so **any query that reads it joins every drag's invalidation set** —
    which is the same contention from the other direction. Fog is a fact about a placement, so
-   filtering on it means reading that table, and three early returns in `foggedTokenIds` are what
-   keep that affordable: the DM reads nothing at all, **a scene with no rectangles returns before the
-   positions read**, and a token anybody controls is never fogged. The middle one is the whole cost
-   model — a game that has never drawn a rectangle has read sets byte-identical to what they were
-   before the feature existed. The rule to carry forward: *before adding a read of `tokenPositions`
-   to a query, work out what that query then costs during a drag, and give it a way to not pay.*
+   filtering on it means reading that table, and three early returns in `fogShape` (in
+   `convex/lib/board.ts`; the prose name `foggedTokenIds` is from a version that had one function
+   where there are now three) are what keep that affordable: the DM reads nothing at all, **a scene
+   that is in the state it shipped in returns before the positions read**, and a token anybody
+   controls is never fogged. The middle one is the whole cost model, and the rule to carry forward is
+   unchanged: *before adding a read of `tokenPositions` to a query, work out what that query then
+   costs during a drag, and give it a way to not pay.*
 
-   🚫 **The middle early return is about to change meaning, and the sentence above has to change with
-   it — not yet, but in the commit that breaks it.** The maps-and-fog milestone in
-   [docs/roadmap.md](docs/roadmap.md) gives a scene a base: *lit, and you black areas out*, or *dark,
-   and you light areas up*. Under the second one, **no rectangles is the most hidden a map can be**,
-   so the free case stops being "nobody has drawn a rectangle" and becomes "this scene is in the
-   state it shipped in". The *property* survives — every game is still free until somebody uses the
-   feature — and the *reason* does not. Whoever builds it restates this paragraph and adds: **turning
-   a scene to dark buys the positions read for the rest of the session, without drawing anything.**
-   Until then, everything above is true as written.
+   ⚠️ **The middle early return used to say "a scene with no rectangles" and no longer can. This is
+   the restatement the previous version of this paragraph asked for**, made in the commit that broke
+   it. A scene now has a **base** — *lit, and you black areas out*, or *dark, and you light areas up*
+   — and under the second one **no shapes is the most hidden a map can be**, so a covered scene with
+   nothing drawn cannot return early. The free case is therefore *this scene is in the state it
+   shipped in*, which is `!startsCovered(base) && shapes.length === 0`.
+
+   **The property survives and the reason does not**, and both halves are worth holding:
+
+   - Every game is still free until somebody uses the feature, because `fogBaseOf` answers `lit` for
+     an absent field and every scene ever stored has it absent.
+   - **Turning a scene to dark buys the positions read for the rest of the session, without drawing
+     anything.** That is the new sentence, and it is the price of the feature rather than a
+     regression — a covered map is one that has to be crossed against placements on every read.
+   - What is *not* true either way is invalidation: an empty range read is invalidated only by an
+     insert into that range, and the scene point-get only by a patch of that row. So a **drag**
+     still invalidates nothing until fog is genuinely in use.
+
+   ⚠️ **The base also added a `scenes` point-get to `characters.vitals` and `feed.list`, which did
+   not read that table before.** A calibration drag patches the scene row at about ten writes a
+   second, so those two subscriptions now re-push while the DM is aiming a grid — bounded, in setup
+   rather than mid-encounter, and `scenes.active` already re-pushed on the same write. Recorded here
+   rather than discovered in a profiler. See [ADR 0015](docs/adr/0015-a-map-that-starts-covered.md).
 
 3. **Hash routing only** (`/#/game/ABC123`). GitHub Pages has no rewrite rules, so a browser-path
    deep link 404s on refresh.
@@ -152,13 +167,22 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    feed they are separated deliberately.
 
    ⚠️ **`fogRects` is a table `lib/fog.ts` reads and is deliberately absent from this list.** Every
-   rectangle goes to every client verbatim — a blacked-out map is the whole interface — so its rows
+   shape goes to every client verbatim — a blacked-out map is the whole interface — so its rows
    have no non-secret twin to be confused with and there is no predicate for a reader to be the home
    of. An entry would *pass*, which is exactly why leaving it out is argued in that file rather than
    assumed; `leakGuard.test.ts` does not keep guards that cannot fail. What is genuinely confined is
-   the `tokenPositions` read that turns a rectangle into a withheld token id, and the existing first
+   the `tokenPositions` read that turns a shape into a withheld token id, and the existing first
    row already covers it. **Per-player fog, reveal-as-you-walk or line of sight flips that** — any of
-   them makes a rectangle a statement about one caller, and the table needs a fourth row that day.
+   them makes a shape a statement about one caller, and the table needs a fourth row that day.
+
+   ⚠️ **A row of that table is a rectangle *or a polygon*, and the name is a misnomer that
+   stays.** `fogRects` gained an optional `points`, the four numbers were reinterpreted as a
+   **bounding box computed server-side**, and nothing above changed — the rows are still symmetric,
+   still sent whole, still without a predicate. Renaming the table is a widen-migrate-narrow across
+   two deploys and the whole of what it buys is a better word; the schema pushes in this project
+   that were worth that are the ones where the old shape could publish a secret. So the word in
+   prose is **shape**, the word in the schema is history, and `convex/schema.ts` says so where
+   somebody would look. See [ADR 0015](docs/adr/0015-a-map-that-starts-covered.md).
 
    **The third row is the same shape as the first two and needed no new machinery, which is the
    point of having had the argument twice already.** `Ancient Red Dragon attacks with their Bite` is

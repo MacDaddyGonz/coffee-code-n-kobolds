@@ -16,6 +16,7 @@ import { v } from 'convex/values'
 // can create a `dm` row from here forward and nothing can send one to a client. Both this
 // import and the fourth member go away once the relabel has run — see `layerOf`.
 import { storedTokenLayerValidator } from './lib/layers'
+import { fogBaseValidator } from './lib/fogBase'
 import { gameStatusValidator } from './lib/games'
 // The condition vocabulary. Imported here for the table's validator and nowhere else in
 // this file — `markerGuard.test.ts` allows exactly three importers inside `convex/`, and
@@ -236,6 +237,57 @@ export default defineSchema({
     // lib/scenes.ts and nowhere else — the discipline lib/sheet.ts states for every field
     // its own schema could not require.
     backgroundColour: v.optional(v.string()),
+    // Lit, and the DM blacks areas out, or dark, and the DM lights areas up.
+    //
+    // ⚠️ **Optional for `backgroundColour`'s reason, and here the default is load-bearing
+    // rather than cosmetic.** Absent means `lit` — read through `fogBaseOf` in lib/scenes.ts
+    // and nowhere else — because every scene stored before this field existed had its fog
+    // drawn *as darkness*, so defaulting them to dark would black out every map in every
+    // game on the push. That is the opposite answer from the one `startsCovered` gives an
+    // *unrecognised* base, and lib/fogBase.ts's header explains why the two questions
+    // deserve opposite answers.
+    fogBase: v.optional(fogBaseValidator),
+    // A small derivative of the map, for the DM's scene picker and for nothing else.
+    //
+    // ⚠️ **THE SECOND BLOB IN THIS SCHEMA TO SHARE A TABLE WITH ANOTHER ONE, AND THAT IS
+    // WHY `storageGuard.test.ts` HAD TO BE REWRITTEN TO LAND IT.** That guard used to derive
+    // one `…References…` predicate per *table*, so `scenes` already having
+    // `sceneReferencesImage` would have let this field arrive with its bytes unprotected by
+    // `files.discard` — a green build, a passing suite, and a discard that cheerfully
+    // deletes the picture a DM is looking at. It now derives one predicate per **field**,
+    // which is what forces `sceneReferencesThumbnail` to exist.
+    //
+    // Optional for `backgroundColour`'s reason and for a second one it does not have: every
+    // scene stored before this field existed has no derivative and never will, because
+    // nothing regenerates one server-side. Absent is therefore a permanent state rather than
+    // a migration window, and `dmScene` in lib/scenes.ts is the one place it becomes a URL —
+    // falling back to the full map, so no client has to know this field exists.
+    thumbnailId: v.optional(v.id('_storage')),
+    // THE DM'S PREP FOR THIS BOARD, and the field in this table that is genuinely a secret.
+    //
+    // ⚠️ **`scenes.active` is ungated — every player at the table subscribes to it — so this
+    // must never reach `publicSceneValidator`.** `lib/scenes.ts` says *nothing in a scene is
+    // a secret, the background image is what every player is looking at*, and that sentence
+    // stopped being true here: *the lich is invisible until somebody casts detect magic* is
+    // the whole ambush, in a milestone whose subject is what players may know. It rides
+    // `dmSceneValidator`, whose one consumer is `scenes.list`, which throws for a non-DM.
+    // CLAUDE.md invariant 1, and `scenes.test.ts` scans a real player payload for a
+    // distinctive string out of a notes fixture rather than trusting this comment.
+    //
+    // Optional, and absent is the **one** spelling of "no notes" — a blank patch removes the
+    // field rather than storing `''`, so there is one state per meaning. Read through
+    // `notesOf` and nowhere else, which is what makes the projection able to promise a
+    // string. ADR 0008 settled that convention after `SheetEntry` came to spell none twice.
+    notes: v.optional(v.string()),
+    // Where this board sits in the DM's list.
+    //
+    // ⚠️ **Optional, and absent means *last* rather than *first*.** A scene nobody has
+    // dragged has no opinion about where it goes, and every scene in every game is in that
+    // state until the DM first reorders — so answering 0 would silently invert an untouched
+    // list the first time one row got a number. `orderOf` in lib/scenes.ts is the only
+    // reader, ties break on `_creationTime`, and `scenes.create` and `scenes.duplicate` both
+    // leave it absent deliberately: a new map belongs at the end.
+    order: v.optional(v.number()),
   }).index('by_gameId', ['gameId']),
 
   // STABLE token data — art, name, size, layer, owning character. Low churn: this
@@ -367,7 +419,16 @@ export default defineSchema({
     .index('by_gameId', ['gameId'])
     .index('by_tokenId', ['tokenId']),
 
-  // FOG OF WAR — the rectangles the DM has blacked out on one scene.
+  // FOG OF WAR — the shapes the DM has blacked out on one scene.
+  //
+  // ⚠️ **THE TABLE NAME IS NOW A MISNOMER AND IT STAYS.** A row here is a rectangle *or* a
+  // polygon, and `fogShapes` is what it would be called if it were being written today.
+  // Renaming a Convex table is a widen-migrate-narrow across two deploys — a second table,
+  // a copy of every row in every game, a window where both are live and every reader has
+  // to consult both, then a narrow — and the whole of what it buys is a better word. The
+  // schema pushes in this project that were worth that are the ones where the old shape
+  // could publish a secret; a table whose every row goes to every client verbatim has no
+  // such argument behind it. So the name is history and this comment is the correction.
   //
   // ⚠️ **These rows are not the secret, and that is the unusual thing about this table.**
   // Every rectangle is sent to every client verbatim, because a blacked-out map is the
@@ -387,9 +448,13 @@ export default defineSchema({
   // belongs to one game, and every reader already holds a scene that the caller's game has
   // vouched for through `findSceneInGame`.
   //
-  // Every field required with no optionals — `feed`'s inversion argument below applies
-  // verbatim, because the pressure that makes a field optional in this schema is *rows that
-  // already exist*, and this table is new.
+  // ⚠️ **`points` is the one optional field, and it is optional for this schema's usual
+  // reason — rows that already exist.** Every row written before polygons is a rectangle,
+  // and **absence means rectangle** rather than a stored `kind` beside it: CLAUDE.md
+  // invariant 9's convention, where an optional field already has a spelling for none and a
+  // second one is two states for one meaning. `fog.draw`'s *argument* is a discriminated
+  // union, which is a different question — a client says which gesture it made, and a row
+  // is asked whether it has a point list.
   fogRects: defineTable({
     sceneId: v.id('scenes'),
     // Image-space pixel floats, top-left corner plus extent — the same coordinate space
@@ -401,10 +466,69 @@ export default defineSchema({
     // a stored row with a negative width silently fails every containment test — fog that
     // looks drawn and hides nothing, which is the worst failure this feature has and the
     // one a DM would never think to check for.
+    //
+    // ⚠️⚠️ **FOR A POLYGON THESE FOUR ARE THE BOUNDING BOX, COMPUTED SERVER-SIDE BY
+    // `boundsOf` AND NEVER TAKEN FROM THE CLIENT.** They are still required, still
+    // non-negative, and still what every containment test consults first — `shapeCovers`
+    // rejects a shape on the box before it visits an edge, which is the whole reason a
+    // polygon costs what a rectangle costs on the drag path. A box a client supplied and
+    // got wrong is a shape drawn on every screen that hides nothing, which is
+    // `normaliseFogRect`'s failure arriving through a second door, so there is no route by
+    // which one reaches this table.
     x: v.number(),
     y: v.number(),
     width: v.number(),
     height: v.number(),
+    // The polygon's vertices, in the order the DM clicked them. **Winding order is not
+    // normalised and must not be**: `polygonCovers` counts crossings rather than turns, so
+    // clockwise and anticlockwise are the same region, and a normaliser would be arithmetic
+    // nothing reads.
+    points: v.optional(v.array(v.object({ x: v.number(), y: v.number() }))),
+  }).index('by_sceneId', ['sceneId']),
+
+  // BARRIERS — the lines on one scene that a token may not be dragged through.
+  //
+  // ⚠️ **A wall stops movement and decides nothing about sight, and the omission is the
+  // design rather than a budget.** Roll20's barriers do both; this table does the first
+  // half only. Line of sight, per-player fog and reveal-as-you-walk each turn a stored row
+  // into *a statement about what one caller may know* — the exact thing that would make
+  // these rows secrets of the same shape as non-secrets and give this table a reader, a
+  // predicate and a fourth row in CLAUDE.md invariant 8's table. This milestone is
+  // specified so that day does not arrive. lib/walls.ts carries the long version.
+  //
+  // So, like `fogRects` above and unlike everything below it, **these rows are not the
+  // secret**. Every wall goes to every client verbatim, because a client that has not been
+  // sent the geometry cannot stop a drag against it — and a line traced over the wall the
+  // map already has drawn on it leaks nothing the fully-downloaded image does not. The
+  // genuine residual is a barrier where the map shows *no* wall, which ADR 0015 records in
+  // its costs and the wall panel says out loud.
+  //
+  // Keyed on the scene alone with no `gameId`, exactly as `fogRects` and `tokenPositions`
+  // are: a scene belongs to one game, and every reader already holds a scene the caller's
+  // game has vouched for through `findSceneInGame`.
+  //
+  // ⚠️ **Every field required, with no optionals** — `fogRects`' and `tokenMarkers`'
+  // inversion argument for the third time, because the pressure that makes a field optional
+  // in this schema is *rows that already exist*, and this table is new. A `points` that
+  // could be absent would be a wall that blocks nothing, stored, counted against the cap and
+  // invisible on the map.
+  walls: defineTable({
+    sceneId: v.id('scenes'),
+    // The vertices, in the order the DM clicked them, in the same image-space pixels every
+    // other coordinate in this application uses. **Two or more**, enforced by `walls.add`
+    // rather than by the validator, which cannot express a minimum length.
+    //
+    // ⚠️ **A polyline and never a polygon: the list is NOT closed.** `pathCrossesAnyWall`
+    // walks neighbouring pairs and stops, so a DM who wants a sealed room clicks back onto
+    // the corner they started at and that repeated vertex is a real segment. Closing every
+    // wall implicitly would draw a barrier across the mouth of every corridor anybody
+    // traced. This is the one place a repeated first-and-last point is *meaningful* rather
+    // than the redundant corner `usePolygonDraw` drops.
+    //
+    // Winding order is not normalised, for `fogRects.points`' reason: a segment
+    // intersection test has no opinion about direction, so a normaliser would be arithmetic
+    // nothing reads.
+    points: v.array(v.object({ x: v.number(), y: v.number() })),
   }).index('by_sceneId', ['sceneId']),
 
   // WHAT HAPPENED, AND WHO MAY HEAR ABOUT IT — the game feed.

@@ -7,6 +7,7 @@ import { api } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import { normaliseFogRect } from './lib/fog'
 import { MAX_FOG_RECTS_PER_SCENE } from './lib/games'
+import { MAX_FOG_POLYGON_POINTS } from './lib/limits'
 import type { Grid, Point, Rect } from './lib/grid'
 import { snapToGrid } from './lib/grid'
 import type { NpcSheet, PcSheet } from './lib/sheet'
@@ -388,7 +389,7 @@ async function drawFog(
     code: game.code,
     dmCode: game.dmCode,
     sceneId,
-    ...rect,
+    shape: { kind: 'rect', ...rect },
   })
   return fogId
 }
@@ -939,10 +940,7 @@ describe('fog.draw', () => {
           code: fixture.code,
           dmCode,
           sceneId: fixture.sceneId,
-          x: 100,
-          y: 100,
-          width: 50,
-          height: 50,
+          shape: { kind: 'rect', x: 100, y: 100, width: 50, height: 50 },
         }),
         'NotDm',
       )
@@ -955,6 +953,308 @@ describe('fog.draw', () => {
 
     expect(await fogRowsOn(t, fixture.sceneId)).toEqual([])
     expect(await fogRowsOn(t, otherScene)).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (e2) fog.draw with a polygon — the second shape kind
+// ---------------------------------------------------------------------------
+
+/**
+ * ⚠️ **`grid.test.ts` owns the geometry and this section owns the *plumbing*, and the split
+ * is deliberate.** Whether a polygon's edges agree with a rectangle's is a question about two
+ * pure functions and is pinned there, against each other, at every edge and corner. What can
+ * only be asked here is whether a polygon that arrives over the wire ends up as a row that
+ * actually withholds something: the bounding box being computed server-side rather than taken
+ * from the caller, the point list surviving the round trip to `fog.list`, and the whole thing
+ * reaching `visiblePositions` through `anyShapeCovers`.
+ *
+ * The two halves fail in completely different ways. A geometry bug hides the wrong squares; a
+ * plumbing bug — a box the writer forgot to compute, a `points` the projection dropped —
+ * produces a shape that is drawn on every screen and hides nothing at all, which is
+ * `normaliseFogRect`'s failure arriving through the newer door.
+ */
+describe('fog.draw with a polygon', () => {
+  /** A triangle covering one point and reaching nothing else. */
+  function triangleOver(point: Point, half = 60): Point[] {
+    return [
+      { x: point.x, y: point.y - half },
+      { x: point.x + half, y: point.y + half },
+      { x: point.x - half, y: point.y + half },
+    ]
+  }
+
+  async function drawPolygon(
+    t: Harness,
+    game: { code: string; dmCode: string },
+    sceneId: Id<'scenes'>,
+    points: Point[],
+  ): Promise<Id<'fogRects'>> {
+    const { fogId } = await t.mutation(api.fog.draw, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId,
+      shape: { kind: 'polygon', points },
+    })
+    return fogId
+  }
+
+  /**
+   * ⚠️ **The single most important assertion in this section.** There is no argument on
+   * `fog.draw` that could carry a bounding box, so the only thing that can go wrong is the
+   * writer failing to compute one — and the four numbers are what every containment test
+   * consults *first*. A row whose box is `{0,0,0,0}` around a perfectly good point list is
+   * fog the DM drew, can see, and which withholds nothing.
+   */
+  test('stores the points and computes the bounding box from them', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    const points = [
+      { x: 300, y: 100 },
+      { x: 500, y: 250 },
+      { x: 150, y: 400 },
+    ]
+    const fogId = await drawPolygon(t, fixture, fixture.sceneId, points)
+
+    const row = await fogRow(t, fogId)
+    expect(row?.points).toEqual(points)
+    expect({ x: row?.x, y: row?.y, width: row?.width, height: row?.height }).toEqual({
+      x: 150,
+      y: 100,
+      width: 350,
+      height: 300,
+    })
+  })
+
+  /**
+   * The projection has to carry every column of the row. It is the one place a `returns:`
+   * validator over this table is worth anything — a `points` the projection had not been
+   * taught about reaches the browser as a rectangle-shaped hole in a polygon-shaped wall,
+   * painted at full confidence on every screen.
+   *
+   * The rectangle beside it is the positive control: it must arrive with **no** `points` key
+   * rather than with an explicit `undefined`, because absence is how a row says it is a
+   * rectangle.
+   */
+  test('fog.list carries the points, and a rectangle still carries none', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    const points = triangleOver({ x: 400, y: 400 })
+    await drawPolygon(t, fixture, fixture.sceneId, points)
+    await drawFog(t, fixture, fixture.sceneId, { x: 900, y: 900, width: 100, height: 100 })
+
+    const listed = await t.query(api.fog.list, {
+      code: fixture.code,
+      sceneId: fixture.sceneId,
+    })
+    const polygon = listed.find((row) => row.points !== undefined)
+    const rect = listed.find((row) => row.points === undefined)
+
+    expect(polygon?.points).toEqual(points)
+    expect(rect).toBeDefined()
+    expect(rect === undefined ? [] : Object.keys(rect)).not.toContain('points')
+  })
+
+  /**
+   * The whole point of the feature, end to end: a polygon over a creature withholds its
+   * placement from the party, and the DM keeps it. Both directions, because a one-way
+   * assertion passes on a fixture whose monster was never there.
+   */
+  test('a creature inside a polygon loses its placement for the party', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+    const at = await placementOf(t, fixture.sceneId, fixture.monsterToken)
+
+    expect(await placedIds(t, fixture)).toContain(fixture.monsterToken)
+
+    await drawPolygon(t, fixture, fixture.sceneId, triangleOver(at))
+
+    expect(await placedIds(t, fixture)).not.toContain(fixture.monsterToken)
+    expect(await placedIds(t, fixture, { dmCode: fixture.dmCode })).toContain(
+      fixture.monsterToken,
+    )
+  })
+
+  /**
+   * ⚠️ **The concave case, which is the one a bounding-box-only implementation passes by
+   * accident.** A creature standing in the notch of an L is inside the shape's *box* and
+   * outside the shape, so a build that never ran the ray-cast would hide it — and the DM
+   * would have drawn round a monster on purpose and hidden it anyway.
+   */
+  test('a creature in the notch of a concave shape is not fogged', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+    const at = await placementOf(t, fixture.sceneId, fixture.monsterToken)
+
+    // An L whose box contains the creature and whose outline does not: the missing quarter is
+    // the one the creature is standing in.
+    await drawPolygon(t, fixture, fixture.sceneId, [
+      { x: at.x - 200, y: at.y - 200 },
+      { x: at.x + 200, y: at.y - 200 },
+      { x: at.x + 200, y: at.y - 20 },
+      { x: at.x - 20, y: at.y - 20 },
+      { x: at.x - 20, y: at.y + 200 },
+      { x: at.x - 200, y: at.y + 200 },
+    ])
+
+    const row = await fogRowsOn(t, fixture.sceneId)
+    // The box really does contain it, so the assertion below is about the ray-cast.
+    expect(row[0].x).toBeLessThan(at.x)
+    expect(row[0].x + row[0].width).toBeGreaterThan(at.x)
+    expect(row[0].y).toBeLessThan(at.y)
+    expect(row[0].y + row[0].height).toBeGreaterThan(at.y)
+
+    expect(await placedIds(t, fixture)).toContain(fixture.monsterToken)
+  })
+
+  test('refuses fewer than three corners, and writes nothing', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    for (const points of [
+      [],
+      [{ x: 100, y: 100 }],
+      [
+        { x: 100, y: 100 },
+        { x: 200, y: 200 },
+      ],
+    ]) {
+      await expectKind(drawPolygon(t, fixture, fixture.sceneId, points), 'BadInput')
+    }
+    expect(await fogRowsOn(t, fixture.sceneId)).toEqual([])
+  })
+
+  /**
+   * The cap, at the boundary in both directions. It is not a tidiness limit: unbounded
+   * vertices is unbounded per-token work inside `visiblePositions`, which is the query on the
+   * drag path — `MAX_FOG_POLYGON_POINTS`' docblock carries the arithmetic.
+   */
+  test('accepts exactly the cap and refuses one more', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    // A regular polygon, so no two vertices coincide and the box is never degenerate.
+    const ring = (count: number): Point[] =>
+      Array.from({ length: count }, (_unused, index) => {
+        const angle = (index / count) * Math.PI * 2
+        return { x: 600 + Math.cos(angle) * 200, y: 600 + Math.sin(angle) * 200 }
+      })
+
+    await drawPolygon(t, fixture, fixture.sceneId, ring(MAX_FOG_POLYGON_POINTS))
+    expect(await fogRowsOn(t, fixture.sceneId)).toHaveLength(1)
+
+    await expectKind(
+      drawPolygon(t, fixture, fixture.sceneId, ring(MAX_FOG_POLYGON_POINTS + 1)),
+      'BadInput',
+    )
+    expect(await fogRowsOn(t, fixture.sceneId)).toHaveLength(1)
+  })
+
+  /**
+   * `requireDrawableRect`'s zero-area clause, asked of the box. Collinear corners cover no
+   * point, so the shape hides nothing — and there is nothing on screen to click, so the DM
+   * cannot rub it out either.
+   */
+  test('refuses corners that are all in a line, on either axis', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    for (const points of [
+      [
+        { x: 0, y: 5 },
+        { x: 100, y: 5 },
+        { x: 50, y: 5 },
+      ],
+      [
+        { x: 5, y: 0 },
+        { x: 5, y: 100 },
+        { x: 5, y: 50 },
+      ],
+      [
+        { x: 5, y: 5 },
+        { x: 5, y: 5 },
+        { x: 5, y: 5 },
+      ],
+    ]) {
+      await expectKind(drawPolygon(t, fixture, fixture.sceneId, points), 'BadInput')
+    }
+    expect(await fogRowsOn(t, fixture.sceneId)).toEqual([])
+  })
+
+  /**
+   * NaN and Infinity are valid Convex float64s. A broken vertex poisons `boundsOf` — the box
+   * comes back NaN — and `rectCovers` then fails **open** on it, so the row would be fog that
+   * is drawn on every screen and hides nothing. The rectangle path's own argument, applied to
+   * a point list, and convex-test is precisely where such a row could otherwise be written.
+   */
+  test('refuses a non-finite vertex on either axis', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      for (const axis of ['x', 'y'] as const) {
+        await expectKind(
+          drawPolygon(t, fixture, fixture.sceneId, [
+            { x: 100, y: 100 },
+            { ...{ x: 300, y: 100 }, [axis]: value },
+            { x: 200, y: 300 },
+          ]),
+          'BadInput',
+        )
+      }
+    }
+    expect(await fogRowsOn(t, fixture.sceneId)).toEqual([])
+  })
+
+  /**
+   * ⚠️ **Concave and self-intersecting outlines are deliberately NOT refused**, and this is
+   * the test that says so on purpose rather than by omission. A DM tracing a cave wall
+   * produces both by accident, `polygonCovers` answers them by the even-odd rule, and a
+   * validity check here would refuse a gesture that works. Winding order is not normalised
+   * either, for the same reason.
+   */
+  test('accepts a bowtie and an anticlockwise outline without complaint', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    await drawPolygon(t, fixture, fixture.sceneId, [
+      { x: 100, y: 100 },
+      { x: 300, y: 300 },
+      { x: 100, y: 300 },
+      { x: 300, y: 100 },
+    ])
+    await drawPolygon(t, fixture, fixture.sceneId, [
+      { x: 500, y: 500 },
+      { x: 500, y: 700 },
+      { x: 700, y: 700 },
+    ])
+
+    expect(await fogRowsOn(t, fixture.sceneId)).toHaveLength(2)
+  })
+
+  /** Both shape kinds count against the one bound — a scene has shapes, not two quotas. */
+  test('a polygon counts against the same per-scene bound as a rectangle', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    await t.run(async (ctx) => {
+      for (let i = 0; i < MAX_FOG_RECTS_PER_SCENE; i += 1) {
+        await ctx.db.insert('fogRects', {
+          sceneId: fixture.sceneId,
+          x: i,
+          y: i,
+          width: 1,
+          height: 1,
+        })
+      }
+    })
+
+    await expectKind(
+      drawPolygon(t, fixture, fixture.sceneId, triangleOver({ x: 400, y: 400 })),
+      'SceneFull',
+    )
   })
 })
 
@@ -1266,5 +1566,218 @@ describe('a game with no rectangles pays nothing for fog', () => {
     for (const row of asPlayer) {
       expect({ x: row.x, y: row.y }).toEqual(snapToGrid({ x: row.x, y: row.y }, GRID, 1))
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The fog base — Milestone 13
+// ---------------------------------------------------------------------------
+
+/**
+ * Flip a scene between starting lit and starting covered.
+ *
+ * Through the mutation rather than by patching the row, because the whole point of the base
+ * is that every reader agrees on it — and `scenes.setFogBase` is what the panel calls.
+ */
+async function setBase(
+  t: Harness,
+  game: { code: string; dmCode: string },
+  sceneId: Id<'scenes'>,
+  fogBase: 'lit' | 'dark',
+) {
+  await t.mutation(api.scenes.setFogBase, {
+    code: game.code,
+    dmCode: game.dmCode,
+    sceneId,
+    fogBase,
+  })
+}
+
+/**
+ * ⚠️ **EVERY ASSERTION ABOVE THIS LINE PASSED UNTOUCHED WHEN THE BASE ARRIVED, AND THAT IS
+ * THE ACCEPTANCE CRITERION FOR THE ABSENT-BASE DEFAULT.**
+ *
+ * The roadmap states it in exactly those terms — *if any of them needs editing, the
+ * absent-base default is wrong* — and it is a real check rather than a flourish. Every
+ * fixture in this file creates its scene through `scenes.create`, which writes no `fogBase`
+ * at all, so all 1270 lines above are a running proof that a scene with the field absent
+ * behaves precisely as it did before the field existed. `fogBaseOf` answering `lit` is what
+ * makes that true, and answering `dark` would have failed roughly half of them.
+ *
+ * What follows is the other half: the same scene, turned dark, behaving as the inverse.
+ */
+describe('a scene that starts covered', () => {
+  /**
+   * ⚠️ **THE MILESTONE'S HEADLINE ACCEPTANCE.** *A scene set to dark hides every DM-placed
+   * creature from a player's payload with no shape drawn at all.*
+   *
+   * This is the case the whole feature exists for and the one the old early return made
+   * impossible: fog used to be free precisely because nothing was hidden until a rectangle
+   * existed, so "cover the map" had to be drawn one rectangle at a time and could never be
+   * complete. The health-band and feed-line halves of this sentence live in `vitals.test.ts`
+   * and `feed.test.ts`, where those payloads and their positive controls already are — this
+   * file owns the placement.
+   */
+  test('hides the DM’s creature with no rectangle drawn at all', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    // The control. Lit and empty, every coin the layer rule admits is standing somewhere.
+    expect(await placedIds(t, fixture)).toHaveLength(3)
+
+    await setBase(t, fixture, fixture.sceneId, 'dark')
+    expect(await fogRowsOn(t, fixture.sceneId)).toEqual([])
+
+    // The monster is gone, and the hero and the granted pet are not — the control exemption
+    // stops being a courtesy here and becomes load-bearing, because on a covered map with
+    // nothing revealed *everything* is in the dark, and without it every player at the table
+    // would lose their own hero on the first click of the toggle.
+    const ids = await placedIds(t, fixture)
+    expect(ids).not.toContain(fixture.monsterToken)
+    expect(ids).toContain(fixture.heroToken)
+    expect(ids).toContain(fixture.petToken)
+
+    // And the DM sees all three, as ever: fog filters the party's payload and paints a veil
+    // on the DM's screen, which is a preference rather than a permission.
+    expect(await placedIds(t, fixture, { dmCode: fixture.dmCode })).toHaveLength(3)
+  })
+
+  /**
+   * The inverse of the headline: a drawn shape is a **hole** in the dark, so revealing one
+   * room brings back exactly what is standing in it.
+   */
+  test('revealing one room brings back exactly what is standing in it', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+    await setBase(t, fixture, fixture.sceneId, 'dark')
+
+    const monsterAt = await placementOf(t, fixture.sceneId, fixture.monsterToken)
+    await drawFog(t, fixture, fixture.sceneId, boxAround(monsterAt))
+
+    expect(await placedIds(t, fixture)).toContain(fixture.monsterToken)
+  })
+
+  test('a second creature outside the revealed room stays hidden', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    // A second monster, far from the first, so one hole cannot reach both.
+    const other = await makeCharacter(t, fixture, 'Cave Troll', npcSheet())
+    const otherToken = await addToken(t, fixture, fixture.sceneId, {
+      name: 'Cave Troll',
+      characterId: other,
+      x: 300,
+      y: 1400,
+    })
+
+    await setBase(t, fixture, fixture.sceneId, 'dark')
+    await drawFog(
+      t,
+      fixture,
+      fixture.sceneId,
+      boxAround(await placementOf(t, fixture.sceneId, fixture.monsterToken)),
+    )
+
+    const ids = await placedIds(t, fixture)
+    expect(ids).toContain(fixture.monsterToken)
+    expect(ids).not.toContain(otherToken)
+  })
+
+  /**
+   * ⚠️ **The inversion is exact, which is what makes the two bases one predicate rather than
+   * two implementations that agree in the cases somebody thought of.**
+   *
+   * The same scene and the same rectangle, read on both bases: what it hides on one is what
+   * it reveals on the other. The hero and the pet are in both, because control beats fog on
+   * either base — the one asymmetry, and it is deliberate.
+   */
+  test('the same rectangle hides on lit exactly what it reveals on dark', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    const monsterAt = await placementOf(t, fixture.sceneId, fixture.monsterToken)
+    await drawFog(t, fixture, fixture.sceneId, boxAround(monsterAt))
+
+    const lit = await placedIds(t, fixture)
+    expect(lit).not.toContain(fixture.monsterToken)
+
+    await setBase(t, fixture, fixture.sceneId, 'dark')
+    const dark = await placedIds(t, fixture)
+    expect(dark).toContain(fixture.monsterToken)
+
+    // Stated as a set difference over the coins fog can touch. Only the monster is
+    // uncontrolled, so it is the only member either way.
+    expect(dark.filter((id) => !lit.includes(id))).toEqual([fixture.monsterToken])
+  })
+
+  /**
+   * ⚠️ **Flipping must not delete the shapes.** Inverting a map exactly is arguably a feature
+   * and definitely a surprise, so the confirm dialog says it in words — and deleting is what
+   * `fog.clear` is for. A flip that destroyed an afternoon's drawing with no undo is
+   * unforgivable, and the property that makes the dialog's promise true is this one: flip
+   * away and back and the board is byte-identical.
+   */
+  test('flipping keeps every shape, and flipping back restores the board exactly', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    const fogId = await drawFog(
+      t,
+      fixture,
+      fixture.sceneId,
+      boxAround(await placementOf(t, fixture.sceneId, fixture.monsterToken)),
+    )
+
+    const snapshot = async () =>
+      JSON.stringify({
+        positions: await t.query(api.board.positions, {
+          code: fixture.code,
+          sceneId: fixture.sceneId,
+        }),
+        list: await t.query(api.fog.list, { code: fixture.code, sceneId: fixture.sceneId }),
+      })
+
+    const before = await snapshot()
+
+    await setBase(t, fixture, fixture.sceneId, 'dark')
+    expect(await fogRowsOn(t, fixture.sceneId)).toHaveLength(1)
+    expect(await fogRow(t, fogId)).not.toBeNull()
+    // The control: the flip genuinely changed what the party is told, so "identical" below is
+    // a fact about the round trip and not about the flip being a no-op.
+    expect(await snapshot()).not.toBe(before)
+
+    await setBase(t, fixture, fixture.sceneId, 'lit')
+    expect(await snapshot()).toBe(before)
+  })
+
+  /**
+   * The base is a fact about the map, so every client has to be told it — and the browser must
+   * never spell the absent-means-lit default a second time. `scenes.active` carries the
+   * resolved answer, which is what stops a client painting a covered map as visible.
+   */
+  test('the base reaches every client through scenes.active, already resolved', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    expect((await t.query(api.scenes.active, { code: fixture.code }))?.fogBase).toBe('lit')
+
+    await setBase(t, fixture, fixture.sceneId, 'dark')
+    expect((await t.query(api.scenes.active, { code: fixture.code }))?.fogBase).toBe('dark')
+  })
+
+  test('setting the base is DM-only', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    await expectKind(
+      t.mutation(api.scenes.setFogBase, {
+        code: fixture.code,
+        dmCode: twiddle(fixture.dmCode),
+        sceneId: fixture.sceneId,
+        fogBase: 'dark',
+      }),
+      'NotDm',
+    )
+    expect((await t.query(api.scenes.active, { code: fixture.code }))?.fogBase).toBe('lit')
   })
 })

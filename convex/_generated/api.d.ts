@@ -35,6 +35,7 @@ import type * as lib_creatures from "../lib/creatures.js";
 import type * as lib_dice from "../lib/dice.js";
 import type * as lib_feed from "../lib/feed.js";
 import type * as lib_fog from "../lib/fog.js";
+import type * as lib_fogBase from "../lib/fogBase.js";
 import type * as lib_games from "../lib/games.js";
 import type * as lib_grid from "../lib/grid.js";
 import type * as lib_layers from "../lib/layers.js";
@@ -61,10 +62,12 @@ import type * as lib_rules from "../lib/rules.js";
 import type * as lib_scenes from "../lib/scenes.js";
 import type * as lib_sheet from "../lib/sheet.js";
 import type * as lib_skills from "../lib/skills.js";
+import type * as lib_walls from "../lib/walls.js";
 import type * as modalImages from "../modalImages.js";
 import type * as music from "../music.js";
 import type * as players from "../players.js";
 import type * as scenes from "../scenes.js";
+import type * as walls from "../walls.js";
 
 import type {
   ApiFromModules,
@@ -100,6 +103,7 @@ declare const fullApi: ApiFromModules<{
   "lib/dice": typeof lib_dice;
   "lib/feed": typeof lib_feed;
   "lib/fog": typeof lib_fog;
+  "lib/fogBase": typeof lib_fogBase;
   "lib/games": typeof lib_games;
   "lib/grid": typeof lib_grid;
   "lib/layers": typeof lib_layers;
@@ -126,10 +130,12 @@ declare const fullApi: ApiFromModules<{
   "lib/scenes": typeof lib_scenes;
   "lib/sheet": typeof lib_sheet;
   "lib/skills": typeof lib_skills;
+  "lib/walls": typeof lib_walls;
   modalImages: typeof modalImages;
   music: typeof music;
   players: typeof players;
   scenes: typeof scenes;
+  walls: typeof walls;
 }>;
 
 /**
