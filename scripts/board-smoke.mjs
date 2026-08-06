@@ -7446,6 +7446,186 @@ async function main() {
         )
       }
     }
+
+    // 42. MANAGING THE MAPS: TWO OPTIONAL COLUMNS ON A POPULATED TABLE, A SHARED BLOB, AND
+    // A REWRITE OF EVERY COORDINATE ON A BOARD.
+    //
+    // ⚠️ **Worked on a scene of its own rather than on `sceneId`**, and that is not tidiness:
+    // `scenes:replaceImage` multiplies every placement and every fog rectangle on the board
+    // it is given, so running it on the run's main scene would move the coins forty earlier
+    // checks are about. The scene made here is pushed to `extraScenes` and swept in `finally`.
+    //
+    // What the suite cannot answer, in the order the checks come:
+    //
+    //   - **`notes` and `order` are new optional columns on a populated table**, and
+    //     `dmSceneValidator` declares both as *required* over them. A deployment that
+    //     returned the raw fields for a scene nobody has written notes on or reordered would
+    //     fail its own `returns:` validation, and convex-test does not apply it.
+    //   - **The leak.** `scenes:active` is ungated and every player subscribes to it, so the
+    //     notes are scanned for out of a real payload fetched with no DM code at all, with
+    //     the DM's own list as the positive control.
+    //   - **A duplicate shares the map blob**, so deleting one map must not blank the other —
+    //     the bug that made two unconditional `ctx.storage.delete` calls conditional. Asserted
+    //     by re-fetching the copy's signed URL after the original goes, which is the only
+    //     version of that claim a real deployment can make.
+    //   - **Real float64s through the rescale.** The grid offsets here are fractional on
+    //     purpose, so the multiplication is arithmetic over the same doubles the position
+    //     table stores rather than over integers that would survive any bug.
+    const mapAdminImage = await uploadPng(client, code, dmCode)
+    uploads.push(mapAdminImage)
+    const mapAdminThumb = await uploadPng(client, code, dmCode)
+    uploads.push(mapAdminThumb)
+    const managed = await client.mutation('scenes:create', {
+      code,
+      dmCode,
+      name: 'The Sunken Chapel',
+      imageId: mapAdminImage,
+      thumbnailId: mapAdminThumb,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+    })
+    extraScenes.push(managed.sceneId)
+
+    const listedAs = async (id) =>
+      (await client.query('scenes:list', { code, dmCode })).find((row) => row._id === id) ?? null
+
+    const beforeNotes = await listedAs(managed.sceneId)
+    check(
+      'scenes:list declares notes and order as required over two absent columns',
+      beforeNotes !== null &&
+        beforeNotes.notes === '' &&
+        Number.isInteger(beforeNotes.order) &&
+        beforeNotes.order >= 0,
+      beforeNotes
+        ? `notes ${JSON.stringify(beforeNotes.notes)}, order ${beforeNotes.order}`
+        : 'not listed',
+    )
+
+    const PREP = 'the lich behind the altar is invisible until somebody casts detect magic'
+    await client.mutation('scenes:setNotes', { code, dmCode, sceneId: managed.sceneId, notes: PREP })
+    await client.mutation('scenes:setActive', { code, dmCode, sceneId: managed.sceneId })
+
+    const asTheTable = await client.query('scenes:active', { code })
+    const asTheDm = await listedAs(managed.sceneId)
+    check(
+      'the DM’s prep reached the DM and reached nobody else',
+      asTheDm !== null &&
+        asTheDm.notes === PREP &&
+        asTheTable !== null &&
+        !JSON.stringify(asTheTable).includes('lich') &&
+        !Object.prototype.hasOwnProperty.call(asTheTable, 'notes'),
+      asTheDm ? `${asTheDm.notes.length} characters to the DM, ${Object.keys(asTheTable ?? {}).length} keys to the table` : 'not listed',
+    )
+    // Put the table back on the board every other section is about, before anything below
+    // starts moving this one around.
+    await client.mutation('scenes:setActive', { code, dmCode, sceneId })
+
+    // REORDER: THE WHOLE LIST, ONE TRANSACTION. A permutation check the deployment performs
+    // over its own rows, which is why the refusal below is worth a round trip.
+    const allSceneIds = (await client.query('scenes:list', { code, dmCode })).map((row) => row._id)
+    const reversed = [...allSceneIds].reverse()
+    await client.mutation('scenes:reorder', { code, dmCode, sceneIds: reversed })
+    const afterReorder = (await client.query('scenes:list', { code, dmCode })).map((row) => row._id)
+    check(
+      'scenes:reorder stored the whole ordering and the list came back in it',
+      JSON.stringify(afterReorder) === JSON.stringify(reversed),
+      `${afterReorder.length} maps, reversed`,
+    )
+    await refuses('scenes:reorder refused a partial list', () =>
+      client.mutation('scenes:reorder', { code, dmCode, sceneIds: [managed.sceneId] }),
+    )
+
+    // DUPLICATE: THE SHARED BLOB, AND THE DELETE THAT MUST NOT RECLAIM IT.
+    const copy = await client.mutation('scenes:duplicate', {
+      code,
+      dmCode,
+      sceneId: managed.sceneId,
+      includeContents: false,
+    })
+    extraScenes.push(copy.sceneId)
+    const copyRow = await listedAs(copy.sceneId)
+    check(
+      'scenes:duplicate copied the notes and the grid and did not go on the table',
+      copyRow !== null &&
+        copyRow.name === 'The Sunken Chapel (copy)' &&
+        copyRow.notes === PREP &&
+        copyRow._id !== (await client.query('scenes:active', { code }))?._id,
+      copyRow ? copyRow.name : 'the copy is not in the list',
+    )
+
+    // Deleting the original: the copy's picture has to survive, and the only honest way to
+    // ask a deployment that is to fetch the bytes.
+    await client.mutation('scenes:remove', { code, dmCode, sceneId: managed.sceneId })
+    extraScenes.splice(extraScenes.indexOf(managed.sceneId), 1)
+    const copyAfterDelete = await listedAs(copy.sceneId)
+    const sharedFetch = copyAfterDelete?.imageUrl ? await fetch(copyAfterDelete.imageUrl) : null
+    check(
+      'deleting the original left the duplicate’s shared map image in storage',
+      sharedFetch !== null && sharedFetch.ok,
+      sharedFetch ? `${sharedFetch.status} from the copy’s image URL` : 'no image URL to fetch',
+    )
+
+    // REPLACE: ONE FACTOR THROUGH THE GRID, THE PLACEMENTS AND THE FOG.
+    await client.mutation('scenes:updateGrid', {
+      code,
+      dmCode,
+      sceneId: copy.sceneId,
+      gridSize: GRID.gridSize,
+      gridOffsetX: GRID.gridOffsetX,
+      gridOffsetY: GRID.gridOffsetY,
+      gridVisible: true,
+    })
+    await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId: copy.sceneId,
+      x: 101.5,
+      y: 202.25,
+      width: 303.75,
+      height: 404.5,
+    })
+
+    const differentShape = await uploadPng(client, code, dmCode)
+    uploads.push(differentShape)
+    await refuses('scenes:replaceImage refused a map of a different shape', () =>
+      client.mutation('scenes:replaceImage', {
+        code,
+        dmCode,
+        sceneId: copy.sceneId,
+        imageId: differentShape,
+        imageWidth: MAP_HEIGHT,
+        imageHeight: MAP_WIDTH,
+      }),
+    )
+
+    const doubled = await uploadPng(client, code, dmCode)
+    uploads.push(doubled)
+    await client.mutation('scenes:replaceImage', {
+      code,
+      dmCode,
+      sceneId: copy.sceneId,
+      imageId: doubled,
+      imageWidth: MAP_WIDTH * 2,
+      imageHeight: MAP_HEIGHT * 2,
+    })
+    const scaledMap = await listedAs(copy.sceneId)
+    const scaledFog = await client.query('fog:list', { code, dmCode, sceneId: copy.sceneId })
+    check(
+      'scenes:replaceImage put one factor through the grid and the fog, in real float64s',
+      scaledMap !== null &&
+        scaledMap.imageWidth === MAP_WIDTH * 2 &&
+        scaledMap.gridSize === GRID.gridSize * 2 &&
+        scaledMap.gridOffsetX === GRID.gridOffsetX * 2 &&
+        scaledMap.gridOffsetY === GRID.gridOffsetY * 2 &&
+        scaledFog.length === 1 &&
+        scaledFog[0].x === 203 &&
+        scaledFog[0].y === 404.5 &&
+        scaledFog[0].width === 607.5 &&
+        scaledFog[0].height === 809,
+      scaledMap
+        ? `grid ${scaledMap.gridSize} / ${scaledMap.gridOffsetX} / ${scaledMap.gridOffsetY}, fog ${JSON.stringify(scaledFog[0] ?? null)}`
+        : 'the copy is not in the list',
+    )
   } catch (error) {
     const data = error && error.data ? ` ${JSON.stringify(error.data)}` : ''
     record('the run completed without an unexpected error', false, `${error.message ?? error}${data}`)

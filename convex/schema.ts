@@ -263,6 +263,31 @@ export default defineSchema({
     // a migration window, and `dmScene` in lib/scenes.ts is the one place it becomes a URL —
     // falling back to the full map, so no client has to know this field exists.
     thumbnailId: v.optional(v.id('_storage')),
+    // THE DM'S PREP FOR THIS BOARD, and the field in this table that is genuinely a secret.
+    //
+    // ⚠️ **`scenes.active` is ungated — every player at the table subscribes to it — so this
+    // must never reach `publicSceneValidator`.** `lib/scenes.ts` says *nothing in a scene is
+    // a secret, the background image is what every player is looking at*, and that sentence
+    // stopped being true here: *the lich is invisible until somebody casts detect magic* is
+    // the whole ambush, in a milestone whose subject is what players may know. It rides
+    // `dmSceneValidator`, whose one consumer is `scenes.list`, which throws for a non-DM.
+    // CLAUDE.md invariant 1, and `scenes.test.ts` scans a real player payload for a
+    // distinctive string out of a notes fixture rather than trusting this comment.
+    //
+    // Optional, and absent is the **one** spelling of "no notes" — a blank patch removes the
+    // field rather than storing `''`, so there is one state per meaning. Read through
+    // `notesOf` and nowhere else, which is what makes the projection able to promise a
+    // string. ADR 0008 settled that convention after `SheetEntry` came to spell none twice.
+    notes: v.optional(v.string()),
+    // Where this board sits in the DM's list.
+    //
+    // ⚠️ **Optional, and absent means *last* rather than *first*.** A scene nobody has
+    // dragged has no opinion about where it goes, and every scene in every game is in that
+    // state until the DM first reorders — so answering 0 would silently invert an untouched
+    // list the first time one row got a number. `orderOf` in lib/scenes.ts is the only
+    // reader, ties break on `_creationTime`, and `scenes.create` and `scenes.duplicate` both
+    // leave it absent deliberately: a new map belongs at the end.
+    order: v.optional(v.number()),
   }).index('by_gameId', ['gameId']),
 
   // STABLE token data — art, name, size, layer, owning character. Low churn: this

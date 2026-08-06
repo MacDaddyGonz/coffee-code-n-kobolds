@@ -5,7 +5,7 @@ import { describe, expect, test } from 'vitest'
 
 import { api } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
-import { MAX_SCENE_NAME_LENGTH } from './lib/codes'
+import { MAX_SCENE_NAME_LENGTH, MAX_SCENE_NOTES_LENGTH, hasLoneSurrogate } from './lib/codes'
 import { MAX_SCENES_PER_GAME } from './lib/games'
 import { MAX_GRID_SIZE, MIN_GRID_SIZE } from './lib/grid'
 // Imported rather than re-stated, for `DEFAULT_SCENE_BACKGROUND`'s reason below: neither is
@@ -977,6 +977,262 @@ describe('files.generateUploadUrl', () => {
   })
 })
 
+describe('scenes.setNotes', () => {
+  /**
+   * ⚠️ **THE POSITIVE CONTROL THIS WHOLE PROJECTION SPLIT EXISTS FOR.**
+   *
+   * `scenes.active` is ungated: every player at the table subscribes to it, so a `notes`
+   * field on `publicSceneValidator` publishes the DM's prep to the party — CLAUDE.md
+   * invariant 1, in a milestone whose entire subject is what players may know. This is
+   * `board.test.ts`'s and `feed.test.ts`'s shape of test: a fixture carrying a distinctive
+   * string, a scan of a *real* payload, and a positive control so it cannot pass on an
+   * empty one.
+   */
+  test('the DM’s prep never reaches a player', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const { sceneId } = await makeScene(t, game.code, game.dmCode, 'Admittance')
+    const secret = 'the lich is invisible until somebody casts detect magic'
+
+    await t.mutation(api.scenes.setNotes, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId,
+      notes: secret,
+    })
+
+    // Every way a caller without the DM code can reach this scene.
+    const payloads = [
+      await t.query(api.scenes.active, { code: game.code }),
+      await t.query(api.games.getByCode, { code: game.code }),
+    ]
+    for (const payload of payloads) {
+      expect(JSON.stringify(payload)).not.toContain('lich')
+    }
+    expect(Object.keys((await t.query(api.scenes.active, { code: game.code }))!)).not.toContain(
+      'notes',
+    )
+
+    // THE POSITIVE CONTROL. The scan above passes trivially against a fixture whose notes
+    // were never stored, so the DM's own list has to contain the very string it looked for.
+    const [listed] = await t.query(api.scenes.list, { code: game.code, dmCode: game.dmCode })
+    expect(listed.notes).toBe(secret)
+  })
+
+  test('a blank clears it, and the column goes rather than holding an empty string', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const { sceneId } = await makeScene(t, game.code, game.dmCode)
+
+    // Absent from the start, and the projection still promises a string.
+    expect((await sceneRow(t, sceneId))?.notes).toBeUndefined()
+    const before = await t.query(api.scenes.list, { code: game.code, dmCode: game.dmCode })
+    expect(before[0].notes).toBe('')
+
+    await t.mutation(api.scenes.setNotes, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId,
+      // Trimmed at the ends and *not* collapsed in the middle: prose written in paragraphs
+      // is what this field is for, and `collapseWhitespace` would flatten it to one line.
+      notes: '  Two rooms.\n\nThe second one is trapped.  ',
+    })
+    expect((await sceneRow(t, sceneId))?.notes).toBe('Two rooms.\n\nThe second one is trapped.')
+
+    await t.mutation(api.scenes.setNotes, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId,
+      notes: '   ',
+    })
+    // One stored spelling of "none" — ADR 0008's convention, so nothing downstream has to
+    // decide whether absent and '' mean the same thing.
+    expect((await sceneRow(t, sceneId))?.notes).toBeUndefined()
+  })
+
+  test('refuses notes past the limit and keeps the old ones', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const { sceneId } = await makeScene(t, game.code, game.dmCode)
+    await t.mutation(api.scenes.setNotes, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId,
+      notes: 'Keep me.',
+    })
+
+    await expectKind(
+      t.mutation(api.scenes.setNotes, {
+        code: game.code,
+        dmCode: game.dmCode,
+        sceneId,
+        notes: 'x'.repeat(MAX_SCENE_NOTES_LENGTH + 1),
+      }),
+      'BadInput',
+    )
+    expect((await sceneRow(t, sceneId))?.notes).toBe('Keep me.')
+
+    // And exactly the limit is accepted, so the refusal is a boundary rather than a fence
+    // one character inside it.
+    await t.mutation(api.scenes.setNotes, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId,
+      notes: 'y'.repeat(MAX_SCENE_NOTES_LENGTH),
+    })
+    expect((await sceneRow(t, sceneId))?.notes).toHaveLength(MAX_SCENE_NOTES_LENGTH)
+  })
+
+  test('rejects a wrong DM code and a scene from another game', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const other = await makeGame(t, 'Other Table', 'Sam')
+    const { sceneId } = await makeScene(t, game.code, game.dmCode)
+    const theirs = await makeScene(t, other.code, other.dmCode, 'Theirs')
+
+    await expectKind(
+      t.mutation(api.scenes.setNotes, {
+        code: game.code,
+        dmCode: twiddle(game.dmCode),
+        sceneId,
+        notes: 'nope',
+      }),
+      'NotDm',
+    )
+    await expectKind(
+      t.mutation(api.scenes.setNotes, {
+        code: game.code,
+        dmCode: game.dmCode,
+        sceneId: theirs.sceneId,
+        notes: 'nope',
+      }),
+      'SceneNotFound',
+    )
+    expect((await sceneRow(t, theirs.sceneId))?.notes).toBeUndefined()
+  })
+})
+
+describe('scenes.reorder', () => {
+  async function namesInOrder(t: Harness, game: { code: string; dmCode: string }) {
+    const list = await t.query(api.scenes.list, { code: game.code, dmCode: game.dmCode })
+    return list.map((scene) => scene.name)
+  }
+
+  test('a game nobody has reordered reads back in upload order', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    for (const name of ['Cellar', 'Courtyard', "Dragon's Lair"]) {
+      await makeScene(t, game.code, game.dmCode, name)
+    }
+    // Byte-identical to what this query did before the column existed, which is the
+    // acceptance criterion for `orderOf`'s absent-sorts-last default.
+    expect(await namesInOrder(t, game)).toEqual(['Cellar', 'Courtyard', "Dragon's Lair"])
+  })
+
+  test('stores the whole ordering, and a later scene still lands last', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const made: Record<string, Id<'scenes'>> = {}
+    for (const name of ['Cellar', 'Courtyard', "Dragon's Lair"]) {
+      made[name] = (await makeScene(t, game.code, game.dmCode, name)).sceneId
+    }
+
+    await t.mutation(api.scenes.reorder, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneIds: [made["Dragon's Lair"], made.Cellar, made.Courtyard],
+    })
+    expect(await namesInOrder(t, game)).toEqual(["Dragon's Lair", 'Cellar', 'Courtyard'])
+
+    // ⚠️ The reason absent is `Infinity` and not 0: a scene added after a reorder has no
+    // opinion, and a default of 0 would put it at the top of a list the DM had just sorted.
+    await makeScene(t, game.code, game.dmCode, 'Latecomer')
+    expect(await namesInOrder(t, game)).toEqual([
+      "Dragon's Lair",
+      'Cellar',
+      'Courtyard',
+      'Latecomer',
+    ])
+  })
+
+  /**
+   * A prefix would leave the unnamed scenes holding whatever numbers they had, and a repeat
+   * would give two rows the same index and put the tie-break in charge. Both are refusals
+   * rather than best-effort sorts.
+   */
+  test('refuses a partial list, a repeated id, and a foreign scene', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const other = await makeGame(t, 'Other Table', 'Sam')
+    const cellar = await makeScene(t, game.code, game.dmCode, 'Cellar')
+    const courtyard = await makeScene(t, game.code, game.dmCode, 'Courtyard')
+    const theirs = await makeScene(t, other.code, other.dmCode, 'Theirs')
+
+    await expectKind(
+      t.mutation(api.scenes.reorder, {
+        code: game.code,
+        dmCode: game.dmCode,
+        sceneIds: [cellar.sceneId],
+      }),
+      'BadInput',
+    )
+    await expectKind(
+      t.mutation(api.scenes.reorder, {
+        code: game.code,
+        dmCode: game.dmCode,
+        sceneIds: [cellar.sceneId, cellar.sceneId],
+      }),
+      'BadInput',
+    )
+    await expectKind(
+      t.mutation(api.scenes.reorder, {
+        code: game.code,
+        dmCode: game.dmCode,
+        sceneIds: [cellar.sceneId, theirs.sceneId],
+      }),
+      'SceneNotFound',
+    )
+    await expectKind(
+      t.mutation(api.scenes.reorder, {
+        code: game.code,
+        dmCode: twiddle(game.dmCode),
+        sceneIds: [cellar.sceneId, courtyard.sceneId],
+      }),
+      'NotDm',
+    )
+
+    // Nothing moved, and nothing was half-written: the refusals all land before any patch.
+    expect(await namesInOrder(t, game)).toEqual(['Cellar', 'Courtyard'])
+    expect((await sceneRow(t, cellar.sceneId))?.order).toBeUndefined()
+  })
+
+  test('leaves a row whose position did not change unwritten', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const a = await makeScene(t, game.code, game.dmCode, 'A')
+    const b = await makeScene(t, game.code, game.dmCode, 'B')
+
+    await t.mutation(api.scenes.reorder, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneIds: [a.sceneId, b.sceneId],
+    })
+    const settled = await sceneRow(t, a.sceneId)
+    expect(settled?.order).toBe(0)
+
+    // The same order again is no writes at all — a patch that changes nothing still
+    // invalidates every subscription reading the row.
+    const before = settled?._creationTime
+    await t.mutation(api.scenes.reorder, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneIds: [a.sceneId, b.sceneId],
+    })
+    expect((await sceneRow(t, a.sceneId))?._creationTime).toBe(before)
+    expect((await sceneRow(t, a.sceneId))?.order).toBe(0)
+  })
+})
+
 describe('a scene’s thumbnail', () => {
   /**
    * ⚠️ **THE POSITIVE CONTROL FOR THE PROJECTION SPLIT, AND IT PINS AN EXACT KEY SET.**
@@ -1244,6 +1500,464 @@ describe('a map blob two scenes share', () => {
 
     expect(await t.run(async (ctx) => await deleteScenesInGame(ctx, original!.gameId))).toBe(2)
     expect(await blobExists(t, shared)).toBe(false)
+  })
+})
+
+/** A scene with a grid, a colour, a covered base, notes, a coin on it and one fog shape. */
+async function furnishedScene(t: Harness, game: { code: string; dmCode: string }) {
+  const imageId = await storeImage(t, 'map')
+  const thumbnailId = await storeImage(t, 'thumb')
+  const { sceneId } = await t.mutation(api.scenes.create, {
+    code: game.code,
+    dmCode: game.dmCode,
+    name: 'Admittance',
+    imageId,
+    thumbnailId,
+    imageWidth: MAP_WIDTH,
+    imageHeight: MAP_HEIGHT,
+  })
+
+  await t.mutation(api.scenes.updateGrid, {
+    code: game.code,
+    dmCode: game.dmCode,
+    sceneId,
+    gridSize: 140,
+    gridOffsetX: 12.5,
+    gridOffsetY: 7.25,
+    gridVisible: false,
+  })
+  await t.mutation(api.scenes.setBackground, {
+    code: game.code,
+    dmCode: game.dmCode,
+    sceneId,
+    backgroundColour: '#204060',
+  })
+  await t.mutation(api.scenes.setFogBase, {
+    code: game.code,
+    dmCode: game.dmCode,
+    sceneId,
+    fogBase: 'dark',
+  })
+  await t.mutation(api.scenes.setNotes, {
+    code: game.code,
+    dmCode: game.dmCode,
+    sceneId,
+    notes: 'Two rooms and a trapped chest.',
+  })
+
+  const { tokenId } = await t.mutation(api.board.addToken, {
+    code: game.code,
+    dmCode: game.dmCode,
+    sceneId,
+    name: 'Village Guard',
+    layer: 'player',
+    sizeSquares: 1,
+    tint: '#c0392b',
+    x: 280,
+    y: 420,
+  })
+  await t.mutation(api.fog.draw, {
+    code: game.code,
+    dmCode: game.dmCode,
+    sceneId,
+    x: 100,
+    y: 200,
+    width: 300,
+    height: 400,
+  })
+
+  return { sceneId, imageId, thumbnailId, tokenId }
+}
+
+async function placementsOn(t: Harness, sceneId: Id<'scenes'>) {
+  return await t.run(
+    async (ctx) =>
+      await ctx.db
+        .query('tokenPositions')
+        .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
+        .collect(),
+  )
+}
+
+describe('scenes.duplicate', () => {
+  /**
+   * ⚠️ **The blob is SHARED and never copied** — CLAUDE.md invariant 6. Four megabytes on a
+   * press is a quarter of a game's map budget spent on bytes already in storage.
+   */
+  test('shares both blobs and takes everything that describes the map', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const source = await furnishedScene(t, game)
+
+    const { sceneId } = await t.mutation(api.scenes.duplicate, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId: source.sceneId,
+      includeContents: false,
+    })
+
+    const copy = await sceneRow(t, sceneId)
+    expect(copy).toMatchObject({
+      name: 'Admittance (copy)',
+      imageId: source.imageId,
+      thumbnailId: source.thumbnailId,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+      gridSize: 140,
+      gridOffsetX: 12.5,
+      gridOffsetY: 7.25,
+      gridVisible: false,
+      backgroundColour: '#204060',
+      fogBase: 'dark',
+      notes: 'Two rooms and a trapped chest.',
+    })
+    // Absent, so it sorts last — a copy belongs at the end rather than beside its source.
+    expect(copy?.order).toBeUndefined()
+
+    // Not on the table, and the original still is. Copying a map is preparation.
+    expect(await activeSceneId(t, game.code)).toBe(source.sceneId)
+  })
+
+  /**
+   * *A wall is a property of the map; a placement and a fog shape are where things are
+   * tonight.* One choice rather than three checkboxes.
+   */
+  test('takes the placements and the fog only when asked', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const source = await furnishedScene(t, game)
+
+    const empty = await t.mutation(api.scenes.duplicate, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId: source.sceneId,
+      includeContents: false,
+    })
+    expect(await placementsOn(t, empty.sceneId)).toEqual([])
+    expect(
+      await t.query(api.fog.list, {
+        code: game.code,
+        dmCode: game.dmCode,
+        sceneId: empty.sceneId,
+      }),
+    ).toEqual([])
+
+    const laidOut = await t.mutation(api.scenes.duplicate, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId: source.sceneId,
+      includeContents: true,
+    })
+    const copied = await placementsOn(t, laidOut.sceneId)
+    // The *token* is shared and only the placement is copied: the two boards show one coin,
+    // which is what a DM copying an encounter means.
+    expect(copied.map((row) => row.tokenId)).toEqual([source.tokenId])
+    const fog = await t.query(api.fog.list, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId: laidOut.sceneId,
+    })
+    expect(fog).toHaveLength(1)
+    expect(fog[0]).toMatchObject({ x: 100, y: 200, width: 300, height: 400 })
+    // And the source is untouched by either copy.
+    expect(await placementsOn(t, source.sceneId)).toHaveLength(1)
+  })
+
+  /**
+   * ⚠️ **The Milestone 1 lone-surrogate bug, third occurrence and first where the *app*
+   * supplies the over-long part.** ` (copy)` on a 58-character name is 65, past the limit,
+   * and no field's `maxLength` could have stopped it because nobody typed it. Cut by code
+   * point, with the suffix's budget reserved, so the result both fits and stays a copy.
+   */
+  test('cuts a long name by code point and keeps the suffix', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    // Emoji at the cut, so a `slice` would leave a lone surrogate that `requireSceneName`
+    // accepts and a real deployment refuses.
+    const long = `${'a'.repeat(MAX_SCENE_NAME_LENGTH - 8)}🐉🐉🐉`
+    const { sceneId } = await makeScene(t, game.code, game.dmCode, long)
+
+    const copy = await t.mutation(api.scenes.duplicate, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId,
+      includeContents: false,
+    })
+    const name = (await sceneRow(t, copy.sceneId))?.name ?? ''
+    expect(name.length).toBeLessThanOrEqual(MAX_SCENE_NAME_LENGTH)
+    expect(name.endsWith(' (copy)')).toBe(true)
+    expect(hasLoneSurrogate(name)).toBe(false)
+  })
+
+  test('counts against MAX_SCENES_PER_GAME, and needs the DM code', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const other = await makeGame(t, 'Other Table', 'Sam')
+    const { sceneId } = await makeScene(t, game.code, game.dmCode)
+    const theirs = await makeScene(t, other.code, other.dmCode, 'Theirs')
+
+    await expectKind(
+      t.mutation(api.scenes.duplicate, {
+        code: game.code,
+        dmCode: twiddle(game.dmCode),
+        sceneId,
+        includeContents: false,
+      }),
+      'NotDm',
+    )
+    await expectKind(
+      t.mutation(api.scenes.duplicate, {
+        code: game.code,
+        dmCode: game.dmCode,
+        sceneId: theirs.sceneId,
+        includeContents: false,
+      }),
+      'SceneNotFound',
+    )
+
+    while (
+      (await t.query(api.scenes.list, { code: game.code, dmCode: game.dmCode })).length <
+      MAX_SCENES_PER_GAME
+    ) {
+      await makeScene(t, game.code, game.dmCode, `Filler ${Math.random()}`)
+    }
+    await expectKind(
+      t.mutation(api.scenes.duplicate, {
+        code: game.code,
+        dmCode: game.dmCode,
+        sceneId,
+        includeContents: false,
+      }),
+      'GameFull',
+    )
+  })
+})
+
+describe('scenes.replaceImage', () => {
+  async function replace(
+    t: Harness,
+    game: { code: string; dmCode: string },
+    sceneId: Id<'scenes'>,
+    size: { width: number; height: number },
+    label = 'replacement',
+  ) {
+    const imageId = await storeImage(t, label)
+    await t.mutation(api.scenes.replaceImage, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId,
+      imageId,
+      imageWidth: size.width,
+      imageHeight: size.height,
+    })
+    return imageId
+  }
+
+  /**
+   * ⚠️ **`k === 1` skips every rewrite, and it is the common case rather than an
+   * optimisation** — a DM re-exporting a map at the same size after redrawing a room.
+   * Multiplying two hundred placements by 1 is two hundred writes that change nothing.
+   */
+  test('a same-size replacement moves nothing', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const source = await furnishedScene(t, game)
+    const before = await sceneRow(t, source.sceneId)
+    // Read rather than asserted as a literal: `addToken` snapped the coin server-side, so
+    // where it actually sits is the grid's business and not this test's.
+    const stood = (await placementsOn(t, source.sceneId))[0]
+
+    const swapped = await replace(t, game, source.sceneId, {
+      width: MAP_WIDTH,
+      height: MAP_HEIGHT,
+    })
+
+    const after = await sceneRow(t, source.sceneId)
+    expect(after).toMatchObject({
+      imageId: swapped,
+      gridSize: before!.gridSize,
+      gridOffsetX: before!.gridOffsetX,
+      gridOffsetY: before!.gridOffsetY,
+    })
+    expect((await placementsOn(t, source.sceneId))[0]).toMatchObject({ x: stood.x, y: stood.y })
+    const [fog] = await t.query(api.fog.list, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId: source.sceneId,
+    })
+    expect(fog).toMatchObject({ x: 100, y: 200, width: 300, height: 400 })
+  })
+
+  /**
+   * Every coordinate in this application is in the stored image's pixel space, so one factor
+   * has to go through the grid, every placement and every fog shape together — a uniform
+   * similarity transform, which is why an aspect-ratio change is refused rather than scaled.
+   */
+  test('a bigger map of the same shape scales the grid, the coins and the fog by one factor', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const source = await furnishedScene(t, game)
+    const stood = (await placementsOn(t, source.sceneId))[0]
+
+    await replace(t, game, source.sceneId, { width: MAP_WIDTH * 2, height: MAP_HEIGHT * 2 })
+
+    expect(await sceneRow(t, source.sceneId)).toMatchObject({
+      imageWidth: MAP_WIDTH * 2,
+      imageHeight: MAP_HEIGHT * 2,
+      gridSize: 280,
+      gridOffsetX: 25,
+      gridOffsetY: 14.5,
+    })
+    // ⚠️ The same factor as the grid, which is the whole property: a coin centred on a
+    // square before the swap is centred on it after. A placement multiplied by a different
+    // number from the grid it was snapped to is the bug this mutation exists to not have.
+    expect((await placementsOn(t, source.sceneId))[0]).toMatchObject({
+      x: stood.x * 2,
+      y: stood.y * 2,
+    })
+    const [fog] = await t.query(api.fog.list, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId: source.sceneId,
+    })
+    expect(fog).toMatchObject({ x: 200, y: 400, width: 600, height: 800 })
+  })
+
+  test('refuses a map of a different shape and changes nothing', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const source = await furnishedScene(t, game)
+    const square = await storeImage(t, 'square')
+
+    await expectKind(
+      t.mutation(api.scenes.replaceImage, {
+        code: game.code,
+        dmCode: game.dmCode,
+        sceneId: source.sceneId,
+        imageId: square,
+        imageWidth: 2000,
+        imageHeight: 2000,
+      }),
+      'BadInput',
+    )
+    expect((await sceneRow(t, source.sceneId))?.imageId).toBe(source.imageId)
+    expect(await blobExists(t, source.imageId)).toBe(true)
+
+    // A pixel of rounding is not a different shape: the downscaler rounds both edges to
+    // whole pixels, so an odd-numbered source comes back a fraction out.
+    await t.mutation(api.scenes.replaceImage, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId: source.sceneId,
+      imageId: await storeImage(t, 'rounded'),
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT + 1,
+    })
+    expect((await sceneRow(t, source.sceneId))?.imageHeight).toBe(MAP_HEIGHT + 1)
+  })
+
+  /**
+   * ⚠️ **REFUSED RATHER THAN CLAMPED, and the roadmap does not say which.** A calibration
+   * silently pinned to `MIN_GRID_SIZE` is a grid that no longer lines up with the map,
+   * discovered mid-session by a DM with no way to know the app changed their number.
+   */
+  test('refuses a scale that would take the grid out of range, rather than clamping it', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const { sceneId } = await makeScene(t, game.code, game.dmCode)
+    await t.mutation(api.scenes.updateGrid, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId,
+      gridSize: MIN_GRID_SIZE,
+      gridOffsetX: 0,
+      gridOffsetY: 0,
+      gridVisible: true,
+    })
+
+    // A tenth of the width takes a 4 px grid to 0.4 px, which `isUsableGrid` refuses.
+    await expectKind(
+      t.mutation(api.scenes.replaceImage, {
+        code: game.code,
+        dmCode: game.dmCode,
+        sceneId,
+        imageId: await storeImage(t, 'tiny'),
+        imageWidth: MAP_WIDTH / 10,
+        imageHeight: MAP_HEIGHT / 10,
+      }),
+      'BadInput',
+    )
+    expect((await sceneRow(t, sceneId))?.gridSize).toBe(MIN_GRID_SIZE)
+    expect((await sceneRow(t, sceneId))?.imageWidth).toBe(MAP_WIDTH)
+  })
+
+  test('reclaims the old blobs — but not one a copy is still drawing', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const source = await furnishedScene(t, game)
+
+    // No copy yet: the outgoing map and its thumbnail are nobody else's.
+    const first = await replace(t, game, source.sceneId, {
+      width: MAP_WIDTH,
+      height: MAP_HEIGHT,
+    })
+    expect(await blobExists(t, source.imageId)).toBe(false)
+    expect(await blobExists(t, source.thumbnailId)).toBe(false)
+
+    // Now a duplicate shares `first`, so replacing it again must leave those bytes alone.
+    await t.mutation(api.scenes.duplicate, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId: source.sceneId,
+      includeContents: false,
+    })
+    await replace(t, game, source.sceneId, { width: MAP_WIDTH, height: MAP_HEIGHT }, 'third')
+    expect(await blobExists(t, first)).toBe(true)
+  })
+
+  test('checks the stored bytes, and needs the DM code', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const other = await makeGame(t, 'Other Table', 'Sam')
+    const { sceneId } = await makeScene(t, game.code, game.dmCode)
+    const theirs = await makeScene(t, other.code, other.dmCode, 'Theirs')
+    const huge = await storeImage(t, 'huge', MAX_SCENE_BYTES + 1)
+
+    await expectKind(
+      t.mutation(api.scenes.replaceImage, {
+        code: game.code,
+        dmCode: game.dmCode,
+        sceneId,
+        imageId: huge,
+        imageWidth: MAP_WIDTH,
+        imageHeight: MAP_HEIGHT,
+      }),
+      'BadInput',
+    )
+    await expectKind(
+      t.mutation(api.scenes.replaceImage, {
+        code: game.code,
+        dmCode: twiddle(game.dmCode),
+        sceneId,
+        imageId: await storeImage(t, 'fine'),
+        imageWidth: MAP_WIDTH,
+        imageHeight: MAP_HEIGHT,
+      }),
+      'NotDm',
+    )
+    await expectKind(
+      t.mutation(api.scenes.replaceImage, {
+        code: game.code,
+        dmCode: game.dmCode,
+        sceneId: theirs.sceneId,
+        imageId: await storeImage(t, 'fine-2'),
+        imageWidth: MAP_WIDTH,
+        imageHeight: MAP_HEIGHT,
+      }),
+      'SceneNotFound',
+    )
+    // The refused blob survives the rollback, which is what `files.discard` is for.
+    expect(await blobExists(t, huge)).toBe(true)
   })
 })
 

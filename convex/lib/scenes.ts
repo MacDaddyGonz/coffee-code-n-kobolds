@@ -14,7 +14,7 @@ import { deleteSceneFog } from './fog'
 // The base vocabulary. A function of a string, like lib/layers.ts — the *decision* about
 // whether a given token is hidden stays in lib/board.ts, behind invariant 8's choke point.
 import { fogBaseOf, fogBaseValidator } from './fogBase'
-import { MAX_SCENES_PER_GAME } from './games'
+import { MAX_FOG_RECTS_PER_SCENE, MAX_SCENES_PER_GAME } from './games'
 
 // Lives in lib/limits.ts, which the browser imports too so there is one definition
 // of it rather than one on each side. Brought through here because `scenes.create`
@@ -55,6 +55,50 @@ export const DEFAULT_SCENE_BACKGROUND = '#111114'
  */
 export function backgroundOf(scene: Doc<'scenes'>): string {
   return scene.backgroundColour ?? DEFAULT_SCENE_BACKGROUND
+}
+
+/**
+ * The DM's prep for this board. **The only reader of the optional field.**
+ *
+ * `backgroundOf`'s arrangement exactly, for a string whose "none" is empty rather than a
+ * default worth naming. Absent and `''` would otherwise be two spellings of one meaning that
+ * every consumer has to agree about, so `scenes.setNotes` stores neither — it *removes* the
+ * column for a blank — and this is where the one remaining state becomes a value.
+ */
+export function notesOf(scene: Doc<'scenes'>): string {
+  return scene.notes ?? ''
+}
+
+/**
+ * Where this board sits in the DM's list. **The only reader of the optional field.**
+ *
+ * ⚠️ **Absent sorts LAST, which is why this is `Infinity` and not `0`.** Every scene in
+ * every game has no order until the DM first reorders one, and a default of 0 would make the
+ * first drag invert the untouched rows behind it — they would all still answer 0 and tie,
+ * then break on `_creationTime`, *above* whatever the DM had just moved to position 1. A new
+ * map belongs at the end, and `scenes.create` and `scenes.duplicate` both leave the column
+ * absent rather than computing a number for it.
+ *
+ * The tie-break is `_creationTime`, so a game nobody has reordered reads back in upload
+ * order — byte-identical to what `scenes.list` did before this field existed.
+ */
+export function orderOf(scene: Doc<'scenes'>): number {
+  return scene.order ?? Number.POSITIVE_INFINITY
+}
+
+/**
+ * The DM's order, or upload order for the scenes that have none.
+ *
+ * A comparator rather than a sort key, because two absent orders are both `Infinity` and
+ * `Infinity - Infinity` is `NaN` — a comparator that returns `NaN` leaves the array in
+ * whatever order the engine's sort happened to visit it in, which is the one failure mode
+ * here that looks like a rendering bug rather than a comparison bug.
+ */
+export function compareScenes(a: Doc<'scenes'>, b: Doc<'scenes'>): number {
+  const left = orderOf(a)
+  const right = orderOf(b)
+  if (left !== right) return left < right ? -1 : 1
+  return a._creationTime - b._creationTime
 }
 
 // `fogBaseOf` is the sibling of `backgroundOf` above and deliberately does **not** live here.
@@ -151,25 +195,71 @@ export const dmSceneValidator = publicSceneValidator.extend({
    * when the map's own blob has gone, which `publicScene` already says must not be an error.
    */
   thumbnailUrl: v.union(v.string(), v.null()),
+  /**
+   * ⚠️ **THE FIELD THIS FORK EXISTS FOR.** Required here even though the column is optional,
+   * which is the point of a projection: `notesOf` has already turned absent into `''`, so no
+   * client has to know the column arrived late or spell the default a second time.
+   */
+  notes: v.string(),
+  /**
+   * Where this row sits in the list that was just sorted: **0…n-1, always, with no gaps.**
+   *
+   * ⚠️ **NOT `orderOf(scene)`, and the difference is the interesting part of this field.**
+   * The stored column is optional and `orderOf` answers `Infinity` for an absent one — a
+   * perfectly good float64 that Convex stores and transmits, and a nonsense thing to hand a
+   * browser. It is also the wrong *question*: whether a row has been dragged is a storage
+   * detail, and what a client can use is where the row came in the order the server already
+   * computed. So this is the index, supplied by `scenes.list` after `listScenes` has sorted.
+   *
+   * That keeps the sort in exactly one place. A client that wanted to re-sort would need
+   * `orderOf`'s absent-sorts-last rule restated by hand, which is the second implementation
+   * `listScenes`' own note is written to prevent.
+   */
+  order: v.number(),
 })
 
 export type DmScene = Infer<typeof dmSceneValidator>
 
-export async function dmScene(ctx: QueryCtx, scene: Doc<'scenes'>): Promise<DmScene> {
+/** `position` is the row's index in the sorted list — see the ⚠️ on `order` above. */
+export async function dmScene(
+  ctx: QueryCtx,
+  scene: Doc<'scenes'>,
+  position: number,
+): Promise<DmScene> {
   const base = await publicScene(ctx, scene)
   // Two `getUrl` calls only when there is genuinely a second blob. A scene uploaded before
   // thumbnails existed resolves exactly one, and hands the same string back twice.
   const thumbnailUrl =
     scene.thumbnailId === undefined ? null : await ctx.storage.getUrl(scene.thumbnailId)
 
-  return { ...base, thumbnailUrl: thumbnailUrl ?? base.imageUrl }
+  return {
+    ...base,
+    thumbnailUrl: thumbnailUrl ?? base.imageUrl,
+    notes: notesOf(scene),
+    order: position,
+  }
 }
 
+/**
+ * Every board in a game, **in the DM's order**.
+ *
+ * ⚠️ **The sort is here rather than in `scenes.list`, so there is one answer.** Four other
+ * callers read this — two `…References…` predicates, the purge and `reorder`'s permutation
+ * check — and none of them cares about order, which is exactly why putting the comparator in
+ * the query would be safe today and wrong tomorrow: the second surface that lists scenes
+ * would sort for itself, and the two would disagree the first time `orderOf`'s
+ * absent-sorts-last rule was restated by hand. Twenty-five rows is a free sort.
+ *
+ * `Infinity` in the comparator is what a `v.number()` column can never hold, so it cannot
+ * collide with a real order — see `orderOf`.
+ */
 export async function listScenes(ctx: QueryCtx, gameId: Id<'games'>): Promise<Doc<'scenes'>[]> {
-  return await ctx.db
+  const scenes = await ctx.db
     .query('scenes')
     .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
     .take(MAX_SCENES_PER_GAME)
+
+  return scenes.sort(compareScenes)
 }
 
 /**
@@ -268,6 +358,98 @@ export async function otherSceneReferencesThumbnail(
 ): Promise<boolean> {
   const scenes = await listScenes(ctx, scene.gameId)
   return scenes.some((other) => other._id !== scene._id && other.thumbnailId === imageId)
+}
+
+// ─── A SCENE'S FOG, COPIED AND RESCALED ─────────────────────────────────────────────────
+//
+// ⚠️ **THESE TWO READ AND WRITE `fogRects` FROM OUTSIDE `lib/fog.ts`, WHICH THAT MODULE'S
+// HEADER SAYS IS THE ONLY READER. READ WHY BEFORE COPYING THE PATTERN.**
+//
+// That confinement is a **convention** and not a guard, and `lib/fog.ts` and
+// `leakGuard.test.ts` both say so at length: a fog rectangle goes to every client verbatim,
+// so its rows have no non-secret twin, there is no predicate for a choke point to be the home
+// of, and an entry in the leak guard's table would be a guard that cannot fail. Nothing here
+// is therefore a security exception — the two functions below leak nothing that `fog.list`
+// does not already publish to the whole table.
+//
+// What they *are* is misfiled, honestly and on purpose. They belong beside `deleteSceneFog`,
+// which is the same shape of thing — a scene-lifecycle sweep over rows keyed on a scene
+// alone — and they are here because the fog-shape work is in flight on a parallel branch and
+// a second author in that file is a merge conflict rather than a design. **Move them when it
+// lands**, and take this comment with them.
+//
+// ⚠️ **AND THE THING THAT MOVE HAS TO FIX.** A `fogRects` row today is `x`, `y`, `width`,
+// `height` — four numbers this file rescales and copies. The shape work adds polygons, which
+// carry a `points` array, and **neither function below touches it**: a duplicated polygon
+// would arrive with its points and no scaling, so `replaceImage` on a scene with polygons
+// would leave every polygon at the old map's scale while every rectangle moved. That is not
+// a guess left implicit — it is written here because the two commits cannot see each other,
+// and the merge that brings them together is the one place somebody can fix it.
+
+/**
+ * Every rectangle on one scene, copied onto another. For `scenes.duplicate`.
+ *
+ * Bounded by `MAX_FOG_RECTS_PER_SCENE` on the read, which is also the bound on the write:
+ * the source cannot hold more than the destination is allowed, so the copy cannot overrun a
+ * limit the draw path enforces.
+ *
+ * Fields are spelled out rather than spread, for `copyTokenRow`'s reason in `lib/board.ts`:
+ * a spread carries `_id` and `_creationTime` into an insert, and a rebuild is where a new
+ * column silently fails to be copied — which is exactly the polygon trap named above.
+ */
+export async function copySceneFog(
+  ctx: MutationCtx,
+  fromSceneId: Id<'scenes'>,
+  toSceneId: Id<'scenes'>,
+): Promise<number> {
+  const rows = await ctx.db
+    .query('fogRects')
+    .withIndex('by_sceneId', (q) => q.eq('sceneId', fromSceneId))
+    .take(MAX_FOG_RECTS_PER_SCENE)
+
+  for (const row of rows) {
+    await ctx.db.insert('fogRects', {
+      sceneId: toSceneId,
+      x: row.x,
+      y: row.y,
+      width: row.width,
+      height: row.height,
+    })
+  }
+  return rows.length
+}
+
+/**
+ * Multiply every rectangle on one scene by `k`. For `scenes.replaceImage`.
+ *
+ * A **uniform similarity transform**, which is the whole reason the mutation refuses an
+ * aspect-ratio change: one factor through both axes keeps a shape snapped to the old grid
+ * snapped to the new one, and two factors would shear every rectangle the DM drew against a
+ * square.
+ *
+ * No renormalising on the way through. `normaliseFogRect` guarantees a non-negative extent
+ * on the write path and `k` is positive, so a positive extent stays positive — a second
+ * opinion about the stored shape here would be a second place for it to be wrong.
+ */
+export async function scaleSceneFog(
+  ctx: MutationCtx,
+  sceneId: Id<'scenes'>,
+  k: number,
+): Promise<number> {
+  const rows = await ctx.db
+    .query('fogRects')
+    .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
+    .take(MAX_FOG_RECTS_PER_SCENE)
+
+  for (const row of rows) {
+    await ctx.db.patch('fogRects', row._id, {
+      x: row.x * k,
+      y: row.y * k,
+      width: row.width * k,
+      height: row.height * k,
+    })
+  }
+  return rows.length
 }
 
 /**

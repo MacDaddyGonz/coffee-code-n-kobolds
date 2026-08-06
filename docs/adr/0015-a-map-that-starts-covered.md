@@ -267,6 +267,107 @@ write. It is worth noticing that two milestones in a row have found the same lat
 unconditional delete is a bet that nothing will ever share the thing, and this project has now lost
 that bet twice.**
 
+### Notes, and the hazard the roadmap did not mention
+
+The roadmap asks for *notes (DM-only, per scene)* and says nothing else about them, which reads as
+the smallest item in the milestone. It is the one that could have shipped a leak.
+
+`scenes.active` is **ungated** — it is the one board the whole table is looking at, so every player
+subscribes to it — and `lib/scenes.ts` said in as many words that *nothing in a scene is a secret;
+the background image is what every player is looking at.* That sentence stopped being true the
+moment a scene could carry *the lich behind the altar is invisible until somebody casts detect
+magic*. A `notes` field on `publicSceneValidator` is CLAUDE.md invariant 1 broken by one line, in a
+milestone whose entire subject is what players may know.
+
+The split is described above and landed a commit early on purpose. What is worth adding here is the
+*test*: a fixture whose notes contain a distinctive string, scanned out of a real player payload,
+with the DM's own list as the positive control — `board.test.ts`'s and `feed.test.ts`'s shape,
+because a scan for an absent key passes trivially against a row that never had one.
+
+Two smaller decisions came with the column. **Blank removes it** rather than storing `''`, so there
+is one stored spelling of "none" (ADR 0008's convention) and `notesOf` is the one reader. And
+`requireSceneNotes` is **not** `requireText`: it allows a blank, and it does not collapse
+whitespace, because prose written in paragraphs is what the field is for and
+`collapseWhitespace` would flatten it to a line. It still rejects rather than truncating, and still
+measures UTF-16 units.
+
+### Order is stored, but the number a client is sent is the index
+
+`scenes.order` is optional and **absent sorts last**, because every scene in every game is in that
+state until the DM first drags one — a default of 0 would make the first reorder invert everything
+behind it. `orderOf` answers `Infinity`, `compareScenes` breaks ties on `_creationTime`, and the
+sort lives inside `listScenes` so there is one answer rather than one per query.
+
+⚠️ **The projected `order` is deliberately not `orderOf`'s answer.** `Infinity` is a perfectly good
+float64 that Convex stores and transmits, and a nonsense thing to hand a browser; it is also the
+wrong question, because whether a row has been dragged is a storage detail. What the DM's screen can
+use is *where this row came in the order the server already computed*, so `scenes.list` passes the
+index and the field is always 0…n-1.
+
+`reorder` takes the **whole ordered list** and validates it is a permutation of this game's scenes —
+`board.setControllers`' argument for a second table. The DM means *this order*, and a loop of N
+"move up" calls is that intention spread across N transactions, where a refresh in the middle shows
+a list nobody chose. A prefix is refused rather than accepted, because the unnamed rows would keep
+whatever numbers they had; a repeat is refused because two rows at one index puts the tie-break in
+charge.
+
+### Duplicate: one choice, and a shared blob
+
+*A wall is a property of the map; a placement and a fog shape are where things are tonight.* That
+sentence decides the split, and it is one boolean rather than three checkboxes because it answers
+every case a DM actually has: the same room laid out again, or the same room empty.
+
+The image and the thumbnail are **shared**, which invariant 6 requires and which is what broke the
+two deletes above. The **tokens** are shared too and only their placements are copied — a duplicated
+map has the same recurring villain standing on it, and renaming it renames both, which is what
+copying an encounter means. A copy does not become active and does not stamp.
+
+⚠️ **`${name} (copy)` can overflow `MAX_SCENE_NAME_LENGTH`, and this is the third appearance of the
+Milestone 1 lone-surrogate bug — the first where the *app* supplies the over-long part.** No field's
+`maxLength` could have caught it, because nobody typed it. `sceneCopyName` reserves the suffix's
+budget and spends the rest through `truncateCodePoints`, which measures UTF-16 units while stepping
+whole code points: the same unit `requireSceneName` counts in, and no split surrogate. Cutting the
+whole result instead would take the suffix off and produce a second map called almost what the first
+one is.
+
+### Replace: one factor, or a refusal
+
+Every coordinate in this application is in the stored image's pixel space, so replacing the blob
+moves everything. The rejected alternatives are a schema migration of every position row in every
+game to store normalised coordinates, and doing nothing — which silently puts an afternoon of
+calibration and fog in the wrong place with no error anywhere.
+
+⚠️ **An aspect-ratio change beyond ~1% is refused**, because a different shape needs two scale
+factors and two factors shear every square the DM aligned against a printed grid. `k === 1` skips
+every rewrite, which is the common case rather than an optimisation: re-exporting a map at the same
+size after redrawing a room is what a DM does, and multiplying two hundred placements by 1 is two
+hundred writes that change nothing and re-push the board to the whole table.
+
+⚠️ **The scaled `gridSize` can leave `isUsableGrid`, the roadmap does not say what to do, and the
+answer is REFUSE rather than clamp.** A calibration silently pinned to `MIN_GRID_SIZE` is a grid that
+no longer lines up with the map, discovered mid-session by a DM with no way to know the app changed
+their number — and a "successful" replace is exactly the state in which nobody looks. A refusal names
+the reason and leaves the old map in place, which is something they can act on. It is the same
+principle as the aspect refusal one paragraph up: **where this mutation cannot preserve the
+relationship, it declines rather than asserting a new one.** Placements are not re-snapped afterwards
+for the mirror of that reason — the grid moved by the same factor, so a coin centred on a square
+still is, and a snap would quietly correct the drift that would have told the DM something was wrong.
+
+### One thing this milestone put in the wrong file on purpose
+
+`copySceneFog` and `scaleSceneFog` read and write `fogRects` from `lib/scenes.ts`, and `lib/fog.ts`'s
+header says it is the only reader of that table. Nothing is leaked — that confinement is a
+convention rather than a guard, argued at length in both that file and `leakGuard.test.ts`, because a
+fog rectangle goes to every client verbatim and has no non-secret twin. They are misfiled because the
+fog-shape work was in flight on a parallel branch and a second author in that file is a merge
+conflict rather than a design.
+
+⚠️ **The merge that moves them has one thing to fix.** A `fogRects` row today is four numbers. The
+shape work adds polygons with a `points` array, and neither function touches it — so a duplicated
+polygon would arrive unscaled, and `replaceImage` would move every rectangle and leave every polygon
+at the old map's scale. It is written into the code as well as here, because the two commits cannot
+see each other and the merge is the one place somebody can fix it.
+
 ## Consequences
 
 ### Good
@@ -285,6 +386,13 @@ that bet twice.**
 - **`characters.vitals` and `feed.list` read `scenes` now**, so a calibration drag re-pushes them.
 - **The paint inversion is held by a hand check.** There is nothing in `npm test` that can look at a
   canvas.
+- **A crashed tab now leaks two blobs instead of one.** Still the game-editor milestone's sweeper,
+  and named rather than left implicit.
+- **`copySceneFog` and `scaleSceneFog` are in `lib/scenes.ts` and belong in `lib/fog.ts`**, and
+  neither handles a polygon's `points`. Both are marked in the code; the merge with the shape work
+  is the commit that owes the fix.
+- **`scenes.list` now resolves up to two signed URLs per row instead of one**, for a query only the
+  DM subscribes to. A scene with no thumbnail still resolves exactly one.
 - **Fog is still a map tool and not a secrecy tool**, and a covered map does not change that. The
   background image is still fully downloaded, and a creature's *name and art* still travel in
   `board.tokens` — what fog takes is where something is, how hurt it is and what it just rolled. A

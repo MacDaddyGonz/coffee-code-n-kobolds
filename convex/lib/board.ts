@@ -1494,6 +1494,84 @@ export async function deleteScenePlacements(
 }
 
 /**
+ * Every placement on one scene, copied onto another. For `scenes.duplicate`'s
+ * *include what is standing on it* half.
+ *
+ * ⚠️ **The tokens are shared and only the placements are copied**, which is the
+ * arrangement `scenes.remove`'s docblock already describes from the other direction:
+ * a placement points at a scene and at a token, and a token belongs to the game and
+ * knows nothing about which boards it stands on. So a duplicated map has the same
+ * recurring villain standing on it, in the same square, and the two boards' coins are
+ * one coin — renaming it renames both, which is what a DM copying an encounter means.
+ * Copying the `tokens` rows would be `board.duplicateToken`'s act performed without
+ * being asked, twenty times over.
+ *
+ * It lives here rather than in `lib/scenes.ts` because every read of `tokenPositions`
+ * does (CLAUDE.md invariant 8), and `leakGuard.test.ts` greps the sources to prove it.
+ * No layer test and no `maySee`: a copy is not a question about contents, and the
+ * caller is `requireDm`-gated — the same reasoning `deleteTokensInGame` states, with a
+ * *number* leaving and never a row.
+ *
+ * Bounded by `MAX_PLACEMENTS_PER_SCENE` on both sides, since the source cannot hold
+ * more than the destination is allowed to.
+ */
+export async function copyScenePlacements(
+  ctx: MutationCtx,
+  fromSceneId: Id<'scenes'>,
+  toSceneId: Id<'scenes'>,
+): Promise<number> {
+  const placements = await ctx.db
+    .query('tokenPositions')
+    .withIndex('by_sceneId', (q) => q.eq('sceneId', fromSceneId))
+    .take(MAX_PLACEMENTS_PER_SCENE)
+
+  for (const placement of placements) {
+    await ctx.db.insert('tokenPositions', {
+      sceneId: toSceneId,
+      tokenId: placement.tokenId,
+      x: placement.x,
+      y: placement.y,
+    })
+  }
+  return placements.length
+}
+
+/**
+ * Multiply every placement on one scene by `k`. For `scenes.replaceImage`.
+ *
+ * ⚠️ **Not snapped afterwards, and that is a decision rather than an omission.** Every
+ * coordinate in this application is in the stored image's pixel space, so replacing the
+ * blob with a bigger or smaller one moves everything — and the grid is multiplied by the
+ * *same* factor in the same transaction, so a token that was centred on a square is
+ * still centred on it. Running `snapToGrid` over the result would re-decide a placement
+ * the DM did not touch, and it would quietly correct exactly the drift that would tell
+ * them the factor was wrong. A uniform similarity transform preserves the relationship;
+ * a snap asserts one.
+ *
+ * The other reason is that this is the one write to `tokenPositions` that is not a
+ * *move*. `board.moveToken` snaps server-side because a client bug must not leave a coin
+ * resting between squares (CLAUDE.md invariant 2); nothing here came from a client.
+ */
+export async function scaleScenePlacements(
+  ctx: MutationCtx,
+  sceneId: Id<'scenes'>,
+  k: number,
+): Promise<number> {
+  const placements = await ctx.db
+    .query('tokenPositions')
+    .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
+    .take(MAX_PLACEMENTS_PER_SCENE)
+
+  for (const placement of placements) {
+    await ctx.db.patch('tokenPositions', placement._id, {
+      x: placement.x * k,
+      y: placement.y * k,
+    })
+  }
+  return placements.length
+}
+
+/**
  * Every token in a game, with its placements and its art. For the purge tool in
  * `convex/admin.ts`, and for nothing a client can reach.
  *

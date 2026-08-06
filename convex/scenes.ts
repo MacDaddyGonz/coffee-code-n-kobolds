@@ -3,25 +3,28 @@ import { ConvexError, v } from 'convex/values'
 import { mutation, query } from './_generated/server'
 import type { QueryCtx } from './_generated/server'
 import type { Id } from './_generated/dataModel'
-import { deleteScenePlacements } from './lib/board'
+import { copyScenePlacements, deleteScenePlacements, scaleScenePlacements } from './lib/board'
 import { colourProblem } from './lib/colour'
 import { deleteSceneFog } from './lib/fog'
 import { fogBaseOf, fogBaseValidator } from './lib/fogBase'
 import { MAX_SCENES_PER_GAME, findGameByCode, requireDm, stampReveal } from './lib/games'
 import { MIN_GRID_SIZE, gridSizeFor, isUsableGrid } from './lib/grid'
-import { requireSceneName } from './lib/names'
+import { requireSceneName, requireSceneNotes, sceneCopyName } from './lib/names'
 import {
   DEFAULT_SQUARES_ACROSS,
   MAX_SCENE_BYTES,
   MAX_THUMB_BYTES,
+  copySceneFog,
   dmScene,
   dmSceneValidator,
   getSceneInGame,
   listScenes,
+  notesOf,
   otherSceneReferencesImage,
   otherSceneReferencesThumbnail,
   publicScene,
   publicSceneValidator,
+  scaleSceneFog,
 } from './lib/scenes'
 
 /**
@@ -72,10 +75,10 @@ export const list = query({
   returns: v.array(dmSceneValidator),
   handler: async (ctx, args) => {
     const game = await requireDm(ctx, args.code, args.dmCode)
+    // Already in the DM's order — `listScenes` sorts, so that rule lives in one place — and
+    // the index it came back in *is* each row's `order`. See the ⚠️ on that field.
     const scenes = await listScenes(ctx, game._id)
-    // Oldest first: Convex appends _creationTime to every index, so the DM's list
-    // stays in the order they uploaded rather than reshuffling on each render.
-    return await Promise.all(scenes.map((scene) => dmScene(ctx, scene)))
+    return await Promise.all(scenes.map((scene, index) => dmScene(ctx, scene, index)))
   },
 })
 
@@ -365,6 +368,338 @@ export const rename = mutation({
     const game = await requireDm(ctx, args.code, args.dmCode)
     const scene = await getSceneInGame(ctx, game._id, args.sceneId)
     await ctx.db.patch('scenes', scene._id, { name: requireSceneName(args.name) })
+    return null
+  },
+})
+
+/**
+ * The DM's prep for this board.
+ *
+ * ⚠️ **A blank REMOVES the column rather than storing `''`.** Convex's `patch` deletes a
+ * field given `undefined`, and using it is what keeps "no notes" to one stored spelling —
+ * ADR 0008's convention, which exists because two spellings of one meaning is a thing every
+ * field-by-field rebuild afterwards has to agree about. `notesOf` is the only reader and it
+ * answers `''` either way, so nothing downstream can tell the difference or has to.
+ *
+ * Its own mutation for `setBackground`'s reason: one field, one call, and nothing about it
+ * belongs to the grid calibration it would otherwise ride along with.
+ *
+ * **No `stampReveal`.** Writing prep nobody but the DM can read reveals nothing, and
+ * `fogActReveals`' cost argument runs the other way here — a stamp too many retires the
+ * flourish on every feed line older than it, for an act no player can observe at all.
+ */
+export const setNotes = mutation({
+  args: { code: v.string(), dmCode: v.string(), sceneId: v.id('scenes'), notes: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    // Argument-first, so an over-long note costs no reads — `setBackground`'s ordering.
+    const notes = requireSceneNotes(args.notes)
+
+    const game = await requireDm(ctx, args.code, args.dmCode)
+    const scene = await getSceneInGame(ctx, game._id, args.sceneId)
+    if (notesOf(scene) === notes) return null
+
+    await ctx.db.patch('scenes', scene._id, { notes: notes === '' ? undefined : notes })
+    return null
+  },
+})
+
+/**
+ * The DM's list, in the order they want it. **The whole list, every time.**
+ *
+ * ⚠️ **It takes the entire ordering rather than a scene and a direction, and that is
+ * `board.setControllers`' argument arriving for a second table.** The DM means *this order*,
+ * and a loop of N calls is that intention spread across N transactions: a browser that
+ * refreshes between the third and the fourth shows a list nobody chose, and two DMs pressing
+ * the arrows at once interleave into an order neither asked for. Twenty-five patches in one
+ * transaction is cheap and is the thing that was meant.
+ *
+ * ⚠️ **A permutation, checked, and not a prefix.** Accepting a partial list would leave the
+ * unnamed scenes holding whatever numbers they had, which is a list the next reorder cannot
+ * reason about — and accepting one with a repeat would give two rows the same index and put
+ * the tie-break in charge. So the check is exact: same length, same set, this game's scenes
+ * only. `getSceneInGame` is what makes "this game's" true, and a foreign id refuses rather
+ * than being ignored, because an ignored id is a UI that silently did something else.
+ *
+ * Ordinals are the **array index** rather than the numbers the rows already hold, so the
+ * result is 0…n-1 with no gaps whatever it was before. A list where every row has an order
+ * is the state `orderOf`'s absent-sorts-last rule never has to be thought about again in.
+ *
+ * The membership check reads the game's scenes **once** and then answers from that list,
+ * rather than calling `getSceneInGame` twenty-five times: it is the same question, and one
+ * range read is what `deleteTokensInGame` already had to be corrected to.
+ */
+export const reorder = mutation({
+  args: { code: v.string(), dmCode: v.string(), sceneIds: v.array(v.id('scenes')) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const game = await requireDm(ctx, args.code, args.dmCode)
+    const scenes = await listScenes(ctx, game._id)
+    const byId = new Map(scenes.map((scene) => [scene._id, scene]))
+
+    const named = new Set(args.sceneIds)
+    if (named.size !== args.sceneIds.length || named.size !== scenes.length) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message: 'Reordering needs every map in the game, each named once.',
+      })
+    }
+    // Every named id belongs to this game — and, given the two counts above, every scene in
+    // the game is therefore named. One direction implies the other only because the sizes
+    // match, which is why the length check is not decoration.
+    for (const sceneId of args.sceneIds) {
+      if (!byId.has(sceneId)) {
+        throw new ConvexError({
+          kind: 'SceneNotFound',
+          message: 'That scene is not in this game.',
+        })
+      }
+    }
+
+    for (const [index, sceneId] of args.sceneIds.entries()) {
+      // No-op guarded per row, like `setTokenLayer`: a patch that changes nothing still
+      // invalidates every subscription reading it, and swapping two rows in a list of
+      // twenty-five should re-push two documents rather than twenty-five.
+      if (byId.get(sceneId)?.order === index) continue
+      await ctx.db.patch('scenes', sceneId, { order: index })
+    }
+    return null
+  },
+})
+
+/**
+ * Copy a board. **One choice, not three checkboxes.**
+ *
+ * ⚠️ **The blob is SHARED and never copied** (CLAUDE.md invariant 6). Four megabytes
+ * duplicated on a press is a quarter of a game's map budget spent on a picture that is
+ * byte-identical to one already in storage, and the free tier's 1 GB is what the whole
+ * downscaler exists to defend. The thumbnail is shared for the same reason and the same
+ * arithmetic. That sharing is what broke two unconditional deletes, which is why the commit
+ * before this one made `scenes.remove` conditional and deduplicated the purge.
+ *
+ * **What a copy always takes, and the sentence that decides it:** *a wall is a property of
+ * the map; a placement and a fog shape are where things are tonight.* So the image, the
+ * thumbnail, the grid calibration, the fog base, the notes and the background colour come
+ * across unconditionally — they describe the map — and the token placements and the fog
+ * shapes come only when asked. One boolean rather than three checkboxes, because that
+ * sentence answers every case a DM actually has: *the same room, laid out again* or *the
+ * same room, empty*.
+ *
+ * (Walls do not exist yet. When they do they belong on the unconditional side, and
+ * `copySceneFog`'s header names the polygon field that the same merge has to bring with it.)
+ *
+ * ⚠️ **It does not become active and it does not stamp.** Copying a map is preparation, and
+ * a duplicate that put itself on the table would move the whole party onto a board the DM
+ * made to work on. `scenes.create` makes the *first* map active because there is only one
+ * possible answer then; here there are two, and the DM picks. Nothing about a copy is a
+ * reveal either — the rows land on a scene nobody is looking at — so `stampReveal` would
+ * retire the flourish on every feed line older than it for an act no player can observe.
+ *
+ * The copy's `order` is left absent, which sorts it last. That is the same choice
+ * `scenes.create` makes, and it is the useful one: a new row belongs at the end of the list
+ * rather than beside the row it came from, where it would silently renumber everything after.
+ */
+export const duplicate = mutation({
+  args: {
+    code: v.string(),
+    dmCode: v.string(),
+    sceneId: v.id('scenes'),
+    /** The placements and the fog shapes. Everything else comes across regardless. */
+    includeContents: v.boolean(),
+  },
+  returns: v.object({ sceneId: v.id('scenes') }),
+  handler: async (ctx, args) => {
+    const game = await requireDm(ctx, args.code, args.dmCode)
+    const source = await getSceneInGame(ctx, game._id, args.sceneId)
+
+    // The same bound `create` enforces, for the same reason: a scene past the read window
+    // could never be found again by the panel that would let the DM delete it.
+    const existing = await listScenes(ctx, game._id)
+    if (existing.length >= MAX_SCENES_PER_GAME) {
+      throw new ConvexError({
+        kind: 'GameFull',
+        message: `This game already has ${MAX_SCENES_PER_GAME} scenes.`,
+      })
+    }
+
+    // ⚠️ Field by field rather than `{ ...source }`, which would carry `_id` and
+    // `_creationTime` into the insert — and, more to the point, would copy a future column
+    // nobody had thought about. `copyTokenRow` in lib/board.ts carries the long version, plus
+    // the warning that an optional field spelled as an explicit `undefined` is a *different
+    // write* from an omitted one against a real deployment, which convex-test cannot see.
+    const sceneId = await ctx.db.insert('scenes', {
+      gameId: game._id,
+      // `requireSceneName` still runs, because `sceneCopyName` reserves the suffix's budget
+      // and a refusal here would mean the two disagree — which is worth finding in a test
+      // rather than in front of the table.
+      name: requireSceneName(sceneCopyName(source.name)),
+      imageId: source.imageId,
+      ...(source.thumbnailId === undefined ? {} : { thumbnailId: source.thumbnailId }),
+      imageWidth: source.imageWidth,
+      imageHeight: source.imageHeight,
+      gridSize: source.gridSize,
+      gridOffsetX: source.gridOffsetX,
+      gridOffsetY: source.gridOffsetY,
+      gridVisible: source.gridVisible,
+      ...(source.backgroundColour === undefined
+        ? {}
+        : { backgroundColour: source.backgroundColour }),
+      ...(source.fogBase === undefined ? {} : { fogBase: source.fogBase }),
+      ...(source.notes === undefined ? {} : { notes: source.notes }),
+    })
+
+    if (args.includeContents) {
+      await copyScenePlacements(ctx, source._id, sceneId)
+      await copySceneFog(ctx, source._id, sceneId)
+    }
+
+    return { sceneId }
+  },
+})
+
+/**
+ * ⚠️ **How far two aspect ratios may differ and still be the same map.**
+ *
+ * One percent, which is a rounding error rather than a crop: the downscaler rounds both
+ * edges to whole pixels, so 2240 × 1680 re-exported at 2560 lands on 2560 × 1920 exactly but
+ * an odd-numbered source can come back a pixel out — 0.05% on a map that size. A DM who
+ * cropped a border off, or exported the same dungeon at a different page size, is past this
+ * within a few pixels of doing it, which is the case the refusal is for.
+ */
+const MAX_ASPECT_DRIFT = 0.01
+
+/**
+ * Swap the picture under a board without losing its grid, its fog or where everything is
+ * standing.
+ *
+ * ⚠️ **Every coordinate in this application is in the stored image's pixel space, so
+ * replacing the blob moves everything.** The grid is pixels-per-square; a placement is a
+ * pixel point; a fog rectangle is a pixel rectangle. Swap a 2240 px map for a 2560 px one and
+ * every one of those numbers now means something 14% smaller than it did. The alternative
+ * designs are worse in an obvious way and a subtle one: storing normalised coordinates is a
+ * schema migration of every position row in every game to buy this one mutation, and doing
+ * nothing means a DM's afternoon of calibration and fog silently ends up in the wrong place
+ * with no error anywhere.
+ *
+ * In order, and every check before every write:
+ *
+ * 1. **The blobs**, against the stored bytes rather than the client's word for them — the
+ *    same shape `scenes.create` uses, for CLAUDE.md invariant 6's reason.
+ * 2. ⚠️ **An aspect-ratio change beyond a whisker is refused**, with the advice rather than
+ *    a diagnosis: *that map is a different shape; add it as a new map instead.* A different
+ *    shape needs two scale factors, and two factors shear every square the DM aligned
+ *    against a printed grid — a "successful" replace that quietly makes the calibration
+ *    wrong is worse than a refusal, because nothing on screen says so.
+ * 3. `k = newWidth / oldWidth`, one factor, a **uniform similarity transform** — so a shape
+ *    snapped to the old grid is snapped to the new one.
+ * 4. ⚠️ **`k === 1` skips every rewrite, and that is the common case rather than an
+ *    optimisation.** Re-exporting a map at the same size is what a DM does when they redraw
+ *    a room, and multiplying two hundred placements by 1 is two hundred writes that change
+ *    nothing and re-push the board to the whole table.
+ * 5. Otherwise the one factor goes through the grid, every placement and every fog shape.
+ * 6. The **old** blobs are reclaimed conditionally, through the same siblings `scenes.remove`
+ *    uses, because a duplicate may still be drawing them.
+ *
+ * ⚠️ **A scaled `gridSize` that leaves `isUsableGrid` REFUSES rather than being clamped**,
+ * and the roadmap does not say which. Clamping is the wrong answer for the reason the whole
+ * mutation exists: a calibration silently pinned to `MIN_GRID_SIZE` is a grid that no longer
+ * lines up with the map, discovered by a DM who is mid-session and has no way to know the
+ * app changed their number. A refusal names the reason and leaves the old map in place,
+ * which is a state they can act on. It is unreachable at any sane scale — `MIN_GRID_SIZE` is
+ * 4 px and `MAX_GRID_SIZE` is 2000 — and it is checked because `MAX_SCENE_BYTES` does not
+ * bound a *dimension* and a 20 px-wide upload is a client bug rather than a map.
+ *
+ * **It does not stamp.** Rescaling fog moves every shape by the same factor and reveals
+ * nothing that was hidden; the party is looking at a map that changed under them, and
+ * `fogActReveals` has nothing to say about an act that is not a fog act.
+ */
+export const replaceImage = mutation({
+  args: {
+    code: v.string(),
+    dmCode: v.string(),
+    sceneId: v.id('scenes'),
+    imageId: v.id('_storage'),
+    thumbnailId: v.optional(v.id('_storage')),
+    imageWidth: v.number(),
+    imageHeight: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const game = await requireDm(ctx, args.code, args.dmCode)
+    const scene = await getSceneInGame(ctx, game._id, args.sceneId)
+
+    if (!isUsableImageSize(args.imageWidth) || !isUsableImageSize(args.imageHeight)) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message: 'That image has no usable width and height.',
+      })
+    }
+
+    await requireStoredBlob(ctx, args.imageId, SCENE_IMAGE_LIMIT)
+    if (args.thumbnailId !== undefined) {
+      await requireStoredBlob(ctx, args.thumbnailId, SCENE_THUMB_LIMIT)
+    }
+
+    const was = scene.imageWidth / scene.imageHeight
+    const now = args.imageWidth / args.imageHeight
+    if (Math.abs(now - was) > was * MAX_ASPECT_DRIFT) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message: 'That map is a different shape. Add it as a new map instead.',
+      })
+    }
+
+    const k = args.imageWidth / scene.imageWidth
+    const grid = {
+      gridSize: scene.gridSize * k,
+      gridOffsetX: scene.gridOffsetX * k,
+      gridOffsetY: scene.gridOffsetY * k,
+    }
+    // Checked before anything is written, and refused rather than clamped — see the ⚠️ above.
+    if (k !== 1 && !isUsableGrid(grid)) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message:
+          'Scaling this map’s grid to that size would leave a grid that cannot be drawn. Recalibrate the grid first, or add the image as a new map.',
+      })
+    }
+
+    const previousImageId = scene.imageId
+    const previousThumbnailId = scene.thumbnailId
+
+    await ctx.db.patch('scenes', scene._id, {
+      imageId: args.imageId,
+      // Absent clears the column, which is right: the replacement was uploaded without a
+      // derivative, so keeping the old map's thumbnail would draw the picture that is no
+      // longer there. `dmScene` then falls back to the new map.
+      thumbnailId: args.thumbnailId,
+      imageWidth: args.imageWidth,
+      imageHeight: args.imageHeight,
+      ...(k === 1 ? {} : grid),
+    })
+
+    if (k !== 1) {
+      await scaleScenePlacements(ctx, scene._id, k)
+      await scaleSceneFog(ctx, scene._id, k)
+    }
+
+    // Reclaimed only if no duplicate is still drawing them, and only if the swap actually
+    // changed them — re-uploading the identical blob id is a no-op, not a reason to delete
+    // the bytes the row now points at. The row is already patched, so `otherScene…`'s `_id`
+    // exclusion is what makes these correct rather than the ordering.
+    if (
+      previousImageId !== args.imageId &&
+      !(await otherSceneReferencesImage(ctx, scene, previousImageId))
+    ) {
+      await ctx.storage.delete(previousImageId)
+    }
+    if (
+      previousThumbnailId !== undefined &&
+      previousThumbnailId !== args.thumbnailId &&
+      !(await otherSceneReferencesThumbnail(ctx, scene, previousThumbnailId))
+    ) {
+      await ctx.storage.delete(previousThumbnailId)
+    }
     return null
   },
 })
