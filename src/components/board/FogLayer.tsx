@@ -72,6 +72,21 @@ export type FogLayerProps = {
   scene: PublicScene
   /** The camera's scale, needed for the same reason `GridOverlay` needs it. */
   scale: number
+  /**
+   * Whether the DM has asked to see the table's board — `useBoardLayers`' `tableView`.
+   *
+   * ⚠️ **It paints and it does not filter.** The only thing it changes here is the layer's
+   * opacity: the DM's veil is translucent so they can work under it, and the party's is not,
+   * so previewing the party's screen means painting theirs. Every rectangle this component
+   * holds arrived the same way it always does — `fog.list` is ungated and sends all of them
+   * to everybody. See `useBoardLayers` for why this distinction is stated everywhere it
+   * appears rather than once.
+   *
+   * A prop rather than a second read of the store, unlike `useFogMode` beside it, because
+   * `Board` is already holding it for `TokenLayers` and the badge. One cell, one read, three
+   * consumers.
+   */
+  tableView: boolean
 }
 
 /**
@@ -111,7 +126,13 @@ export type FogLayerProps = {
  * numbers; the mode and the rectangles arrive through hooks rather than props, so arming a
  * tool and drawing a rectangle still re-render this regardless of the memo.
  */
-export const FogLayer = memo(function FogLayer({ code, dmCode, scene, scale }: FogLayerProps) {
+export const FogLayer = memo(function FogLayer({
+  code,
+  dmCode,
+  scene,
+  scale,
+  tableView,
+}: FogLayerProps) {
   const isDm = dmCode !== null
   const rects = useFog(code, scene._id, dmCode)
   const { mode } = useFogMode(code)
@@ -229,7 +250,22 @@ export const FogLayer = memo(function FogLayer({ code, dmCode, scene, scale }: F
       : flatten(polygon.cursor === null ? polygon.points : [...polygon.points, polygon.cursor])
 
   return (
-    <Layer listening={drawing || tracing || erasing} opacity={isDm ? DM_FOG_OPACITY : 1}>
+    /*
+      ⚠️ **The opacity is where the table-view toggle lands, and it is the whole of what it
+      does here.** `DM_FOG_OPACITY` exists because a DM has to work under their own veil; a
+      player's veil is the wall, so it is opaque. Asking to see the table's board therefore
+      means painting the party's opacity, and a preview that left the veil translucent would
+      be a preview of a screen nobody has — the DM would look through the fog at the coins
+      the same toggle has just taken out of the picture, which is worse than not previewing.
+
+      Deliberately on the `Layer` and not on the shapes, which is unchanged and load-bearing:
+      `destination-out` composites against this layer's own canvas, so a hole in a covered
+      map is a hole rather than a lighter patch. See the ⚠️ further down.
+    */
+    <Layer
+      listening={drawing || tracing || erasing}
+      opacity={isDm && !tableView ? DM_FOG_OPACITY : 1}
+    >
       {/*
         The draw surface: the map itself, made pressable, and only while the DM is
         holding the draw tool. It spans the image and nothing beyond it, which is the

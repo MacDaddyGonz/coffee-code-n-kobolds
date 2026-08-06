@@ -5,6 +5,7 @@ import { BoardEmpty } from '@/components/board/BoardEmpty'
 import { BoardStage } from '@/components/board/BoardStage'
 import { BoardTokenMenu } from '@/components/board/BoardTokenMenu'
 import { BoardToolbar } from '@/components/board/BoardToolbar'
+import { TableViewBadge } from '@/components/board/TableViewBadge'
 import { FogLayer } from '@/components/board/FogLayer'
 import { TokenHpPopover } from '@/components/board/TokenHpPopover'
 import { TokenLayers } from '@/components/board/TokenLayers'
@@ -642,6 +643,11 @@ export function Board({
               dmCode={dm.dmCode}
               scene={scene}
               scale={camera.camera.scale}
+              // Paints the party's opaque veil instead of the DM's translucent one. It
+              // changes nothing about what arrived — `fog.list` is ungated — and
+              // `useBoardLayers` spends a paragraph on why that distinction is restated at
+              // every one of this toggle's three consumers rather than written once.
+              tableView={layers.tableView}
             />
             <TokenLayers
               tokens={tokens}
@@ -652,6 +658,11 @@ export function Board({
               // arrived — the secrecy filter ran on the server. See `TokenLayers`.
               isDm={board.isDm}
               shown={layers.shown}
+              // The other half of the same toggle. `hiddenFromParty` is already on each
+              // token, computed once for the whole board in `useBoard` and `isDm &&`-gated
+              // there, so this is a boolean deciding whether to read it — never a second
+              // containment test.
+              hideFogged={layers.tableView}
               // Held space turns the whole board into a pan surface, so a press that
               // lands on a token has to move the view rather than the creature. The
               // calibration handles borrow the same mechanism: while the box is out, a
@@ -817,6 +828,25 @@ export function Board({
             onToggleCalibrate={onToggleCalibrate}
             className="top-3 left-3"
           />
+          {/*
+            ⚠️ **Top-right, on the map, and it is not in the toolbar opposite it on purpose.**
+            The toolbar holds controls that are always there; this is a notice that a mode is
+            on, and a notice that shares a surface with four permanent buttons is one the eye
+            stops reading after the second session. Roll20's documentation says GMs lose track
+            of this mode constantly, and a toggle you cannot see from the map is why —
+            `TableViewBadge` carries the argument.
+
+            `board.isDm` gates it because "the table cannot see this" is only a sentence about
+            somebody else from the DM's chair. It authorises nothing: every consumer of
+            `tableView` is already correct for a player without an `isDm` of its own, which is
+            the arrangement `useBoardLayers` argues for rather than a gap this fills.
+          */}
+          {board.isDm && layers.tableView ? (
+            <TableViewBadge
+              onExit={() => layers.setView('all')}
+              className="absolute top-3 right-3"
+            />
+          ) : null}
         </>
       ) : (
         <BoardEmpty scene={scene} isDm={board.isDm} />

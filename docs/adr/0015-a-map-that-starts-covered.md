@@ -241,6 +241,71 @@ untouched. `fog.draw`'s argument is now a union, so six call sites across four s
 moved and not one assertion did**, which is the weaker claim that is still worth making: what the
 union changed is how a shape is spelled on the way in, and nothing at all about what fog does.
 
+### The DM's view of the board applies the fog, and a badge says so
+
+"Your view of the board" already showed the DM the party's *layers*. It now also applies the
+*fog*: the veil is painted at the party's opacity rather than the DM's, and the coins the party
+has lost sight of are left out of the picture.
+
+**No new state.** `view === 'player'` means both, because both are the same act — *show me their
+screen* — and a second switch would let the DM sit in a state that is neither screen while being
+sure they had previewed something they had not. `useBoardLayers` grew one derived member,
+`tableView`, beside `shown` and on `shown`'s terms: derived from `view`, stored nowhere, because
+two spellings of one fact is how a toggle comes to disagree with the board it toggles.
+
+⚠️⚠️ **IT IS A PREFERENCE AND NEVER A PERMISSION, AND THE FOG CASE IS THE ONE WHERE SOMEBODY WILL
+CALL IT A FILTER.** That hook's docblock already said it of the layer half; the sentence is
+inherited verbatim and the fog half needs it stated harder, so it is written at all three
+consumers rather than once.
+
+**This is the browser choosing what to paint of a payload it is fully entitled to.** The DM was
+sent every position row, every health band and every feed line on that board, because
+`resolveDmAccess` said so. Nothing is withheld from this client, and nothing is being withheld *by*
+this cell. Leaving a coin unpainted is a drawing decision in exactly the register `shown` already
+occupies.
+
+**It is not a filter and must never be described as one.** The withholding that matters happened in
+`visiblePositions` and `boardCharacterAccess`, server-side, before the party's payload existed. If
+this cell were ever the thing keeping something off a screen, the secret would already have been
+sent to the browser that must not have it — the inversion CLAUDE.md invariant 1 forbids. A
+hand-edited `localStorage` key reveals nothing here, because there is nothing on this payload this
+client was not entitled to.
+
+Stated the other way round, because it is the honest half: **the preview is an approximation and
+says so.** It answers *what would the party's board look like* by re-running the server's own
+predicates over the DM's payload — `hiddenFromParty` shares `anyShapeCovers` with `veiled` for
+exactly that reason, and is read off the token rather than recomputed at the canvas — rather than
+by asking the server for a player's payload, which would need a second subscription keyed by a seat
+this browser does not hold.
+
+⚠️ **A persistent badge on the map, and Roll20's own documentation is the argument for it.** GMs
+there lose track of this mode constantly, and the reason is that the toggle is not visible from the
+map: the DM previews, gets distracted, and then wonders where their ambush went — or places three
+creatures onto a board missing half of what is on it. So `TableViewBadge` sits on the top-right of
+the board pane whenever `isDm && tableView`, and clicking it returns to Everything. The control
+that turns a mode on and the notice that it is on are two different jobs, and only one of them has
+to be on the thing being modified.
+
+It is **HTML and not Konva**, which is not a preference: it has to be legible at any zoom and it
+has to be clickable, and a Konva node is neither for free — it would scale with the camera, need
+its own hit target, and sit inside a stage whose layers this very mode is rearranging. It reuses
+`BOARD_OVERLAY_SURFACE` and is positioned by its caller, exactly as `ZoomControls` is. It is
+deliberately **not** a fifth button in `BoardToolbar` opposite it: that bar holds controls that are
+always there, and a notice sharing a surface with four permanent buttons is one the eye stops
+reading after the second session.
+
+⚠️ **`LayerView` and its `localStorage` key are unrenamed on purpose.** The union now decides more
+than layers and `BoardView` would be a better name for it, but renaming a persisted key silently
+resets the preference for everybody who had one — a cost with no upside, paid by people who did not
+ask.
+
+Two smaller things worth knowing. The fogged coins are dropped in `TokenLayers`' bucketing pass
+rather than at the render, so an emptied layer is **absent** rather than a transparent second canvas
+— that file's own rule, and it matters more here, since a GM layer holding nothing but fogged coins
+should not exist at all on a preview of the party's board. And the opacity switch stays on the
+`Layer` rather than moving to the shapes, because `destination-out` composites against the layer's
+own canvas and a hole in a covered map has to stay a hole rather than becoming a lighter patch.
+
 ## Consequences
 
 ### Good
@@ -274,3 +339,10 @@ union changed is how a shape is spelled on the way in, and nothing at all about 
   corner, and none of that is what the milestone is for.
 - **The table's name no longer describes its rows**, and the correction is three comments rather
   than a migration.
+- **The table-view preview is held by a hand check too**, for the same reason the paint inversion
+  is: there is nothing in `npm test` that can look at a canvas, and what this mode does is entirely
+  a matter of what is painted. What *can* be tested is underneath it and already is —
+  `hiddenFromParty` shares its predicate with `veiled`, and `fog.test.ts` pins the server half.
+- **`MapSetupPanel`'s copy for the toggle still describes the layer half alone.** The control now
+  does more than its own hint says, and the badge is the only thing on screen that mentions the fog
+  half. Worth a sentence in that panel the next time it is open.

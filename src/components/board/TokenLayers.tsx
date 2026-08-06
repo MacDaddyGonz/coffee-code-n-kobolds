@@ -52,6 +52,22 @@ export type TokenLayersProps = {
    * preview toggle: a preference, and never a permission.
    */
   shown: ReadonlySet<TokenLayer>
+  /**
+   * The other half of the same toggle: leave out the coins the party has lost sight of.
+   * `useBoardLayers`' `tableView`.
+   *
+   * ⚠️ **`token.hiddenFromParty` is read and never recomputed**, which is the point of this
+   * prop being a bare boolean. That field comes off `useBoard`, which already `isDm &&`-gates
+   * it and already shares `anyShapeCovers` with the server's own `veiled` — so it is the
+   * server's three clauses, in the server's order, answered once for the whole board. A
+   * second containment test here would be a fourth spelling of the fog inversion, on the one
+   * screen where being wrong means the DM plans an ambush around it.
+   *
+   * ⚠️ **A preference and never a permission**, on `shown`'s exact terms and for a payload
+   * this browser is fully entitled to. A player's coins are absent because `visiblePositions`
+   * never sent them; the DM's are merely unpainted.
+   */
+  hideFogged: boolean
   /** Off while the space bar is held, so a drag pans the board instead. */
   draggable: boolean
   /**
@@ -119,6 +135,7 @@ export const TokenLayers = memo(function TokenLayers({
   selectedId,
   isDm,
   shown,
+  hideFogged,
   draggable,
   onSelect,
   onDragStart,
@@ -127,10 +144,17 @@ export const TokenLayers = memo(function TokenLayers({
   onOpenHp,
   onContextMenu,
 }: TokenLayersProps) {
-  // On `tokens` alone, because that is the only thing any of it depends on. A pan
-  // changes neither which tokens exist nor where they are, and paying for a bucketing and
-  // a sort per layer on each of its sixty frames a second is work whose entire output is
-  // the array we already had.
+  // On `tokens` and the fog toggle, because those are the only things any of it depends on.
+  // A pan changes neither which tokens exist nor where they are, and paying for a bucketing
+  // and a sort per layer on each of its sixty frames a second is work whose entire output is
+  // the array we already had. The toggle is a boolean somebody presses, so it costs one
+  // rebucketing per press.
+  //
+  // ⚠️ **The fogged coins are dropped here rather than at the render, which is what makes an
+  // emptied layer *absent* instead of transparent** — this file's own rule, and it matters
+  // more than usual for this mode: a DM previewing the table's board with a GM layer holding
+  // nothing but fogged coins should see no such layer at all, because that is what the party
+  // has. A `<Layer>` rendered with no children is a second canvas over the map saying nothing.
   //
   // The buckets come from `TOKEN_LAYERS` rather than from an object literal, so the union
   // is named once in this file and a fourth layer arrives with a bucket rather than with
@@ -142,13 +166,14 @@ export const TokenLayers = memo(function TokenLayers({
 
     for (const token of tokens) {
       if (token.position === null) continue
+      if (hideFogged && token.hiddenFromParty) continue
       grouped[token.layer].push(token)
     }
     // Big tokens underneath. A hero standing on a dragon's four-square footprint would
     // otherwise be unclickable, since the last node drawn is the one the pointer hits.
     for (const layer of TOKEN_LAYERS) grouped[layer].sort((a, b) => b.sizeSquares - a.sizeSquares)
     return grouped
-  }, [tokens])
+  }, [tokens, hideFogged])
 
   return (
     <>
