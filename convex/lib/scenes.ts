@@ -11,6 +11,9 @@ import { deleteScenePlacements } from './board'
 // keyed on the scene alone, so a scene's rectangles are unreachable the moment its row is
 // gone — an orphaned rectangle is not a leak, it is litter nothing in the app can name.
 import { deleteSceneFog } from './fog'
+// The base vocabulary. A function of a string, like lib/layers.ts — the *decision* about
+// whether a given token is hidden stays in lib/board.ts, behind invariant 8's choke point.
+import { fogBaseOf, fogBaseValidator } from './fogBase'
 import { MAX_SCENES_PER_GAME } from './games'
 
 // Lives in lib/limits.ts, which the browser imports too so there is one definition
@@ -54,6 +57,11 @@ export function backgroundOf(scene: Doc<'scenes'>): string {
   return scene.backgroundColour ?? DEFAULT_SCENE_BACKGROUND
 }
 
+// `fogBaseOf` is the sibling of `backgroundOf` above and deliberately does **not** live here.
+// It takes the stored value rather than the document, in lib/fogBase.ts, because lib/board.ts
+// has to ask the question and this module already imports *from* lib/board.ts — an accessor
+// over `Doc<'scenes'>` would close that cycle. Its own docblock carries the argument.
+
 /**
  * The only shape of a scene a query may return.
  *
@@ -77,6 +85,11 @@ export const publicSceneValidator = v.object({
   // `backgroundOf` has already turned absent into a colour, so no client ever has to know
   // this field arrived late or what it would have meant if it were missing.
   backgroundColour: v.string(),
+  // Same arrangement, and it matters more: `fogBaseOf` has already turned absent into `lit`,
+  // so the browser never has to spell that default a second time. A client that had to write
+  // `scene.fogBase ?? 'lit'` for itself is a client that can disagree with the server about
+  // whether a map is covered, which is a map that lies.
+  fogBase: fogBaseValidator,
 })
 
 export type PublicScene = Infer<typeof publicSceneValidator>
@@ -100,6 +113,7 @@ export async function publicScene(ctx: QueryCtx, scene: Doc<'scenes'>): Promise<
     gridOffsetY: scene.gridOffsetY,
     gridVisible: scene.gridVisible,
     backgroundColour: backgroundOf(scene),
+    fogBase: fogBaseOf(scene.fogBase),
   }
 }
 

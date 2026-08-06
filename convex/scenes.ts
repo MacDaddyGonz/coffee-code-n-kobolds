@@ -4,7 +4,8 @@ import { mutation, query } from './_generated/server'
 import { deleteScenePlacements } from './lib/board'
 import { colourProblem } from './lib/colour'
 import { deleteSceneFog } from './lib/fog'
-import { MAX_SCENES_PER_GAME, findGameByCode, requireDm } from './lib/games'
+import { fogBaseOf, fogBaseValidator } from './lib/fogBase'
+import { MAX_SCENES_PER_GAME, findGameByCode, requireDm, stampReveal } from './lib/games'
 import { MIN_GRID_SIZE, gridSizeFor, isUsableGrid } from './lib/grid'
 import { requireSceneName } from './lib/names'
 import {
@@ -245,6 +246,47 @@ export const setBackground = mutation({
     const game = await requireDm(ctx, args.code, args.dmCode)
     const scene = await getSceneInGame(ctx, game._id, args.sceneId)
     await ctx.db.patch('scenes', scene._id, { backgroundColour: args.backgroundColour })
+    return null
+  },
+})
+
+/**
+ * Flip this map between starting lit and starting covered.
+ *
+ * Its own mutation for `setBackground`'s reason exactly: one field, one call, and nothing
+ * about it is part of the grid calibration it would otherwise have to ride along with.
+ *
+ * ⚠️ **It does not delete the shapes, and the confirm dialog says so in words.** Inverting a
+ * map exactly — what was dark is now lit — is arguably a feature and is definitely a surprise,
+ * so the DM is told before it happens rather than after. Deleting is what `fog.clear` is for,
+ * and a flip that destroyed an afternoon's drawing with no undo is unforgivable.
+ *
+ * ⚠️ **The stamp is unconditional, and it is the one write in the fog surface `fogActReveals`
+ * cannot answer for.** That predicate asks whether an act widens or narrows, and a flip does
+ * **both at once**: every shape that was covering is now revealing and vice versa, so some
+ * creature somewhere almost certainly just became audible. The two costs are the ones that
+ * function's docblock weighs — a stamp too many is one missing flourish, a stamp too few
+ * replays an evening — so the cheap side wins and the flip always stamps.
+ *
+ * No-op guarded, like `setTokenLayer`: a patch that changes nothing still invalidates every
+ * subscription reading the row, and re-stamping the game for a press that changed nothing
+ * would silently retire the flourish on every line older than it.
+ */
+export const setFogBase = mutation({
+  args: {
+    code: v.string(),
+    dmCode: v.string(),
+    sceneId: v.id('scenes'),
+    fogBase: fogBaseValidator,
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const game = await requireDm(ctx, args.code, args.dmCode)
+    const scene = await getSceneInGame(ctx, game._id, args.sceneId)
+    if (fogBaseOf(scene.fogBase) === args.fogBase) return null
+
+    await ctx.db.patch('scenes', scene._id, { fogBase: args.fogBase })
+    await stampReveal(ctx, game._id)
     return null
   },
 })

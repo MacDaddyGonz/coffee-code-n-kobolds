@@ -16,6 +16,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import type { FogMode } from '@/hooks/useFog'
 import { FOG_MODES, useFog, useFogMode } from '@/hooks/useFog'
 import { api } from '@convex/_generated/api'
+import type { FogBase } from '@convex/lib/fogBase'
+import { FOG_BASES, FOG_BASE_LABELS } from '@convex/lib/fogBase'
 
 export type FogToolsProps = {
   code: string
@@ -24,30 +26,113 @@ export type FogToolsProps = {
 }
 
 /**
- * What each tool is called and what it does, keyed by the union so a fourth mode fails
- * to compile here rather than arriving as a button with no label.
+ * ⚠️⚠️ **EVERY SENTENCE IN THIS PANEL IS A FUNCTION OF THE BASE, AND THAT IS THE POINT OF
+ * THE FILE RATHER THAN A STYLISTIC CHOICE.**
  *
- * The same discipline `TOKEN_LAYER_STYLES` and `LAYER_BADGES` keep, and `FOG_MODES` is
- * iterated below rather than three buttons being written out — so the array is the order
- * they are offered in, and a mode cannot arrive with nowhere to be pressed.
+ * On a lit map the DM blacks areas out; on a dark one they light areas up. The *same three
+ * tools* do opposite things, so a label that does not invert is a label that lies — and the
+ * worst of them is the destructive confirm, where "lift the fog off this map" over a covered
+ * map would describe the exact opposite of covering the whole board.
+ *
+ * So every one of these is a `Record<FogBase, …>`: a third base fails to compile here rather
+ * than arriving as copy somebody has to remember to write. `FOG_MODES` and `FOG_BASES` are
+ * both iterated below rather than written out, for `TOKEN_LAYERS`' reason — a member cannot
+ * arrive with nowhere to be pressed.
  */
-const MODE_LABELS: Record<FogMode, { label: string; hint: string }> = {
-  off: {
-    label: 'Off',
-    hint: 'The board behaves normally: coins are yours to pick up and the fog is scenery.',
+const MODE_LABELS: Record<FogBase, Record<FogMode, { label: string; hint: string }>> = {
+  lit: {
+    off: {
+      label: 'Off',
+      hint: 'The board behaves normally: coins are yours to pick up and the fog is scenery.',
+    },
+    draw: {
+      label: 'Black out',
+      hint: 'Drag a rectangle on the map. It snaps to whole squares, and the table goes dark the moment you let go — not while you are dragging.',
+    },
+    erase: {
+      label: 'Rub out',
+      hint: 'Click a blacked-out area to lift it. That is the moment the party walks into the room, so anything standing in it appears for them at once.',
+    },
   },
-  draw: {
-    label: 'Fog an area',
-    hint: 'Drag a rectangle on the map. It snaps to whole squares, and the table goes dark the moment you let go — not while you are dragging.',
+  dark: {
+    off: {
+      label: 'Off',
+      hint: 'The board behaves normally: coins are yours to pick up and the cover is scenery.',
+    },
+    draw: {
+      label: 'Reveal',
+      hint: 'Drag a rectangle on the map to open it up. It snaps to whole squares, and the party sees that room — and everything standing in it — the moment you let go.',
+    },
+    erase: {
+      label: 'Cover back up',
+      hint: 'Click a revealed area to close it again. Anything standing in it disappears from the party’s board.',
+    },
   },
-  erase: {
-    label: 'Rub out',
-    hint: 'Click a fogged area to lift it. That is the moment the party walks into the room, so anything standing in it appears for them at once.',
+}
+
+/** What the card says it is for, which is two different things. */
+const CARD_DESCRIPTION: Record<FogBase, string> = {
+  lit: 'The map is visible and you black out the parts the party has not reached. Everyone can see that an area is dark — that is the point of it — and anything standing in one disappears from their board until you rub it out.',
+  dark: 'The map starts covered and you open it up room by room. Everyone can see that the map is dark — that is the point of it — and anything standing in a covered area is absent from their board until you reveal it.',
+}
+
+/** The count line. Zero means an untouched map, which is opposite things on the two bases. */
+const COUNT_LABELS: Record<FogBase, { none: string; one: string; many: string }> = {
+  lit: {
+    none: 'None of this map is blacked out.',
+    one: 'area blacked out on this map.',
+    many: 'areas blacked out on this map.',
+  },
+  dark: {
+    none: 'None of this map is revealed — the party sees nothing but the dark.',
+    one: 'area revealed on this map.',
+    many: 'areas revealed on this map.',
   },
 }
 
 /**
- * FOG OF WAR: the DM's three tools over one map.
+ * ⚠️ **The destructive control, and the worst copy bug available in this milestone.** The
+ * mutation behind both of these is the same `fog.clear`, and what it *does* is opposite: on a
+ * lit map it lifts the fog and shows the party everything, and on a dark one it takes every
+ * revealed area away and covers the whole board. A confirm dialog saying the opposite of what
+ * it is about to do is worse than no confirm dialog.
+ */
+const CLEAR_LABELS: Record<FogBase, { trigger: string; title: string; description: string; confirm: string }> = {
+  lit: {
+    trigger: 'Clear all fog',
+    title: 'Lift the fog off this map?',
+    description:
+      'Every blacked-out area on this map goes, and this cannot be undone. The party sees the whole map and everything standing on it that you have not put on your own layer — so this is the end of an encounter rather than a tidy-up. Fog on your other maps is untouched.',
+    confirm: 'Lift all of it',
+  },
+  dark: {
+    trigger: 'Cover the whole map',
+    title: 'Close every revealed area?',
+    description:
+      'Every revealed area on this map goes and the whole board goes dark again, and this cannot be undone. The party loses sight of everything except their own coins and anything you have granted them. Other maps are untouched. To turn the map back to lit instead, use the base control above — that keeps your areas.',
+    confirm: 'Cover all of it',
+  },
+}
+
+/** What flipping the base is about to do, said before it happens rather than after. */
+const FLIP_LABELS: Record<FogBase, { title: string; description: string; confirm: string }> = {
+  // Keyed by the base being switched **to**, because that is what the DM is choosing.
+  lit: {
+    title: 'Turn this map to lit?',
+    description:
+      'The map becomes visible and the areas you have drawn become blacked-out ones instead of revealed ones — so the map inverts exactly: what the party could see, they cannot, and what was hidden is shown. Nothing is deleted; flipping back returns it exactly as it is now.',
+    confirm: 'Turn it lit',
+  },
+  dark: {
+    title: 'Turn this map to dark?',
+    description:
+      'The map becomes covered and the areas you have drawn become revealed ones instead of blacked-out ones — so the map inverts exactly: what the party could see, they cannot, and what was hidden is shown. Nothing is deleted; flipping back returns it exactly as it is now.',
+    confirm: 'Turn it dark',
+  },
+}
+
+/**
+ * FOG OF WAR: the map's base, and the DM's three tools over it.
  *
  * **Two of the three writes are not in this file**, and the split is deliberate rather
  * than incidental. Drawing and erasing are *gestures on the map* — a rubber band and a
@@ -64,10 +149,15 @@ const MODE_LABELS: Record<FogMode, { label: string; hint: string }> = {
  * `useBoardLayers`' reason, and the alternative of hoisting it to `GameShell` would put a
  * board concern in the props of the component whose job is to arrange two panes.
  *
+ * ⚠️ **The base is the opposite: it goes to the server.** It is a fact about the map that
+ * every client has to agree on — `scenes.active` carries it, resolved through `fogBaseOf` —
+ * because a browser that thought a covered map was lit would paint the party a fully visible
+ * floor plan. A mode is this browser holding a tool; a base is what the map *is*.
+ *
  * Rendered on the strength of the DM code being present, and that display gate authorises
- * nothing: all three mutations re-verify the code server-side on every call (CLAUDE.md
+ * nothing: all four mutations re-verify the code server-side on every call (CLAUDE.md
  * invariant 7), so a browser that forced this panel on with an invented code would get
- * three buttons and a refusal from each.
+ * some buttons and a refusal from each.
  */
 export function FogTools({ code, dmCode }: FogToolsProps) {
   // The one board everybody is looking at, taken from the open query rather than threaded
@@ -75,6 +165,8 @@ export function FogTools({ code, dmCode }: FogToolsProps) {
   // code and a secret. Fog is per scene, so there is nothing to fog until there is a map.
   const active = useQuery(api.scenes.active, { code })
   const sceneId = active?._id ?? null
+  // Resolved on the server. The browser never spells the absent-means-lit default.
+  const base: FogBase = active?.fogBase ?? 'lit'
 
   const fog = useFog(code, sceneId, dmCode)
   const { mode, setMode } = useFogMode(code)
@@ -98,15 +190,25 @@ export function FogTools({ code, dmCode }: FogToolsProps) {
   useEffect(() => () => setMode('off'), [setMode])
 
   const clearFog = useMutation(api.fog.clear)
+  const setFogBase = useMutation(api.scenes.setFogBase)
   const action = useLobbyAction()
 
   const busy = action.pending !== null
   const drawn = fog?.length ?? 0
+  const labels = MODE_LABELS[base]
+  const clearLabels = CLEAR_LABELS[base]
 
   const clear = () => {
     if (sceneId === null) return
-    return action.run('clear', 'Could not lift the fog.', () =>
+    return action.run('clear', 'Could not change the fog on this map.', () =>
       clearFog({ code, dmCode, sceneId }),
+    )
+  }
+
+  const flipTo = (next: FogBase) => {
+    if (sceneId === null) return
+    return action.run('base', 'Could not change this map’s base.', () =>
+      setFogBase({ code, dmCode, sceneId, fogBase: next }),
     )
   }
 
@@ -114,11 +216,7 @@ export function FogTools({ code, dmCode }: FogToolsProps) {
     <Card className="w-full">
       <CardHeader>
         <CardTitle>Fog of war</CardTitle>
-        <CardDescription>
-          Black out the parts of the map the party has not reached. Everyone can see that an
-          area is dark — that is the point of it — and anything standing in one disappears
-          from their board until you rub it out.
-        </CardDescription>
+        <CardDescription>{CARD_DESCRIPTION[base]}</CardDescription>
       </CardHeader>
 
       <CardContent className="flex flex-col gap-4">
@@ -134,6 +232,47 @@ export function FogTools({ code, dmCode }: FogToolsProps) {
         ) : (
           <>
             <div className="flex flex-col gap-2">
+              <Label>This map starts</Label>
+              <div className="flex flex-wrap gap-2">
+                {FOG_BASES.map((choice) =>
+                  choice === base ? (
+                    <Button
+                      key={choice}
+                      type="button"
+                      size="sm"
+                      variant="default"
+                      aria-pressed
+                      // The base you are already on is not a thing to press. Disabled rather
+                      // than absent, so the pair reads as a two-way switch with one side lit.
+                      disabled
+                    >
+                      {FOG_BASE_LABELS[choice].label}
+                    </Button>
+                  ) : (
+                    // ⚠️ **Behind a confirm, because the map inverts exactly.** That is
+                    // arguably a feature and is definitely a surprise, and the dialog says in
+                    // words that nothing is deleted — which is the question a DM looking at an
+                    // afternoon of drawing actually has.
+                    <ConfirmDialog
+                      key={choice}
+                      trigger={
+                        <Button type="button" size="sm" variant="outline" disabled={busy}>
+                          {FOG_BASE_LABELS[choice].label}
+                        </Button>
+                      }
+                      title={FLIP_LABELS[choice].title}
+                      description={FLIP_LABELS[choice].description}
+                      confirmLabel={FLIP_LABELS[choice].confirm}
+                      busy={action.pending === 'base'}
+                      onConfirm={() => flipTo(choice)}
+                    />
+                  ),
+                )}
+              </div>
+              <p className="text-muted-foreground text-xs">{FOG_BASE_LABELS[base].hint}</p>
+            </div>
+
+            <div className="flex flex-col gap-2">
               <Label>Tool</Label>
               <div className="flex flex-wrap gap-2">
                 {FOG_MODES.map((choice) => (
@@ -148,11 +287,11 @@ export function FogTools({ code, dmCode }: FogToolsProps) {
                     // refused draw is exactly the moment somebody reaches for it.
                     onClick={() => setMode(choice)}
                   >
-                    {MODE_LABELS[choice].label}
+                    {labels[choice].label}
                   </Button>
                 ))}
               </div>
-              <p className="text-muted-foreground text-xs">{MODE_LABELS[mode].hint}</p>
+              <p className="text-muted-foreground text-xs">{labels[mode].hint}</p>
             </div>
 
             {/* ⚠️ Said here rather than left to be discovered: while a tool is armed the
@@ -161,7 +300,7 @@ export function FogTools({ code, dmCode }: FogToolsProps) {
                 argument for why that is allowed to be true here and nowhere else. */}
             {mode === 'off' ? null : (
               <p className="text-muted-foreground text-xs">
-                While this is armed, pressing the map draws or rubs out fog instead of picking
+                While this is armed, pressing the map draws or rubs out areas instead of picking
                 up a coin. Press <span className="font-medium">Off</span> to get the board back.
               </p>
             )}
@@ -173,8 +312,8 @@ export function FogTools({ code, dmCode }: FogToolsProps) {
                     number would put that in the bundle — and `fog.draw`'s refusal already
                     names it in a sentence the DM reads at the moment it applies. */}
                 {drawn === 0
-                  ? 'None of this map is fogged.'
-                  : `${drawn} fogged ${drawn === 1 ? 'area' : 'areas'} on this map.`}
+                  ? COUNT_LABELS[base].none
+                  : `${drawn} ${drawn === 1 ? COUNT_LABELS[base].one : COUNT_LABELS[base].many}`}
               </p>
 
               <ConfirmDialog
@@ -185,14 +324,12 @@ export function FogTools({ code, dmCode }: FogToolsProps) {
                     size="sm"
                     disabled={busy || drawn === 0}
                   >
-                    Clear all fog
+                    {clearLabels.trigger}
                   </Button>
                 }
-                title="Lift the fog off this map?"
-                description={
-                  'Every fogged area on this map goes, and this cannot be undone. The party sees the whole map and everything standing on it that you have not put on your own layer — so this is the end of an encounter rather than a tidy-up. Fog on your other maps is untouched.'
-                }
-                confirmLabel="Lift all of it"
+                title={clearLabels.title}
+                description={clearLabels.description}
+                confirmLabel={clearLabels.confirm}
                 busy={action.pending === 'clear'}
                 onConfirm={clear}
               />

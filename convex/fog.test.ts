@@ -1268,3 +1268,216 @@ describe('a game with no rectangles pays nothing for fog', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// The fog base — Milestone 13
+// ---------------------------------------------------------------------------
+
+/**
+ * Flip a scene between starting lit and starting covered.
+ *
+ * Through the mutation rather than by patching the row, because the whole point of the base
+ * is that every reader agrees on it — and `scenes.setFogBase` is what the panel calls.
+ */
+async function setBase(
+  t: Harness,
+  game: { code: string; dmCode: string },
+  sceneId: Id<'scenes'>,
+  fogBase: 'lit' | 'dark',
+) {
+  await t.mutation(api.scenes.setFogBase, {
+    code: game.code,
+    dmCode: game.dmCode,
+    sceneId,
+    fogBase,
+  })
+}
+
+/**
+ * ⚠️ **EVERY ASSERTION ABOVE THIS LINE PASSED UNTOUCHED WHEN THE BASE ARRIVED, AND THAT IS
+ * THE ACCEPTANCE CRITERION FOR THE ABSENT-BASE DEFAULT.**
+ *
+ * The roadmap states it in exactly those terms — *if any of them needs editing, the
+ * absent-base default is wrong* — and it is a real check rather than a flourish. Every
+ * fixture in this file creates its scene through `scenes.create`, which writes no `fogBase`
+ * at all, so all 1270 lines above are a running proof that a scene with the field absent
+ * behaves precisely as it did before the field existed. `fogBaseOf` answering `lit` is what
+ * makes that true, and answering `dark` would have failed roughly half of them.
+ *
+ * What follows is the other half: the same scene, turned dark, behaving as the inverse.
+ */
+describe('a scene that starts covered', () => {
+  /**
+   * ⚠️ **THE MILESTONE'S HEADLINE ACCEPTANCE.** *A scene set to dark hides every DM-placed
+   * creature from a player's payload with no shape drawn at all.*
+   *
+   * This is the case the whole feature exists for and the one the old early return made
+   * impossible: fog used to be free precisely because nothing was hidden until a rectangle
+   * existed, so "cover the map" had to be drawn one rectangle at a time and could never be
+   * complete. The health-band and feed-line halves of this sentence live in `vitals.test.ts`
+   * and `feed.test.ts`, where those payloads and their positive controls already are — this
+   * file owns the placement.
+   */
+  test('hides the DM’s creature with no rectangle drawn at all', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    // The control. Lit and empty, every coin the layer rule admits is standing somewhere.
+    expect(await placedIds(t, fixture)).toHaveLength(3)
+
+    await setBase(t, fixture, fixture.sceneId, 'dark')
+    expect(await fogRowsOn(t, fixture.sceneId)).toEqual([])
+
+    // The monster is gone, and the hero and the granted pet are not — the control exemption
+    // stops being a courtesy here and becomes load-bearing, because on a covered map with
+    // nothing revealed *everything* is in the dark, and without it every player at the table
+    // would lose their own hero on the first click of the toggle.
+    const ids = await placedIds(t, fixture)
+    expect(ids).not.toContain(fixture.monsterToken)
+    expect(ids).toContain(fixture.heroToken)
+    expect(ids).toContain(fixture.petToken)
+
+    // And the DM sees all three, as ever: fog filters the party's payload and paints a veil
+    // on the DM's screen, which is a preference rather than a permission.
+    expect(await placedIds(t, fixture, { dmCode: fixture.dmCode })).toHaveLength(3)
+  })
+
+  /**
+   * The inverse of the headline: a drawn shape is a **hole** in the dark, so revealing one
+   * room brings back exactly what is standing in it.
+   */
+  test('revealing one room brings back exactly what is standing in it', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+    await setBase(t, fixture, fixture.sceneId, 'dark')
+
+    const monsterAt = await placementOf(t, fixture.sceneId, fixture.monsterToken)
+    await drawFog(t, fixture, fixture.sceneId, boxAround(monsterAt))
+
+    expect(await placedIds(t, fixture)).toContain(fixture.monsterToken)
+  })
+
+  test('a second creature outside the revealed room stays hidden', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    // A second monster, far from the first, so one hole cannot reach both.
+    const other = await makeCharacter(t, fixture, 'Cave Troll', npcSheet())
+    const otherToken = await addToken(t, fixture, fixture.sceneId, {
+      name: 'Cave Troll',
+      characterId: other,
+      x: 300,
+      y: 1400,
+    })
+
+    await setBase(t, fixture, fixture.sceneId, 'dark')
+    await drawFog(
+      t,
+      fixture,
+      fixture.sceneId,
+      boxAround(await placementOf(t, fixture.sceneId, fixture.monsterToken)),
+    )
+
+    const ids = await placedIds(t, fixture)
+    expect(ids).toContain(fixture.monsterToken)
+    expect(ids).not.toContain(otherToken)
+  })
+
+  /**
+   * ⚠️ **The inversion is exact, which is what makes the two bases one predicate rather than
+   * two implementations that agree in the cases somebody thought of.**
+   *
+   * The same scene and the same rectangle, read on both bases: what it hides on one is what
+   * it reveals on the other. The hero and the pet are in both, because control beats fog on
+   * either base — the one asymmetry, and it is deliberate.
+   */
+  test('the same rectangle hides on lit exactly what it reveals on dark', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    const monsterAt = await placementOf(t, fixture.sceneId, fixture.monsterToken)
+    await drawFog(t, fixture, fixture.sceneId, boxAround(monsterAt))
+
+    const lit = await placedIds(t, fixture)
+    expect(lit).not.toContain(fixture.monsterToken)
+
+    await setBase(t, fixture, fixture.sceneId, 'dark')
+    const dark = await placedIds(t, fixture)
+    expect(dark).toContain(fixture.monsterToken)
+
+    // Stated as a set difference over the coins fog can touch. Only the monster is
+    // uncontrolled, so it is the only member either way.
+    expect(dark.filter((id) => !lit.includes(id))).toEqual([fixture.monsterToken])
+  })
+
+  /**
+   * ⚠️ **Flipping must not delete the shapes.** Inverting a map exactly is arguably a feature
+   * and definitely a surprise, so the confirm dialog says it in words — and deleting is what
+   * `fog.clear` is for. A flip that destroyed an afternoon's drawing with no undo is
+   * unforgivable, and the property that makes the dialog's promise true is this one: flip
+   * away and back and the board is byte-identical.
+   */
+  test('flipping keeps every shape, and flipping back restores the board exactly', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    const fogId = await drawFog(
+      t,
+      fixture,
+      fixture.sceneId,
+      boxAround(await placementOf(t, fixture.sceneId, fixture.monsterToken)),
+    )
+
+    const snapshot = async () =>
+      JSON.stringify({
+        positions: await t.query(api.board.positions, {
+          code: fixture.code,
+          sceneId: fixture.sceneId,
+        }),
+        list: await t.query(api.fog.list, { code: fixture.code, sceneId: fixture.sceneId }),
+      })
+
+    const before = await snapshot()
+
+    await setBase(t, fixture, fixture.sceneId, 'dark')
+    expect(await fogRowsOn(t, fixture.sceneId)).toHaveLength(1)
+    expect(await fogRow(t, fogId)).not.toBeNull()
+    // The control: the flip genuinely changed what the party is told, so "identical" below is
+    // a fact about the round trip and not about the flip being a no-op.
+    expect(await snapshot()).not.toBe(before)
+
+    await setBase(t, fixture, fixture.sceneId, 'lit')
+    expect(await snapshot()).toBe(before)
+  })
+
+  /**
+   * The base is a fact about the map, so every client has to be told it — and the browser must
+   * never spell the absent-means-lit default a second time. `scenes.active` carries the
+   * resolved answer, which is what stops a client painting a covered map as visible.
+   */
+  test('the base reaches every client through scenes.active, already resolved', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    expect((await t.query(api.scenes.active, { code: fixture.code }))?.fogBase).toBe('lit')
+
+    await setBase(t, fixture, fixture.sceneId, 'dark')
+    expect((await t.query(api.scenes.active, { code: fixture.code }))?.fogBase).toBe('dark')
+  })
+
+  test('setting the base is DM-only', async () => {
+    const t = harness()
+    const fixture = await fogFixture(t)
+
+    await expectKind(
+      t.mutation(api.scenes.setFogBase, {
+        code: fixture.code,
+        dmCode: twiddle(fixture.dmCode),
+        sceneId: fixture.sceneId,
+        fogBase: 'dark',
+      }),
+      'NotDm',
+    )
+    expect((await t.query(api.scenes.active, { code: fixture.code }))?.fogBase).toBe('lit')
+  })
+})

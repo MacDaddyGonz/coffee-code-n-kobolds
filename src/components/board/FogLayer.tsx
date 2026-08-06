@@ -12,6 +12,7 @@ import { errorMessage } from '@/lib/errors'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicFog } from '@convex/lib/fog'
+import { startsCovered } from '@convex/lib/fogBase'
 import type { Grid, Rect as ImageRect } from '@convex/lib/grid'
 import { isUsableGrid, snapToGrid } from '@convex/lib/grid'
 import type { PublicScene } from '@convex/lib/scenes'
@@ -154,8 +155,15 @@ export const FogLayer = memo(function FogLayer({ code, dmCode, scene, scale }: F
   // Nothing to draw and nothing to press. Absent rather than transparent, which is
   // `TokenLayers`' rule for an empty layer and matters more here: an empty `Layer` is a
   // second canvas element over the map for as long as the game lasts.
+  //
+  // ⚠️ **The `covered` term inverts this early return, and it is the second of the two client
+  // inversions that would have been missed.** *Nothing drawn, draw nothing* is right for a lit
+  // map and is exactly backwards for a covered one, where nothing drawn means **paint the
+  // whole map black**. A half-inverted fog is a map that lies, which is why the base lands as
+  // one commit covering the server, both client cues and the tools panel.
   const drawn = rects ?? []
-  if (drawn.length === 0 && !drawing) return null
+  const covered = startsCovered(scene.fogBase)
+  if (drawn.length === 0 && !covered && !drawing) return null
 
   const preview = band === null ? null : snappedRect(band, scene)
 
@@ -188,8 +196,46 @@ export const FogLayer = memo(function FogLayer({ code, dmCode, scene, scale }: F
         />
       ) : null}
 
+      {/*
+        ⚠️ **THE INVERSION, AND IT IS THE ONE THING IN THIS MILESTONE NO TEST CAN ASSERT.**
+
+        Under a lit base each shape is painted as darkness and there is nothing underneath
+        them. Under a covered base the whole image is painted first and each shape is then
+        punched *out* of it with `destination-out`, which composites against this `Layer`'s
+        own canvas — that is why `DM_FOG_OPACITY` stays on the `Layer` and not on the shapes,
+        and it is what makes a hole a hole rather than a lighter patch.
+
+        Konva's **hit graph does not apply composite operations**, so a revealed area still
+        answers the pointer as its own rectangle. That is exactly what the eraser wants — the
+        DM clicks the hole to cover it back up — and it is worth knowing because it looks like
+        it should be the other way round.
+
+        The rejected alternative was computing complement rectangles and painting those. It is
+        O(n²) in the shape count, it turns a short-circuit containment test into a stencil
+        composite, and it is the layers-of-paint model the roadmap declines under per-shape
+        hide-or-reveal. **Verified by hand in two browsers, both bases, with overlapping
+        shapes**, because there is nothing in `npm test` that can look at a canvas.
+      */}
+      {covered ? (
+        <Rect
+          x={0}
+          y={0}
+          width={scene.imageWidth}
+          height={scene.imageHeight}
+          fill={FOG_FILL}
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      ) : null}
+
       {drawn.map((rect) => (
-        <FogRect key={rect._id} rect={rect} listening={erasing} onErase={erase} />
+        <FogRect
+          key={rect._id}
+          rect={rect}
+          listening={erasing}
+          covered={covered}
+          onErase={erase}
+        />
       ))}
 
       {/*
@@ -222,6 +268,12 @@ type FogRectProps = {
   /** Whether the eraser is armed. Nothing else on this board makes a rectangle pressable. */
   listening: boolean
   /**
+   * Whether this shape is a piece of darkness or a hole in it. A boolean rather than the
+   * `FogBase` itself, because that is what the shape actually needs and a memo compares props
+   * by reference — one derived value at the top beats two hundred `startsCovered` calls.
+   */
+  covered: boolean
+  /**
    * One function for the whole list, given the rectangle it happened to, rather than one
    * closed over each row. `TokenCoinProps` states the rule and the reason at length.
    */
@@ -244,7 +296,7 @@ type FogRectProps = {
  * is fine and is the same arrangement `TokenCoin` uses — a render that did not happen builds
  * no closures.
  */
-const FogRect = memo(function FogRect({ rect, listening, onErase }: FogRectProps) {
+const FogRect = memo(function FogRect({ rect, listening, covered, onErase }: FogRectProps) {
   return (
     <Rect
       x={rect.x}
@@ -252,6 +304,10 @@ const FogRect = memo(function FogRect({ rect, listening, onErase }: FogRectProps
       width={rect.width}
       height={rect.height}
       fill={FOG_FILL}
+      // Darkness, or a hole punched through the darkness the layer painted first. The fill is
+      // the same either way — under `destination-out` only the alpha matters — so this is one
+      // prop and not a second colour to keep in step.
+      globalCompositeOperation={covered ? 'destination-out' : undefined}
       // The eraser is a click on a rectangle the client was *sent*, which is why rectangles
       // are rows rather than one blob of geometry on the scene — see `publicFogValidator`.
       // Deaf to the pointer at every other moment, including while the draw tool is down.

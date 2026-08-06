@@ -6,6 +6,8 @@ import type { Id } from '@convex/_generated/dataModel'
 import type { PublicFog } from '@convex/lib/fog'
 import type { Point, Rect } from '@convex/lib/grid'
 import { anyRectCovers } from '@convex/lib/grid'
+import type { FogBase } from '@convex/lib/fogBase'
+import { startsCovered } from '@convex/lib/fogBase'
 import { positionsArgs } from '@/hooks/useBoard'
 
 // FOG OF WAR, in the browser: the rectangles, the tool the DM has armed, and who is
@@ -175,6 +177,12 @@ export type FoggableToken = {
  *   server ran, which is what makes the cue and the withholding one answer rather than
  *   two that agree until somebody edits one. Its half-open edges and its fail-open on a
  *   non-finite coordinate are argued in convex/lib/grid.ts and inherited whole.
+ * - ⚠️ **The base inverts it, and this cue is one of the two client inversions that would
+ *   have been missed.** Under a lit map a shape is the dark, so a coin inside one is hidden.
+ *   Under a covered map the shape is a hole, so a coin inside one is the only kind the party
+ *   *can* see. Half-inverting this makes the DM's crossed-disc cue say the opposite of what
+ *   the party's screen is doing, which is worse than not having the cue at all — the DM plans
+ *   an ambush around it.
  * - **The centre point, never the footprint.** The stored coordinate already *is* the
  *   centre, so no grid enters and a 2×2 ogre one pixel over the line does not vanish
  *   from the cue while most of it stands in the lit room. `foggedTokenIds` carries the
@@ -191,10 +199,15 @@ export function hiddenFromParty(
   token: FoggableToken,
   position: Point | null,
   rects: readonly Rect[],
+  base: FogBase,
 ): boolean {
   if (position === null) return false
   if (token.controllerIds.length > 0) return false
-  return anyRectCovers(rects, position)
+  // `veiled` in convex/lib/board.ts, one line for one line. Written the same way round on
+  // purpose: two spellings of one inversion is how the DM's cue and the party's board end up
+  // disagreeing about which half of the map is dark.
+  const inside = anyRectCovers(rects, position)
+  return startsCovered(base) ? !inside : inside
 }
 
 /** Held still so a board with nothing in the dark hands every consumer the same empty set. */
@@ -224,15 +237,20 @@ function sameIds(a: ReadonlySet<Id<'tokens'>>, b: ReadonlySet<Id<'tokens'>>): bo
  * hold — so this costs sockets and server executions nothing and costs renders something.
  * That something is the reason for the gate below.
  *
- * ⚠️ **`board.positions` is skipped until a rectangle exists, and that is the whole cost
+ * ⚠️ **`board.positions` is skipped until there is fog to apply, and that is the whole cost
  * model rather than a micro-optimisation.** Positions are written ten times a second
  * during a drag, and this tab's own ⚠️ says at length why a placement must not be folded
  * into its low-churn view of a coin (CLAUDE.md invariant 2). Gated on fog, a game that
- * never draws a rectangle re-renders this list exactly as often as it did before fog
- * existed — the same pay-as-you-go line `foggedTokenIds` draws on the server, for the
- * same reason. A game that *is* using fog pays a re-render of the list per position tick
- * while somebody is dragging, which is the honest price of a cue that is never stale, and
- * is recorded here rather than discovered.
+ * never uses the feature re-renders this list exactly as often as it did before fog
+ * existed — the same pay-as-you-go line `fogShape` draws on the server, for the same reason.
+ * A game that *is* using fog pays a re-render of the list per position tick while somebody
+ * is dragging, which is the honest price of a cue that is never stale.
+ *
+ * ⚠️ **The gate inverts with the base, exactly as the server's early return does.** It used
+ * to be "no rectangles, no cost"; under a covered map no rectangles is the most hidden a map
+ * can be, so the free case is now *this scene is in the state it shipped in*. Turning a scene
+ * to dark buys this subscription for the rest of the session without drawing anything, and
+ * that is the sentence CLAUDE.md invariant 2 now carries.
  *
  * The DM gate is `dmCode`, not `players.isDm` (CLAUDE.md invariant 7). It costs nothing
  * — this tab is DM-only already — and it is what stops the cue ever being drawn on a
@@ -263,10 +281,14 @@ export function useHiddenFromParty(
 
   const fog = useFog(code, sceneId, dmCode)
   const rects = fog ?? NO_FOG
+  // `scenes.active` already carries the base, resolved through `fogBaseOf` on the server, so
+  // the browser never spells the absent-means-lit default a second time.
+  const covered = startsCovered(scene?.fogBase ?? 'lit')
+  const fogging = covered || rects.length > 0
 
   const positions = useQuery(
     api.board.positions,
-    sceneId !== null && rects.length > 0 ? positionsArgs(code, sceneId, dmCode) : 'skip',
+    sceneId !== null && fogging ? positionsArgs(code, sceneId, dmCode) : 'skip',
   )
 
   const at = useMemo(
@@ -280,16 +302,18 @@ export function useHiddenFromParty(
   const isDm = dmCode !== null
 
   const built = useMemo(() => {
-    // Nothing to be in the dark, and the early return is what keeps a game that never fogs
-    // anything holding one shared empty set for the life of the session.
-    if (!isDm || rects.length === 0) return NONE_HIDDEN
+    // Nothing to be in the dark, and the early return is what keeps a game that never uses the
+    // feature holding one shared empty set for the life of the session. Not `rects.length` any
+    // more — a covered map with no holes in it hides everything.
+    if (!isDm || !fogging) return NONE_HIDDEN
 
+    const base: FogBase = covered ? 'dark' : 'lit'
     const hidden = new Set<Id<'tokens'>>()
     for (const token of tokens) {
-      if (hiddenFromParty(token, at.get(token._id) ?? null, rects)) hidden.add(token._id)
+      if (hiddenFromParty(token, at.get(token._id) ?? null, rects, base)) hidden.add(token._id)
     }
     return hidden
-  }, [isDm, at, rects, tokens])
+  }, [isDm, at, rects, tokens, fogging, covered])
 
   // ⚠️ **A ref written during render, which is the identity-collapsing escape hatch and not a
   // piece of state.** The value above is a pure function of the inputs, so a render that runs

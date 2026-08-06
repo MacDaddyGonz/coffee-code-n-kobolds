@@ -2560,4 +2560,175 @@ describe('a creature in the dark is not heard from', () => {
     expect(await t.mutation(api.fog.clear, { code, dmCode, sceneId })).toEqual({ removed: 1 })
     expect(newest(await t.query(api.feed.list, { code })).predatesReveal).toBe(true)
   })
+
+  // -------------------------------------------------------------------------
+  // The same three acts, on a covered map — Milestone 13
+  // -------------------------------------------------------------------------
+
+  /**
+   * ⚠️⚠️ **THE STAMP INVERTS WITH THE BASE, AND THIS IS THE SECOND AXIS OF THE ASSERTIONS
+   * ABOVE.**
+   *
+   * Every test in this section so far encodes one rule: *draw narrows and must not stamp;
+   * erase and clear widen and must.* That is a statement about a **lit** map. On a covered
+   * one a shape is a hole in the darkness, so drawing is the reveal and rubbing out covers
+   * somebody back up — and if the stamp did not invert with it, **rubbing out a reveal would
+   * replay a session's worth of rolls across the map**, which is the exact failure ADR 0012
+   * built the timestamp to prevent, arriving through the mechanism it built.
+   *
+   * `fogActReveals` in lib/fogBase.ts is the one place that decides, and `lib/fogBase.test.ts`
+   * walks its full act × base matrix including the unrecognised cases. What these three add is
+   * the half a unit test cannot reach: that each of the three mutations actually asks it, and
+   * that the answer reaches the feed.
+   */
+  async function coverMap(t: Harness, fixture: Fixture) {
+    await t.mutation(api.scenes.setFogBase, {
+      code: fixture.code,
+      dmCode: fixture.dmCode,
+      sceneId: fixture.sceneId,
+      fogBase: 'dark',
+    })
+  }
+
+  /**
+   * The feed half of the milestone's headline acceptance: *a scene set to dark hides every
+   * DM-placed creature from a player's payload with no shape drawn at all — no position row,
+   * no health band, **no feed line**.* The position half is in `fog.test.ts` and the band half
+   * in `vitals.test.ts`, each where that payload's needles already live.
+   */
+  test('a covered map with nothing revealed silences the creature entirely', async () => {
+    const t = harness()
+    const fixture = await litFixture(t)
+    const { code } = fixture
+    await rollCreatureAttack(t, fixture)
+    await rollHeroInitiative(t, fixture)
+
+    // The control: on the board and audible, with no rectangle anywhere.
+    expect((await t.query(api.feed.list, { code })).map((row) => row.actorName)).toEqual([
+      CREATURE_NAME,
+      CREATURE_NAME,
+      HERO_NAME,
+    ])
+
+    await coverMap(t, fixture)
+
+    const dark = await t.query(api.feed.list, { code })
+    expect(dark.map((row) => row.actorName)).toEqual([HERO_NAME])
+
+    // The full needle table, not a length check: a row dropped from the array but echoed in a
+    // sibling field would satisfy one and leak the creature anyway.
+    const serialised = JSON.stringify(dark) ?? ''
+    for (const [what, needle] of CREATURE_STRINGS) {
+      expect(serialised, `the covered creature’s feed leaked ${what}`).not.toContain(needle)
+    }
+
+    // The hero is audible throughout, which is the exemption doing its job: on a covered map
+    // with nothing revealed *everything* is in the dark, so without it the whole feed would go
+    // quiet and this test would pass for entirely the wrong reason.
+    expect(dark).toHaveLength(1)
+  })
+
+  test('revealing a room on a covered map brings the creature back', async () => {
+    const t = harness()
+    const fixture = await litFixture(t)
+    const { code } = fixture
+    await rollCreatureAttack(t, fixture)
+    await coverMap(t, fixture)
+    expect(await t.query(api.feed.list, { code })).toHaveLength(0)
+
+    await fogOver(t, fixture, fixture.creatureToken)
+    expect((await t.query(api.feed.list, { code })).map((row) => row.actorName)).toEqual([
+      CREATURE_NAME,
+      CREATURE_NAME,
+    ])
+  })
+
+  /**
+   * ⚠️ **The inverted stamp, in the direction that costs an evening if it is wrong.**
+   *
+   * On a covered map, `draw` is the widening write and `erase` is the narrowing one. Both
+   * halves are asserted on the same fixture, because a stamp stuck at `true` satisfies the
+   * first alone and a stamp stuck at `false` satisfies the second alone.
+   */
+  test('on a covered map drawing marks the lines it publishes, and erasing marks nothing', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(BEFORE_REVEAL)
+
+    const t = harness()
+    const fixture = await litFixture(t)
+    const { code, dmCode } = fixture
+    await rollCreatureAttack(t, fixture)
+    await rollHeroInitiative(t, fixture)
+
+    // Covering the map is itself a widening-and-narrowing at once, so `scenes.setFogBase`
+    // stamps unconditionally — see its docblock. Done before the clock moves, so the flag it
+    // sets is not what the two assertions below are reading.
+    await coverMap(t, fixture)
+
+    vi.setSystemTime(AFTER_REVEAL)
+    await rollHeroInitiative(t, fixture)
+    expect(newest(await t.query(api.feed.list, { code })).predatesReveal).toBe(false)
+
+    // THE WIDENING WRITE ON THIS BASE. A hole in the dark publishes everything standing in
+    // it, so every line older than the click becomes history.
+    vi.setSystemTime(new Date('2026-08-02T20:02:00.000Z'))
+    const fogId = await fogOver(t, fixture, fixture.creatureToken)
+
+    const published = await t.query(api.feed.list, { code })
+    expect(published.map((row) => row.actorName)).toEqual([
+      CREATURE_NAME,
+      CREATURE_NAME,
+      HERO_NAME,
+      HERO_NAME,
+    ])
+    expect(published.every((row) => row.predatesReveal)).toBe(true)
+    expect((await dmFeed(t, fixture)).every((row) => row.predatesReveal)).toBe(true)
+
+    // The live half: a roll made after the reveal is current, so the flag is not stuck.
+    vi.setSystemTime(new Date('2026-08-02T20:03:00.000Z'))
+    await rollHeroInitiative(t, fixture)
+    expect(newest(await t.query(api.feed.list, { code })).predatesReveal).toBe(false)
+
+    // THE NARROWING WRITE ON THIS BASE, AND THE ONE THAT MATTERS. Covering the room back up
+    // reveals nobody, so it must move nothing — a stamp here would mark the line written a
+    // minute ago as history and suppress the flourish on every roll the table has been
+    // watching, every time the DM closes a door.
+    vi.setSystemTime(new Date('2026-08-02T20:04:00.000Z'))
+    await t.mutation(api.fog.erase, { code, dmCode, fogId })
+    expect(newest(await t.query(api.feed.list, { code })).predatesReveal).toBe(false)
+  })
+
+  /**
+   * `clear` follows `erase` on both bases, because it is `erase` applied to everything at
+   * once. On a covered map that means it takes every revealed area away — so it narrows, and
+   * must not stamp, even though the identical call on a lit map does.
+   */
+  test('on a covered map clearing narrows, and does not stamp', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(BEFORE_REVEAL)
+
+    const t = harness()
+    const fixture = await litFixture(t)
+    const { code, dmCode, sceneId } = fixture
+    await coverMap(t, fixture)
+    await fogOver(t, fixture, fixture.creatureToken)
+
+    vi.setSystemTime(AFTER_REVEAL)
+    await rollHeroInitiative(t, fixture)
+    expect(newest(await t.query(api.feed.list, { code })).predatesReveal).toBe(false)
+
+    vi.setSystemTime(new Date('2026-08-02T20:02:00.000Z'))
+    expect(await t.mutation(api.fog.clear, { code, dmCode, sceneId })).toEqual({ removed: 1 })
+    expect(newest(await t.query(api.feed.list, { code })).predatesReveal).toBe(false)
+
+    // The contrast that makes it a statement about the base rather than about `clear`: the
+    // same mutation, the same fixture, flipped back to lit, does stamp.
+    await t.mutation(api.scenes.setFogBase, { code, dmCode, sceneId, fogBase: 'lit' })
+    vi.setSystemTime(new Date('2026-08-02T20:03:00.000Z'))
+    await rollHeroInitiative(t, fixture)
+    await fogOver(t, fixture, fixture.creatureToken)
+    vi.setSystemTime(new Date('2026-08-02T20:04:00.000Z'))
+    expect(await t.mutation(api.fog.clear, { code, dmCode, sceneId })).toEqual({ removed: 1 })
+    expect(newest(await t.query(api.feed.list, { code })).predatesReveal).toBe(true)
+  })
 })

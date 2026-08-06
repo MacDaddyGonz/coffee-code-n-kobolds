@@ -2474,4 +2474,45 @@ describe('fog takes a creature’s health bar with it', () => {
       rowFor(await t.query(api.characters.vitals, { code, dmCode: twiddle(dmCode) }), npc),
     ).toBeUndefined()
   })
+
+  /**
+   * ⚠️ **THE BAND HALF OF THE MILESTONE'S HEADLINE ACCEPTANCE — Milestone 13.**
+   *
+   * *A scene set to dark hides every DM-placed creature from a player's payload with no shape
+   * drawn at all — no position row, **no health band**, no feed line.* The placement half is
+   * `fog.test.ts`'s and the lines are `feed.test.ts`'s; the band is here, where this payload's
+   * needles and its positive controls already live.
+   *
+   * The whole of what makes this reachable is the inverted early return: fog used to be free
+   * precisely because nothing was withheld until a rectangle existed, so a covered map could
+   * only ever be approximated one rectangle at a time.
+   */
+  test('a covered map takes the band with no rectangle drawn at all', async () => {
+    const t = harness()
+    const fixture = await vitalsFixture(t)
+    const { code, dmCode, sceneId, npc, pc } = fixture
+
+    // The control: lit, empty, and the creature has a band.
+    expect(rowFor(await t.query(api.characters.vitals, { code }), npc)?.kind).toBe('band')
+
+    await t.mutation(api.scenes.setFogBase, { code, dmCode, sceneId, fogBase: 'dark' })
+
+    const covered = await t.query(api.characters.vitals, { code })
+    // No row at all rather than a narrower band — the whole creature is dropped before either
+    // variant is assembled, which is why no armour class travels either (ADR 0014's scope).
+    expect(rowFor(covered, npc)).toBeUndefined()
+    const serialised = JSON.stringify(covered) ?? ''
+    expect(serialised, 'the covered creature’s id travelled anyway').not.toContain(npc)
+    expect(containsNumber(serialised, NPC_MAX_HP)).toBe(false)
+    expect(containsNumber(serialised, NPC_CURRENT_HP)).toBe(false)
+
+    // The hero keeps exact numbers throughout. On a covered map with nothing revealed
+    // *everything* is in the dark, so without the control exemption this query would empty
+    // and the absence above would be about the wrong thing entirely.
+    expect(rowFor(covered, pc)).toMatchObject({ kind: 'exact', current: PC_CURRENT_HP })
+
+    // And the DM is unaffected, as under a rectangle: fog filters the party's payload and
+    // paints a veil on the DM's screen.
+    expect(rowFor(await t.query(api.characters.vitals, { code, dmCode }), npc)?.kind).toBe('exact')
+  })
 })

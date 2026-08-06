@@ -255,6 +255,10 @@ export function useBoard(args: {
 
     const at = new Map((positions ?? []).map((row) => [row.tokenId, { x: row.x, y: row.y }]))
     const rects = fog ?? []
+    // Absent-means-lit is resolved on the server, in `fogBaseOf`, so `scenes.active` always
+    // carries a real base. The `??` is for the frame before the first answer arrives, not a
+    // second spelling of the default — see the ⚠️ on `hiddenFromParty`.
+    const base = scene?.fogBase ?? 'lit'
 
     // Order is left alone — `TokenLayers` splits the tokens by layer and stacks them
     // by size, which is a drawing decision and belongs with the canvas.
@@ -341,7 +345,7 @@ export function useBoard(args: {
       // `isDm` first, so a player's board computes nothing: the question is *has the
       // party lost sight of this*, which is not a sentence about your own screen, and a
       // player's payload has already had the fogged rows taken out of it.
-      hiddenFromParty: isDm && hiddenFromParty(token, at.get(token._id) ?? null, rects),
+      hiddenFromParty: isDm && hiddenFromParty(token, at.get(token._id) ?? null, rects, base),
       // Read, never derived, and never filtered here. The server decided which coins'
       // rows travel — `visibleMarkers` runs `maySee`, so a GM-layer coin's conditions
       // are absent from a player's payload rather than dropped in this file
@@ -363,7 +367,10 @@ export function useBoard(args: {
     // of these dependencies at all. What it costs when one *is* ticked is every token
     // object rebuilt and every coin reconciled — the same charge damage already pays, for
     // an event that happens far less often than damage does.
-  }, [tokens, positions, fog, marked, isDm, playerId, myCharacterId, vitalsOf])
+    //
+    // `scene?.fogBase` is on the cheapest side of all: it changes when the DM flips a map,
+    // which is a handful of times an evening at most, and getting it wrong inverts the cue.
+  }, [tokens, positions, fog, marked, isDm, playerId, myCharacterId, vitalsOf, scene?.fogBase])
 
   return {
     scene: scene ?? null,

@@ -16,6 +16,7 @@ import { v } from 'convex/values'
 // can create a `dm` row from here forward and nothing can send one to a client. Both this
 // import and the fourth member go away once the relabel has run — see `layerOf`.
 import { storedTokenLayerValidator } from './lib/layers'
+import { fogBaseValidator } from './lib/fogBase'
 import { gameStatusValidator } from './lib/games'
 // The condition vocabulary. Imported here for the table's validator and nowhere else in
 // this file — `markerGuard.test.ts` allows exactly three importers inside `convex/`, and
@@ -236,6 +237,16 @@ export default defineSchema({
     // lib/scenes.ts and nowhere else — the discipline lib/sheet.ts states for every field
     // its own schema could not require.
     backgroundColour: v.optional(v.string()),
+    // Lit, and the DM blacks areas out, or dark, and the DM lights areas up.
+    //
+    // ⚠️ **Optional for `backgroundColour`'s reason, and here the default is load-bearing
+    // rather than cosmetic.** Absent means `lit` — read through `fogBaseOf` in lib/scenes.ts
+    // and nowhere else — because every scene stored before this field existed had its fog
+    // drawn *as darkness*, so defaulting them to dark would black out every map in every
+    // game on the push. That is the opposite answer from the one `startsCovered` gives an
+    // *unrecognised* base, and lib/fogBase.ts's header explains why the two questions
+    // deserve opposite answers.
+    fogBase: v.optional(fogBaseValidator),
   }).index('by_gameId', ['gameId']),
 
   // STABLE token data — art, name, size, layer, owning character. Low churn: this
