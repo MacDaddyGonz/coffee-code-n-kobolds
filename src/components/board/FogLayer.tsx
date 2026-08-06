@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback } from 'react'
 import { Layer, Rect } from 'react-konva'
 import { useMutation } from 'convex/react'
 import { toast } from 'sonner'
@@ -7,11 +7,12 @@ import type Konva from 'konva'
 import { setCursor, swallowLeftPress } from '@/components/board/konvaPointer'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { useFog, useFogMode } from '@/hooks/useFog'
+import { useRubberBand, type Band } from '@/hooks/useRubberBand'
 import { errorMessage } from '@/lib/errors'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicFog } from '@convex/lib/fog'
-import type { Grid, Point, Rect as ImageRect } from '@convex/lib/grid'
+import type { Grid, Rect as ImageRect } from '@convex/lib/grid'
 import { isUsableGrid, snapToGrid } from '@convex/lib/grid'
 import type { PublicScene } from '@convex/lib/scenes'
 
@@ -44,9 +45,6 @@ const BAND_FILL = 'rgba(5, 7, 13, 0.45)'
 /** Screen-pixel weights, divided by the scale so they hold at any zoom. */
 const BAND_WIDTH = 2
 const BAND_DASH = 6
-
-/** Where a gesture started and where the pointer is now, both in image space. */
-type Band = { from: Point; to: Point }
 
 export type FogLayerProps = {
   code: string
@@ -81,12 +79,10 @@ export type FogLayerProps = {
  * cannot be silent: arming a tool is a deliberate act with a lit button in DM tools and
  * a crosshair under the cursor, and `FogTools`' first control turns it off.
  *
- * **One write per gesture, on release, deliberately un-throttled.** This is the opposite
- * of a token drag, where invariant 2 asks for ten writes a second so that everybody
- * watches the coin move: nobody wants to watch a rectangle rubber-band on somebody else's
- * screen, and a fog rectangle has no intermediate state anybody at the table needs. So
- * the band is local until the mouse comes up, and the map goes dark for the party in one
- * step.
+ * **The gesture itself is `useRubberBand`**, shared with the grid tracer. One write per
+ * gesture, on release, un-throttled — the argument for that lives on the hook, along with
+ * the listener-identity trap this component used to carry a paragraph about and no longer
+ * has to.
  *
  * **Memoised, and `scale` is the reason it is worth anything.** The other three props are a
  * code, a secret and a scene row the subscription holds still, and the scale changes on a
@@ -115,120 +111,32 @@ export const FogLayer = memo(function FogLayer({ code, dmCode, scene, scale }: F
   // disable while one is in flight, and the rectangle vanishing is the whole of the
   // feedback. So `erase` reports the way `Board` reports a refused move: the server's own
   // words, in a toast, over a board that has already settled.
-  //
-  // ⚠️ **The member is taken and not the object, and that is load-bearing rather than tidy.**
-  // `useLobbyAction` returns a fresh literal every render, so a `commit` closed over the whole
-  // thing had a fresh identity every render too — and the band effect below depends on
-  // `commit` while `setBand` fires on every `mousemove`, which tore down and re-added both
-  // `window` listeners sixty times a second for the length of every gesture. `run` is a
-  // `useCallback([])`, so depending on it is what holds `commit` still. Parking `commit` in a
-  // ref would have worked equally well and would have said none of this.
   const { run } = useLobbyAction()
 
   const drawing = isDm && mode === 'draw'
   const erasing = isDm && mode === 'erase'
 
-  /**
-   * The gesture, twice: in state so the band redraws, and in a ref so the handlers on
-   * `window` below read where the pointer *is* rather than where it was when the
-   * listener was attached.
-   */
-  const [band, setBand] = useState<Band | null>(null)
-  const bandRef = useRef<Band | null>(null)
-  const stageRef = useRef<Konva.Stage | null>(null)
+  const commit = useCallback(
+    (gesture: Band) => {
+      if (dmCode === null) return
 
-  const commit = useCallback(() => {
-    const gesture = bandRef.current
-    bandRef.current = null
-    setBand(null)
-    if (gesture === null || dmCode === null) return
+      const rect = snappedRect(gesture, scene)
+      // A drag that snapped to nothing — a click, or a wobble inside one square. Dropped
+      // silently rather than sent, because the band the DM was watching is already the
+      // snapped one, so there was visibly nothing there to fog. `fog.draw` refuses a
+      // zero-area rectangle anyway, and its reason is a data one worth reading: a
+      // rectangle with no width hides nothing and has nothing on screen to click, so it
+      // would sit on the scene for ever counting against the cap.
+      if (rect.width === 0 || rect.height === 0) return
 
-    const rect = snappedRect(gesture, scene)
-    // A drag that snapped to nothing — a click, or a wobble inside one square. Dropped
-    // silently rather than sent, because the band the DM was watching is already the
-    // snapped one, so there was visibly nothing there to fog. `fog.draw` refuses a
-    // zero-area rectangle anyway, and its reason is a data one worth reading: a
-    // rectangle with no width hides nothing and has nothing on screen to click, so it
-    // would sit on the scene for ever counting against the cap.
-    if (rect.width === 0 || rect.height === 0) return
+      void run('draw', 'Could not fog that area.', () =>
+        drawFog({ code, dmCode, sceneId: scene._id, ...rect }),
+      )
+    },
+    [code, dmCode, drawFog, run, scene],
+  )
 
-    void run('draw', 'Could not fog that area.', () =>
-      drawFog({ code, dmCode, sceneId: scene._id, ...rect }),
-    )
-  }, [code, dmCode, drawFog, run, scene])
-
-  // Held still for the draw surface's sake. With the cursor handlers hoisted to module scope
-  // this is the only prop on that shape that could still change identity, and one unstable
-  // handler is enough to make Konva rebind on every frame of a band — a half-applied
-  // discipline that reads as if it had been applied.
-  const begin = useCallback((event: Konva.KonvaEventObject<MouseEvent>) => {
-    // Left button only: a right-click is not a gesture and a middle-drag belongs to the
-    // pan, which `BoardStage` claims on the container before Konva ever hears about it.
-    if (event.evt.button !== 0) return
-
-    const stage = event.target.getStage()
-    const point = stage?.getRelativePointerPosition()
-    if (!stage || !point) return
-
-    // Konva binds the stage's drag with a namespaced `mousedown` listener, and the stage
-    // is `draggable` so the map can be panned from anywhere. Cancelling the bubble is
-    // what stops a rubber band panning the board underneath itself —
-    // `TokenHealthBar.swallowLeftPress` is the same trick against the same mechanism one
-    // level down.
-    event.cancelBubble = true
-
-    stageRef.current = stage
-    bandRef.current = { from: point, to: point }
-    setBand(bandRef.current)
-  }, [])
-
-  const banding = band !== null
-
-  /**
-   * The rest of the gesture, on `window` rather than on the shape.
-   *
-   * `BoardStage`'s own pan says why in one line: a drag that runs off the edge of the
-   * canvas should keep going, and should still end when the button comes up somewhere
-   * else entirely. Fogging the far edge of a map is exactly that drag, and a mouse-up
-   * Konva never sees is a band that never commits and never clears.
-   *
-   * `setPointersPositions` is how a raw browser event is handed to Konva — the same
-   * method its own HTML drag-and-drop support uses — and `getRelativePointerPosition`
-   * then inverts the *stage's live transform*, which is this camera. That is
-   * `toImageSpace` with the numbers the stage is actually painting with rather than the
-   * ones this render was handed, which is the same reason `useTokenMove.nodePoint` reads
-   * a dragged node's own position instead of converting a pointer.
-   */
-  useEffect(() => {
-    const stage = stageRef.current
-    if (!banding || !stage) return
-
-    const move = (event: MouseEvent) => {
-      stage.setPointersPositions(event)
-      const point = stage.getRelativePointerPosition()
-      const current = bandRef.current
-      if (point === null || current === null) return
-      bandRef.current = { from: current.from, to: point }
-      setBand(bandRef.current)
-    }
-
-    window.addEventListener('mousemove', move)
-    window.addEventListener('mouseup', commit)
-    return () => {
-      window.removeEventListener('mousemove', move)
-      window.removeEventListener('mouseup', commit)
-    }
-  }, [banding, commit])
-
-  // Putting the tool down mid-drag abandons the band rather than committing it. The DM
-  // reached for another control while holding the mouse, which is not a decision about
-  // where the fog goes — and a band left on screen with no listeners behind it would be
-  // a rectangle that never lands and never leaves.
-  useEffect(() => {
-    if (drawing) return
-    bandRef.current = null
-    setBand(null)
-  }, [drawing])
+  const { begin, band } = useRubberBand({ enabled: drawing, onCommit: commit })
 
   // A `useCallback` because it crosses into `FogRect`, whose memo is worth nothing unless the
   // handler it is handed survives a render. Two hundred rectangles is `TokenLayers`' arithmetic
