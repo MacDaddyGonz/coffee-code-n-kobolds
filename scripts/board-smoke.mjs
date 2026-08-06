@@ -650,60 +650,80 @@ const WOLF = {
   key: 'dire-wolf',
   entryName: 'Dire Wolf',
   libraryCr: 1,
-  blurb: 'Horse-sized wolf that hunts in twos and does not tire.',
+  blurb: 'Beast · Darts in, hits, and is gone.',
   loot: 'Nothing carried and nothing hidden. A beast owns only itself.',
+  /**
+   * ⚠️ **Every number below moved with the 2024 corpus, and the fixture is the point.**
+   * This is an independent hand-written copy of what the library says, so when the corpus
+   * was re-transcribed from the SRD and `benchmarks.ts` re-fitted to it, this is what said
+   * so — against the real deployment, field by field, rather than by agreeing with itself.
+   *
+   * The Dire Wolf is CR 1 in both editions and is a different animal on paper: 22 hit points
+   * rather than 31, AC 14 rather than 12, and one `1d10+3` Bite where the old hand-written
+   * entry had `2d6+3`.
+   */
   /** The entry as written. CR 1 → CR 1 is the exact identity and is not short-circuited. */
   atCr1: {
-    maxHp: 31,
-    armourClass: 12,
-    attackBonus: 4,
-    initiativeBonus: 2,
-    passivePerception: 13,
-    speed: 50,
-    skills: { perception: 3, stealth: 4 },
-    damage: '2d6+3',
-    toHit: '1d20+4',
-    // Every attack in the corpus is a weapon by construction — the entry separates
-    // `attacks` from `abilities`, and an attack is the thing that has to land before its
-    // damage applies. Asserted rather than assumed, because it is read off the structure
-    // rather than declared on a hundred and fifty-nine hand-written attacks.
-    category: 'weapon',
-  },
-  /** 31 × 70/26 = 83.46… → 83, and +2 on every d20 column. Damage 16/8 = 2.0× exactly. */
-  atCr4: {
-    maxHp: 83,
+    maxHp: 22,
     armourClass: 14,
-    attackBonus: 6,
-    initiativeBonus: 4,
+    attackBonus: 5,
+    initiativeBonus: 2,
     passivePerception: 15,
     speed: 50,
-    skills: { perception: 5, stealth: 6 },
-    damage: '4d6+6',
+    skills: { perception: 5, stealth: 4 },
+    damage: '1d10+3',
+    toHit: '1d20+5',
+    category: 'weapon',
+  },
+
+  /** Up three ratings. Hit points and damage scale on ratios, the d20 columns on deltas. */
+  atCr4: {
+    maxHp: 62,
+    armourClass: 16,
+    attackBonus: 6,
+    initiativeBonus: 3,
+    passivePerception: 16,
+    speed: 50,
+    skills: { perception: 6, stealth: 5 },
+    damage: '2d10+6',
     toHit: '1d20+6',
     category: 'weapon',
   },
-  /** 31 × 120/26 = 143.07… → 143, and +3 on every d20 column. Damage 25/8 = 3.125×. */
+
+  /** The ceiling. `scaleRoll` keeps the faces and moves the count and the modifier. */
   atCr6: {
-    maxHp: 143,
-    armourClass: 15,
+    maxHp: 94,
+    armourClass: 17,
     attackBonus: 7,
-    initiativeBonus: 5,
-    passivePerception: 16,
+    initiativeBonus: 4,
+    passivePerception: 17,
     speed: 50,
-    skills: { perception: 6, stealth: 7 },
-    damage: '6d6+10',
+    skills: { perception: 7, stealth: 6 },
+    damage: '3d10+12',
     toHit: '1d20+7',
     category: 'weapon',
   },
+
   /** The composed opening of the resolved Bite at each rating, from `attackText`. */
-  biteAtCr1: 'Melee. 2d6+3 piercing damage.',
-  biteAtCr6: 'Melee. 6d6+10 piercing damage.',
+  biteAtCr1: 'Melee. 1d10+3 piercing damage.',
+  biteAtCr6: 'Melee. 3d10+12 piercing damage.',
 }
+
+/**
+ * How many creatures are on the DM's shelf.
+ *
+ * ⚠️ **Hand-written here rather than counted from the corpus, which is the whole point of
+ * this file.** `bestiary.test.ts` asserts the same number from the inside; this asserts that
+ * the *deployment* sends that many rows, so a query that silently truncated — a `take` past
+ * its bound, a filter that dropped a category — would be caught by a number a person typed
+ * rather than by the corpus agreeing with itself.
+ */
+const BESTIARY_ENTRIES = 283
 
 /** The creature's own name in the game, which is neither the entry's nor the token's. */
 const WOLF_CHARACTER_NAME = 'Wyrmshadow at the Ford 🐺'
-/** 89 of 143. Distinctive digits, for the reason 271 and 137 are. */
-const WOLF_CURRENT_HP = 89
+/** 59 of 94, the CR 6 maximum. Distinctive digits, for the reason 271 and 137 are. */
+const WOLF_CURRENT_HP = 59
 
 /**
  * A social NPC with **no combat block at all** — twenty-two of the thirty are like this
@@ -3320,7 +3340,10 @@ async function main() {
       wolfAtOne &&
         oneDrift === null &&
         wolfAtOne.sheet.kind === 'npc' &&
-        wolfAtOne.sheet.actions.length === 3 &&
+        // Two: one Bite and one Pack Tactics. The old hand-written entry had three; the SRD
+        // Dire Wolf has one attack and one trait, and this is a hand-written count rather than
+        // a derived one for the reason the whole fixture is.
+        wolfAtOne.sheet.actions.length === 2 &&
         wolfAtOne.sheet.actions[0].id === 'atk:bite' &&
         wolfAtOne.sheet.actions[0].text.startsWith(WOLF.biteAtCr1),
       oneDrift ??
@@ -3412,9 +3435,9 @@ async function main() {
     const rescaled = await dmVitalsFor(wolf.characterId)
     check(
       'a creature on half its hit points came out on half of the new maximum',
-      // round(15 × 83/31) = round(40.16) = 40 of 83. Neither dead nor healed.
-      rescaled && rescaled.current === 40 && rescaled.max === WOLF.atCr4.maxHp,
-      rescaled ? `${rescaled.current}/${rescaled.max}, wanted 40/${WOLF.atCr4.maxHp}` : 'no vitals row',
+      // round(15 × 62/22) = round(42.27) = 42 of 62. Neither dead nor healed.
+      rescaled && rescaled.current === 42 && rescaled.max === WOLF.atCr4.maxHp,
+      rescaled ? `${rescaled.current}/${rescaled.max}, wanted 42/${WOLF.atCr4.maxHp}` : 'no vitals row',
     )
 
     // An override is the DM's last word, and the scale happens before it — so a boss-fight
@@ -3590,10 +3613,10 @@ async function main() {
     const rescaledAgain = await dmVitalsFor(wolf.characterId)
     check(
       'the fraction survived the second shift too',
-      // round(40 × 143/83) = round(68.92) = 69 of 143.
-      rescaledAgain && rescaledAgain.current === 69 && rescaledAgain.max === WOLF.atCr6.maxHp,
+      // round(42 × 94/62) = round(63.67) = 64 of 94.
+      rescaledAgain && rescaledAgain.current === 64 && rescaledAgain.max === WOLF.atCr6.maxHp,
       rescaledAgain
-        ? `${rescaledAgain.current}/${rescaledAgain.max}, wanted 69/${WOLF.atCr6.maxHp}`
+        ? `${rescaledAgain.current}/${rescaledAgain.max}, wanted 64/${WOLF.atCr6.maxHp}`
         : 'no vitals row',
     )
 
@@ -3726,8 +3749,8 @@ async function main() {
     const shelf = await client.query('bestiary:index', { code, dmCode })
     const shelfText = JSON.stringify(shelf)
     check(
-      'bestiary:index hands the DM 129 summary rows and no stat block',
-      shelf.length === 129 &&
+      'bestiary:index hands the DM every summary row and no stat block',
+      shelf.length === BESTIARY_ENTRIES &&
         shelfText.includes(WOLF.key) &&
         shelfText.includes(WOLF.entryName) &&
         shelfText.includes(WOLF.blurb) &&
@@ -3788,13 +3811,13 @@ async function main() {
         reset.creature.cr === WOLF.libraryCr &&
         reset.creature.overrides === null &&
         reset.creature.overriddenFields.length === 0 &&
-        // round(89 × 31/143) = round(19.29) = 19 of 31.
+        // round(59 × 22/94) = round(13.80) = 14 of 22.
         resetVitals &&
-        resetVitals.current === 19 &&
+        resetVitals.current === 14 &&
         resetVitals.max === WOLF.atCr1.maxHp,
       resetDrift ??
         (resetVitals
-          ? `CR ${reset.creature.cr}, ${resetVitals.current}/${resetVitals.max}, wanted 19/${WOLF.atCr1.maxHp}`
+          ? `CR ${reset.creature.cr}, ${resetVitals.current}/${resetVitals.max}, wanted 14/${WOLF.atCr1.maxHp}`
           : 'no vitals row'),
     )
 

@@ -23,6 +23,7 @@ import type * as lib_bestiary_index from "../lib/bestiary/index.js";
 import type * as lib_bestiary_monstersHigh from "../lib/bestiary/monstersHigh.js";
 import type * as lib_bestiary_monstersLow from "../lib/bestiary/monstersLow.js";
 import type * as lib_bestiary_monstersMid from "../lib/bestiary/monstersMid.js";
+import type * as lib_bestiary_retired from "../lib/bestiary/retired.js";
 import type * as lib_bestiary_scale from "../lib/bestiary/scale.js";
 import type * as lib_bestiary_social from "../lib/bestiary/social.js";
 import type * as lib_bestiary_types from "../lib/bestiary/types.js";
@@ -93,6 +94,7 @@ declare const fullApi: ApiFromModules<{
   "lib/bestiary/monstersHigh": typeof lib_bestiary_monstersHigh;
   "lib/bestiary/monstersLow": typeof lib_bestiary_monstersLow;
   "lib/bestiary/monstersMid": typeof lib_bestiary_monstersMid;
+  "lib/bestiary/retired": typeof lib_bestiary_retired;
   "lib/bestiary/scale": typeof lib_bestiary_scale;
   "lib/bestiary/social": typeof lib_bestiary_social;
   "lib/bestiary/types": typeof lib_bestiary_types;
