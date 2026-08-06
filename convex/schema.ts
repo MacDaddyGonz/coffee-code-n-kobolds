@@ -445,6 +445,51 @@ export default defineSchema({
     points: v.optional(v.array(v.object({ x: v.number(), y: v.number() }))),
   }).index('by_sceneId', ['sceneId']),
 
+  // BARRIERS — the lines on one scene that a token may not be dragged through.
+  //
+  // ⚠️ **A wall stops movement and decides nothing about sight, and the omission is the
+  // design rather than a budget.** Roll20's barriers do both; this table does the first
+  // half only. Line of sight, per-player fog and reveal-as-you-walk each turn a stored row
+  // into *a statement about what one caller may know* — the exact thing that would make
+  // these rows secrets of the same shape as non-secrets and give this table a reader, a
+  // predicate and a fourth row in CLAUDE.md invariant 8's table. This milestone is
+  // specified so that day does not arrive. lib/walls.ts carries the long version.
+  //
+  // So, like `fogRects` above and unlike everything below it, **these rows are not the
+  // secret**. Every wall goes to every client verbatim, because a client that has not been
+  // sent the geometry cannot stop a drag against it — and a line traced over the wall the
+  // map already has drawn on it leaks nothing the fully-downloaded image does not. The
+  // genuine residual is a barrier where the map shows *no* wall, which ADR 0015 records in
+  // its costs and the wall panel says out loud.
+  //
+  // Keyed on the scene alone with no `gameId`, exactly as `fogRects` and `tokenPositions`
+  // are: a scene belongs to one game, and every reader already holds a scene the caller's
+  // game has vouched for through `findSceneInGame`.
+  //
+  // ⚠️ **Every field required, with no optionals** — `fogRects`' and `tokenMarkers`'
+  // inversion argument for the third time, because the pressure that makes a field optional
+  // in this schema is *rows that already exist*, and this table is new. A `points` that
+  // could be absent would be a wall that blocks nothing, stored, counted against the cap and
+  // invisible on the map.
+  walls: defineTable({
+    sceneId: v.id('scenes'),
+    // The vertices, in the order the DM clicked them, in the same image-space pixels every
+    // other coordinate in this application uses. **Two or more**, enforced by `walls.add`
+    // rather than by the validator, which cannot express a minimum length.
+    //
+    // ⚠️ **A polyline and never a polygon: the list is NOT closed.** `pathCrossesAnyWall`
+    // walks neighbouring pairs and stops, so a DM who wants a sealed room clicks back onto
+    // the corner they started at and that repeated vertex is a real segment. Closing every
+    // wall implicitly would draw a barrier across the mouth of every corridor anybody
+    // traced. This is the one place a repeated first-and-last point is *meaningful* rather
+    // than the redundant corner `usePolygonDraw` drops.
+    //
+    // Winding order is not normalised, for `fogRects.points`' reason: a segment
+    // intersection test has no opinion about direction, so a normaliser would be arithmetic
+    // nothing reads.
+    points: v.array(v.object({ x: v.number(), y: v.number() })),
+  }).index('by_sceneId', ['sceneId']),
+
   // WHAT HAPPENED, AND WHO MAY HEAR ABOUT IT — the game feed.
   //
   // THE SECRET IS `characterId`. A line reading `Ancient Red Dragon attacks with their

@@ -12,8 +12,10 @@ import {
   isUsableGrid,
   isUsableTokenSize,
   moveByCells,
+  pathCrossesAnyWall,
   polygonCovers,
   rectCovers,
+  segmentsIntersect,
   shapeCovers,
   snapToGrid,
   squaresDown,
@@ -778,5 +780,124 @@ describe('anyShapeCovers', () => {
     expect(anyShapeCovers(shapes, { x: 170, y: 270 })).toBe(true)
     expect(anyShapeCovers(shapes, { x: 1000, y: 1000 })).toBe(false)
     expect(anyShapeCovers([], { x: 10, y: 10 })).toBe(false)
+  })
+})
+
+/**
+ * ⚠️⚠️ **THE EDGE CONVENTION BELOW IS THE OPPOSITE OF `rectCovers`', AND THAT DISAGREEMENT IS
+ * THE THING THESE TWO BLOCKS EXIST TO PIN.**
+ *
+ * Everything above answers *is this point inside that region*, and is half-open so that two
+ * abutting shapes tile without both claiming the line between them. A wall is a line with no
+ * inside, so there is no seam to tile and nothing for two shapes to argue over — and what
+ * there is instead is a token walking up to a barrier, which should stop **just short** of
+ * it. So endpoint-touching and collinear overlap both count as crossing.
+ *
+ * Getting that backwards is quietly wrong in the direction nobody checks: a token that may
+ * cross a wall by landing exactly on it looks identical, on every screen, to a token that
+ * may not. Hence a case per way of touching rather than a handful of obvious crossings.
+ */
+describe('segmentsIntersect', () => {
+  const A: Point = { x: 0, y: 0 }
+  const B: Point = { x: 100, y: 0 }
+
+  test('a proper crossing is a crossing', () => {
+    expect(segmentsIntersect(A, B, { x: 50, y: -50 }, { x: 50, y: 50 })).toBe(true)
+  })
+
+  test('two segments that miss each other are not', () => {
+    expect(segmentsIntersect(A, B, { x: 50, y: 10 }, { x: 50, y: 50 })).toBe(false)
+    expect(segmentsIntersect(A, B, { x: 200, y: -50 }, { x: 200, y: 50 })).toBe(false)
+  })
+
+  test('parallel segments never meet', () => {
+    expect(segmentsIntersect(A, B, { x: 0, y: 10 }, { x: 100, y: 10 })).toBe(false)
+  })
+
+  /** The T-junction: one segment's endpoint sitting on the other's interior. */
+  test('an endpoint landing on the other segment counts', () => {
+    expect(segmentsIntersect(A, B, { x: 50, y: 0 }, { x: 50, y: 50 })).toBe(true)
+    expect(segmentsIntersect({ x: 50, y: 50 }, { x: 50, y: 0 }, A, B)).toBe(true)
+  })
+
+  /** Corner to corner: the case a half-open convention would answer false to. */
+  test('two segments meeting at a shared endpoint count', () => {
+    expect(segmentsIntersect(A, B, B, { x: 100, y: 100 })).toBe(true)
+    expect(segmentsIntersect(A, B, { x: 0, y: -100 }, A)).toBe(true)
+  })
+
+  test('collinear overlap counts, and collinear-but-apart does not', () => {
+    expect(segmentsIntersect(A, B, { x: 50, y: 0 }, { x: 150, y: 0 })).toBe(true)
+    // Touching end to end along the same line is still touching.
+    expect(segmentsIntersect(A, B, B, { x: 200, y: 0 })).toBe(true)
+    expect(segmentsIntersect(A, B, { x: 150, y: 0 }, { x: 250, y: 0 })).toBe(false)
+  })
+
+  /**
+   * A zero-length path — a settling write that moves a token nowhere — meets a wall only if
+   * it is standing on it. Worth pinning because it is the shape of every `settle` that
+   * follows a drag which travelled no distance.
+   */
+  test('a degenerate path meets a wall only when it stands on it', () => {
+    expect(segmentsIntersect({ x: 50, y: 0 }, { x: 50, y: 0 }, A, B)).toBe(true)
+    expect(segmentsIntersect({ x: 50, y: 10 }, { x: 50, y: 10 }, A, B)).toBe(false)
+  })
+
+  /**
+   * ⚠️ **Fails open on a non-finite coordinate**, which is `rectCovers`' choice arriving for
+   * a different reason: nothing behind a wall is a secret, so a refusal nobody can explain is
+   * worse than one move that should not have happened.
+   */
+  test('a non-finite coordinate crosses nothing', () => {
+    expect(segmentsIntersect({ x: Number.NaN, y: 0 }, { x: 50, y: 50 }, A, B)).toBe(false)
+    expect(segmentsIntersect(A, B, { x: 50, y: Number.NaN }, { x: 50, y: 50 })).toBe(false)
+  })
+})
+
+describe('pathCrossesAnyWall', () => {
+  /** An L, which is two segments and the commonest wall after a straight one. */
+  const CORNER: Point[] = [
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 200, y: 100 },
+  ]
+
+  test('any one segment of any one wall is enough', () => {
+    expect(pathCrossesAnyWall([CORNER], { x: 50, y: 50 }, { x: 150, y: 50 })).toBe(true)
+    expect(pathCrossesAnyWall([CORNER], { x: 150, y: 50 }, { x: 150, y: 150 })).toBe(true)
+  })
+
+  test('a path that goes round the end of a wall is not blocked', () => {
+    expect(pathCrossesAnyWall([CORNER], { x: 50, y: 150 }, { x: 150, y: 150 })).toBe(false)
+  })
+
+  test('no walls and an empty wall block nothing', () => {
+    expect(pathCrossesAnyWall([], { x: 0, y: 0 }, { x: 1000, y: 1000 })).toBe(false)
+    expect(pathCrossesAnyWall([[]], { x: 0, y: 0 }, { x: 1000, y: 1000 })).toBe(false)
+    expect(pathCrossesAnyWall([[{ x: 50, y: 50 }]], { x: 0, y: 0 }, { x: 100, y: 100 })).toBe(
+      false,
+    )
+  })
+
+  /**
+   * ⚠️ **A wall is a polyline and is NOT closed**, which is the one thing about this
+   * function that looks like an oversight and is a decision. A DM sealing a room clicks back
+   * onto the corner they started at, and that repeated vertex is what closes it — so the
+   * three points below leave a gap between the last and the first, and a path through that
+   * gap is a doorway rather than a bug.
+   */
+  test('an unclosed outline leaves the gap between its last and first corner open', () => {
+    const open: Point[] = [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+      { x: 0, y: 100 },
+    ]
+    // Out through the missing fourth side — the left edge, from (0,100) back to (0,0).
+    expect(pathCrossesAnyWall([open], { x: 50, y: 50 }, { x: -50, y: 50 })).toBe(false)
+    // And the same outline with the first vertex repeated does close it.
+    expect(
+      pathCrossesAnyWall([[...open, { x: 0, y: 0 }]], { x: 50, y: 50 }, { x: -50, y: 50 }),
+    ).toBe(true)
   })
 })

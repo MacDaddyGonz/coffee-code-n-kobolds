@@ -82,6 +82,41 @@ export const MAX_FOG_RECTS_PER_SCENE = 200
 export const MAX_FOG_POLYGON_POINTS = 32
 
 /**
+ * How many walls one scene may hold, and how many vertices one wall may have.
+ *
+ * ⚠️ **Both are write checks and not merely read bounds, and `fog.draw`'s recorded reason
+ * applies to them word for word.** Nothing structurally caps walls — a DM tracing the
+ * corridors of a dungeon produces one row per gesture, all evening — so a scene past the
+ * read window would hold barriers that `pathCrossesAnyWall` sees on some passes and not
+ * others, depending on which rows the `take` happened to return. That failure is worse here
+ * than it is for fog: a refusal that fires intermittently reads as a rendering glitch, gets
+ * explained away, and the DM stops trusting the feature rather than reporting it.
+ * `walls.add` therefore refuses at the boundary, the way `board.addToken` enforces
+ * `MAX_TOKENS_PER_GAME`, and the refusal names the way out.
+ *
+ * The arithmetic behind the pair, in `MAX_ROLL_DICE`'s register — the constant carries the
+ * sum so the next person to move it can see what they are buying. The barrier test is
+ * `walls × (points − 1)` segment intersections, each four cross products, so the ceiling is
+ * `100 × 63` ≈ **6,300 segment tests per checked move**. That is once per settling write on
+ * the server and once per drag frame in the browser, and it is deliberately *not* inside a
+ * query: `requireMovableToken`'s docblock argues why a `walls` read may not go on the path
+ * that runs ten times a second.
+ *
+ * A hundred walls is generous for the intended use, which is the doors and outer edges of
+ * one dungeon level, and sixty-four vertices is a long corridor traced in one go. The two
+ * numbers are separate because they bound different mistakes: one is a DM who keeps
+ * drawing, the other is a DM who traces a cave wall click by click without letting go.
+ *
+ * ⚠️ **Two is the floor for `MAX_WALL_POINTS` and it is a grammar rather than a courtesy.**
+ * One point is not a line, has no segment, blocks nothing and cannot be seen on the map — so
+ * it would sit on the scene for ever counting against the wall count, reachable only by
+ * clearing the whole map. That is `MAX_FOG_POLYGON_POINTS`' three-corner floor, one shape
+ * kind down: a fog shape needs a region and a wall needs only a direction.
+ */
+export const MAX_WALLS_PER_SCENE = 100
+export const MAX_WALL_POINTS = 64
+
+/**
  * How many handouts and how many tracks one game may hold.
  *
  * Both are write checks like MAX_TOKENS_PER_GAME, because both are things a DM adds one at

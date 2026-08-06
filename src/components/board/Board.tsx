@@ -14,6 +14,7 @@ import { GridHandlesLayer } from '@/components/board/dm/GridHandlesLayer'
 import { TokenDeleteDialog } from '@/components/board/dm/TokenDeleteDialog'
 import { TokenDuplicateDialog } from '@/components/board/dm/TokenDuplicateDialog'
 import { TraceBoxLayer } from '@/components/board/dm/TraceBoxLayer'
+import { WallLayer } from '@/components/board/dm/WallLayer'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BoardToken } from '@/hooks/useBoard'
 import { useBoard } from '@/hooks/useBoard'
@@ -27,6 +28,7 @@ import { useGridWrite } from '@/hooks/useGridWrite'
 import { useHpTarget } from '@/hooks/useHpTarget'
 import { useSmoothPositions, useTokenMove } from '@/hooks/useTokenMove'
 import { useTokenSelection } from '@/hooks/useTokenSelection'
+import { useWallMode, useWallPaths } from '@/hooks/useWalls'
 import { useHpActions } from '@/hooks/useVitals'
 import type { GridBox, GridHandle } from '@/lib/gridBox'
 import { boxOfGrid, dragBox, gridOfBox } from '@/lib/gridBox'
@@ -166,6 +168,35 @@ export function Board({
   const { mode: fogMode } = useFogMode(code)
   const fogArmed = board.isDm && fogMode !== 'off'
 
+  /**
+   * The wall tool, read here for exactly `fogMode`'s reason: the control is in the
+   * right-hand pane and both of the things that care about it are in this one.
+   *
+   * ⚠️ **That is now three module-level cells that can be armed at once, and it is a bug
+   * rather than a pattern** — see the ⚠️ on the tracer's mount below, which has described
+   * one half of it since the grid tracer landed. Each of the three mounts a draw surface
+   * spanning the whole image, so whichever is rendered last takes every press and the others
+   * silently stop working. The fix is one cell over one union and it is the next commit;
+   * this is the shape the wall tool ships in so that the collision is fixed once for all
+   * three rather than twice.
+   */
+  const { mode: wallMode } = useWallMode(code)
+  const wallArmed = board.isDm && wallMode !== 'off'
+
+  /**
+   * The barriers on this board, as bare geometry, for the drag.
+   *
+   * ⚠️ **Held by every client and not only the DM's**, which looks like a leak and is the
+   * feature: `useTokenMove` slides a coin up to a wall and stops it, and it cannot do that
+   * against geometry the browser was not sent. `WallLayer` decides whether they are *drawn*,
+   * and that layer is DM-only. `convex/walls.ts`'s header and `WallTools`' copy both carry
+   * the residual this leaves.
+   *
+   * The same subscription `WallLayer` and `WallTools` hold, through the same `wallArgs`
+   * builder — so this costs a `map` per change of the wall list and nothing on the wire.
+   */
+  const walls = useWallPaths(code, scene?._id ?? null, dm.dmCode)
+
   const selection = useTokenSelection(
     board.tokens,
     selectedTokenId,
@@ -180,6 +211,7 @@ export function Board({
     scene,
     tokens: board.tokens,
     containerRef,
+    walls,
   })
 
   const tokens = useSmoothPositions({
@@ -668,7 +700,7 @@ export function Board({
               // calibration handles borrow the same mechanism: while the box is out, a
               // press anywhere near a coin is aimed at the grid underneath it — and an
               // armed fog tool is the third of them, for the reason `fogArmed` carries.
-              draggable={!camera.spacePanning && !calibrating && !fogArmed}
+              draggable={!camera.spacePanning && !calibrating && !fogArmed && !wallArmed}
               onSelect={onSelect}
               onDragStart={move.onDragStart}
               onDragMove={move.onDragMove}
@@ -676,6 +708,37 @@ export function Board({
               onOpenHp={onOpenHp}
               onContextMenu={onTokenContextMenu}
             />
+            {/*
+              ⚠️ **Over the coins, which is the opposite of where the fog goes, and the two
+              reasons are different from each other.**
+
+              Visually, a barrier is the one piece of map furniture that has to read *across*
+              a figure: a wall drawn underneath a 2×2 ogre standing against it would
+              disappear exactly where the DM most needs to see it. Fog goes underneath
+              because an opaque veil painted over the party's own coins would take away the
+              figures the server went to some trouble not to withhold.
+
+              For the pointer it is the half-promise `FogLayer` makes and this layer keeps
+              whole. There, the coins sit on top, so a press on a creature finds the creature
+              and selects it rather than erasing the fog underneath — a documented trade.
+              Here the draw surface is above them, so while a wall tool is armed the map
+              answers the tool, full stop. It costs nothing that fog was protecting: there is
+              no equivalent of *a player's own hero, which must stay pickable through the
+              veil*, because this layer is DM-only and only exists while the DM is holding a
+              tool for pressing on the map.
+
+              Rendered only for the DM, so on a player's board the stage is exactly the tree
+              it was before walls existed — the geometry still arrives, through `useWallPaths`
+              above, and stops their drags without being painted.
+            */}
+            {board.isDm && dm.dmCode !== null ? (
+              <WallLayer
+                code={code}
+                dmCode={dm.dmCode}
+                scene={scene}
+                scale={camera.camera.scale}
+              />
+            ) : null}
             {/*
               Last, and that is the whole of how it wins the pointer — see `BoardStage`.
               Rendered only when the DM has asked for it, so on every other board the
@@ -688,15 +751,20 @@ export function Board({
               `gridWrite` and set the same `draftGrid`, so what changes between them is the
               gesture and not the consequence.
 
-              ⚠️ **The tracer and an armed fog tool can both be out, and the tracer wins the
-              pointer — deliberately, and worth knowing before reaching for a mutual
-              exclusion.** This layer is mounted last, so its draw surface takes every press on
-              the map and the fog band underneath never starts. The handles never collided this
-              way because they cover four squares rather than the whole image. It is left as it
-              is because the failure is *not* the silent one `FogLayer`'s docblock is about: two
-              buttons are lit, and a drag produces a blue measuring box rather than a dark
-              rectangle, which says which tool answered. Making one mode turn the other off is a
-              rule about two panes' controls and wants deciding rather than inferring here.
+              ⚠️⚠️ **THE TRACER, AN ARMED FOG TOOL AND AN ARMED WALL TOOL CAN NOW ALL THREE BE
+              OUT AT ONCE, AND THE TRACER WINS THE POINTER.** This layer is mounted last, so its
+              draw surface takes every press on the map and neither of the others ever starts.
+              The handles never collided this way because they cover four squares rather than
+              the whole image.
+
+              This paragraph used to end by saying it was left alone because the failure is not
+              the silent one `FogLayer`'s docblock is about — two buttons are lit, and a drag
+              produces a blue measuring box rather than a dark rectangle, which says which tool
+              answered. **That was a reasonable trade for two tools and it is not one for
+              three**, and the two panes' controls it said wanted deciding have now been
+              decided: one armed cell over one union, so arming any of them disarms the rest by
+              construction. It is the commit after the one that added walls, and this comment
+              goes with it.
             */}
             {board.isDm && calibrating ? (
               tracing ? (

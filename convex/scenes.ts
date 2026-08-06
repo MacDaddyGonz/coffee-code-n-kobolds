@@ -4,6 +4,7 @@ import { mutation, query } from './_generated/server'
 import { deleteScenePlacements } from './lib/board'
 import { colourProblem } from './lib/colour'
 import { deleteSceneFog } from './lib/fog'
+import { deleteSceneWalls } from './lib/walls'
 import { fogBaseOf, fogBaseValidator } from './lib/fogBase'
 import { MAX_SCENES_PER_GAME, findGameByCode, requireDm, stampReveal } from './lib/games'
 import { MIN_GRID_SIZE, gridSizeFor, isUsableGrid } from './lib/grid'
@@ -344,6 +345,9 @@ export const remove = mutation({
     // returned to — leaving it would be leaving a row nothing in the app can name, reach or
     // delete. `deleteScenesInGame` pairs these two calls the same way.
     await deleteSceneFog(ctx, scene._id)
+    // And the walls, which are keyed on the scene in exactly the same way and would
+    // otherwise outlive every reader that could ever name them.
+    await deleteSceneWalls(ctx, scene._id)
 
     // Cleared rather than moved to another scene. Choosing the next board is the
     // DM's decision, and every client would follow this one silently.

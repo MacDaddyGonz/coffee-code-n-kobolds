@@ -211,6 +211,127 @@ export function anyShapeCovers(shapes: readonly Shape[], point: Point): boolean 
 }
 
 /**
+ * Which side of the line `o → a` the point `b` falls on, as a signed area. Zero is
+ * collinear.
+ *
+ * The 2-D cross product, written out rather than reached for from a vector helper this
+ * module deliberately does not have. Everything here works on plain `{ x, y }` objects, and
+ * a `Vec2` type with an operator set would be the beginning of one.
+ */
+function cross(o: Point, a: Point, b: Point): number {
+  return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+}
+
+/** −1, 0 or 1. A NaN answers 0 — see the ⚠️ on `segmentsIntersect`. */
+function sign(value: number): number {
+  return value > 0 ? 1 : value < 0 ? -1 : 0
+}
+
+/**
+ * Is `point` within the bounding box of the segment `a → b`? Only ever asked of a point
+ * already known to be **collinear** with it, which is what makes a box test an answer to
+ * "is it on the segment" rather than merely near it.
+ *
+ * Inclusive at both ends, which is the convention `segmentsIntersect` exists to have — see
+ * the ⚠️ there. This is the one function in this file whose edges are *not* half-open, and
+ * the difference is deliberate.
+ */
+function withinSegment(a: Point, b: Point, point: Point): boolean {
+  return (
+    point.x >= Math.min(a.x, b.x) &&
+    point.x <= Math.max(a.x, b.x) &&
+    point.y >= Math.min(a.y, b.y) &&
+    point.y <= Math.max(a.y, b.y)
+  )
+}
+
+/**
+ * Do the two segments `a1 → a2` and `b1 → b2` meet anywhere at all?
+ *
+ * ⚠️⚠️ **ENDPOINT-TOUCHING AND COLLINEAR OVERLAP BOTH COUNT AS CROSSING, AND THAT IS A
+ * DIFFERENT CONVENTION FROM `rectCovers`' HALF-OPEN ONE ON PURPOSE.** Everything above this
+ * point in the file answers *is this point inside that region*, where an inclusive edge
+ * shared by two abutting shapes would be a line both of them claim. Nothing here is a
+ * region: a wall is a line with no inside, so two shapes cannot both claim anything and
+ * there is no seam to tile. What there is instead is a token walking up to a barrier, and
+ * the feel wants it to **stop just short** — so a path that ends exactly on the wall, or
+ * that runs along it for a while, is a path that has met it.
+ *
+ * Read the two conventions as answering two questions rather than as an inconsistency to be
+ * reconciled. Half-open is right for *which* of two neighbouring regions owns a point;
+ * inclusive is right for *did this journey touch that line*. A shared convention would make
+ * one of the two wrong, and the wrong one would be silent — a token that may cross a wall by
+ * landing precisely on it looks exactly like a token that may not.
+ *
+ * The rule is the standard four-orientation test. `d1 !== d2 && d3 !== d4` catches a proper
+ * crossing *and* an endpoint that lands on the other segment's interior, because a zero
+ * orientation differs from either sign. The four clauses after it catch the collinear cases
+ * the first test cannot see, where all four signs agree at zero.
+ *
+ * ⚠️ **This fails *open* on a non-finite coordinate, which is `rectCovers`' choice arriving
+ * for a second reason rather than the same one.** Every comparison against a NaN is false,
+ * so `sign` answers 0, the collinear clauses answer false, and a broken coordinate crosses
+ * nothing and is refused nothing. There is no secret behind a wall — that is the whole of
+ * why walls needed no choke point — so the cautious direction here is *let the move happen*:
+ * a refusal a DM cannot explain, on a map where nothing looks wrong, is worse than a token
+ * that walked through a barrier once. `requireFinite` in `convex/board.ts` runs before this
+ * on the one write path that matters anyway.
+ */
+export function segmentsIntersect(a1: Point, a2: Point, b1: Point, b2: Point): boolean {
+  const d1 = sign(cross(b1, b2, a1))
+  const d2 = sign(cross(b1, b2, a2))
+  const d3 = sign(cross(a1, a2, b1))
+  const d4 = sign(cross(a1, a2, b2))
+
+  if (d1 !== d2 && d3 !== d4) return true
+
+  if (d1 === 0 && withinSegment(b1, b2, a1)) return true
+  if (d2 === 0 && withinSegment(b1, b2, a2)) return true
+  if (d3 === 0 && withinSegment(a1, a2, b1)) return true
+  if (d4 === 0 && withinSegment(a1, a2, b2)) return true
+
+  return false
+}
+
+/**
+ * Would moving from `from` to `to` in a straight line pass through one of these walls?
+ * **The** barrier test, shared by the browser's drag and the server's settling write.
+ *
+ * A wall is a polyline — a list of vertices with a segment between each neighbouring pair —
+ * and it is deliberately **not closed**. A DM who wants a sealed room clicks back onto the
+ * corner they started at, which is a real vertex and a real segment; closing every wall
+ * implicitly would put a barrier along the line between the two ends of every corridor
+ * anybody traced.
+ *
+ * ⚠️ **The path is the token's centre and nothing else enters the arithmetic** — no token
+ * size, no grid size. That is `foggedTokenIds`' rule applied to a second feature and for the
+ * same reason: a footprint test needs the grid, and an uncalibrated map would then silently
+ * switch the whole feature off rather than behaving oddly. The cost is written down rather
+ * than hidden — a 2×2 ogre's body can overlap a wall its centre missed. See ADR 0015.
+ *
+ * A wall of fewer than two points has no segments and blocks nothing, which is the
+ * fail-open direction for the same reason `segmentsIntersect` fails open on a NaN.
+ * `walls.add` refuses one anyway.
+ *
+ * The cost is `walls × segments` calls of four cross products, bounded by
+ * `MAX_WALLS_PER_SCENE × MAX_WALL_POINTS`. It runs once per settling write and once per
+ * drag frame in the browser, never inside a query — see `requireMovableToken`'s docblock
+ * for why the server's copy is on the settle alone.
+ */
+export function pathCrossesAnyWall(
+  walls: readonly (readonly Point[])[],
+  from: Point,
+  to: Point,
+): boolean {
+  for (const wall of walls) {
+    for (let i = 1; i < wall.length; i += 1) {
+      if (segmentsIntersect(from, to, wall[i - 1], wall[i])) return true
+    }
+  }
+  return false
+}
+
+/**
  * Pixels per square from a square count across the image width.
  *
  * This is the calibration entry point, and it exists because the answer is often

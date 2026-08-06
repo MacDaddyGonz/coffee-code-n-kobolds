@@ -306,6 +306,188 @@ should not exist at all on a preview of the party's board. And the opacity switc
 `Layer` rather than moving to the shapes, because `destination-out` composites against the layer's
 own canvas and a hole in a covered map has to stay a hole rather than becoming a lighter patch.
 
+### Walls stop a token and decide nothing about sight
+
+Roll20's barriers do two jobs at once: they stop movement, and they block line of sight. **What
+ships here is the first half alone, and the omission is load-bearing rather than a budget
+decision.**
+
+Per-player fog, reveal-as-you-walk and line of sight each turn a stored row into *a statement
+about what one caller may know*. That is the exact condition CLAUDE.md invariant 8's table is
+written around, and any one of them would make `walls` — and `fogRects` beside it — secrets of
+the same shape as non-secrets, needing a reader, a predicate and a fourth row in that table on
+the day it landed. **This milestone is specified so that day does not arrive**, and the sentence
+is written into `convex/lib/walls.ts`'s header, into the schema comment and into
+`leakGuard.test.ts` rather than only here, because it is the thing a future feature will
+casually break.
+
+The consequence is that walls are the first board feature in this project where **invariant 1
+does not enter at all**. A wall withholds no row, no field and no payload. Every one goes to
+every client verbatim, and it *has* to: the whole user-facing feature is a coin that slides up
+to a barrier and stops, which a browser cannot do against geometry it was not sent.
+
+**The split between client and server is the design.**
+
+| Half | Where | What it is |
+| --- | --- | --- |
+| The feel | `useTokenMove` | Each frame is tested against the last point this browser **accepted**; a blocked frame is not accepted, the node is put back, nothing is pushed. |
+| The backstop | `board.moveToken` | One check, on the settling write, `&&`-ed at the call site. |
+
+⭐ **Testing against the last *accepted* point rather than against the drag origin is what
+makes walking round a wall work**, and it makes the block path-dependent, which is what a
+person expects: you cannot reach the far side of a barrier in a straight line, and you can
+reach it by going round the end. Against the origin, the second half of every journey round a
+corner would be refused.
+
+⚠️ **The server check is deliberately not folded into `requireMovableToken`**, and that
+function's own docblock now says so. It is the one place a barrier would look at home, and the
+read is why it cannot go there: a `walls` range read on a handler that runs ten times a second
+during a drag turns every wall the DM traces into an OCC conflict against every in-flight drag,
+on the one write path CLAUDE.md invariant 2 exists for. `placeToken` already reads the
+placement inside that transaction, so on the settling write the *from* point is free and the
+range read is paid once per drag rather than twenty times.
+
+⚠️ **What that leaves advisory, written out rather than glossed:**
+
+- Intermediate positions are unchecked, stored and broadcast, so a client that never settles
+  can park a token anywhere and everybody watches it walk through the wall.
+- Because those unchecked writes move the *from* point, a client that wants to cross a wall
+  crosses it in unchecked steps and the settling check then sees a legal hop.
+- A token is tested by its **centre**, so a 2×2 ogre's body can overlap a wall its centre
+  missed. No token size and no grid size enter the arithmetic, which is `foggedTokenIds`' rule
+  and its reason: a footprint test needs the grid, and an uncalibrated map would then silently
+  switch the whole feature off rather than behaving oddly.
+
+⭐ **Checked against the threat model this is clean rather than a compromise, and this is the
+sentence that matters: unlike `playerId`, and unlike fog, nothing behind a wall is a secret.**
+*"Server-side refusals that stop a misclick are worth having and are not claimed to be more
+than that"* is already the written rule, and this is the first feature to which it applies with
+no residual worth arguing about. All three holes are pinned by tests in `convex/walls.test.ts`,
+including the unsettled crossing — a documented hole that no test names becomes a bug report,
+and the day somebody closes it they should be told they are changing a decision.
+
+**Three questions, answered.**
+
+- **Walls do not block the DM.** They place creatures inside sealed rooms, drag the party
+  through a door they have just narrated open, and rearrange scenery. A wall the DM cannot
+  cross is a wall the DM cannot use. The `isDm` term is first in the condition, so their board
+  pays no read for the feature either.
+- **Background-layer tokens are moot, and that is the answer.** Players already may not move
+  them, so nobody subject to walls can move one — **no new predicate and no change to
+  `lib/layers.ts`.** Scenery is placed, not walked.
+- **The refusal is its own kind and is not an existence oracle.** `WallBlocks`, saying *there
+  is a wall across that path*. `requireMovableToken` collapses three failures into one *not
+  found* because telling them apart would confirm that a GM-layer coin exists; nothing of the
+  sort applies here, because every wall is already in the caller's payload and there is nothing
+  to enumerate. Answering *not found* about a coin on the player's own screen would be a lie
+  that reads as a bug — ADR 0012's inversion argument, reused.
+
+⚠️ **Walls are sent to everyone and drawn for the DM only, and the residual is one sentence
+long.** A wall traced over the wall the map already has printed on it leaks nothing the
+fully-downloaded image does not already leak. **A barrier where the map shows no wall** — an
+invisible ward, a magically sealed door — is information the picture does not carry, and
+devtools recovers it. That is written into `WallTools`' copy as well as here, because a partial
+guard described as a whole one is worse than no guard.
+
+⚠️ **Arrow keys get no slide-and-stop, and making that true cost one clause the roadmap did not
+predict.** A keypress is a whole square at once, so there is nothing to slide up to; the write
+reaches `board.moveToken` with `settle: true` and is refused with a toast, and `WallTools` says
+so in a sentence, because without one the two input methods behaving differently reads as a
+bug. The clause: `nudge` also suppresses its *unchecked intermediate* write for a blocked step.
+Without that the promise is simply false — the throttle is leading-edge, so the first keypress
+of a run lands an unsettled write that crosses the wall, and the settling check then measures
+from the far side and accepts. `acceptedRef` is not advanced on a blocked step, so every later
+step of the same run is measured from the same place and suppressed too.
+
+#### The geometry, and the one convention that disagrees with every other one in the file
+
+`segmentsIntersect` and `pathCrossesAnyWall` join `convex/lib/grid.ts`, which is browser-shared,
+so the coin's stop and the server's refusal are **one function** rather than two that agreed
+when they were written.
+
+⚠️⚠️ **Endpoint-touching and collinear overlap COUNT as crossing, which is the opposite of
+`rectCovers`' half-open convention, and the disagreement is deliberate.** Everything else in
+that module answers *is this point inside that region*, where an inclusive edge shared by two
+abutting shapes is a line both of them claim — ADR 0012 and the polygon section above spend
+paragraphs on getting that exactly right. A wall is a line with no inside: there is no seam to
+tile and nothing for two shapes to argue over, and what there is instead is a token walking up
+to a barrier, which should stop **just short**. A token that may cross a wall by landing
+precisely on it looks identical, on every screen, to one that may not — so the cases are pinned
+one per way of touching in `grid.test.ts` rather than trusted.
+
+⚠️ **A wall is a polyline and `pathCrossesAnyWall` does not close it.** A DM sealing a room
+clicks back onto the corner they started at, and that repeated vertex is a real segment.
+Closing implicitly would draw a barrier across the mouth of every corridor anybody traced. This
+is the one place in the codebase where a repeated first-and-last point is *meaningful*, and it
+is the reason the gesture is `usePolylineDraw` and not `usePolygonDraw` — see below.
+
+⚠️ **It fails open on a non-finite coordinate**, which is `rectCovers`' choice arriving for a
+different reason. There, fail-open publishes a token; ADR 0012 calls it the one such branch in
+the fog design and this record notes above that a covered base inverts it. Here there is
+nothing to publish, so the cautious direction is *let the move happen*: a refusal a DM cannot
+explain, on a map where nothing looks wrong, is worse than one token that walked through a
+barrier once. `requireFinite` guards the write path anyway.
+
+#### Two caps, and a degenerate test that inverts
+
+`MAX_WALLS_PER_SCENE = 100` and `MAX_WALL_POINTS = 64`, both **write checks and not merely read
+bounds** — `fog.draw`'s recorded reason applies word for word, and bites slightly harder: a
+scene past the read window would hold barriers the check sees on some passes and not others,
+and a refusal that fires intermittently reads as a rendering glitch, gets explained away, and
+the DM stops trusting the feature rather than reporting it.
+
+⚠️ **`requireDrawableWall`'s degenerate clause is `&&` where `requireDrawablePolygon`'s is
+`||`, and this is the single easiest thing in the milestone to copy across wrong.** A fog shape
+with zero extent in *either* axis covers no point. A wall with zero extent in one axis is the
+commonest wall there is — a vertical barrier has no width — so `||` here would refuse every
+wall drawn along a grid line, which is nearly all of them. What is degenerate for a wall is
+zero extent in **both**. Two is the floor for corners, and it is a grammar rather than a
+courtesy: one point is not a line.
+
+#### `usePolylineDraw` is a third gesture hook, and the split had to be argued
+
+⚠️ **This is the closest pair of hooks in the codebase and the first time the *lifecycle* test
+did not settle it.** `useRubberBand` and `usePolygonDraw` differ in lifecycle, which is what
+that file's docblock uses to justify the second hook. A polyline has `usePolygonDraw`'s
+lifecycle exactly: an unbounded sequence of clicks, a live segment, a way to finish. Two
+differences decided it anyway, and only the second is decisive:
+
+| Difference | Weight |
+| --- | --- |
+| Two corners rather than three | Real — a wall between two points is the commonest wall there is — but a minimum *could* have been an argument. |
+| A repeated first-and-last vertex is **meaningful** | Decisive. `usePolygonDraw.close` drops it, correctly, because a polygon is closed by definition. Dropping it here puts a doorway in every sealed room in the game, along a wall nobody drew and nothing shows. |
+
+A flag switching that would be a hook whose output means one thing or its opposite depending on
+an argument, on the one gesture where the wrong answer is invisible on screen. **What would
+merge them** is a third caller wanting either shape, at which point the right refactor is a
+shared vertex-collecting primitive under both rather than a `mode` on one of them.
+
+The two ways out differ too, and for a reason worth knowing: `usePolygonDraw`'s first-vertex
+grab handle *is* its close gesture, and here clicking that vertex is a legitimate corner — so
+the affordance had to go somewhere that is not on the map, and it is **Enter**, beside the
+double-click.
+
+#### Two smaller things the mounting order decided
+
+**`WallLayer` goes over the coins and `FogLayer` goes under them**, and the two reasons are
+different from each other. Visually, a barrier is the one piece of map furniture that has to
+read *across* a figure — a wall drawn underneath a 2×2 ogre standing against it disappears
+exactly where the DM most needs to see it — whereas an opaque veil painted over the party's own
+coins would take away the figures the server went to some trouble not to withhold. For the
+pointer, `FogLayer` keeps half a promise (a press on a creature finds the creature, not the fog
+underneath) and this layer keeps it whole, which costs nothing, because it is DM-only and only
+mounted while the DM holds a tool for pressing on the map.
+
+**A wall gets a transparent second `Line` as its hit target rather than `hitStrokeWidth`.** That
+property is in *image* pixels with no route to the camera scale, so a target comfortable at
+100% would be a speck at 25%; a sibling node takes the same `/ scale` division every other
+weight on this board takes.
+
+**Walls got their own sub-tab beside Fog rather than a card inside it.** The two look alike and
+are opposites — fog decides what a client is *sent*, a wall decides where a coin may be
+*dragged* — and a wall panel under a Fog heading is one glance away from a DM planning an
+ambush behind a barrier.
+
 ## Consequences
 
 ### Good
@@ -316,6 +498,12 @@ own canvas and a hole in a covered map has to stay a hole rather than becoming a
   control, the choke points, the roll path or the feed's shape changed.
 - `convex/fog.test.ts`'s existing 1270 lines passed **untouched**, which is the acceptance criterion
   for the absent-base default stated as a mechanical check rather than a promise.
+- **Walls needed no new choke point, no new predicate over a secret and no change to
+  `lib/layers.ts`.** A whole board feature landed inside the existing structure, and the one
+  place it touches the movement path is `&&`-ed at a call site.
+- **`convex/lib/grid.ts` is still the one definition of where a square is**, and it now holds
+  the one definition of what crossing a line means too — shared by the browser's drag and the
+  server's settling write, so the coin's stop and the refusal cannot disagree.
 
 ### Costs and constraints we are accepting
 
@@ -343,6 +531,20 @@ own canvas and a hole in a covered map has to stay a hole rather than becoming a
   is: there is nothing in `npm test` that can look at a canvas, and what this mode does is entirely
   a matter of what is painted. What *can* be tested is underneath it and already is —
   `hiddenFromParty` shares its predicate with `veiled`, and `fog.test.ts` pins the server half.
+- **A wall is enforced at the settle and nowhere else**, so intermediate positions cross freely,
+  a run of unchecked writes moves the *from* point the settling check measures against, and a
+  large token is judged by its centre. All three are pinned by tests rather than left in prose.
+  This is affordable for one reason and it should be re-argued if that reason ever stops
+  holding: **nothing behind a wall is a secret.**
+- **A barrier where the map shows no wall is recoverable from devtools.** Walls go to every
+  browser because that is what lets a coin stop against one on the player's own screen, and
+  they are simply not painted for anybody but the DM. Said in `WallTools`' copy as well as
+  here.
+- **A wall cannot be edited, only rubbed out and redrawn** — the same surface `fog.erase` and
+  `fog.draw` have, for the same reason, and the polygon bullet above carries the argument.
+- **`ROLL_PATTERN`-style arithmetic now exists for two caps that nothing profiles.**
+  `MAX_WALLS_PER_SCENE × MAX_WALL_POINTS` bounds a per-settle cost at roughly 6,300 segment
+  tests. Generous, finite, and a guess about what a dungeon level needs.
 - **`MapSetupPanel`'s copy for the toggle still describes the layer half alone.** The control now
   does more than its own hint says, and the badge is the only thing on screen that mentions the fog
   half. Worth a sentence in that panel the next time it is open.

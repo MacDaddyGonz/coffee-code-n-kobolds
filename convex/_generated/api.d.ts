@@ -61,10 +61,12 @@ import type * as lib_rules from "../lib/rules.js";
 import type * as lib_scenes from "../lib/scenes.js";
 import type * as lib_sheet from "../lib/sheet.js";
 import type * as lib_skills from "../lib/skills.js";
+import type * as lib_walls from "../lib/walls.js";
 import type * as modalImages from "../modalImages.js";
 import type * as music from "../music.js";
 import type * as players from "../players.js";
 import type * as scenes from "../scenes.js";
+import type * as walls from "../walls.js";
 
 import type {
   ApiFromModules,
@@ -126,10 +128,12 @@ declare const fullApi: ApiFromModules<{
   "lib/scenes": typeof lib_scenes;
   "lib/sheet": typeof lib_sheet;
   "lib/skills": typeof lib_skills;
+  "lib/walls": typeof lib_walls;
   modalImages: typeof modalImages;
   music: typeof music;
   players: typeof players;
   scenes: typeof scenes;
+  walls: typeof walls;
 }>;
 
 /**

@@ -11,6 +11,8 @@ import { deleteScenePlacements } from './board'
 // keyed on the scene alone, so a scene's rectangles are unreachable the moment its row is
 // gone — an orphaned rectangle is not a leak, it is litter nothing in the app can name.
 import { deleteSceneFog } from './fog'
+// The wall sweep, for the identical reason one line up: `walls` is keyed on the scene alone.
+import { deleteSceneWalls } from './walls'
 // The base vocabulary. A function of a string, like lib/layers.ts — the *decision* about
 // whether a given token is hidden stays in lib/board.ts, behind invariant 8's choke point.
 import { fogBaseOf, fogBaseValidator } from './fogBase'
@@ -182,6 +184,7 @@ export async function deleteScenesInGame(
   for (const scene of scenes) {
     await deleteScenePlacements(ctx, scene._id)
     await deleteSceneFog(ctx, scene._id)
+    await deleteSceneWalls(ctx, scene._id)
     await ctx.storage.delete(scene.imageId)
     await ctx.db.delete('scenes', scene._id)
   }
