@@ -217,6 +217,60 @@ export async function sceneReferencesThumbnail(
 }
 
 /**
+ * Is this blob the background of some **other** scene in the same game? So the delete
+ * paths can stop short of reclaiming a map a duplicate is still drawing.
+ *
+ * ⚠️ **A sibling of `sceneReferencesImage` above and deliberately not a parameter on it.**
+ * `otherTokenReferencesImage` in `lib/board.ts` spends a paragraph on exactly this and it
+ * is the same paragraph here, one table over: the two answer different callers' questions
+ * and the difference is exactly one row. `files.discard` asks *is anything using this?* and
+ * needs `true` for the scene being examined — that is what makes it refuse to blank the map
+ * out from under the table. A delete path asks *is anything **else** using this?* and needs
+ * `false` for the row it is about to remove or repoint. Collapsing them into one function
+ * with an optional `exclude` gives the discard guard an argument no caller ever wants to
+ * pass, and which a future caller can get wrong in the one direction that blanks a live map.
+ *
+ * **The exclusion is what makes each call site correct, not the ordering.** `scenes.remove`
+ * could be made to work by asking before the row write and leaning on read-your-writes; a
+ * correctness property held by the order of two adjacent lines is the fragility this
+ * codebase has already documented nearly shipping once. The `_id` comparison holds whichever
+ * side of the write it runs.
+ *
+ * Takes the row rather than a `(gameId, sceneId)` pair, so the game comes off the document
+ * and there is no way to ask the question about the wrong one. `imageId` stays a separate
+ * argument because `replaceImage` asks about the **previous** blob, which is no longer the
+ * one the row will hold.
+ */
+export async function otherSceneReferencesImage(
+  ctx: QueryCtx,
+  scene: Doc<'scenes'>,
+  imageId: Id<'_storage'>,
+): Promise<boolean> {
+  const scenes = await listScenes(ctx, scene.gameId)
+  return scenes.some((other) => other._id !== scene._id && other.imageId === imageId)
+}
+
+/**
+ * The same question about the other column, for the same two callers.
+ *
+ * ⚠️ **Not folded into the one above, and the cross-column case is why rather than
+ * symmetry.** A duplicate shares *both* of the original's blobs, so the two questions have
+ * the same answer today — but they are asked about two ids, and `replaceImage` repoints both
+ * columns at once and must reclaim each independently. A single predicate answering *does
+ * any other scene point at this blob from either column?* would keep a map alive because
+ * some scene happens to use those bytes as a thumbnail, which is a state a mis-sequenced
+ * client can genuinely produce and which nothing else would ever notice.
+ */
+export async function otherSceneReferencesThumbnail(
+  ctx: QueryCtx,
+  scene: Doc<'scenes'>,
+  imageId: Id<'_storage'>,
+): Promise<boolean> {
+  const scenes = await listScenes(ctx, scene.gameId)
+  return scenes.some((other) => other._id !== scene._id && other.thumbnailId === imageId)
+}
+
+/**
  * Every board in a game, with its placements and its background image. For the purge
  * tool in `convex/admin.ts`, and for nothing a client can reach.
  *
@@ -251,19 +305,58 @@ export async function sceneReferencesThumbnail(
  * scene id that resolves to nothing. Cheap rows rather than blobs, so this is litter and
  * not the storage leak the image delete above prevents — but it is litter no query in the
  * application can ever reach again, which is the same reason `purgeGame` exists at all.
+ *
+ * ⚠️ **EACH DISTINCT BLOB IS DELETED EXACTLY ONCE, AND THIS FUNCTION IS THE ONE OF THE PAIR
+ * THAT MUST *NOT* BE MADE CONDITIONAL.** The roadmap says both unconditional deletes "become
+ * conditional in the same commit", and that is right for `scenes.remove` and wrong here, for
+ * the two reasons `deleteTokensInGame` in `lib/board.ts` already wrote down about the tokens
+ * milestone's identical pair:
+ *
+ * - **It would answer the wrong question.** A purge deletes *every* scene in the game, so
+ *   *is another scene using this map?* is `true` for a duplicate that is also about to go.
+ *   Asked per row it would keep the blob for ever, or work only by accident of the order the
+ *   loop happens to run in.
+ * - **It would be O(n²).** Twenty-five scenes would mean twenty-five range reads of
+ *   twenty-five rows, to answer a question whose answer is known.
+ *
+ * So the conversion here is **deduplication**, and it is a stronger statement than
+ * `scenes.remove`'s rather than a weaker one: the question that mutation asks is answered
+ * *no* by construction for every id here, because no scene survives to own one.
+ *
+ * ⚠️ **This fixes a live bug rather than merely preparing for one, and it is the second time
+ * this project has hit it.** The loop called `ctx.storage.delete` once per row, and a second
+ * delete of the same id throws — confirmed against a real deployment on the token side:
+ * `Error: storage id … not found`, a plain `Error` and not a `ConvexError`, so it aborts the
+ * whole transaction. Before duplication nothing could produce two scenes sharing a blob;
+ * from the moment one press can copy a map, a purge of any game containing a duplicate would
+ * have failed outright and `admin.purgeGame` would have had no way to clean it up.
+ *
+ * **One set for both columns**, not one per column. A blob a mis-sequenced client stored as
+ * one scene's map and another's thumbnail is exactly as undeletable-twice as a shared map.
+ *
+ * The two deletes are ordered rows-then-blobs, so a failure part-way leaves storage holding
+ * bytes with no row — which the orphaned-blob sweeper is for — rather than rows pointing at
+ * bytes that have gone, which nothing repairs.
  */
 export async function deleteScenesInGame(ctx: MutationCtx, gameId: Id<'games'>): Promise<number> {
   const scenes = await listScenes(ctx, gameId)
+  const blobs = new Set<Id<'_storage'>>()
+
   for (const scene of scenes) {
     await deleteScenePlacements(ctx, scene._id)
     await deleteSceneFog(ctx, scene._id)
-    await ctx.storage.delete(scene.imageId)
-    // And the derivative with it. A thumbnail is small, which is exactly why forgetting it
-    // here would be invisible: 25 orphans a game is a few megabytes nothing in the
+    blobs.add(scene.imageId)
+    // The derivative goes with the map. A thumbnail is small, which is exactly why
+    // forgetting it would be invisible: 25 orphans a game is a few megabytes nothing in the
     // application can name, and no screen would ever be short a picture to say so.
-    if (scene.thumbnailId) await ctx.storage.delete(scene.thumbnailId)
+    if (scene.thumbnailId) blobs.add(scene.thumbnailId)
     await ctx.db.delete('scenes', scene._id)
   }
+
+  for (const imageId of blobs) {
+    await ctx.storage.delete(imageId)
+  }
+
   return scenes.length
 }
 

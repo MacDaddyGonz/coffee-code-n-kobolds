@@ -4,7 +4,7 @@ import { ConvexError } from 'convex/values'
 import { describe, expect, test } from 'vitest'
 
 import { api } from './_generated/api'
-import type { Id } from './_generated/dataModel'
+import type { Doc, Id } from './_generated/dataModel'
 import { MAX_SCENE_NAME_LENGTH } from './lib/codes'
 import { MAX_SCENES_PER_GAME } from './lib/games'
 import { MAX_GRID_SIZE, MIN_GRID_SIZE } from './lib/grid'
@@ -19,7 +19,7 @@ import { MAX_DISCARD_IDS, MAX_THUMB_BYTES } from './lib/limits'
 // so a test that imports it cannot notice the promise moving. This is a default nobody
 // has promised anything about: what the assertions are for is that the projection turns
 // absent into whatever it happens to be, not that it is any particular near-black.
-import { DEFAULT_SCENE_BACKGROUND } from './lib/scenes'
+import { DEFAULT_SCENE_BACKGROUND, deleteScenesInGame } from './lib/scenes'
 import schema from './schema'
 
 const modules = import.meta.glob('./**/*.ts')
@@ -1101,6 +1101,149 @@ describe('a scene’s thumbnail', () => {
     // The one that would be missed: a forgotten thumbnail leaves no gap on any screen, so
     // nothing in the application would ever report it.
     expect(await blobExists(t, thumbnailId)).toBe(false)
+  })
+})
+
+/**
+ * ⚠️ **THE SHARED BLOB, BEFORE ANYTHING CAN CREATE ONE.**
+ *
+ * `scenes.duplicate` does not exist yet, and these tests do not wait for it — the fix is
+ * reviewable on its own precisely because the bug is a property of the delete path rather
+ * than of the feature that trips it. A second row pointing at one blob is inserted directly,
+ * which is exactly what a duplicate will produce, and the assertions are about what
+ * `scenes.remove` and `purgeGame` then do.
+ *
+ * The pair is the point. `remove` becomes conditional and `deleteScenesInGame` must not —
+ * see the ⚠️ on each. A test suite that only exercised one of them would let somebody
+ * "finish the job" by converting the other and breaking the purge.
+ */
+describe('a map blob two scenes share', () => {
+  /** A second scene row on the same two blobs — what `scenes.duplicate` will write. */
+  async function twinOf(t: Harness, scene: Doc<'scenes'>, name: string): Promise<Id<'scenes'>> {
+    return await t.run(
+      async (ctx) =>
+        await ctx.db.insert('scenes', {
+          gameId: scene.gameId,
+          name,
+          imageId: scene.imageId,
+          ...(scene.thumbnailId === undefined ? {} : { thumbnailId: scene.thumbnailId }),
+          imageWidth: scene.imageWidth,
+          imageHeight: scene.imageHeight,
+          gridSize: scene.gridSize,
+          gridOffsetX: scene.gridOffsetX,
+          gridOffsetY: scene.gridOffsetY,
+          gridVisible: scene.gridVisible,
+        }),
+    )
+  }
+
+  test('survives deleting the original, and goes when the last holder goes', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const imageId = await storeImage(t, 'map')
+    const thumbnailId = await storeImage(t, 'thumb')
+    const { sceneId } = await t.mutation(api.scenes.create, {
+      code: game.code,
+      dmCode: game.dmCode,
+      name: 'Admittance',
+      imageId,
+      thumbnailId,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+    })
+    const original = await sceneRow(t, sceneId)
+    expect(original).not.toBeNull()
+    const copy = await twinOf(t, original!, 'Admittance (copy)')
+
+    await t.mutation(api.scenes.remove, { code: game.code, dmCode: game.dmCode, sceneId })
+    expect(await sceneRow(t, sceneId)).toBeNull()
+    // The copy is still on the DM's list and still has a picture. An unconditional delete
+    // here is a blank map in a list the DM is looking at.
+    expect(await blobExists(t, imageId)).toBe(true)
+    expect(await blobExists(t, thumbnailId)).toBe(true)
+    const [listed] = await t.query(api.scenes.list, { code: game.code, dmCode: game.dmCode })
+    expect(listed._id).toBe(copy)
+    expect(typeof listed.imageUrl).toBe('string')
+
+    // ⚠️ THE POSITIVE CONTROL. A `remove` that had simply stopped deleting blobs would
+    // satisfy every assertion above, so the same call on the last holder has to reclaim
+    // them — otherwise this is a leak test dressed as a sharing test.
+    await t.mutation(api.scenes.remove, {
+      code: game.code,
+      dmCode: game.dmCode,
+      sceneId: copy,
+    })
+    expect(await blobExists(t, imageId)).toBe(false)
+    expect(await blobExists(t, thumbnailId)).toBe(false)
+  })
+
+  /**
+   * ⚠️ **The bug that is not about sharing at all.** A second `ctx.storage.delete` of the
+   * same id throws a plain `Error` rather than a `ConvexError`, so it aborts the whole
+   * transaction — `deleteTokensInGame` documents that confirmed against a real deployment.
+   * Before duplication nothing could produce two scenes on one blob; from the moment one
+   * press can copy a map, a purge of any game containing a copy would have failed outright
+   * and there would be no way left to clean it up.
+   */
+  test('purges exactly once, so the whole purge does not abort', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const imageId = await storeImage(t, 'map')
+    const thumbnailId = await storeImage(t, 'thumb')
+    const { sceneId } = await t.mutation(api.scenes.create, {
+      code: game.code,
+      dmCode: game.dmCode,
+      name: 'Admittance',
+      imageId,
+      thumbnailId,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+    })
+    const original = await sceneRow(t, sceneId)
+    await twinOf(t, original!, 'Admittance (copy)')
+
+    const receipt = await t.run(async (ctx) => await deleteScenesInGame(ctx, original!.gameId))
+    expect(receipt).toBe(2)
+    expect(await blobExists(t, imageId)).toBe(false)
+    expect(await blobExists(t, thumbnailId)).toBe(false)
+    expect(await t.query(api.scenes.list, { code: game.code, dmCode: game.dmCode })).toEqual([])
+  })
+
+  /**
+   * One set for both columns, not one per column. A blob a mis-sequenced client stored as
+   * one scene's map and another's thumbnail is exactly as undeletable-twice as a shared map,
+   * and it is the case a per-column dedup would miss.
+   */
+  test('a blob used as one scene’s map and another’s thumbnail is deleted once', async () => {
+    const t = harness()
+    const game = await makeGame(t)
+    const shared = await storeImage(t, 'both')
+    const { sceneId } = await t.mutation(api.scenes.create, {
+      code: game.code,
+      dmCode: game.dmCode,
+      name: 'Admittance',
+      imageId: shared,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+    })
+    const original = await sceneRow(t, sceneId)
+    await t.run(async (ctx) => {
+      await ctx.db.insert('scenes', {
+        gameId: original!.gameId,
+        name: 'Second',
+        imageId: await ctx.storage.store(new Blob([new Uint8Array(8)])),
+        thumbnailId: shared,
+        imageWidth: MAP_WIDTH,
+        imageHeight: MAP_HEIGHT,
+        gridSize: original!.gridSize,
+        gridOffsetX: 0,
+        gridOffsetY: 0,
+        gridVisible: true,
+      })
+    })
+
+    expect(await t.run(async (ctx) => await deleteScenesInGame(ctx, original!.gameId))).toBe(2)
+    expect(await blobExists(t, shared)).toBe(false)
   })
 })
 

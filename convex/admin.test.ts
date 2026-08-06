@@ -299,6 +299,55 @@ describe('admin.purgeGame', () => {
     expect(await blobExists(t, game.tokenImageId)).toBe(false)
   })
 
+  /**
+   * ⚠️ **THE PURGE IS THE ONE DELETE PATH THAT MUST *NOT* ASK WHETHER SOMETHING ELSE HOLDS
+   * THE BLOB, AND THIS IS WHAT MAKES THAT SAFE.**
+   *
+   * A purge takes every scene in the game, so *is another scene using this map?* is `true`
+   * for a duplicate that is also about to go — asked per row it would keep the blob for ever.
+   * Its fix is deduplication instead, and the bug being fixed is not about sharing at all:
+   * a second `ctx.storage.delete` of the same id throws a plain `Error` rather than a
+   * `ConvexError`, so it aborts the **whole** transaction. Before a map could be copied
+   * nothing could produce two scenes on one blob; from the moment one can, a purge of any
+   * game containing a copy would have failed outright and there would be no way left to
+   * clean it up. `deleteTokensInGame` hit exactly this and documents it confirmed against a
+   * real deployment.
+   *
+   * The second row is inserted directly, because `scenes.duplicate` does not exist yet —
+   * which is the point of landing the fix here rather than inside the feature that trips it.
+   *
+   * The receipt is asserted as well as the blob, because "the purge did not throw" and "the
+   * purge deleted both scenes" are different claims and only the second one is the fix.
+   */
+  test('deletes a blob two scenes share exactly once, rather than aborting', async () => {
+    const t = harness()
+    const game = await populate(t, 'Board Smoke shared blob')
+
+    const original = await t.run(async (ctx) => await ctx.db.get('scenes', game.sceneId))
+    if (!original) throw new Error('the fixture has no scene')
+    await t.run(
+      async (ctx) =>
+        await ctx.db.insert('scenes', {
+          gameId: original.gameId,
+          name: 'Admittance (copy)',
+          imageId: original.imageId,
+          imageWidth: original.imageWidth,
+          imageHeight: original.imageHeight,
+          gridSize: original.gridSize,
+          gridOffsetX: original.gridOffsetX,
+          gridOffsetY: original.gridOffsetY,
+          gridVisible: original.gridVisible,
+        }),
+    )
+
+    const receipt = await t.mutation(internal.admin.purgeGame, { gameId: game.gameId })
+    expect(receipt.counts.scenes).toBe(2)
+    expect(await blobExists(t, game.mapImageId)).toBe(false)
+    // And the rest of the purge still ran, which is the half a thrown transaction takes
+    // with it: the game document itself is what everything else hangs off.
+    expect(await t.run(async (ctx) => await ctx.db.get('games', game.gameId))).toBeNull()
+  })
+
   test('leaves a second game in the same deployment completely untouched', async () => {
     const t = harness()
     const doomed = await populate(t, 'Board Smoke 2026-08-01T00:00:00.000Z')

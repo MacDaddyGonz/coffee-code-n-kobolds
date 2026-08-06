@@ -225,6 +225,48 @@ can disagree with the server about which picture a row shows, and there would be
 moment a second surface drew a scene list. Every scene uploaded before this field existed is
 permanently in that state, because nothing regenerates a derivative server-side.
 
+### Two unconditional deletes, and two different fixes
+
+A duplicated scene shares the map blob, because invariant 6 forbids copying four megabytes to make
+a copy. That breaks two unconditional `ctx.storage.delete` calls — and **the roadmap says both
+become conditional, which is right for one of them.**
+
+| Call site | What goes wrong | The fix |
+| --- | --- | --- |
+| `scenes.remove` | Another scene survives holding the blob, so deleting the original blanks the copy | **Conditional.** `otherSceneReferencesImage` / `…Thumbnail` |
+| `deleteScenesInGame` | Every scene goes, so nothing survives to hold it — the failure is a **second `ctx.storage.delete` of the same id** | **Deduplication.** One set, rows then blobs |
+
+The purge must *not* be made conditional, and the reason is worth reading twice because "finish the
+job" is the obvious next commit. *Is another scene using this map?* is `true` for a duplicate that is
+also about to be deleted, so asked per row it keeps the blob for ever, or works only by accident of
+the order the loop runs in. It would also be O(n²). Deduplication is the **stronger** statement:
+the question `scenes.remove` asks is answered *no* by construction for every id, because no scene
+survives to own one.
+
+⚠️ **The purge's bug is not about sharing at all.** A second delete of the same id throws a plain
+`Error` and not a `ConvexError`, so it aborts the whole transaction — confirmed against a real
+deployment when `deleteTokensInGame` hit it. From the moment one press can copy a map, a purge of
+any game containing a copy would have failed outright and `admin.purgeGame` would have had no way
+left to clean it up.
+
+**One set for both columns**, not one per column: a blob a mis-sequenced client stored as one
+scene's map and another's thumbnail is exactly as undeletable-twice as a shared map.
+
+⚠️ **"Conditional" must not become an optional parameter on the existing predicate**, and
+`otherTokenReferencesImage` in `lib/board.ts` already spends a paragraph on why. `files.discard`
+asks *is anything using this?* and needs `true` for the row being examined; a delete path asks *is
+anything **else**?* and needs `false` for the row it is removing. One function with an `exclude`
+gives the discard guard an argument no caller wants to pass and a future caller can get wrong in the
+one direction that blanks a live map. So there are four predicates over the `scenes` table now, and
+the `_id` comparison — not the ordering of two adjacent lines — is what makes each call site correct.
+
+**Landed one commit ahead of duplication**, deliberately: the bug is a property of the delete path
+rather than of the feature that trips it, so the fix is reviewable without the feature in the diff.
+The tests insert a second scene row on one blob directly, which is exactly what `duplicate` will
+write. It is worth noticing that two milestones in a row have found the same latent bug: **an
+unconditional delete is a bet that nothing will ever share the thing, and this project has now lost
+that bet twice.**
+
 ## Consequences
 
 ### Good

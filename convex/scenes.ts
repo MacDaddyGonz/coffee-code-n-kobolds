@@ -18,6 +18,8 @@ import {
   dmSceneValidator,
   getSceneInGame,
   listScenes,
+  otherSceneReferencesImage,
+  otherSceneReferencesThumbnail,
   publicScene,
   publicSceneValidator,
 } from './lib/scenes'
@@ -394,6 +396,19 @@ export const setActive = mutation({
  * token library, ready to be dropped onto the next map. The reverse arrangement —
  * a scene owning its tokens — would mean deleting a board you had finished with
  * quietly deleted the NPCs you had built for it.
+ *
+ * ⚠️ **The image delete is conditional, and it had to become so before duplication existed
+ * rather than in the same commit.** A duplicated scene shares the map blob, because
+ * invariant 6 forbids copying four megabytes to make a copy — so an unconditional
+ * `ctx.storage.delete` here means duplicating a map and then deleting the original blanks
+ * the copy. It is the same latent bug the tokens milestone found in a coin's art, arriving
+ * for a second table, and it is worth noticing that **an unconditional delete is a bet that
+ * nothing will ever share the thing, and this project has now lost that bet twice.**
+ *
+ * ⚠️ **`deleteScenesInGame` is the other half of the pair and did NOT become conditional**,
+ * which is where the roadmap's "both become conditional" is wrong. That one deletes every
+ * scene in the game, so the question has no useful answer; its failure was a *second delete
+ * of the same id*, and its fix is deduplication. Its docblock carries the argument.
  */
 export const remove = mutation({
   args: { code: v.string(), dmCode: v.string(), sceneId: v.id('scenes') },
@@ -416,13 +431,26 @@ export const remove = mutation({
       await ctx.db.patch('games', game._id, { activeSceneId: undefined })
     }
 
-    // Deleted with the row, in the same transaction. Nothing else can reach the
-    // blob once the scene is gone, so leaving it behind would be a slow leak
-    // against the 1 GB ceiling that no screen in the app could ever show.
-    await ctx.storage.delete(scene.imageId)
-    // The derivative goes with it, for the reason `deleteScenesInGame` states: a forgotten
-    // thumbnail leaves no gap on any screen, so nothing would ever report it.
-    if (scene.thumbnailId) await ctx.storage.delete(scene.thumbnailId)
+    // Deleted with the row, in the same transaction — **unless a duplicate is still
+    // drawing it.** Leaving a blob nothing points at is a slow leak against the 1 GB
+    // ceiling that no screen in the app could ever show; reclaiming one a copy still holds
+    // is worse, because it blanks a map the DM can see in the list beside this one.
+    //
+    // ⚠️ **Ordered rows-then-blobs, and the exclusion rather than the ordering is what makes
+    // this correct.** `otherSceneReferencesImage` compares `_id`, so it answers the same
+    // either side of the row delete; a version that worked because the row was already gone
+    // would be a correctness property held by two adjacent lines.
+    if (!(await otherSceneReferencesImage(ctx, scene, scene.imageId))) {
+      await ctx.storage.delete(scene.imageId)
+    }
+    // The derivative asks its own question. A duplicate shares both blobs, so today the two
+    // answers agree — `otherSceneReferencesThumbnail` says why they are still two questions.
+    if (
+      scene.thumbnailId &&
+      !(await otherSceneReferencesThumbnail(ctx, scene, scene.thumbnailId))
+    ) {
+      await ctx.storage.delete(scene.thumbnailId)
+    }
     await ctx.db.delete('scenes', scene._id)
     return null
   },
