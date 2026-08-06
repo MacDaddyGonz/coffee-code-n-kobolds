@@ -170,6 +170,23 @@ function scaleWith(
       combat.saveDc === null
         ? null
         : bound(Math.round(combat.saveDc + dDc), MIN_SAVE_DC, MAX_SAVE_DC),
+    // ⚠️ **The six scores and the six saves pass through untouched, by reference, and that
+    // is a decision rather than an omission.**
+    //
+    // A score is what the creature *is* — the same category as `speed` above and as every
+    // word on an attack. The two numbers a score would otherwise imply, the attack bonus
+    // and the save DC, are already stored and already shifted by their benchmark deltas
+    // three lines up; scaling the score as well would move each of them twice, in
+    // directions that need not agree. It would also put this scaler in direct conflict with
+    // `scalesWithCr`, which exists precisely to say that an ability's *own* numbers are
+    // frozen unless the entry opts in.
+    //
+    // By reference for the same reason a non-scaling ability is: `Object.is` then holds
+    // against the entry's own object, so a test can assert the freeze exactly rather than
+    // by deep comparison. Safe because nothing downstream mutates either — `resolveBestiary`
+    // does not read them at all.
+    abilityScores: combat.abilityScores,
+    saveBonuses: combat.saveBonuses,
     // Same keys in the same order — a creature is listed with the thing it is best at
     // first, and re-sorting a scaled creature's skills would change what its sheet looks
     // like for no reason. Fresh pair objects rather than mutated ones: this array belongs

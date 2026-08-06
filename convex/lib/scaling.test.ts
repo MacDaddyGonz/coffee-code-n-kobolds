@@ -57,6 +57,18 @@ function ability(overrides: Partial<BestiaryAbility> = {}): BestiaryAbility {
   }
 }
 
+/**
+ * The six scores and the six saves a 2024 stat block prints.
+ *
+ * ⚠️ **Shared by reference across every fixture on purpose.** `scaleCombat` returns both
+ * untouched and *by reference*, exactly as it returns a frozen ability, so a single shared
+ * object is what lets the freeze be asserted with `toBe` rather than approximated with a
+ * deep comparison — and a fixture that built a fresh object per creature would make that
+ * assertion impossible to write. Nothing in this file mutates either.
+ */
+const SCORES = { str: 12, dex: 14, con: 12, int: 10, wis: 11, cha: 9 }
+const SAVES = { str: 1, dex: 2, con: 1, int: 0, wis: 0, cha: -1 }
+
 function combat(overrides: Partial<BestiaryCombat> = {}): BestiaryCombat {
   return {
     maxHp: 26,
@@ -66,6 +78,8 @@ function combat(overrides: Partial<BestiaryCombat> = {}): BestiaryCombat {
     passivePerception: 12,
     speed: 30,
     saveDc: null,
+    abilityScores: SCORES,
+    saveBonuses: SAVES,
     skills: [{ key: 'perception', bonus: 2 }],
     attacks: [attack()],
     abilities: [],
@@ -421,28 +435,82 @@ describe('the benchmark table is well formed', () => {
    * hand-wave. Without this assertion a tuner can move either cell, the fixture
    * below silently stops being an exact ratio, and nothing says so.
    */
+  /**
+   * ⚠️ **The cells moved with the 2024 re-derivation and the ratio did not, which is the
+   * distinction this test now has to carry.** They were 8 and 16 against a hand-written
+   * corpus; the SRD's own medians at those two ratings are 9 and 24, and 10/20 is the pair
+   * that sits close to both while being exactly 2.0×.
+   *
+   * The ratio is the constraint. `benchmarks.ts` section 3 says in writing that `damage` is
+   * pinned so CR 1 → CR 4 is exactly 2.0×, because that is what makes the design's own
+   * illustration — `1d6+2` becoming `2d6+4` — a literal fixture rather than a hand-wave.
+   * A tuner may have a different pair; they may not have a pair whose ratio is 2.4.
+   */
   test('pins damage at CR 1 and CR 4 so the 2.0× illustration stays exact', () => {
-    expect(rowAt(1).damage).toBe(8)
-    expect(rowAt(4).damage).toBe(16)
+    expect(rowAt(1).damage).toBe(10)
+    expect(rowAt(4).damage).toBe(20)
     expect(rowAt(4).damage / rowAt(1).damage).toBe(2)
   })
 
-  /** The two design constraints the header claims are constraints, not accidents. */
+  /**
+   * The two design constraints the header claims are constraints, not accidents.
+   *
+   * ⭐ **Both survived the re-derivation without being aimed at**, which is the strongest
+   * available evidence that they were describing something real about the shape of a
+   * difficulty curve rather than the old corpus's habits: `hp` still quadruples and a bit
+   * from CR 1 to CR 6 — 120/28 is 4.3×, where the old table's was 4.6× — and `armourClass`
+   * still moves by exactly three across the same span.
+   */
   test('quadruples hit points and moves armour class by three from CR 1 to CR 6', () => {
     expect(rowAt(6).hp / rowAt(1).hp).toBeGreaterThanOrEqual(4)
     expect(rowAt(6).armourClass - rowAt(1).armourClass).toBe(3)
   })
 
-  test('the three competence columns stay one curve read at three offsets', () => {
-    // Not a rule the scaler depends on — but the header states it holds on every
-    // row, and an accidental break is a bestiary where things get harder to hit
-    // faster than they get better at hitting.
+  /**
+   * 🚫 **THE THREE-COLUMN PARALLEL IS GONE, AND ITS GOING IS A FINDING RATHER THAN A
+   * REGRESSION.** This test used to assert `attackBonus === armourClass - 9`,
+   * `saveDc === armourClass - 1` and `skillBonus === armourClass - 11` on every row —
+   * one competence curve read at three offsets — and the 2024 SRD does not have that shape.
+   * Its offensive columns and its defensive one gain their points at different ratings, so
+   * no single offset holds anywhere across the table.
+   *
+   * What replaces it has to be a claim that can still *fail*, or deleting the old one would
+   * have been the honest move instead. So: the offsets are stated as bands, read off the
+   * re-derived rows, and the span each column covers from CR 0 to CR 6 is pinned. Between
+   * them those catch what the parallel caught — a bestiary where things get harder to hit
+   * far faster than they get better at hitting would break a band, and a column that had
+   * quietly flattened or run away would break a span.
+   */
+  test('the competence columns track the armour class within a stated band', () => {
     for (const row of CR_BENCHMARKS) {
-      expect(row.attackBonus, `CR ${row.cr}`).toBe(row.armourClass - 9)
-      expect(row.saveDc, `CR ${row.cr}`).toBe(row.armourClass - 1)
-      expect(row.skillBonus, `CR ${row.cr}`).toBe(row.armourClass - 11)
+      const at = `CR ${row.cr}`
+      expect(row.attackBonus - row.armourClass, at).toBeGreaterThanOrEqual(-9)
+      expect(row.attackBonus - row.armourClass, at).toBeLessThanOrEqual(-8)
+      expect(row.saveDc - row.armourClass, at).toBeGreaterThanOrEqual(-2)
+      expect(row.saveDc - row.armourClass, at).toBeLessThanOrEqual(0)
+      expect(row.skillBonus - row.armourClass, at).toBeGreaterThanOrEqual(-10)
+      expect(row.skillBonus - row.armourClass, at).toBeLessThanOrEqual(-8)
     }
     expect(CR_BENCHMARKS).toHaveLength(10)
+  })
+
+  /**
+   * The spans, stated as exact numbers because a band alone would let a whole column drift
+   * up or down together. Five points of armour class across the table, four of attack bonus,
+   * four of save DC and three of skill bonus — and sixteen and a half times as much damage,
+   * which is the asymmetry the 2024 SRD is built on: a d20 column can only ever move a few
+   * points, so difficulty at the top of the range is carried almost entirely by hit points
+   * and damage.
+   */
+  test('and each column covers exactly the span the SRD gives it', () => {
+    const first = CR_BENCHMARKS[0]
+    const last = CR_BENCHMARKS[CR_BENCHMARKS.length - 1]
+    expect(last.armourClass - first.armourClass).toBe(5)
+    expect(last.attackBonus - first.attackBonus).toBe(4)
+    expect(last.saveDc - first.saveDc).toBe(4)
+    expect(last.skillBonus - first.skillBonus).toBe(3)
+    expect(last.hp / first.hp).toBe(30)
+    expect(last.damage / first.damage).toBe(16.5)
   })
 
   test('finds each of the ten rows by its own rating', () => {
@@ -623,10 +691,16 @@ describe('a creature at its own rating is untouched', () => {
  * carrying the deviation across — that scaler makes every CR 6 creature AC 16, and
  * the gap assertion below becomes `0 === 6`.
  */
-const CR3_ROW = { hp: 53, armourClass: 14, attackBonus: 5, damage: 13, saveDc: 13, skillBonus: 3 }
+const CR3_ROW = { hp: 64, armourClass: 14, attackBonus: 5, damage: 17, saveDc: 12, skillBonus: 4 }
 
 const TANK: BestiaryCombat = combat({
-  maxHp: 80, // ×1.51 of its row
+  // ⚠️ **94 rather than a round 96, and the reason is the tolerance below rather than
+  // taste.** `each keeps its own multiple of the hit-point row` allows 0.05 of drift, and
+  // the CR ⅛ row's `hp` is 9 — small enough that a deviation landing on an exact half
+  // (96 × 9/64 is 13.5) rounds away 0.056 of it and fails on correct arithmetic. The
+  // fixture is chosen to avoid a tie, not to hide one; `hp[0] = 4` being the largest
+  // amplifier in the table is the same fact seen from the other end.
+  maxHp: 94, // ×1.47 of its row
   armourClass: 18, // +4 above its row
   attackBonus: 4,
   initiativeBonus: 1,
@@ -634,13 +708,13 @@ const TANK: BestiaryCombat = combat({
   speed: 25,
   saveDc: null,
   skills: [{ key: 'athletics', bonus: 5 }],
-  // 5.5 average, well under the row's 13.
+  // 5.5 average, well under the row's 17.
   attacks: [attack({ name: 'Shield Bash', damage: '1d8+1', damageType: 'bludgeoning' })],
   abilities: [ability({ name: 'Hold the Line' })],
 })
 
 const BRUTE: BestiaryCombat = combat({
-  maxHp: 38, // ×0.72 of its row
+  maxHp: 48, // ×0.75 of its row
   armourClass: 12, // −2 below its row
   attackBonus: 7,
   initiativeBonus: 4,
@@ -648,8 +722,8 @@ const BRUTE: BestiaryCombat = combat({
   speed: 40,
   saveDc: null,
   skills: [{ key: 'athletics', bonus: 1 }],
-  // 15 average, above the row's 13.
-  attacks: [attack({ name: 'Maul', damage: '2d10+4', damageType: 'bludgeoning' })],
+  // 18 average, above the row's 17.
+  attacks: [attack({ name: 'Maul', damage: '2d12+5', damageType: 'bludgeoning' })],
   abilities: [ability({ name: 'Reckless' })],
 })
 
@@ -670,7 +744,7 @@ describe('a role survives a change of rating', () => {
       skillBonus: row.skillBonus,
     }).toEqual(CR3_ROW)
     expect(routineAverage(TANK)).toBe(5.5)
-    expect(routineAverage(BRUTE)).toBe(15)
+    expect(routineAverage(BRUTE)).toBe(18)
   })
 
   /**
@@ -777,14 +851,19 @@ describe('a role survives a change of rating', () => {
    * something that hits between two and three times as hard as a native CR 0
    * creature. Absorbing that would mean swapping die faces, which scale.ts rules out
    * on purpose; this assertion is here so the size of the effect is on the record.
+   *
+   * ⚠️ **The 2024 re-derivation made this worse rather than better, and the numbers say by
+   * how much.** `damage[0]` is still 2 — it is an anti-amplification floor and the SRD does
+   * not get a vote on it — while `damage[3]` rose from 13 to 17, so the step down is steeper
+   * and the floor is in the way of more of it.
    */
   test('the single-die floor makes a scaled-down creature hit harder than its new row', () => {
     expect(scaleCombat(TANK, 3, 0).attacks[0].damage).toBe('1d8')
-    expect(scaleCombat(BRUTE, 3, 0).attacks[0].damage).toBe('1d10')
+    expect(scaleCombat(BRUTE, 3, 0).attacks[0].damage).toBe('1d12')
     const row = rowAt(0).damage
     expect(row).toBe(2)
     expect(routineAverage(scaleCombat(TANK, 3, 0)) / row).toBeCloseTo(2.25, 2)
-    expect(routineAverage(scaleCombat(BRUTE, 3, 0)) / row).toBeCloseTo(2.75, 2)
+    expect(routineAverage(scaleCombat(BRUTE, 3, 0)) / row).toBeCloseTo(3.25, 2)
     // Hit points and armour class have no such floor, so the scaled-down creature is
     // fragile *and* hits hard — a CR 0 the party can kill in a round but should not
     // be standing next to.
@@ -1097,14 +1176,27 @@ describe('scaleRoll cannot emit a string the sheet validator refuses', () => {
     expect(failures).toEqual([])
   })
 
+  /**
+   * ⚠️ **These are fixtures *parameterised by the benchmark table*, and the 2024
+   * re-derivation moved five of the seven.** Nothing about `scaleRoll` changed — the ratios
+   * fed to it did, because every row but the first reads `rowAt(to).damage /
+   * rowAt(from).damage`. The claims are identical and the expected strings are the
+   * arithmetic consequence of the new `damage` column.
+   *
+   * The **first row did not move**, and that is the point of pinning the CR 1 → CR 4 ratio
+   * at exactly 2.0×: the design's own illustration survives a whole recalibration of the
+   * table underneath it.
+   */
   test('the design fixtures, character for character', () => {
     const table: [string, ChallengeRating, ChallengeRating, string][] = [
-      // The design's own illustration, and the reason two cells of the damage
-      // column are pinned above.
+      // The design's own illustration, and the reason the CR 1 → CR 4 damage ratio is
+      // pinned above. Unchanged by the re-derivation, by construction.
       ['1d6+2', 1, 4, '2d6+4'],
-      ['2d8+3', 5, 2, '1d8+2'],
-      ['4d10+5', 1, 6, '13d10+13'],
-      ['1d4', 1, 6, '3d4'],
+      ['2d8+3', 5, 2, '1d8+1'],
+      ['4d10+5', 1, 6, '13d10+18'],
+      ['1d4', 1, 6, '3d4+1'],
+      // The negative-floor path: one die left, still short, floored rather than left
+      // negative. Unchanged too, because the floor is where the arithmetic stops mattering.
       ['6d6', 3, 0, '1d6'],
       ['3d6-1', 2, 2, '3d6-1'],
       ['1d4', 0, 0, '1d4'],
@@ -1186,7 +1278,11 @@ describe('scaleRoll cannot emit a string the sheet validator refuses', () => {
   // ⚠️s are about.
   test('a count driven past the cap is absorbed by the flat modifier, not dropped', () => {
     const out = scaleRoll('20d10', rowAt(6).damage / rowAt(1).damage)
-    expect(out).toBe('50d10+69')
+    // ⚠️ The modifier moved from +69 to +88 with the 2024 re-derivation and nothing else
+    // about this test did: the CR 1 → CR 6 damage ratio went from 25/8 to 33/10, the cap
+    // still bites at fifty dice, and the overflow still lands in the modifier. The two
+    // assertions below are the actual claims and neither was touched.
+    expect(out).toBe('50d10+88')
     expect(SIMPLE_ROLL.exec(out)![1]).toBe(String(MAX_ROLL_DICE))
     // Expected damage still lands on target — that is the whole point of the
     // modifier absorbing the overflow.
@@ -1243,7 +1339,16 @@ describe('scaleRoll cannot emit a string the sheet validator refuses', () => {
    */
   test('a roll written with a minus is not rewritten by the negative repair', () => {
     // Positive modifier: two dice would need −1, so it drops to one die and +4.
-    expect(scaleRoll('1d8+1', rowAt(5).damage / rowAt(3).damage)).toBe('1d8+4')
+    //
+    // ⚠️ **The rating pair moved from CR 3 → 5 to CR ⅛ → ¼ and the expected string did
+    // not.** The repair only fires in a narrow window — a ratio that rounds the count up to
+    // two while leaving under nine points of expected damage to spread across them — and the
+    // 2024 damage column no longer has that window at CR 3 → 5 (28/17 is 1.65, which lands
+    // the modifier on zero rather than below it). CR ⅛ → ¼ is exactly 1.5 and does. A
+    // fixture that had merely been updated to whatever CR 3 → 5 now produces would have
+    // stopped exercising the repair at all, silently, which is the failure mode this file's
+    // other ⚠️s are about.
+    expect(scaleRoll('1d8+1', rowAt(0.25).damage / rowAt(0.125).damage)).toBe('1d8+4')
     // Negative modifier at a shrinking ratio: the count stays where the ratio put
     // it and the minus survives. Repaired, this would have read `9d4`.
     expect(scaleRoll('20d4-5', 0.5)).toBe('10d4-2')
@@ -1267,8 +1372,11 @@ describe('scaleRoll cannot emit a string the sheet validator refuses', () => {
     const up = scaleRoll('20d4+99', rowAt(6).damage / rowAt(0).damage)
     expect(up).toBe('50d4+999')
     expect(isValidRoll(up)).toBe(true)
+    // Thirteen dice became seventeen with the 2024 re-derivation, because the CR 0 → CR 6
+    // damage ratio went from 25/2 to 33/2. The claim — clamped, and still a legal roll — is
+    // the line below it and did not move.
     const down = scaleRoll('1d4-99', rowAt(6).damage / rowAt(0).damage)
-    expect(down).toBe('13d4-999')
+    expect(down).toBe('17d4-999')
     expect(isValidRoll(down)).toBe(true)
   })
 

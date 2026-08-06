@@ -1,5 +1,25 @@
 // Social NPCs: thirty townspeople, villagers and dockhands a DM can drop into a scene.
 //
+// ⚠️ **THESE THIRTY ARE THE AUTHORED PART OF THE CORPUS, AND THE ONLY ONE.** The other two
+// hundred and fifty-three creatures are transcribed from the D&D 5e (2024) SRD 5.2.1 by
+// scripts/srd/creatures.mjs — every number on them is printed in that document and can be
+// checked against it. **Nothing here can be.** The SRD has no innkeeper, no harbourmaster
+// and no net-mender, so these were written for this application, and they are measured
+// against the benchmark rows and the content rules in `bestiary.test.ts` and against nothing
+// else.
+//
+// That is worth a paragraph rather than a footnote, because "which creatures were checked
+// against what" is the first question anybody auditing this corpus will ask, and a file that
+// looks exactly like the four generated ones beside it gives no clue. It is also why this
+// file is **deliberately not regenerated**: the generator writes the four transcribed files
+// and skips this one entirely, so a re-run cannot quietly invent a provenance these people
+// do not have.
+//
+// Their eight combat blocks carry `abilityScores` and `saveBonuses` like every other
+// creature, and those two are authored too — chosen to agree with the numbers already on the
+// block, chiefly that a 2024 stat block's Initiative modifier is *"typically equal to its
+// Dexterity modifier"*.
+//
 // Content only — the shape is in ./types.ts, and see the note at the top of that file for
 // why nothing under this directory may ever be imported by the browser. The social block in
 // particular is DM-only in its entirety, because what the innkeeper knows *is* the plot.
@@ -171,6 +191,8 @@ export const SOCIAL: BestiaryFile = {
         passivePerception: 12,
         speed: ON_FOOT,
         saveDc: null,
+        abilityScores: { str: 10, dex: 14, con: 10, int: 10, wis: 12, cha: 11 },
+        saveBonuses: { str: 0, dex: 2, con: 0, int: 0, wis: 1, cha: 0 },
         skills: [
           { key: 'animalHandling', bonus: 4 },
           { key: 'perception', bonus: 2 },
@@ -267,6 +289,8 @@ export const SOCIAL: BestiaryFile = {
         passivePerception: 11,
         speed: ON_FOOT,
         saveDc: null,
+        abilityScores: { str: 16, dex: 10, con: 15, int: 11, wis: 12, cha: 10 },
+        saveBonuses: { str: 3, dex: 0, con: 2, int: 0, wis: 1, cha: 0 },
         skills: [
           { key: 'athletics', bonus: 5 },
           { key: 'investigation', bonus: 2 },
@@ -408,6 +432,8 @@ export const SOCIAL: BestiaryFile = {
         passivePerception: 14,
         speed: ON_FOOT,
         saveDc: null,
+        abilityScores: { str: 11, dex: 16, con: 12, int: 10, wis: 14, cha: 10 },
+        saveBonuses: { str: 0, dex: 3, con: 1, int: 0, wis: 2, cha: 0 },
         skills: [
           { key: 'perception', bonus: 5 },
           { key: 'stealth', bonus: 5 },
@@ -612,6 +638,8 @@ export const SOCIAL: BestiaryFile = {
         passivePerception: 11,
         speed: ON_FOOT,
         saveDc: null,
+        abilityScores: { str: 14, dex: 12, con: 14, int: 10, wis: 12, cha: 11 },
+        saveBonuses: { str: 2, dex: 1, con: 2, int: 0, wis: 1, cha: 0 },
         skills: [
           { key: 'athletics', bonus: 4 },
           { key: 'intimidation', bonus: 2 },
@@ -939,6 +967,8 @@ export const SOCIAL: BestiaryFile = {
         passivePerception: 14,
         speed: ON_FOOT,
         saveDc: 12,
+        abilityScores: { str: 11, dex: 14, con: 12, int: 14, wis: 14, cha: 15 },
+        saveBonuses: { str: 0, dex: 2, con: 1, int: 2, wis: 2, cha: 2 },
         skills: [
           { key: 'insight', bonus: 4 },
           { key: 'intimidation', bonus: 4 },
@@ -1005,6 +1035,8 @@ export const SOCIAL: BestiaryFile = {
         passivePerception: 12,
         speed: ON_FOOT,
         saveDc: null,
+        abilityScores: { str: 15, dex: 12, con: 14, int: 10, wis: 12, cha: 10 },
+        saveBonuses: { str: 2, dex: 1, con: 2, int: 0, wis: 1, cha: 0 },
         skills: [
           { key: 'athletics', bonus: 3 },
           { key: 'perception', bonus: 3 },
@@ -1067,6 +1099,8 @@ export const SOCIAL: BestiaryFile = {
         passivePerception: 14,
         speed: ON_FOOT,
         saveDc: null,
+        abilityScores: { str: 14, dex: 16, con: 13, int: 11, wis: 14, cha: 12 },
+        saveBonuses: { str: 2, dex: 3, con: 1, int: 0, wis: 2, cha: 1 },
         skills: [
           { key: 'athletics', bonus: 4 },
           { key: 'perception', bonus: 4 },
@@ -1135,6 +1169,8 @@ export const SOCIAL: BestiaryFile = {
         passivePerception: 10,
         speed: ON_FOOT,
         saveDc: null,
+        abilityScores: { str: 13, dex: 10, con: 13, int: 9, wis: 10, cha: 9 },
+        saveBonuses: { str: 1, dex: 0, con: 1, int: -1, wis: 0, cha: -1 },
         skills: [
           { key: 'athletics', bonus: 3 },
           { key: 'perception', bonus: 1 },

@@ -136,10 +136,23 @@ const CREATURE_KEY = 'dire-wolf'
 const CREATURE_ENTRY_NAME = 'Dire Wolf'
 /** The character document's own name, which is not the entry's and not the token's. */
 const CREATURE_NAME = 'Wyrmshadow at the Ford'
-/** 31 × 120/26 = 143.07… → 143, the maximum at CR 6. Distinctive on purpose. */
-const CREATURE_MAX_HP = 143
+/** 22 × 120/28 = 94.28… → 94, the maximum at CR 6. Distinctive on purpose. */
+const CREATURE_MAX_HP = 94
 const CREATURE_CURRENT_HP = 89
-const CREATURE_BLURB = 'Horse-sized wolf that hunts in twos and does not tire.'
+/**
+ * ⚠️ **A weaker needle than the sentence it replaced, and knowingly so.** The hand-written
+ * Dire Wolf's blurb was *"Horse-sized wolf that hunts in twos and does not tire"* — a
+ * sentence that could only have come from that one entry. The 2024 corpus's blurbs are
+ * generated from the creature's type and role, so this one is shared with every other
+ * skirmishing beast on the shelf.
+ *
+ * It still does its job here, because this fixture puts exactly one creature in the game and
+ * the scan is over that game's payloads. What it no longer does is distinguish *which*
+ * creature leaked, which would matter if this fixture ever grew a second one. `CREATURE_LOOT`
+ * below has the same property; `PERSON_KNOWS` is the needle in this file that is still
+ * genuinely unique, and it is the one guarding the plot.
+ */
+const CREATURE_BLURB = 'Beast · Darts in, hits, and is gone.'
 const CREATURE_LOOT = 'Nothing carried and nothing hidden. A beast owns only itself.'
 
 /**

@@ -30,8 +30,8 @@ import { npcSheetValidator } from './lib/sheet'
 // else's.
 //
 // **The corpus is never sent whole.** `index` returns summaries and a stat block is
-// only ever resolved server-side, one creature at a time. That is what keeps ~130 hand
-// written entries out of a bundle already close to a megabyte — the argument
+// only ever resolved server-side, one creature at a time. That is what keeps ~280 entries
+// out of a bundle already close to a megabyte — the argument
 // lib/bestiary/types.ts makes at the top of the corpus, enforced from this end by these
 // two functions being the only way in.
 //
@@ -49,7 +49,7 @@ import { npcSheetValidator } from './lib/sheet'
  * A summary and a resolved creature have genuinely different shapes: there is nowhere in
  * here to put an armour class, a hit point total or an attack, so a projection that tried
  * to widen a row into the whole entry makes Convex throw at runtime rather than shipping
- * ~130 stat blocks to the client. Contrast the row-shaped secret in lib/characters.ts,
+ * ~280 stat blocks to the client. Contrast the row-shaped secret in lib/characters.ts,
  * where an NPC's document is indistinguishable in type from a hero's and no validator can
  * ever tell them apart.
  *
@@ -82,7 +82,7 @@ type BestiarySummary = Infer<typeof bestiarySummaryValidator>
 /**
  * Every creature in the bestiary, as a row.
  *
- * **The whole corpus in one answer, and no filtering server-side.** ~130 rows of a dozen
+ * **The whole corpus in one answer, and no filtering server-side.** ~280 rows of a dozen
  * short fields is a few tens of kilobytes on a query the DM's panel subscribes to once,
  * and narrowing it by tier, role or a typed search term is a client-side `filter` over an
  * array already in memory. Doing it here would mean a distinct cache entry per
@@ -109,7 +109,7 @@ export const index = query({
  * The picker's rows, projected **once at import** rather than per call.
  *
  * The corpus is static, so this array can only ever have one value — but the subscription
- * above does re-run (the doc comment there says when), and rebuilding ~130 objects with a
+ * above does re-run (the doc comment there says when), and rebuilding ~280 objects with a
  * fresh `tags` array each, on every scene activation, for a value that cannot have changed,
  * is work with no reader.
  *

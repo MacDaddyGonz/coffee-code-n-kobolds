@@ -52,7 +52,7 @@ type Harness = ReturnType<typeof harness>
  * same count asserted at the far end of a `returns:` validator, which is the only place
  * it can be seen from.
  */
-const BESTIARY_ROWS = 129
+const BESTIARY_ROWS = 283
 
 /** The fourteen fields `bestiarySummaryValidator` declares, and no fifteenth. */
 const SUMMARY_KEYS = [
@@ -82,14 +82,22 @@ const WOLF_LIBRARY_CR = 1
  * `convex/lib/bestiary/monstersLow.ts`, and the same block at three other ratings with
  * the arithmetic spelled out.
  *
+ * ⚠️ **Every number below moved with the 2024 conversion**, because both halves of the
+ * arithmetic did: the Dire Wolf is now the SRD's own stat block (22 hit points and a
+ * `1d10+3` Bite, where the hand-written one had 31 and `2d6+3`) and the benchmark rows were
+ * re-fitted to the SRD's medians. That is two independent changes landing on one fixture,
+ * which is why the workings are spelled out rather than the answers copied — a fixture whose
+ * derivation is written down can be checked, and one that is a list of numbers can only be
+ * pasted over.
+ *
  * The benchmark rows, also hand-copied, from `convex/lib/bestiary/benchmarks.ts`:
  *
  * ```
  * CR    hp   ac  atk  dmg  dc  skill
- *  0     4   11   2     2  10   0
- *  1    26   13   4     8  12   2
- *  4    70   15   6    16  14   4
- *  6   120   16   7    25  15   5
+ *  0     4   11   3     2  11   3
+ *  1    28   13   5    10  11   4
+ *  4    79   15   6    20  13   5
+ *  6   120   16   7    33  15   6
  * ```
  *
  * `hp` and `damage` are ratio columns and the rest are deltas — mixing the two up is
@@ -98,51 +106,54 @@ const WOLF_LIBRARY_CR = 1
  */
 const WOLF_AT_1 = {
   // The entry, untouched: CR 1 → CR 1 is the exact identity and is not short-circuited.
-  maxHp: 31,
-  armourClass: 12,
-  attackBonus: 4,
+  maxHp: 22,
+  armourClass: 14,
+  attackBonus: 5,
   initiativeBonus: 2,
-  passivePerception: 13,
+  passivePerception: 15,
   speed: 50,
-  skills: { perception: 3, stealth: 4 },
-  damage: '2d6+3',
+  skills: { perception: 5, stealth: 4 },
+  damage: '1d10+3',
 }
 
 const WOLF_AT_4 = {
-  // 31 × 70/26 = 83.46… → 83
-  maxHp: 83,
+  // 22 × 79/28 = 62.07… → 62
+  maxHp: 62,
   // +(15 − 13) = +2 on every d20 column
-  armourClass: 14,
+  armourClass: 16,
   attackBonus: 6,
-  initiativeBonus: 4,
-  passivePerception: 15,
+  // +(5 − 4) = +1 on initiative, passive perception and every skill
+  initiativeBonus: 3,
+  passivePerception: 16,
   // Untouched. A Dire Wolf that follows the party up still moves 50 feet.
   speed: 50,
-  skills: { perception: 5, stealth: 6 },
-  // 16/8 = 2.0× exactly. (2 × 3.5 + 3) × 2 = 20; 4 dice average 14, so +6.
-  damage: '4d6+6',
+  skills: { perception: 6, stealth: 5 },
+  // 20/10 = 2.0× exactly. (5.5 + 3) × 2 = 17; 2 dice average 11, so +6.
+  damage: '2d10+6',
 }
 
 const WOLF_AT_6 = {
-  // 31 × 120/26 = 143.07… → 143
-  maxHp: 143,
+  // 22 × 120/28 = 94.28… → 94
+  maxHp: 94,
   // +(16 − 13) = +3
-  armourClass: 15,
+  armourClass: 17,
   attackBonus: 7,
-  initiativeBonus: 5,
-  passivePerception: 16,
+  initiativeBonus: 4,
+  passivePerception: 17,
   speed: 50,
-  skills: { perception: 6, stealth: 7 },
-  // 25/8 = 3.125×. 10 × 3.125 = 31.25; round(2 × 3.125) = 6 dice average 21, so +10.
-  damage: '6d6+10',
+  skills: { perception: 7, stealth: 6 },
+  // 33/10 = 3.3×. 8.5 × 3.3 = 28.05; round(1 × 3.3) = 3 dice average 16.5, so +12.
+  damage: '3d10+12',
 }
 
-/** 31 × 4/26 = 4.77 → 5. Only the maximum is needed: this rating is the floor edge. */
-const WOLF_AT_0_MAX_HP = 5
+/** 22 × 4/28 = 3.14 → 3. Only the maximum is needed: this rating is the floor edge. */
+const WOLF_AT_0_MAX_HP = 3
 
 /** The first line of the resolved Bite, composed by `attackText` from the structured fields. */
-const WOLF_BITE_TEXT_AT_1 = 'Melee. 2d6+3 piercing damage. Jaws wide enough to take a shoulder.'
-const WOLF_BITE_TEXT_AT_4 = 'Melee. 4d6+6 piercing damage. Jaws wide enough to take a shoulder.'
+const WOLF_BITE_TEXT_AT_1 =
+  'Melee. 1d10+3 piercing damage. It gets inside your guard and leaves a puncture'
+const WOLF_BITE_TEXT_AT_4 =
+  'Melee. 2d10+6 piercing damage. It gets inside your guard and leaves a puncture'
 
 /**
  * A creature with **no combat block at all** — twenty-two of the thirty social entries
@@ -380,7 +391,7 @@ describe('the DM’s shelf is gated on the DM code and nothing else', () => {
 // ---------------------------------------------------------------------------
 
 describe('bestiary.index sends the shape its validator promises', () => {
-  test('every one of the 129 rows carries the fourteen summary fields and no fifteenth', async () => {
+  test('every one of the 283 rows carries the fourteen summary fields and no fifteenth', async () => {
     const t = harness()
     const { code, dmCode } = await makeGame(t)
 
@@ -670,11 +681,9 @@ describe('characters.setCreatureCr', () => {
     const creature = await makeCreature(t, code, dmCode)
 
     const atOne = await resolvedSheet(t, code, dmCode, creature)
-    expect(atOne.actions.map((action) => action.id)).toEqual([
-      'atk:bite',
-      'abl:pack-tactics',
-      'abl:never-loses-a-trail',
-    ])
+    // Two lines, not three: the SRD's Dire Wolf prints one attack and one trait, where the
+    // hand-written entry this replaced had a second authored ability.
+    expect(atOne.actions.map((action) => action.id)).toEqual(['atk:bite', 'abl:pack-tactics'])
     expect(atOne.actions[0].roll).toBe(WOLF_AT_1.damage)
     expect(atOne.actions[0].text.startsWith(WOLF_BITE_TEXT_AT_1)).toBe(true)
 
@@ -742,18 +751,18 @@ describe('characters.setCreatureCr', () => {
     const { code, dmCode } = await makeGame(t)
     const creature = await makeCreature(t, code, dmCode)
 
-    // 15 of 31 — a fraction of 0.484, which is `bloodied`.
-    await setHp(t, code, dmCode, creature, 15)
-    expect(await exactVitals(t, code, dmCode, creature)).toEqual({ current: 15, max: 31 })
+    // 10 of 22 — a fraction of 0.455, which is `bloodied`.
+    await setHp(t, code, dmCode, creature, 10)
+    expect(await exactVitals(t, code, dmCode, creature)).toEqual({ current: 10, max: 22 })
 
     await t.mutation(api.characters.setCreatureCr, { code, dmCode, characterId: creature, cr: 4 })
-    // round(15 × 83/31) = round(40.16) = 40 of 83, a fraction of 0.482.
-    expect(await exactVitals(t, code, dmCode, creature)).toEqual({ current: 40, max: 83 })
+    // round(10 × 62/22) = round(28.18) = 28 of 62, a fraction of 0.452.
+    expect(await exactVitals(t, code, dmCode, creature)).toEqual({ current: 28, max: 62 })
 
     // Neither dead nor healed, and still the same band a player is told.
     const rows = await t.query(api.characters.vitals, { code, dmCode })
     expect(rows.find((row) => row.characterId === creature)!.kind).toBe('exact')
-    expect(40 / 83).toBeCloseTo(15 / 31, 2)
+    expect(28 / 62).toBeCloseTo(10 / 22, 2)
   })
 
   test('a creature at full health comes out exactly full, not one short', async () => {
@@ -762,16 +771,16 @@ describe('characters.setCreatureCr', () => {
     const creature = await makeCreature(t, code, dmCode)
 
     // Created undamaged: the vitals row is seeded from the resolved maximum.
-    expect(await exactVitals(t, code, dmCode, creature)).toEqual({ current: 31, max: 31 })
+    expect(await exactVitals(t, code, dmCode, creature)).toEqual({ current: 22, max: 22 })
 
     await t.mutation(api.characters.setCreatureCr, { code, dmCode, characterId: creature, cr: 6 })
-    expect(await exactVitals(t, code, dmCode, creature)).toEqual({ current: 143, max: 143 })
+    expect(await exactVitals(t, code, dmCode, creature)).toEqual({ current: 94, max: 94 })
 
     // And down again. "It was on full and now it is one short" is a thing a DM notices
     // immediately, which is why `reconcileHp` takes it as a special case rather than
     // leaving it to a ratio that ought to round to 1.
     await t.mutation(api.characters.setCreatureCr, { code, dmCode, characterId: creature, cr: 1 })
-    expect(await exactVitals(t, code, dmCode, creature)).toEqual({ current: 31, max: 31 })
+    expect(await exactVitals(t, code, dmCode, creature)).toEqual({ current: 22, max: 22 })
   })
 
   test('a corpse stays a corpse and a survivor never rounds down to dead', async () => {
@@ -782,7 +791,7 @@ describe('characters.setCreatureCr', () => {
     const dead = await makeCreature(t, code, dmCode, 'Already Finished')
     await setHp(t, code, dmCode, dead, 0)
     await t.mutation(api.characters.setCreatureCr, { code, dmCode, characterId: dead, cr: 6 })
-    expect(await exactVitals(t, code, dmCode, dead)).toEqual({ current: 0, max: 143 })
+    expect(await exactVitals(t, code, dmCode, dead)).toEqual({ current: 0, max: 94 })
     await t.mutation(api.characters.setCreatureCr, { code, dmCode, characterId: dead, cr: 0 })
     expect(await exactVitals(t, code, dmCode, dead)).toEqual({
       current: 0,
@@ -937,9 +946,9 @@ describe('characters.resetCreature', () => {
     })
     expect(statlineOf(await resolvedSheet(t, code, dmCode, creature))).toEqual(WOLF_AT_1)
 
-    // round(89 × 31/400) = round(6.90) = 7. Resetting a scaled creature moves its
+    // round(89 × 22/400) = round(4.90) = 5. Resetting a scaled creature moves its
     // maximum just as much as scaling it did, so the fraction is what is preserved.
-    expect(await exactVitals(t, code, dmCode, creature)).toEqual({ current: 7, max: 31 })
+    expect(await exactVitals(t, code, dmCode, creature)).toEqual({ current: 5, max: 22 })
 
     // And the panel's own *isModified* flag falls out of the data rather than a field.
     const payload = await t.query(api.characters.sheet, { code, dmCode, characterId: creature })
@@ -955,7 +964,7 @@ describe('characters.resetCreature', () => {
     await t.mutation(api.characters.resetCreature, { code, dmCode, characterId: creature })
 
     expect(JSON.stringify(await resolvedSheet(t, code, dmCode, creature))).toBe(before)
-    expect(await exactVitals(t, code, dmCode, creature)).toEqual({ current: 31, max: 31 })
+    expect(await exactVitals(t, code, dmCode, creature)).toEqual({ current: 22, max: 22 })
   })
 
   /**
