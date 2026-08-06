@@ -462,7 +462,16 @@ function resolvePreset(preset: PresetSheet): PcSheet {
   return withOverrides(applySpecies(base, species(preset.race), level), preset.overrides)
 }
 
-function applySpecies(sheet: PcSheet, chosen: Species, level: number): PcSheet {
+function applySpecies(sheet: PcSheet, chosen: Species | null, level: number): PcSheet {
+  // ⚠️ **A retired species contributes nothing rather than throwing, which is the whole point
+  // of `species()` returning null.** The character keeps its level, its name, its hit points and
+  // every number the library gave it, and loses only what the species was adding — the same
+  // degradation `librarySheet` returning null already produces for a retired archetype, reached
+  // by the other route. `CharacterBuilder` is what tells the player to choose again;
+  // `resolveSheet` is not a place to raise an error, because it runs inside the query that
+  // paints the whole party.
+  if (chosen === null) return sheet
+
   const abilities: AbilityScores = { ...sheet.abilities }
   for (const [key, bonus] of Object.entries(chosen.abilityBonus ?? {})) {
     abilities[key as keyof AbilityScores] += bonus

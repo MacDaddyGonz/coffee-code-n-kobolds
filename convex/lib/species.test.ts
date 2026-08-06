@@ -2,7 +2,14 @@ import { describe, expect, test } from 'vitest'
 
 import { CLASS_KEYS, findClass } from './classes'
 import { LIBRARY, librarySheet } from './library'
-import { SPECIES, SPECIES_KEYS, perRestAbilities, species } from './species'
+import {
+  SPECIES,
+  SPECIES_KEYS,
+  perRestAbilities,
+  species,
+  speciesKeyValidator,
+  speciesLabel,
+} from './species'
 import type { Species } from './species'
 import { resolveSheet } from './resolve'
 import {
@@ -12,6 +19,7 @@ import {
   SPEED_FEET,
   isValidRoll,
   sheetProblem,
+  storedSheetProblem,
 } from './sheet'
 import type { AbilityKey, PcSheet, PresetSheet } from './sheet'
 
@@ -49,7 +57,7 @@ describe('the eight races', () => {
     expect(SPECIES).toHaveLength(8)
     expect(SPECIES.map((entry) => entry.key)).toEqual([...SPECIES_KEYS])
     for (const key of SPECIES_KEYS) {
-      expect(species(key).key, key).toBe(key)
+      expect(species(key)!.key, key).toBe(key)
     }
     expect(new Set(SPECIES.map((entry) => entry.name)).size).toBe(8)
   })
@@ -191,7 +199,7 @@ describe('a race changes its numbers exactly once', () => {
         const selections = preset({ classKey, subclassKey, level })
         const base = source(selections)
         for (const key of SPECIES_KEYS) {
-          const chosen = species(key)
+          const chosen = species(key)!
           const resolved = resolve({ ...selections, race: key })
           const where = `${classKey}/${subclassKey}/${level} + ${key}`
           for (const ability of ABILITIES) {
@@ -221,7 +229,7 @@ describe('the trait lands on the sheet', () => {
     for (const classKey of CLASS_KEYS) {
       for (const level of [1, 3, 5]) {
         for (const key of SPECIES_KEYS) {
-          const chosen = species(key)
+          const chosen = species(key)!
           const resolved = resolve(
             preset({
               classKey,
@@ -260,7 +268,7 @@ describe('the trait lands on the sheet', () => {
    */
   test("every race's trait keeps one id across resolutions, levels and classes", () => {
     for (const key of SPECIES_KEYS) {
-      const chosen = species(key)
+      const chosen = species(key)!
       const ids = new Set<string>()
       for (const classKey of CLASS_KEYS) {
         for (const level of [1, 2, 5]) {
@@ -444,7 +452,7 @@ describe('perRestAbilities', () => {
       // Put it back whatever happens. While the defect stands this test really
       // does edit `SPECIES`, and leaving it edited would make every suite that
       // ran afterwards in the same worker read a race that does not exist.
-      species('human').perRest!.length = 1
+      species('human')!.perRest!.length = 1
     }
   })
 })
@@ -495,5 +503,131 @@ describe('races and the library stay out of each other', () => {
         }
       }
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A species that has been retired — Milestone 14
+// ---------------------------------------------------------------------------
+
+/**
+ * ⚠️⚠️ **THE LANDMINE, DISARMED AND THEN PROVED DISARMED.**
+ *
+ * `species()` used to end `SPECIES_BY_KEY.get(key)!` under the comment *"Non-null:
+ * `SpeciesKey` is derived from the same list, so an unknown key cannot exist."* That comment
+ * was true when it was written and is the exact shape of the bug `findClass` in lib/classes.ts
+ * was rewritten to prevent — whose docblock records that retiring a class was a one-line edit
+ * that turned `characters.list` into a `TypeError` **for the whole party**, not just for the
+ * character concerned. One player's stale key took everybody's sheet list down.
+ *
+ * A key being unconstructable *in new code* is not the same as unconstructable, because a
+ * character **stores** its species. Half-Orc is not a 2024 species and is going, so this is the
+ * commit that would have set it off.
+ *
+ * Every test here uses a key that is deliberately **not** in `SPECIES_KEYS`, because that is
+ * the only kind of key that can reach these functions in anger.
+ */
+describe('a stored species key that no longer resolves', () => {
+  const RETIRED = 'ancient-halfling-subspecies'
+
+  test('is genuinely not a species, so these tests are about the case that matters', () => {
+    // Anti-vacuity. Without this, a fixture that accidentally named a real species would make
+    // every assertion below pass for entirely the wrong reason.
+    expect([...SPECIES_KEYS]).not.toContain(RETIRED)
+  })
+
+  test('species() answers null rather than throwing or returning undefined', () => {
+    expect(species(RETIRED)).toBeNull()
+  })
+
+  test('perRestAbilities answers an empty list, so nothing downstream indexes into undefined', () => {
+    expect(perRestAbilities(RETIRED)).toEqual([])
+  })
+
+  /**
+   * ⚠️ **The failure that actually mattered was never about one character.** `characters.list`
+   * resolves every sheet in the game in one query, so a single stale key threw before the query
+   * returned and took the whole party's list with it. This is that shape: one broken character
+   * among several, resolved together.
+   */
+  test('a character holding one resolves, keeps its name and does not take the party down', () => {
+    // ⚠️ **Cast through `unknown`, and the awkwardness is the point rather than a nuisance.**
+    // `PresetSheet.race` is typed `SpeciesKey`, so a retired key is unconstructable *in new
+    // code* — which is exactly the false comfort the old `!` rested on. The database has no
+    // such type. This is what `ctx.db.get` hands back after a species is retired, and the only
+    // way to write the test at all. Step 3's `storedSpeciesKeyValidator` is what will let such
+    // a row survive a schema push; this is what happens once it does.
+    const party = [
+      { kind: 'preset', race: 'human', classKey: 'fighter', subclassKey: 'champion', level: 3, locked: false },
+      { kind: 'preset', race: RETIRED, classKey: 'wizard', subclassKey: 'evocation', level: 3, locked: false },
+      { kind: 'preset', race: 'elf', classKey: 'rogue', subclassKey: 'thief', level: 3, locked: false },
+    ] as unknown as PresetSheet[]
+
+    const resolved = party.map((sheet) => resolveSheet({ sheet }) as PcSheet)
+
+    // Nothing threw, and all three came back.
+    expect(resolved).toHaveLength(3)
+    for (const sheet of resolved) expect(sheet.kind).toBe('pc')
+
+    // The broken one keeps everything the LIBRARY gave it — level, class, hit points, abilities
+    // — and loses only what the species was adding. That is the same degradation a retired
+    // archetype already produces through `librarySheet` returning null, reached by the other
+    // route, and it is why `resolveSheet` is not a place to raise an error.
+    const orphan = resolved[1]
+    expect(orphan.level).toBe(3)
+    expect(orphan.className).toContain('Evocation')
+    expect(orphan.maxHp).toBeGreaterThan(0)
+    expect(Object.keys(orphan.skillProficiencies ?? {})).toHaveLength(18)
+
+    // And it carries no species trait, which is the visible consequence — one entry fewer than
+    // the same build with a species that resolves. Asserted against a *real* build rather than
+    // against a literal, so a change to what the library grants does not make this a lie.
+    const intact = resolveSheet({
+      sheet: { ...party[1], race: 'human' } as PresetSheet,
+    }) as PcSheet
+    expect(orphan.feats.length).toBeLessThan(intact.feats.length)
+  })
+
+  /**
+   * ⚠️ **Tolerated on READ and refused on WRITE — and writing this test found that the refusal
+   * is not where it looks like it should be.**
+   *
+   * `storedSheetProblem` answers **null** for the sheet below, and that is correct rather than a
+   * hole: it validates numbers, entries and roll grammar, and it takes a `PresetSheet` — a type
+   * whose `race` field is `SpeciesKey` and therefore cannot hold a retired key in any code the
+   * compiler has seen. Adding a hand-written key check there would be a second opinion about
+   * something the type already decides.
+   *
+   * **What actually refuses the write is `speciesKeyValidator`**, at the Convex function
+   * boundary, before a handler runs — the same mechanical refusal `tokenLayerValidator` gives a
+   * layer. That is the stronger of the two and it is the one asserted here. The asymmetry the
+   * roadmap names is therefore real and is spelled: the NARROW validator is what every argument
+   * takes, and only the widened stored one (step 3) will admit a retired key at all, which is
+   * what lets an existing row survive a push without letting a new one be created.
+   */
+  test('is refused on write by the validator, which is where that refusal lives', () => {
+    const literals = speciesKeyValidator.members.map((member) => member.value)
+    expect(literals).toEqual([...SPECIES_KEYS])
+    expect(literals).not.toContain(RETIRED)
+
+    // And the sheet checker is silent about it, deliberately — see above. Asserted rather than
+    // left implicit, so a later reader does not add a redundant check to "fix" the gap.
+    expect(
+      storedSheetProblem({
+        kind: 'preset',
+        race: RETIRED,
+        classKey: 'fighter',
+        subclassKey: 'champion',
+        level: 3,
+        locked: false,
+      } as unknown as PresetSheet),
+    ).toBeNull()
+  })
+
+  test('speciesLabel shows the stored key rather than a blank', () => {
+    // A blank where a species used to be reads as a bug; the key reads as a choice that needs
+    // making again, which is what it is.
+    expect(speciesLabel(RETIRED)).toBe(RETIRED)
+    expect(speciesLabel('human')).toBe('Human')
   })
 })

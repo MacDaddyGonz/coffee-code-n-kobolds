@@ -584,7 +584,7 @@ describe('a preset the store would accept always resolves to a sheet it would ac
       const source = librarySheet(classKey, null, 1)
       const elf = resolve(preset({ classKey, subclassKey: null, level: 1, race: 'elf' }))
       expect(elf.abilities.dex, classKey).toBe((source?.abilities.dex ?? 0) + 2)
-      expect(elf.feats.some((e) => e.name === species('elf').traitName), classKey).toBe(true)
+      expect(elf.feats.some((e) => e.name === species('elf')!.traitName), classKey).toBe(true)
     }
   })
 })
@@ -627,7 +627,7 @@ describe('the category survives every layer of resolution', () => {
       expect(trait.category, key).toBe('passive')
       expect(trait.roll, key).toBeNull()
       expect('toHit' in built, `${key} trait carries a to-hit`).toBe(false)
-      expect(trait.name, key).toBe(species(key).traitName)
+      expect(trait.name, key).toBe(species(key)!.traitName)
     }
   })
 
@@ -654,7 +654,7 @@ describe('the category survives every layer of resolution', () => {
   test('a granted feat or spell keeps the category its race declared', () => {
     let checked = 0
     for (const key of SPECIES_KEYS) {
-      const chosen = species(key)
+      const chosen = species(key)!
       const sheet = resolve(preset({ race: key }))
       const granted = [
         ...(chosen.grantedFeats ?? []).map((source) => ({ source, list: sheet.feats })),

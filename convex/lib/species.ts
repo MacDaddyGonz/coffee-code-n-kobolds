@@ -205,20 +205,77 @@ export const SPECIES: readonly Species[] = [
 
 const SPECIES_BY_KEY = new Map(SPECIES.map((entry) => [entry.key, entry]))
 
-/** Non-null: `SpeciesKey` is derived from the same list, so an unknown key cannot exist. */
-export function species(key: SpeciesKey): Species {
-  return SPECIES_BY_KEY.get(key)!
+/**
+ * The species, or null for one that has been retired.
+ *
+ * ⚠️ **This used to end `SPECIES_BY_KEY.get(key)!` under the comment *"Non-null: `SpeciesKey`
+ * is derived from the same list, so an unknown key cannot exist."* That comment was true when
+ * it was written and is the exact shape of a landmine.**
+ *
+ * A key being unconstructable *in new code* is not the same as unconstructable. A character
+ * **stores** its species, so removing an entry from `SPECIES_KEYS` leaves every character who
+ * chose it holding a key nothing resolves — and the resolver then reads `.name` off the
+ * `undefined` it got back. `findClass` in lib/classes.ts is the same lookup with the same
+ * comment, and its docblock records what happened when a class was retired against it:
+ * retiring one was a one-line edit that turned `characters.list` into a `TypeError` **for the
+ * whole party**, not just for the character concerned. One player's stale key took everybody's
+ * sheet list down.
+ *
+ * That pair has been one-fixed-one-not since; this is the other one, fixed **before** anything
+ * is retired rather than after. Half-Orc is not a 2024 species and is going, so the comment
+ * above was about to become false in the same commit that made it matter.
+ *
+ * ⚠️ **Returning null is necessary and NOT sufficient.** `speciesKeyValidator` is in the stored
+ * schema, and Convex validates existing documents on a push — so removing `'half-orc'` from
+ * that union makes `npx convex deploy` *fail* against any deployment holding one, before this
+ * function is ever called. The lookup is the second failure; the push is the first.
+ * `storedSpeciesKeyValidator` is what carries the retired key across, exactly as
+ * `storedTokenLayerValidator` carried `dm`.
+ *
+ * Takes a `string` rather than a `SpeciesKey`, like `findClass`, because a caller holding a
+ * *stored* key by definition holds something the narrow type says cannot exist.
+ */
+export function species(key: string): Species | null {
+  return SPECIES_BY_KEY.get(key as SpeciesKey) ?? null
 }
+
+/**
+ * A stored species key rendered for a person, whether or not it still resolves.
+ *
+ * `classLabel`'s treatment in lib/resolve.ts: a retired key is shown as itself rather than
+ * thrown away, so a character built before the conversion still says *what it was* on a sheet
+ * whose numbers it has lost. A blank where a species used to be reads as a bug; the key reads
+ * as a choice that needs making again, which is what it is.
+ */
+export function speciesLabel(key: string): string {
+  return species(key)?.name ?? RETIRED_SPECIES[key] ?? key
+}
+
+/**
+ * The species this application used to have and no longer does, with what to call them.
+ *
+ * ⚠️ **A retired key is tolerated on READ and refused on WRITE**, which is the asymmetry
+ * `subclassOf`, `catalogueEntry` and `librarySheet` already keep. A character holding one opens,
+ * keeps its name and its hit points, and is told plainly that its species needs choosing again;
+ * nothing lets a *new* character be built with one, because `speciesKeyValidator` — the narrow
+ * union every argument takes — does not contain it.
+ */
+export const RETIRED_SPECIES: Record<string, string> = {}
 
 /**
  * Every once-per-rest ability a race brings. Flat, because the sheet shows one list
  * and a race with two of them should not need the caller to know that.
  */
-export function perRestAbilities(key: SpeciesKey): PerRestAbility[] {
+export function perRestAbilities(key: string): PerRestAbility[] {
   // Copied, not handed out. `SPECIES` is module state and a Convex isolate outlives
   // the request that warmed it, so a caller that sorted or pushed to this array
-  // would corrupt the race definition for every later query until the next deploy.
+  // would corrupt the species definition for every later query until the next deploy.
   // Nothing does today; `defaultPcSheet` and `noSkills` both build fresh objects for
   // exactly this reason and have a test pinning it.
-  return [...(species(key).perRest ?? [])]
+  //
+  // A retired key has nothing to spend, which is the right answer rather than a fallback:
+  // `characters.setPerRest` validates a *spend* against this list and deliberately does not
+  // validate handing one back, so a character whose species went keeps whatever it had spent
+  // clearable and gains nothing new to spend.
+  return [...(species(key)?.perRest ?? [])]
 }
