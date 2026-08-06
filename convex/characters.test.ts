@@ -5318,8 +5318,8 @@ describe('normalisation covers every field the sheet has grown', () => {
 
 /** A creature the bestiary really has, so `requireUsableSheet`'s corpus check passes. */
 const BESTIARY_KEY = 'dire-wolf'
-/** 31 hit points at CR 1 — hand-copied from `convex/lib/bestiary/monstersLow.ts`. */
-const BESTIARY_MAX_HP = 31
+/** 22 hit points at CR 1 — hand-copied from `convex/lib/bestiary/monstersLow.ts`. */
+const BESTIARY_MAX_HP = 22
 
 function bestiarySheet(overrides: Partial<BestiarySheet> = {}): BestiarySheet {
   return { kind: 'bestiary', entryKey: BESTIARY_KEY, cr: 1, ...overrides }
@@ -5643,7 +5643,7 @@ describe('characters.updateSheet — monster-ness may not change, in either dire
     // door out of scaling. It stops being scalable and stays a monster.
     const resolved = (await readSheet(t, code, typedIn, { dmCode }))!.sheet as NpcSheet
     await update(t, code, typedIn, resolved, { dmCode })
-    expect((await rawCharacter(t, typedIn))?.sheet).toMatchObject({ kind: 'npc', maxHp: 31 })
+    expect((await rawCharacter(t, typedIn))?.sheet).toMatchObject({ kind: 'npc', maxHp: BESTIARY_MAX_HP })
     await expectKind(
       t.mutation(api.characters.setCreatureCr, { code, dmCode, characterId: typedIn, cr: 4 }),
       'BadInput',
