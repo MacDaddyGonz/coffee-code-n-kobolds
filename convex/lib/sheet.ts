@@ -827,6 +827,24 @@ export const presetSheetValidator = v.object({
   classKey: classKeyValidator,
   /** Null below level 2, when no archetype has been chosen yet. */
   subclassKey: v.union(v.string(), v.null()),
+  /**
+   * The lineage, legacy or draconic ancestry, on the five species that print one.
+   *
+   * ⚠️ **Optional *and* nullable, and the two spellings mean different things** —
+   * absent is a character stored before this field existed, null is a character whose
+   * species has a lineage table and who has not picked from it yet. Both resolve to
+   * nothing, so nothing downstream has to tell them apart; `lineageOf` takes the null
+   * and answers null, exactly as `subclassOf` does below `SUBCLASS_LEVEL`.
+   *
+   * A bare `v.string()` rather than a union of the twenty-four keys, which is the
+   * opposite of what `speciesKeyValidator` does one field up and is deliberate: a
+   * lineage key is only unique **within its species**, so a flat union would happily
+   * accept `wood` on a Goliath and a narrow one would need to be per-species, which a
+   * Convex object validator cannot express. The check that matters therefore lives in
+   * `lineageOf`, which is asked with the resolved species and answers null for anything
+   * that does not belong to it.
+   */
+  lineageKey: v.optional(v.union(v.string(), v.null())),
   level: v.number(),
   overrides: v.optional(presetOverridesValidator),
   locked: v.boolean(),
@@ -2232,6 +2250,16 @@ export function normaliseStoredSheet(sheet: StoredSheet): StoredSheet {
     race: sheet.race,
     classKey: sheet.classKey,
     subclassKey: sheet.subclassKey,
+    // ⚠️ **Named here because this is a field-by-field rebuild**, which is the trap the
+    // note on `withOverrides` records this codebase falling into twice: a field added to
+    // a validator, one of two rebuilds updated, and `skillProficiencies` then `speed`
+    // silently dropped on every save. A lineage omitted here would be a Wood Elf who
+    // reverts to 30 feet the next time anybody presses Save.
+    //
+    // Spread rather than assigned, so an absent key stays absent: `undefined` is not a
+    // Convex value, and naming the field while handing it `undefined` is a different
+    // write from omitting it. Null is a real stored value and passes through as one.
+    ...(sheet.lineageKey === undefined ? {} : { lineageKey: sheet.lineageKey }),
     level: Math.round(sheet.level),
     // **The override's entries get the same tidying as any other entry**, which they
     // were not getting. `storedSheetProblem` runs `entriesProblem` over them, so they
