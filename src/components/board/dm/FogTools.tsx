@@ -49,6 +49,10 @@ const MODE_LABELS: Record<FogBase, Record<FogMode, { label: string; hint: string
       label: 'Black out',
       hint: 'Drag a rectangle on the map. It snaps to whole squares, and the table goes dark the moment you let go — not while you are dragging.',
     },
+    polygon: {
+      label: 'Black out a shape',
+      hint: 'Click a corner at a time to trace an area that is not a rectangle. Corners snap to whole squares. Click the white dot you started on, or double-click, to close it; Esc throws it away.',
+    },
     erase: {
       label: 'Rub out',
       hint: 'Click a blacked-out area to lift it. That is the moment the party walks into the room, so anything standing in it appears for them at once.',
@@ -62,6 +66,10 @@ const MODE_LABELS: Record<FogBase, Record<FogMode, { label: string; hint: string
     draw: {
       label: 'Reveal',
       hint: 'Drag a rectangle on the map to open it up. It snaps to whole squares, and the party sees that room — and everything standing in it — the moment you let go.',
+    },
+    polygon: {
+      label: 'Reveal a shape',
+      hint: 'Click a corner at a time to open up an area that is not a rectangle. Corners snap to whole squares. Click the white dot you started on, or double-click, to close it; Esc throws it away.',
     },
     erase: {
       label: 'Cover back up',
@@ -132,7 +140,13 @@ const FLIP_LABELS: Record<FogBase, { title: string; description: string; confirm
 }
 
 /**
- * FOG OF WAR: the map's base, and the DM's three tools over it.
+ * FOG OF WAR: the map's base, and the DM's four tools over it.
+ *
+ * ⚠️ **Two draw tools and exactly two — rectangle and polygon, which is what Roll20 offers
+ * and there is no third.** They are separate modes rather than one tool with a shape setting,
+ * because the gestures have nothing in common: one is press-drag-release and the other is a
+ * sequence of clicks with two ways to finish. A setting would mean a lit button that does not
+ * say what pressing the map is about to do.
  *
  * **Two of the three writes are not in this file**, and the split is deliberate rather
  * than incidental. Drawing and erasing are *gestures on the map* — a rubber band and a

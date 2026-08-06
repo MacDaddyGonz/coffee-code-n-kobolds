@@ -5,13 +5,15 @@ import {
   countFogOnScene,
   deleteFogRect,
   deleteSceneFog,
+  fogShapeArgValidator,
   getFogRect,
-  insertFogRect,
+  insertFogShape,
   publicFog,
   publicFogValidator,
 } from './lib/fog'
 import { fogActReveals, fogBaseOf } from './lib/fogBase'
 import {
+  MAX_FOG_POLYGON_POINTS,
   MAX_FOG_RECTS_PER_SCENE,
   activeSceneId,
   findGameByCode,
@@ -19,7 +21,7 @@ import {
   resolveDmAccess,
   stampReveal,
 } from './lib/games'
-import type { Rect } from './lib/grid'
+import { boundsOf, type Point, type Rect } from './lib/grid'
 import { findSceneInGame, getSceneInGame } from './lib/scenes'
 
 // WHERE THE MAP IS BLACKED OUT — the public surface over the `fogRects` table.
@@ -99,6 +101,65 @@ function requireDrawableRect(rect: Rect): void {
 }
 
 /**
+ * The other half of the same refusal, for the other gesture. **Beside `requireDrawableRect`
+ * rather than folded into it**, because the two check different things and the pair of them
+ * is what the union above buys — one function taking "four numbers or a point list" would be
+ * the additive spelling `fogShapeArgValidator` exists to refuse, wearing a guard's name.
+ *
+ * Four clauses, and each is the rectangle guard's own reasoning applied to a point list:
+ *
+ * - **Finite.** `requireDrawableRect`'s paragraph, unchanged. A non-finite vertex poisons
+ *   `boundsOf` — `Math.min` with a NaN is NaN — and `rectCovers` then fails *open* on the box,
+ *   so the shape is drawn on every screen, the DM believes in it, and it hides nothing.
+ *   convex-test does not apply Convex's own value validation, so this is the only thing
+ *   standing between the suite and such a row.
+ * - **At least three points.** The floor is a *grammar* rather than a courtesy: two points are
+ *   a line, `boundsOf` gives it a zero extent in one axis, and the zero-area refusal below
+ *   would catch it — but the message would talk about area when the problem is that a wall is
+ *   not a region. Refused first, and named.
+ * - **At most `MAX_FOG_POLYGON_POINTS`.** The cap's docblock carries the arithmetic: unbounded
+ *   vertices is unbounded per-token CPU inside `visiblePositions`, which is the query on the
+ *   drag path (CLAUDE.md invariant 2).
+ * - **Non-degenerate bounds.** `requireDrawableRect`'s zero-area clause, asked of the box. A
+ *   polygon whose points are all collinear covers no point, so it hides nothing — and there is
+ *   nothing on screen to click, so the DM cannot rub it out either. It would sit on the scene
+ *   for ever, counting against `MAX_FOG_RECTS_PER_SCENE`, reachable only by clearing the map.
+ *
+ * ⚠️ **Self-intersecting and concave polygons are deliberately NOT refused.** `polygonCovers`
+ * is the even-odd rule, which answers a bowtie and a C-shaped corridor perfectly well, and a
+ * DM tracing a cave wall produces both by accident. A validity check here would refuse a
+ * gesture that works, for tidiness.
+ *
+ * Argument-only, so it is asked before any read — `board.moveToken`'s rule, and the same one
+ * `requireDrawableRect` states.
+ */
+function requireDrawablePolygon(points: readonly Point[]): void {
+  if (!points.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y))) {
+    throw new ConvexError({ kind: 'BadInput', message: 'That is not a region of this map.' })
+  }
+  if (points.length < 3) {
+    throw new ConvexError({
+      kind: 'BadInput',
+      message: 'A fogged shape needs at least three corners. Two would only be a line.',
+    })
+  }
+  if (points.length > MAX_FOG_POLYGON_POINTS) {
+    throw new ConvexError({
+      kind: 'BadInput',
+      message: `A fogged shape can have at most ${MAX_FOG_POLYGON_POINTS} corners. Draw it as two shapes.`,
+    })
+  }
+
+  const bounds = boundsOf(points)
+  if (bounds.width === 0 || bounds.height === 0) {
+    throw new ConvexError({
+      kind: 'BadInput',
+      message: 'Those corners are all in a line, so the shape would hide nothing.',
+    })
+  }
+}
+
+/**
  * Every rectangle on one scene. **Ungated** — see the header.
  *
  * Empty rather than thrown for every kind of unknown, in `board.positions`' register and for
@@ -139,9 +200,22 @@ export const list = query({
 })
 
 /**
- * Black out a rectangle of the map.
+ * Black out a shape on the map — a rectangle, or a polygon.
  *
  * DM-gated, because deciding what the table can and cannot see is the DM's job.
+ *
+ * ⚠️ **The shape is a discriminated union rather than four numbers plus an optional point
+ * list**, and `fogShapeArgValidator`'s docblock argues the alternative out at length: an
+ * additive spelling accepts a call carrying *both*, and a handler that silently prefers one is
+ * two states for one meaning on the write path where the wrong pick draws a shape that hides
+ * nothing. The `switch` below is what the union bought — a `never` arm, so a third gesture
+ * fails `npm run lint` here rather than reaching the database unchecked. There is a second in
+ * `insertFogShape`, at the other place a wrong answer does damage.
+ *
+ * ⚠️ **A polygon's bounding box is not an argument and cannot be.** The four stored numbers
+ * are `boundsOf`'s answer over the points the client sent, computed in the writer. That is the
+ * one thing about this shape a client must not be trusted with, because the box is what every
+ * containment test consults first.
  *
  * ⚠️ **On a lit map this narrows and on a dark one it widens**, so whether it stamps is
  * `fogActReveals`' answer rather than this handler's. It used to be the one mutation in this
@@ -166,15 +240,30 @@ export const draw = mutation({
     code: v.string(),
     dmCode: v.string(),
     sceneId: v.id('scenes'),
-    x: v.number(),
-    y: v.number(),
-    width: v.number(),
-    height: v.number(),
+    shape: fogShapeArgValidator,
   },
   returns: v.object({ fogId: v.id('fogRects') }),
   handler: async (ctx, args) => {
-    const rect = { x: args.x, y: args.y, width: args.width, height: args.height }
-    requireDrawableRect(rect)
+    const { shape } = args
+
+    // Argument-first, before any read, and one `switch` for both kinds so the `never` arm
+    // covers the whole gesture rather than one branch of it.
+    switch (shape.kind) {
+      case 'rect':
+        requireDrawableRect(shape)
+        break
+      case 'polygon':
+        requireDrawablePolygon(shape.points)
+        break
+      default: {
+        const unknownKind: never = shape
+        void unknownKind
+        throw new ConvexError({
+          kind: 'BadInput',
+          message: 'That is not a shape this map holds.',
+        })
+      }
+    }
 
     const game = await requireDm(ctx, args.code, args.dmCode)
     const scene = await getSceneInGame(ctx, game._id, args.sceneId)
@@ -186,9 +275,9 @@ export const draw = mutation({
       })
     }
 
-    // Normalised by the writer rather than here, so there is one shape in the database and
-    // every reader can trust it. lib/fog.ts is where that decision is argued.
-    const fogId = await insertFogRect(ctx, scene._id, rect)
+    // Normalised — and, for a polygon, bounded — by the writer rather than here, so there is
+    // one shape in the database and every reader can trust it. lib/fog.ts argues both.
+    const fogId = await insertFogShape(ctx, scene._id, shape)
     if (fogActReveals('draw', fogBaseOf(scene.fogBase))) await stampReveal(ctx, game._id)
     return { fogId }
   },

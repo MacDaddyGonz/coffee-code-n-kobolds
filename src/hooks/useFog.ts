@@ -4,8 +4,8 @@ import { useQuery } from 'convex/react'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicFog } from '@convex/lib/fog'
-import type { Point, Rect } from '@convex/lib/grid'
-import { anyRectCovers } from '@convex/lib/grid'
+import type { Point, Shape } from '@convex/lib/grid'
+import { anyShapeCovers } from '@convex/lib/grid'
 import type { FogBase } from '@convex/lib/fogBase'
 import { startsCovered } from '@convex/lib/fogBase'
 import { positionsArgs } from '@/hooks/useBoard'
@@ -66,15 +66,28 @@ export function useFog(
   return useQuery(api.fog.list, sceneId === null ? 'skip' : fogArgs(code, sceneId, dmCode))
 }
 
-/** Which fog tool the DM has armed. `off` is the board behaving normally. */
-export type FogMode = 'off' | 'draw' | 'erase'
+/**
+ * Which fog tool the DM has armed. `off` is the board behaving normally.
+ *
+ * ⚠️ **`draw` is the rectangle and `polygon` is the other one, and the asymmetric names are
+ * the lesser of two evils.** Renaming `draw` to `rect` would read better and would rename
+ * nothing on screen, because these are keys into `MODE_LABELS` rather than copy — but the
+ * mode is the one piece of fog state that *is* named in the interface's own vocabulary, and
+ * three files spell `'draw'` including the `useLobbyAction` key the refusal toast is bound to.
+ * Not worth a rename in the commit that adds the second shape; worth one the day a third
+ * arrives, which the roadmap says will not happen.
+ */
+export type FogMode = 'off' | 'draw' | 'polygon' | 'erase'
 
 /**
- * The modes, in the order they are offered. Iterated rather than three buttons written
- * out, for `TOKEN_LAYERS`' reason: a fourth mode arrives with a control rather than with
+ * The modes, in the order they are offered. Iterated rather than four buttons written
+ * out, for `TOKEN_LAYERS`' reason: a fifth mode arrives with a control rather than with
  * nowhere to be pressed.
+ *
+ * The two draw tools sit together and the eraser last, which is the order of the gesture
+ * rather than the order they were built in.
  */
-export const FOG_MODES: readonly FogMode[] = ['off', 'draw', 'erase']
+export const FOG_MODES: readonly FogMode[] = ['off', 'draw', 'polygon', 'erase']
 
 type Store = { mode: FogMode; listeners: Set<() => void> }
 
@@ -173,10 +186,12 @@ export type FoggableToken = {
  *
  * Three clauses, and each is the server's own, in its order:
  *
- * - **`anyRectCovers`, imported and not re-implemented.** It is the same function the
+ * - **`anyShapeCovers`, imported and not re-implemented.** It is the same function the
  *   server ran, which is what makes the cue and the withholding one answer rather than
  *   two that agree until somebody edits one. Its half-open edges and its fail-open on a
- *   non-finite coordinate are argued in convex/lib/grid.ts and inherited whole.
+ *   non-finite coordinate are argued in convex/lib/grid.ts and inherited whole — and since
+ *   polygons landed that inheritance is worth more, because the edge convention a hand-rolled
+ *   copy would get subtly wrong is the keystone `polygonCovers` spends a docblock on.
  * - ⚠️ **The base inverts it, and this cue is one of the two client inversions that would
  *   have been missed.** Under a lit map a shape is the dark, so a coin inside one is hidden.
  *   Under a covered map the shape is a hole, so a coin inside one is the only kind the party
@@ -198,7 +213,7 @@ export type FoggableToken = {
 export function hiddenFromParty(
   token: FoggableToken,
   position: Point | null,
-  rects: readonly Rect[],
+  shapes: readonly Shape[],
   base: FogBase,
 ): boolean {
   if (position === null) return false
@@ -206,7 +221,7 @@ export function hiddenFromParty(
   // `veiled` in convex/lib/board.ts, one line for one line. Written the same way round on
   // purpose: two spellings of one inversion is how the DM's cue and the party's board end up
   // disagreeing about which half of the map is dark.
-  const inside = anyRectCovers(rects, position)
+  const inside = anyShapeCovers(shapes, position)
   return startsCovered(base) ? !inside : inside
 }
 
@@ -280,11 +295,11 @@ export function useHiddenFromParty(
   const sceneId = scene?._id ?? null
 
   const fog = useFog(code, sceneId, dmCode)
-  const rects = fog ?? NO_FOG
+  const shapes = fog ?? NO_FOG
   // `scenes.active` already carries the base, resolved through `fogBaseOf` on the server, so
   // the browser never spells the absent-means-lit default a second time.
   const covered = startsCovered(scene?.fogBase ?? 'lit')
-  const fogging = covered || rects.length > 0
+  const fogging = covered || shapes.length > 0
 
   const positions = useQuery(
     api.board.positions,
@@ -303,17 +318,17 @@ export function useHiddenFromParty(
 
   const built = useMemo(() => {
     // Nothing to be in the dark, and the early return is what keeps a game that never uses the
-    // feature holding one shared empty set for the life of the session. Not `rects.length` any
+    // feature holding one shared empty set for the life of the session. Not `shapes.length` any
     // more — a covered map with no holes in it hides everything.
     if (!isDm || !fogging) return NONE_HIDDEN
 
     const base: FogBase = covered ? 'dark' : 'lit'
     const hidden = new Set<Id<'tokens'>>()
     for (const token of tokens) {
-      if (hiddenFromParty(token, at.get(token._id) ?? null, rects, base)) hidden.add(token._id)
+      if (hiddenFromParty(token, at.get(token._id) ?? null, shapes, base)) hidden.add(token._id)
     }
     return hidden
-  }, [isDm, at, rects, tokens, fogging, covered])
+  }, [isDm, at, shapes, tokens, fogging, covered])
 
   // ⚠️ **A ref written during render, which is the identity-collapsing escape hatch and not a
   // piece of state.** The value above is a pure function of the inputs, so a render that runs

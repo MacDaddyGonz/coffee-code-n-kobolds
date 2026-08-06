@@ -156,6 +156,91 @@ is inside no shape and is therefore published.
 dark. Neither is a bug and neither is a choice made anywhere: it is one behaviour read through two
 bases. Recorded here so a reader does not carry ADR 0012's half of it across.
 
+### A shape is a rectangle or a polygon, and the edge convention is the keystone
+
+Roll20 offers two shapes and there is no third, so this does too. A polygon is stored on the
+existing row: `points` is optional, and the four numbers `x/y/width/height` are **reinterpreted as
+the bounding box, computed server-side by `boundsOf` and never taken from the client.**
+
+⚠️⚠️ **THE POINT-IN-POLYGON EDGE CONVENTION HAS TO AGREE WITH THE RECTANGLE ONE EXACTLY, AND THAT
+EQUIVALENCE IS A TEST RATHER THAN A PARAGRAPH.** `rectCovers` is half-open — top-left inclusive,
+bottom-right exclusive — so that abutting shapes tile with no seam and without both claiming the
+line between them. A polygon spelling out a rectangle has to answer **identically at all four edges
+and all four corners**, and a polygon abutting a rectangle has to tile with it.
+
+It does, and the reason is two details of the crossing-number rule that look arbitrary:
+
+| Detail | What it buys |
+| --- | --- |
+| `(yi > py) !== (yj > py)` — a strict `>` on both ends | An edge whose *lower* vertex sits on the scan line counts as crossed and one whose *upper* vertex does not, so a ray passes through the top of a shape and under the bottom: **top-inclusive, bottom-exclusive**. |
+| `px <` the intersection — strict | A point on a left edge has that edge to its right and is counted; one on a right edge has it to the left and is not: **left-inclusive, right-exclusive**. |
+
+Neither is obvious by reading, and getting either wrong is quietly wrong for a year — a polygon
+claiming one extra row of pixels hides a token the rectangle beside it also hides, and one claiming
+one fewer opens a one-pixel corridor of visibility through a wall the DM believes is solid. Neither
+is visible on a screen.
+
+So `grid.test.ts` asserts the two functions **against each other** rather than against a list of
+expected booleans: at all four edges, all four corners and a thousandth of a pixel either side, in
+both winding directions, plus two abutting shapes of different kinds where exactly one claims every
+point on the seam. The claim is the equivalence, so the equivalence is what is pinned — a
+hand-written truth table would have to be got right by the same reasoning that could have got the
+implementation wrong.
+
+**The bounding box is what makes a polygon cheap, and that is why the client cannot supply it.**
+`shapeCovers` runs `rectCovers` on the box *first*, so a scene of two hundred polygons costs two
+hundred rectangle comparisons and a ray-cast for the handful whose box actually contains the point.
+A box a client sent and got wrong is a shape drawn on every screen that hides nothing — which is
+`normaliseFogRect`'s failure arriving through a second door — so there is no argument on `fog.draw`
+that could carry one.
+
+⚠️ **The bounds-first ordering is load-bearing for the fail-open branch as well, and that is the
+second reason it is not merely a short-circuit.** A NaN never reaches the ray-cast, so there is
+**one** fail-open branch in the fog design and not one per shape kind. The section above extends
+unchanged: under a covered base it inverts to fail-*closed*, for every shape.
+
+**The draw argument is a discriminated union and the stored row is not**, which sounds inconsistent
+and is two different questions. A client states which of two gestures it made, and there the two
+shapes have no field in common — so the union buys a `never` arm in `fog.draw` and a second in
+`insertFogShape`, at the two places a wrong answer does damage: the checker that would let an
+unknown kind past unvalidated, and the writer that would store it. A stored row is asked whether it
+has a point list and either does or does not, which is CLAUDE.md invariant 9's optional-field
+convention. The additive alternative — four numbers plus an optional `points` — accepts a call
+carrying *both* spellings and silently prefers one, which is two states for one meaning and the
+failure [ADR 0008](0008-one-shell-and-what-a-sheet-entry-is.md) settled.
+
+**New cap: `MAX_FOG_POLYGON_POINTS = 32`.** The roadmap gives no number and the arithmetic is why
+there has to be one — `200 shapes × 200 placements × vertices` of edge visits inside
+`visiblePositions`, which is the query on the drag path. The constant's docblock carries the sum the
+way `MAX_ROLL_DICE`'s does. Three is the floor, and it is a grammar rather than a courtesy: two
+points are a line, `boundsOf` gives it a zero extent, and `rectCovers` then answers false for every
+point in the plane.
+
+⚠️ **Concave, collinear and self-intersecting outlines are accepted rather than refused**, and that
+is a decision with a test on it. A DM tracing a cave wall produces all three by accident; the
+even-odd rule answers all three coherently; and a validity check would refuse a gesture that works.
+Winding order is not normalised either, because `polygonCovers` counts crossings rather than turns.
+
+⚠️ **The table is still called `fogRects` and the name is now a misnomer.** Renaming a Convex table
+is a widen-migrate-narrow across two deploys and the whole of what it buys is a better word. The
+schema pushes in this project that were worth that are the ones where the old shape could publish a
+secret; a table whose every row goes to every client verbatim has no such argument behind it. The
+correction lives in the schema comment, in `lib/fog.ts`'s header and in CLAUDE.md.
+
+⚠️ **The gesture is `usePolygonDraw`, a second hook over `useStagePointer` and deliberately not a
+third setting of `useRubberBand`.** A band is press-drag-release with one commit; a polygon is an
+unbounded sequence of clicks with a live segment and two ways to finish, and the mouse button is
+down for none of it. Teaching the band about vertices would give both callers a `mode` and give the
+fog tool an `onCommit` that fires on `mouseup` sometimes and on a double-click other times.
+`useStagePointer`'s docblock predicted this split before either polygon or wall existed.
+
+**This is the commit that spends the previous one's acceptance criterion, and it is spent
+deliberately.** The section above records that `convex/fog.test.ts`'s existing 1270 lines passed
+untouched. `fog.draw`'s argument is now a union, so six call sites across four suites moved to it —
+`fog.test.ts`, `feed.test.ts`, `vitals.test.ts`, `board.test.ts` and two helpers. **The call sites
+moved and not one assertion did**, which is the weaker claim that is still worth making: what the
+union changed is how a shape is spelled on the way in, and nothing at all about what fog does.
+
 ## Consequences
 
 ### Good
@@ -179,3 +264,13 @@ bases. Recorded here so a reader does not carry ADR 0012's half of it across.
   `board.tokens` — what fog takes is where something is, how hurt it is and what it just rolled. A
   creature that must not be known about goes on the GM layer. ADR 0012's *partial guard described as
   a whole one is worse than no guard* is unchanged and now has a second base to be true of.
+- **A polygon costs a ray-cast that a rectangle does not**, bounded by
+  `MAX_FOG_POLYGON_POINTS × MAX_FOG_RECTS_PER_SCENE` per placement in the pathological case where
+  every box contains the point. The box is what keeps the ordinary case free, and the number is what
+  keeps the bad case finite.
+- **A polygon cannot be edited, only rubbed out and redrawn.** No vertex handles, no dragging a
+  corner. `fog.erase` deletes a row and `fog.draw` writes one, which is the whole of the surface —
+  editing wants a mutation, a hit target per vertex and an opinion about two DMs dragging the same
+  corner, and none of that is what the milestone is for.
+- **The table's name no longer describes its rows**, and the correction is three comments rather
+  than a migration.

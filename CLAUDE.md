@@ -167,13 +167,22 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
    feed they are separated deliberately.
 
    ⚠️ **`fogRects` is a table `lib/fog.ts` reads and is deliberately absent from this list.** Every
-   rectangle goes to every client verbatim — a blacked-out map is the whole interface — so its rows
+   shape goes to every client verbatim — a blacked-out map is the whole interface — so its rows
    have no non-secret twin to be confused with and there is no predicate for a reader to be the home
    of. An entry would *pass*, which is exactly why leaving it out is argued in that file rather than
    assumed; `leakGuard.test.ts` does not keep guards that cannot fail. What is genuinely confined is
-   the `tokenPositions` read that turns a rectangle into a withheld token id, and the existing first
+   the `tokenPositions` read that turns a shape into a withheld token id, and the existing first
    row already covers it. **Per-player fog, reveal-as-you-walk or line of sight flips that** — any of
-   them makes a rectangle a statement about one caller, and the table needs a fourth row that day.
+   them makes a shape a statement about one caller, and the table needs a fourth row that day.
+
+   ⚠️ **A row of that table is a rectangle *or a polygon*, and the name is a misnomer that
+   stays.** `fogRects` gained an optional `points`, the four numbers were reinterpreted as a
+   **bounding box computed server-side**, and nothing above changed — the rows are still symmetric,
+   still sent whole, still without a predicate. Renaming the table is a widen-migrate-narrow across
+   two deploys and the whole of what it buys is a better word; the schema pushes in this project
+   that were worth that are the ones where the old shape could publish a secret. So the word in
+   prose is **shape**, the word in the schema is history, and `convex/schema.ts` says so where
+   somebody would look. See [ADR 0015](docs/adr/0015-a-map-that-starts-covered.md).
 
    **The third row is the same shape as the first two and needed no new machinery, which is the
    point of having had the argument twice already.** `Ancient Red Dragon attacks with their Bite` is

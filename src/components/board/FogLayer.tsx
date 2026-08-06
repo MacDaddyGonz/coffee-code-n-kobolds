@@ -1,5 +1,5 @@
 import { memo, useCallback } from 'react'
-import { Layer, Rect } from 'react-konva'
+import { Circle, Layer, Line, Rect } from 'react-konva'
 import { useMutation } from 'convex/react'
 import { toast } from 'sonner'
 import type Konva from 'konva'
@@ -7,13 +7,14 @@ import type Konva from 'konva'
 import { setCursor, swallowLeftPress } from '@/components/board/konvaPointer'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
 import { useFog, useFogMode } from '@/hooks/useFog'
+import { usePolygonDraw } from '@/hooks/usePolygonDraw'
 import { useRubberBand, type Band } from '@/hooks/useRubberBand'
 import { errorMessage } from '@/lib/errors'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicFog } from '@convex/lib/fog'
 import { startsCovered } from '@convex/lib/fogBase'
-import type { Grid, Rect as ImageRect } from '@convex/lib/grid'
+import type { Grid, Point, Rect as ImageRect } from '@convex/lib/grid'
 import { isUsableGrid, snapToGrid } from '@convex/lib/grid'
 import type { PublicScene } from '@convex/lib/scenes'
 
@@ -46,6 +47,17 @@ const BAND_FILL = 'rgba(5, 7, 13, 0.45)'
 /** Screen-pixel weights, divided by the scale so they hold at any zoom. */
 const BAND_WIDTH = 2
 const BAND_DASH = 6
+
+/**
+ * The grab handle on the first vertex of an outline in progress — **the** way to close a
+ * polygon, and the reason `usePolygonDraw` measures no distance in image space.
+ *
+ * A radius in screen pixels divided by the camera scale, exactly as the band's stroke is, so
+ * the target is the same size on a zoomed-out map as on a zoomed-in one. Doing it the other
+ * way — a fixed image-space radius — makes the handle a speck at 25% and a dinner plate at
+ * 400%, on a gesture whose whole difficulty is landing on one square.
+ */
+const CLOSE_HANDLE_RADIUS = 6
 
 export type FogLayerProps = {
   code: string
@@ -80,10 +92,16 @@ export type FogLayerProps = {
  * cannot be silent: arming a tool is a deliberate act with a lit button in DM tools and
  * a crosshair under the cursor, and `FogTools`' first control turns it off.
  *
- * **The gesture itself is `useRubberBand`**, shared with the grid tracer. One write per
- * gesture, on release, un-throttled — the argument for that lives on the hook, along with
- * the listener-identity trap this component used to carry a paragraph about and no longer
- * has to.
+ * **The gestures are `useRubberBand` and `usePolygonDraw`**, one for each shape kind, both
+ * over `useStagePointer`. One write per gesture, un-throttled — the argument for that lives on
+ * the band hook, along with the listener-identity trap this component used to carry a
+ * paragraph about and no longer has to.
+ *
+ * ⚠️ **Two shapes and exactly two, which is what Roll20 offers and there is no third.** They
+ * are two *modes* rather than one tool with a setting, because the lifecycles do not resemble
+ * each other: a rectangle is press-drag-release and a polygon is a sequence of clicks with two
+ * ways to finish. Only one is ever armed, so only one draw surface is ever mounted and there
+ * is no question about which gesture a press belongs to.
  *
  * **Memoised, and `scale` is the reason it is worth anything.** The other three props are a
  * code, a secret and a scene row the subscription holds still, and the scale changes on a
@@ -115,6 +133,7 @@ export const FogLayer = memo(function FogLayer({ code, dmCode, scene, scale }: F
   const { run } = useLobbyAction()
 
   const drawing = isDm && mode === 'draw'
+  const tracing = isDm && mode === 'polygon'
   const erasing = isDm && mode === 'erase'
 
   const commit = useCallback(
@@ -131,13 +150,48 @@ export const FogLayer = memo(function FogLayer({ code, dmCode, scene, scale }: F
       if (rect.width === 0 || rect.height === 0) return
 
       void run('draw', 'Could not fog that area.', () =>
-        drawFog({ code, dmCode, sceneId: scene._id, ...rect }),
+        drawFog({ code, dmCode, sceneId: scene._id, shape: { kind: 'rect', ...rect } }),
       )
     },
     [code, dmCode, drawFog, run, scene],
   )
 
   const { begin, band } = useRubberBand({ enabled: drawing, onCommit: commit })
+
+  /**
+   * ⚠️ **Vertices snap the way a rectangle's corners do, through the same zero-square trick.**
+   * `snappedRect`'s docblock carries the argument: `snapToGrid` with a size of zero squares
+   * lands on grid *intersections*, which is what a shape's edge wants. Doing anything else
+   * here would give the two fog tools two different ideas of where a square is, on one map, on
+   * the same click.
+   *
+   * An uncalibrated grid leaves the vertex where the DM put it, for `snappedRect`'s reason
+   * too — snapping to NaN is a shape `requireDrawablePolygon` refuses, from a gesture that
+   * looked like it worked.
+   */
+  const snapVertex = useCallback(
+    (point: Point): Point => (isUsableGrid(scene) ? snapToGrid(point, scene, 0) : point),
+    [scene],
+  )
+
+  const commitPolygon = useCallback(
+    (points: Point[]) => {
+      if (dmCode === null) return
+      // Nothing is dropped silently here, unlike the band above. A polygon is deliberate work
+      // — three clicks at least — so a refusal is worth a sentence, and the two the server can
+      // give (all in a line, too many corners) both name what to do instead.
+      void run('draw', 'Could not fog that area.', () =>
+        drawFog({ code, dmCode, sceneId: scene._id, shape: { kind: 'polygon', points } }),
+      )
+    },
+    [code, dmCode, drawFog, run, scene],
+  )
+
+  const polygon = usePolygonDraw({
+    enabled: tracing,
+    snap: snapVertex,
+    onCommit: commitPolygon,
+  })
 
   // A `useCallback` because it crosses into `FogRect`, whose memo is worth nothing unless the
   // handler it is handed survives a render. Two hundred rectangles is `TokenLayers`' arithmetic
@@ -163,12 +217,19 @@ export const FogLayer = memo(function FogLayer({ code, dmCode, scene, scale }: F
   // one commit covering the server, both client cues and the tools panel.
   const drawn = rects ?? []
   const covered = startsCovered(scene.fogBase)
-  if (drawn.length === 0 && !covered && !drawing) return null
+  if (drawn.length === 0 && !covered && !drawing && !tracing) return null
 
   const preview = band === null ? null : snappedRect(band, scene)
+  // The committed vertices plus the elastic segment, as Konva's flat pair list. Drawn
+  // `closed`, so what the DM watches is the region rather than the path — the same honesty
+  // the snapped band has, applied to the gesture where the difference is larger.
+  const outline =
+    polygon.points.length === 0
+      ? null
+      : flatten(polygon.cursor === null ? polygon.points : [...polygon.points, polygon.cursor])
 
   return (
-    <Layer listening={drawing || erasing} opacity={isDm ? DM_FOG_OPACITY : 1}>
+    <Layer listening={drawing || tracing || erasing} opacity={isDm ? DM_FOG_OPACITY : 1}>
       {/*
         The draw surface: the map itself, made pressable, and only while the DM is
         holding the draw tool. It spans the image and nothing beyond it, which is the
@@ -191,6 +252,32 @@ export const FogLayer = memo(function FogLayer({ code, dmCode, scene, scale }: F
           height={scene.imageHeight}
           fill="transparent"
           onMouseDown={begin}
+          onMouseEnter={crosshairCursor}
+          onMouseLeave={clearCursor}
+        />
+      ) : null}
+
+      {/*
+        The polygon's draw surface. The same rectangle and the same reasoning as the band's,
+        with one addition: `onDblClick` is the second way to close an outline, and it is bound
+        here rather than on the line being drawn because the DM's last double-click lands on
+        bare map far more often than on the two-pixel stroke they are dragging out.
+
+        ⚠️ **Konva fires `dblclick` *after* both of the presses that make it up**, so the
+        second one has already added a vertex by the time this runs. `usePolygonDraw.close`
+        drops the duplicate rather than this surface trying to suppress a press on suspicion,
+        which is argued on the hook — a press swallowed on suspicion is a corner that sometimes
+        does not appear.
+      */}
+      {tracing ? (
+        <Rect
+          x={0}
+          y={0}
+          width={scene.imageWidth}
+          height={scene.imageHeight}
+          fill="transparent"
+          onMouseDown={polygon.add}
+          onDblClick={polygon.close}
           onMouseEnter={crosshairCursor}
           onMouseLeave={clearCursor}
         />
@@ -228,10 +315,10 @@ export const FogLayer = memo(function FogLayer({ code, dmCode, scene, scale }: F
         />
       ) : null}
 
-      {drawn.map((rect) => (
-        <FogRect
-          key={rect._id}
-          rect={rect}
+      {drawn.map((shape) => (
+        <FogShape
+          key={shape._id}
+          shape={shape}
           listening={erasing}
           covered={covered}
           onErase={erase}
@@ -258,14 +345,60 @@ export const FogLayer = memo(function FogLayer({ code, dmCode, scene, scale }: F
           perfectDrawEnabled={false}
         />
       ) : null}
+
+      {/*
+        The outline in progress, in the band's own colours so the two tools read as one
+        feature. `closed` while it is still being drawn, deliberately: an open polyline shows
+        the path and a closed one shows the *region*, and the region is what is about to be
+        written. Deaf to the pointer, so the surface underneath keeps taking every click.
+      */}
+      {outline ? (
+        <Line
+          points={outline}
+          closed
+          fill={BAND_FILL}
+          stroke={BAND_STROKE}
+          strokeWidth={BAND_WIDTH / scale}
+          dash={[BAND_DASH / scale, BAND_DASH / scale]}
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      ) : null}
+
+      {/*
+        The grab handle on the first vertex — **the** way to close an outline, and the only
+        shape in this layer that listens while the polygon tool is armed.
+
+        It is drawn last so it sits above the draw surface and wins the press; Konva dispatches
+        to the topmost hit-testing node and does not bubble between siblings, so the surface
+        never sees this click and never adds a fourth vertex on top of the first.
+
+        Only offered once there is a shape to close. Two vertices is a line, and a handle that
+        closes nothing is a control that does nothing when pressed.
+      */}
+      {polygon.points.length >= 3 ? (
+        <Circle
+          x={polygon.points[0].x}
+          y={polygon.points[0].y}
+          radius={CLOSE_HANDLE_RADIUS / scale}
+          fill={BAND_STROKE}
+          stroke={FOG_FILL}
+          strokeWidth={BAND_WIDTH / scale}
+          onMouseDown={swallowLeftPress}
+          onClick={polygon.close}
+          onMouseEnter={pointerCursor}
+          onMouseLeave={clearCursor}
+          perfectDrawEnabled={false}
+        />
+      ) : null}
     </Layer>
   )
 })
 
-type FogRectProps = {
+type FogShapeProps = {
   /** The row as it arrived from `fog.list`, held by reference — see the memo below. */
-  rect: PublicFog
-  /** Whether the eraser is armed. Nothing else on this board makes a rectangle pressable. */
+  shape: PublicFog
+  /** Whether the eraser is armed. Nothing else on this board makes a shape pressable. */
   listening: boolean
   /**
    * Whether this shape is a piece of darkness or a hole in it. A boolean rather than the
@@ -274,15 +407,15 @@ type FogRectProps = {
    */
   covered: boolean
   /**
-   * One function for the whole list, given the rectangle it happened to, rather than one
+   * One function for the whole list, given the shape it happened to, rather than one
    * closed over each row. `TokenCoinProps` states the rule and the reason at length.
    */
   onErase: (fogId: Id<'fogRects'>) => void
 }
 
 /**
- * ONE FOGGED RECTANGLE, and it is memoised for `TokenCoin`'s reason with numbers of the same
- * order.
+ * ONE FOGGED SHAPE — a rectangle or a polygon — memoised for `TokenCoin`'s reason with
+ * numbers of the same order.
  *
  * Up to two hundred of these, four `on*` props each, and react-konva compares handlers by
  * reference and answers a changed one by unbinding the old listener and binding the new one.
@@ -295,31 +428,83 @@ type FogRectProps = {
  * `useCallback`. The arrow inside is a fresh identity per render of *this* component, which
  * is fine and is the same arrangement `TokenCoin` uses — a render that did not happen builds
  * no closures.
+ *
+ * ⚠️ **`points` decides which node is drawn, and its absence means rectangle** — the stored
+ * row's own convention, read here rather than restated as a `kind`. The two branches are
+ * otherwise identical in every prop that matters, including the composite operation, which is
+ * what makes a polygon a hole in a covered map exactly as a rectangle is.
+ *
+ * ⚠️ **A `Line` needs its points flattened on every render and a `Rect` does not**, which is
+ * the one place these two branches genuinely cost different amounts. It is bounded by
+ * `MAX_FOG_POLYGON_POINTS`, and the memo above is what keeps it off the frames of a pan — a
+ * shape whose row has not changed does not re-render, so it does not re-flatten.
  */
-const FogRect = memo(function FogRect({ rect, listening, covered, onErase }: FogRectProps) {
+const FogShape = memo(function FogShape({
+  shape,
+  listening,
+  covered,
+  onErase,
+}: FogShapeProps) {
+  // Darkness, or a hole punched through the darkness the layer painted first. The fill is
+  // the same either way — under `destination-out` only the alpha matters — so this is one
+  // value and not a second colour to keep in step.
+  const composite = covered ? ('destination-out' as const) : undefined
+
+  // The eraser is a click on a shape the client was *sent*, which is why these are rows
+  // rather than one blob of geometry on the scene — see `publicFogValidator`. Deaf to the
+  // pointer at every other moment, including while a draw tool is down.
+  const pointer = {
+    listening,
+    onMouseDown: swallowLeftPress,
+    onClick: () => onErase(shape._id),
+    onMouseEnter: pointerCursor,
+    onMouseLeave: clearCursor,
+  }
+
+  if (shape.points !== undefined) {
+    return (
+      <Line
+        points={flatten(shape.points)}
+        // A fog polygon is a region and never a path, so it is always closed and always
+        // filled. Konva hit-tests a closed filled `Line` by its interior, which is what makes
+        // the eraser work on one at all.
+        closed
+        fill={FOG_FILL}
+        globalCompositeOperation={composite}
+        {...pointer}
+        perfectDrawEnabled={false}
+      />
+    )
+  }
+
   return (
     <Rect
-      x={rect.x}
-      y={rect.y}
-      width={rect.width}
-      height={rect.height}
+      x={shape.x}
+      y={shape.y}
+      width={shape.width}
+      height={shape.height}
       fill={FOG_FILL}
-      // Darkness, or a hole punched through the darkness the layer painted first. The fill is
-      // the same either way — under `destination-out` only the alpha matters — so this is one
-      // prop and not a second colour to keep in step.
-      globalCompositeOperation={covered ? 'destination-out' : undefined}
-      // The eraser is a click on a rectangle the client was *sent*, which is why rectangles
-      // are rows rather than one blob of geometry on the scene — see `publicFogValidator`.
-      // Deaf to the pointer at every other moment, including while the draw tool is down.
-      listening={listening}
-      onMouseDown={swallowLeftPress}
-      onClick={() => onErase(rect._id)}
-      onMouseEnter={pointerCursor}
-      onMouseLeave={clearCursor}
+      globalCompositeOperation={composite}
+      {...pointer}
       perfectDrawEnabled={false}
     />
   )
 })
+
+/**
+ * A point list as Konva wants it: `[x, y, x, y, …]`.
+ *
+ * ⚠️ **A pair list is the wire format and a flat list is Konva's**, and this is the one place
+ * the two meet. `{ x, y }` is what the schema stores, what `polygonCovers` walks and what the
+ * containment test on the server and in the browser both read — flattening at the boundary
+ * keeps the flat form from leaking anywhere a `Point` is expected, where an off-by-one in the
+ * index arithmetic is a shape that hides the wrong squares and looks plausible.
+ */
+function flatten(points: readonly Point[]): number[] {
+  const flat: number[] = []
+  for (const point of points) flat.push(point.x, point.y)
+  return flat
+}
 
 /**
  * The rectangle a gesture asks for, on the grid.

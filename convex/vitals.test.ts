@@ -2380,10 +2380,7 @@ describe('fog takes a creature’s health bar with it', () => {
       code: fixture.code,
       dmCode: fixture.dmCode,
       sceneId: fixture.sceneId,
-      x: at.x - 40,
-      y: at.y - 40,
-      width: 80,
-      height: 80,
+      shape: { kind: 'rect', x: at.x - 40, y: at.y - 40, width: 80, height: 80 },
     })
     return fogId
   }
@@ -2461,10 +2458,13 @@ describe('fog takes a creature’s health bar with it', () => {
       code,
       dmCode,
       sceneId,
-      x: -MAP_WIDTH,
-      y: -MAP_HEIGHT,
-      width: MAP_WIDTH * 3,
-      height: MAP_HEIGHT * 3,
+      shape: {
+        kind: 'rect',
+        x: -MAP_WIDTH,
+        y: -MAP_HEIGHT,
+        width: MAP_WIDTH * 3,
+        height: MAP_HEIGHT * 3,
+      },
     })
 
     expect(await t.query(api.characters.vitals, { code, dmCode })).toEqual(before)

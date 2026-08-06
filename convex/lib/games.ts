@@ -50,6 +50,38 @@ export const MAX_PLACEMENTS_PER_SCENE = 200
 export const MAX_FOG_RECTS_PER_SCENE = 200
 
 /**
+ * How many vertices one fog polygon may have.
+ *
+ * ⚠️ **The roadmap gives no number for this, and the arithmetic is why there has to be
+ * one.** `MAX_ROLL_DICE`'s docblock is the model — the constant carries the sum, so the next
+ * person to move it can see what they are buying.
+ *
+ * `visiblePositions` asks `anyShapeCovers` once per placement, so the floor is
+ * `MAX_PLACEMENTS_PER_SCENE × MAX_FOG_RECTS_PER_SCENE` = **40,000 bounding-box comparisons
+ * per execution**, which is what fog already cost before polygons and is four multiplications
+ * of nothing. The box is what keeps it there: `shapeCovers` rejects a shape on its bounds
+ * before it visits an edge, so on a map where the DM has outlined separate rooms the ray-cast
+ * runs once per token, or not at all.
+ *
+ * The number bounds the case where that is not true — two hundred polygons stacked over one
+ * corner of the map, every box containing the point. Then it is
+ * `200 × 200 × MAX_FOG_POLYGON_POINTS` edge visits, and at 32 that is **1.28 million per
+ * execution of a query on the drag path**, which is bad and finite. Unbounded, it is whatever
+ * the client's last request said, on the one query CLAUDE.md invariant 2 exists to protect.
+ *
+ * Thirty-two is generous for the intended use by a wide margin: a hand-traced room outline is
+ * a dozen clicks, and Roll20's polygon tool in practice is fewer. It is deliberately not
+ * higher — a DM who needs a hundred-vertex cave wall wants two polygons, which the shape count
+ * has room for.
+ *
+ * ⚠️ **Three is the floor and it is a grammar rather than a courtesy.** Two points describe a
+ * line, `boundsOf` gives it a zero extent in one axis, and `rectCovers` then answers false for
+ * every point in the plane — a shape drawn on every screen that hides nothing, which is
+ * `normaliseFogRect`'s failure exactly. `requireDrawablePolygon` refuses both ends.
+ */
+export const MAX_FOG_POLYGON_POINTS = 32
+
+/**
  * How many handouts and how many tracks one game may hold.
  *
  * Both are write checks like MAX_TOKENS_PER_GAME, because both are things a DM adds one at

@@ -27,8 +27,8 @@ import { normaliseMarkers, tokenMarkerValidator, type TokenMarker } from './mark
 import { addedNames, duplicateNames } from './names'
 import { findClaimHolder, holderByCharacter, listSeats } from './players'
 import { fogBaseOf, startsCovered } from './fogBase'
-import type { Grid, Point, Rect } from './grid'
-import { anyRectCovers, cellOf, centreOfCell, snapToGrid } from './grid'
+import type { Grid, Point, Shape } from './grid'
+import { anyShapeCovers, cellOf, centreOfCell, snapToGrid } from './grid'
 import {
   layerOf,
   maySeeLayer,
@@ -180,7 +180,14 @@ function maySee(token: Doc<'tokens'>, isDm: boolean): boolean {
  * caller and `veiled` below are looking at the same answer for the same transaction.
  */
 type FogShape = {
-  rects: readonly Rect[]
+  /**
+   * ⚠️ **`Shape` and not `Rect` since polygons landed, and the name of the field is the
+   * correction.** A shape is a bounding box plus, when it has one, a point list; the box is
+   * server-computed and is what `anyShapeCovers` consults first, so the cost of this array on
+   * the drag path is what it always was. The stored table is still called `fogRects`, which is
+   * history — `convex/schema.ts` argues why renaming it is a migration nothing earns.
+   */
+  shapes: readonly Shape[]
   covered: boolean
 }
 
@@ -235,7 +242,7 @@ async function fogShape(
 ): Promise<FogShape | null> {
   if (isDm || sceneId === null) return null
 
-  const [scene, rects] = await Promise.all([
+  const [scene, shapes] = await Promise.all([
     ctx.db.get('scenes', sceneId),
     sceneFog(ctx, sceneId),
   ])
@@ -243,9 +250,9 @@ async function fogShape(
   // this is the belt on a point get that cannot fail in practice, and `false` is right because
   // there is no map to hide.
   const covered = scene !== null && startsCovered(fogBaseOf(scene.fogBase))
-  if (!covered && rects.length === 0) return null
+  if (!covered && shapes.length === 0) return null
 
-  return { rects, covered }
+  return { shapes, covered }
 }
 
 /**
@@ -287,7 +294,9 @@ function fogVeil(shape: FogShape | null, seats: Doc<'players'>[]): FogVeil | nul
  * ⚠️ **The one documented fail-open branch in the fog design inverts here, and ADR 0012's
  * sentence about it no longer covers both cases.** `rectCovers` answers `false` for a
  * non-finite coordinate — every NaN comparison is false — so a token with a broken position is
- * inside no shape. Under a **lit** base that publishes it, which is the fail-open ADR 0012
+ * inside no shape. **That is still the whole of it for a polygon**, because `shapeCovers` runs
+ * the bounds test first precisely so a NaN never reaches the ray-cast; there is one fail-open
+ * branch, not two. Under a **lit** base that publishes it, which is the fail-open ADR 0012
  * names. Under a **covered** base the same answer withholds it, because being inside no shape
  * is being in the dark. Neither is a bug and the direction is not a choice made here; it is
  * `rectCovers`' one behaviour read through two bases, and ADR 0015 records it so a reader does
@@ -310,7 +319,7 @@ function veiled(veil: FogVeil | null, token: Doc<'tokens'>, at: Point): boolean 
   // so a token inside one is hidden. Under a covered base the map begins dark and a shape is a
   // **hole** in it, so a token inside one is the only kind that is visible. Everything else
   // about fog — the centre point, the control exemption, the call sites — is unchanged.
-  const inside = anyRectCovers(veil.rects, at)
+  const inside = anyShapeCovers(veil.shapes, at)
   if (veil.covered ? inside : !inside) return false
 
   const holder = token.characterId ? veil.holders.get(token.characterId) ?? null : null
@@ -725,7 +734,7 @@ export async function visiblePositions(
     fogShape(ctx, sceneId, isDm),
   ])
   // The roster only once there is fog to apply — see `fogShape`'s early returns, which now
-  // decide that rather than a `rects.length` test here. `fogVeil` is handed the seats rather
+  // decide that rather than a `shapes.length` test here. `fogVeil` is handed the seats rather
   // than reading them, so the conditional lives on this side where the trade is being made.
   //
   // This also stopped reading `sceneFog` twice. The old shape asked for the rectangles here
