@@ -87,12 +87,9 @@
 // this script has been asked about at once, and sections 31 to 35 are them.** Five distinct
 // shapes, and none of them is logic the suite already covers:
 //
-//   - **A three-member union, as an argument validator *and* as a projected field.** The
-//     stored union is one member wider than the canonical one while the GM layer's rename
-//     from `dm` to `gm` is in flight, so `board:addToken`'s narrow `tokenLayerValidator` is
-//     the *only* thing stopping a legacy value being created from here forward. Whether
-//     `'background'` and `'gm'` round-trip as themselves, and whether `'dm'` is refused at
-//     the function boundary, are three facts about Convex's own value validation and nothing
+//   - **A three-member union, as an argument validator *and* as a projected field.** Whether
+//     `'background'` and `'gm'` round-trip as themselves, and whether a non-member is refused
+//     at the function boundary, are facts about Convex's own value validation and nothing
 //     else — the local suite reaches the schema directly and so cannot be asked any of them.
 //   - **Four fresh float64s per fog rectangle, through a table that is new.** Floats through
 //     a real deployment are this script's oldest speciality, and the interesting ones here
@@ -5268,16 +5265,17 @@ async function main() {
     // 31. THREE LAYERS: A UNION AS AN ARGUMENT VALIDATOR, AS A STORED VALUE AND AS A
     // PROJECTED FIELD — AND THE ONE SECRECY CHECK IN THIS SCRIPT THAT ASSERTS PRESENCE.
     //
-    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE.** The stored layer union is **one member
-    // wider than the canonical one**: `schema.ts` still admits the legacy `dm` spelling so a
-    // row written before the GM layer was renamed keeps validating, while `board:addToken`'s
-    // and `board:setLayer`'s arguments take the narrow three-member `tokenLayerValidator`. That
-    // arrangement is a widen-migrate-narrow, and the *only* thing holding its second half is
-    // Convex's own argument validation at the function boundary. The local suite writes through
-    // the schema, so it can be asked whether the wide union stores a `dm` — which it must — and
-    // structurally cannot be asked the question that matters here: whether a client can still
-    // *create* one. So the refusal below is not a duplicate of anything in `board.test.ts`; it
-    // is the half of the migration that has no other guard.
+    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE.** `tokenLayerValidator` is one union doing
+    // three jobs — `schema.ts`'s stored field, `board:addToken`'s and `board:setLayer`'s
+    // arguments, and `publicTokenValidator`'s projected field — and what refuses a value that
+    // is not one of its three members is Convex's own validation at the function boundary. The
+    // local suite writes through the schema with a typed literal, so it structurally cannot be
+    // asked whether a *client* can send something else. The refusals below are therefore not
+    // duplicates of anything in `board.test.ts`.
+    //
+    // This section used to carry the second half of the `dm` → `gm` widen-migrate-narrow, and
+    // that half is finished: the sweep ran, the widened stored union is gone, and `'dm'` is now
+    // refused for the ordinary reason rather than a special one.
     //
     // The round trips beside it are the same point from the other end. `'background'` and
     // `'gm'` are two literals of a union that has three, in a field this application both
@@ -5456,12 +5454,13 @@ async function main() {
         : 'no placement came back',
     )
 
-    // ⚠️ **THE NARROW VALIDATOR, WHICH IS THE HALF OF THE MIGRATION WITH NO OTHER GUARD.** A
-    // `dm` row must remain *readable* and must not be *creatable*, and only Convex's own
-    // argument validation enforces the second — nothing in either handler asks. Both writes are
-    // refused because both take the narrow union, which is what makes the wide one in
-    // `schema.ts` safe to keep until the relabel has run.
-    await refuses('board:addToken refused the legacy `dm` layer at the function boundary', () =>
+    // ⚠️ **A RETIRED LITERAL, WHICH IS THE ONE MOST LIKELY TO COME BACK.** `dm` was the GM
+    // layer's stored value until the rename, and it is refused now for the ordinary reason:
+    // the schema, both argument validators and the projection are one three-member union and
+    // it is not a member. Kept as a *named* case beside the never-existed one below, because a
+    // value that used to be legal is the value somebody reintroduces — from an old comment, an
+    // old fixture, or a widened validator "for compatibility" — and a made-up string is not.
+    await refuses('board:addToken refused the retired `dm` layer at the function boundary', () =>
       client.mutation('board:addToken', {
         code,
         dmCode,
@@ -5474,7 +5473,7 @@ async function main() {
         y: 400,
       }),
     )
-    await refuses('board:setLayer refused the legacy `dm` layer too', () =>
+    await refuses('board:setLayer refused the retired `dm` layer too', () =>
       client.mutation('board:setLayer', {
         code,
         dmCode,

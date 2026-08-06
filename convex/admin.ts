@@ -33,12 +33,7 @@ import { ConvexError, v } from 'convex/values'
 import { internalMutation, internalQuery } from './_generated/server'
 import type { QueryCtx } from './_generated/server'
 import type { Id } from './_generated/dataModel'
-import {
-  countLegacyLayers,
-  countTokensInGame,
-  deleteTokensInGame,
-  relabelGmLayer,
-} from './lib/board'
+import { countTokensInGame, deleteTokensInGame } from './lib/board'
 import { countCharactersInGame, deleteCharactersInGame } from './lib/characters'
 import { countFeedInGame, deleteFeedInGame } from './lib/feed'
 import { MAX_GAMES_LISTED, MAX_GAMES_SWEPT, publicGameValidator } from './lib/games'
@@ -255,135 +250,6 @@ export const purgeGame = internalMutation({
       name: game.name,
       code: game.code,
       counts: { scenes, tokens, characters, seats, modalImages, tracks, feed },
-    }
-  },
-})
-
-// ---------------------------------------------------------------------------
-// TRANSITION ONLY — the `dm` → `gm` layer rename
-// ---------------------------------------------------------------------------
-//
-// ⚠️ **Both functions below are scaffolding and are deleted once the sweep has run against
-// every deployment**, together with the fourth member of the layer union in
-// `convex/schema.ts`, `relabelGmLayer` and `countLegacyLayers` in `convex/lib/board.ts`, and
-// `scripts/relabel-layers.mjs`. They are the middle step of widen–migrate–narrow: the schema
-// already accepts both spellings and nothing can create the old one, so what is left is to
-// rewrite the rows that predate the rename and then take the widening back out. The query
-// exists to prove the narrowing is safe — it has to read zero on every deployment before that
-// commit lands — and the mutation exists to make it so.
-//
-// ⚠️ **Neither may ever become a public mutation**, for the reason in this file's header, and
-// with one extra edge to it: `relabelDmLayer` takes a `gameId` and no code of any kind, so a
-// public version would be an unauthenticated write to any game in the deployment. It is safe
-// only because internal functions are absent from the generated API and reachable only by a
-// caller who already holds deploy credentials.
-//
-// The `tokens` reads live in `convex/lib/board.ts` where the choke point is, not here — a
-// migration is not an exemption from invariant 8, and `leakGuard.test.ts` sweeps this module
-// like every other. What stays on this side is the `internalQuery`/`internalMutation`
-// wrapper, which is the same split `purgeGame` above makes.
-
-/**
- * Every game still holding a token on the legacy `dm` layer, with how many.
- *
- * Games with none are omitted, so a clean deployment prints an empty list and the operator
- * is looking at the answer rather than at five hundred zeroes.
- *
- * ⚠️ **One pass covers every game it can see, and the contrast with `listByPrefix` above is
- * a real difference rather than an inconsistency.** There, matching is cheap and *counting*
- * is expensive, so it matches five hundred games and counts the first fifty — a page, and a
- * re-run after the deletions makes progress because the deleted games have left the window.
- * Here the expensive read **is** the predicate: whether a game needs relabelling cannot be
- * known without reading its tokens. A fixed window of fifty would therefore show the same
- * fifty games for ever, relabelled or not, and a game at position fifty-one could never be
- * reached at all — a migration tool that cannot finish.
- *
- * So the cost is stated instead of hidden. The scan is bounded by `MAX_GAMES_SWEPT` and each
- * count by `MAX_TOKENS_PER_GAME`, and the product of those two is above the number of
- * documents one Convex query may read. A deployment large enough to hit that gets a **failed
- * query rather than a short list**, which is the right failure for a tool whose entire job is
- * to prove a number is zero: an under-report here would retire the widening while rows still
- * carried the old spelling, and those rows would then fail validation on read. The dev and
- * production deployments hold tens of games of a handful of tokens each; the deployment where
- * this stops being true wants a cursor-driven migration, not a bigger number here.
- *
- * `truncated` is `listByPrefix`'s flag for `listByPrefix`'s reason — a tool that
- * under-reports looks finished when it is not — with only one of its two terms, because every
- * game that was swept is also counted and there is no second window to overflow.
- */
-export const gamesWithLegacyLayers = internalQuery({
-  args: {},
-  returns: v.object({
-    truncated: v.boolean(),
-    games: v.array(
-      v.object({
-        _id: v.id('games'),
-        name: v.string(),
-        code: v.string(),
-        legacy: v.number(),
-      }),
-    ),
-  }),
-  handler: async (ctx) => {
-    const swept = await ctx.db.query('games').take(MAX_GAMES_SWEPT)
-
-    const counted = await Promise.all(
-      swept.map(async (game) => ({
-        _id: game._id,
-        name: game.name,
-        // The code is printed so the operator can open the game and look at the board
-        // afterwards, which is the only way to confirm by eye that a relabelled token is
-        // still where it was and still hidden.
-        code: game.code,
-        legacy: await countLegacyLayers(ctx, game._id),
-      })),
-    )
-
-    return {
-      truncated: swept.length === MAX_GAMES_SWEPT,
-      games: counted.filter((game) => game.legacy > 0),
-    }
-  },
-})
-
-/**
- * Rewrite one game's `dm` layers to `gm`.
- *
- * One game per call, which makes the transaction a game: a run over thirty of them is thirty
- * transactions, so a game that refuses does not roll back the twenty-nine that worked and the
- * script can name the one that failed. `prune-games.mjs` makes the same choice for the same
- * reason, and `relabelGmLayer` carries the argument for why two hundred rows does not need
- * `@convex-dev/migrations` behind it.
- *
- * Takes a `gameId` rather than a code, like `purgeGame`: the CLI reads the id off the listing
- * above, so the game being rewritten is the game that was printed, with no second lookup in
- * between that could resolve to a different row.
- *
- * **Idempotent, and that is worth relying on.** `relabelGmLayer` patches only the rows that
- * still carry the old spelling, so a second run over a game that has already been swept writes
- * nothing at all and reports zero — which is what makes re-running the script after a partial
- * failure the obvious thing to do rather than a risk.
- */
-export const relabelDmLayer = internalMutation({
-  args: { gameId: v.id('games') },
-  returns: v.object({
-    name: v.string(),
-    code: v.string(),
-    relabelled: v.number(),
-  }),
-  handler: async (ctx, args) => {
-    const game = await ctx.db.get('games', args.gameId)
-    if (!game) {
-      // Thrown rather than shrugged off, for `purgeGame`'s reason: the id came off a listing
-      // taken moments earlier, so its absence means the listing and this call disagree about
-      // the deployment, and a tool doing a one-way rewrite is the wrong place to guess.
-      throw new ConvexError({ kind: 'GameNotFound', message: 'No game with that id.' })
-    }
-
-    return {
-      name: game.name,
-      code: game.code,
-      relabelled: await relabelGmLayer(ctx, game._id),
     }
   },
 })

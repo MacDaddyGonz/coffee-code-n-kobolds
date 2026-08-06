@@ -43,12 +43,10 @@ import {
   resolveDmAccess,
   stampReveal,
 } from './lib/games'
-// The NARROW three-member union, which is the only one anything outside `convex/schema.ts`
-// uses. `addToken` and `setLayer` validate against it, so no `dm` row can be created from
-// this deploy forward however many are still stored. `layerOf` is the transition-only
-// reader beside it: a *stored* layer may still be the legacy `dm`, so every comparison
-// against `'gm'` in this file goes through it rather than against the raw field.
-import { layerOf, tokenLayerValidator } from './lib/layers'
+// The three-member union, spelled once in lib/layers.ts and used by the schema, the public
+// projection and both argument validators alike. `addToken` and `setLayer` validate against
+// it, so a stored layer is always one of the three and a comparison can read the raw field.
+import { tokenLayerValidator } from './lib/layers'
 // The condition vocabulary. One of the three modules inside `convex/` allowed to import
 // it — the schema, the choke point, and this file. See `markerGuard.test.ts`.
 import { TOKEN_MARKERS, normaliseMarkers, tokenMarkerValidator } from './lib/markers'
@@ -560,12 +558,11 @@ export const setLayer = mutation({
     // is what stops the map replaying all of them at once. Hiding a coin again must not
     // stamp: that suppresses the flourish for rolls nobody has been shown yet.
     //
-    // `layerOf` because the stored value may still be the legacy `dm`, and Background is
-    // deliberately not a source: it is already public, so nothing widens by leaving it.
-    // Coverage here is discipline rather than construction, as that note says at length —
-    // a new widening path that skips this line breaks the flourish and nothing else, with
-    // no type error and nothing failing until somebody writes a case beside it.
-    const widening = layerOf(token.layer) === 'gm' && args.layer === 'player'
+    // Background is deliberately not a source: it is already public, so nothing widens by
+    // leaving it. Coverage here is discipline rather than construction, as that note says at
+    // length — a new widening path that skips this line breaks the flourish and nothing
+    // else, with no type error and nothing failing until somebody writes a case beside it.
+    const widening = token.layer === 'gm' && args.layer === 'player'
 
     await setTokenLayer(ctx, token, args.layer)
     if (widening) await stampReveal(ctx, game._id)
@@ -630,7 +627,7 @@ export const setCharacter = mutation({
     // so every line that creature rolled elsewhere reaches the table at once. Only on a
     // bind, and only onto a coin the players can see — unbinding narrows, and binding onto
     // a Background or GM-layer coin publishes nothing.
-    if (args.characterId !== null && layerOf(token.layer) === 'player') {
+    if (args.characterId !== null && token.layer === 'player') {
       await stampReveal(ctx, game._id)
     }
     return null
@@ -869,12 +866,9 @@ async function requireBatchNames(
  * reading `Goblin 4` over a sheet called something else is a confusion nobody asked for —
  * and here there is nobody typing a different one.
  *
- * ⚠️ **The reveal stamp mirrors `addToken`'s condition exactly**, with one spelling
- * difference that is required rather than stylistic: `addToken` compares its **narrow**
- * argument validator and needs no `layerOf`, while this reads a **stored** layer that may
- * still be the legacy `dm`. Both clauses are needed for `addToken`'s reasons verbatim: an
- * empty coin names nobody, and a GM-layer one is the encounter being prepared rather than
- * sprung.
+ * ⚠️ **The reveal stamp mirrors `addToken`'s condition exactly.** Both clauses are needed
+ * for `addToken`'s reasons verbatim: an empty coin names nobody, and a GM-layer one is the
+ * encounter being prepared rather than sprung.
  *
  * Worth knowing what that stamp can and cannot do here: the copies' creatures are made in
  * this transaction and have rolled nothing, so no feed row becomes audible through this
@@ -936,7 +930,7 @@ export const duplicateToken = mutation({
       tokenIds.push(tokenId)
     }
 
-    if (layerOf(source.layer) === 'player' && source.characterId !== undefined) {
+    if (source.layer === 'player' && source.characterId !== undefined) {
       await stampReveal(ctx, game._id)
     }
 
