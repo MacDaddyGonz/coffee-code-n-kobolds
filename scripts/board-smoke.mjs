@@ -7836,6 +7836,202 @@ async function main() {
         fogBase: 'candlelit',
       }),
     )
+
+    // 44. WALLS: A NEW TABLE, AN ARRAY OF RECORDS, AND A REFUSAL ON THE SETTLING WRITE ONLY.
+    //
+    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE.** Three things, and the third is the one
+    // that matters:
+    //
+    //   - **A brand-new table whose only column is an array of float64 records.** `points` is
+    //     required here — the table is new, so the pressure that makes a field optional in this
+    //     schema never applied — and a polyline of real fractional coordinates through real
+    //     value validation is this script's oldest speciality.
+    //   - **A refusal kind that is deliberately NOT `TokenNotFound`.** Every wall goes to every
+    //     client, so a blocked player has been sent the thing that blocked them and there is
+    //     nothing to enumerate — answering *not found* about a coin on their own screen would
+    //     be a lie that reads as a bug. The suite asserts the kind; this asserts that a real
+    //     deployment carries it across the wire as a `ConvexError` payload rather than as a
+    //     generic server error.
+    //   - ⚠️ **THE SPLIT: the backstop fires on the settling write and on nothing else.** That
+    //     is the whole design — `requireMovableToken` runs ten times a second and a range read
+    //     there would turn every wall the DM draws into a conflict against every in-flight
+    //     drag — and it means an *unsettled* move through a wall is accepted. That is the
+    //     advisory ceiling, and it is asserted here as a **positive** rather than described,
+    //     because a documented hole no test names becomes a bug report.
+    const wallScene = baseScene.sceneId
+    const wallSeat = await client.mutation('players:join', {
+      code,
+      displayName: 'Board Smoke Wall Walker',
+    })
+    seats.push(wallSeat.playerId)
+    const wallChar = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: 'Board Smoke Wall Walker',
+    })
+    createdCharacters.push(wallChar.characterId)
+    await client.mutation('characters:claim', {
+      code,
+      playerId: wallSeat.playerId,
+      characterId: wallChar.characterId,
+    })
+    const walker = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId: wallScene,
+      name: 'Wall Walker',
+      layer: 'player',
+      sizeSquares: 1,
+      tint: '#2c3e50',
+      characterId: wallChar.characterId,
+      x: 400,
+      y: 400,
+    })
+    created.push(walker.tokenId)
+
+    // A wall straight down the map between where the coin stands and where it is sent.
+    const wall = await client.mutation('walls:add', {
+      code,
+      dmCode,
+      sceneId: wallScene,
+      points: [
+        { x: 700.5, y: 100.25 },
+        { x: 700.5, y: 1500.75 },
+      ],
+    })
+    const wallRows = await client.query('walls:list', { code, dmCode, sceneId: wallScene })
+    const wallRow = wallRows.find((row) => row._id === wall.wallId) ?? null
+    const wallDrift = wallRow
+      ? firstDifference(
+          {
+            _id: wall.wallId,
+            points: [
+              { x: 700.5, y: 100.25 },
+              { x: 700.5, y: 1500.75 },
+            ],
+          },
+          wallRow,
+          'wall',
+        )
+      : 'no wall came back'
+    check(
+      'a two-point wall round-tripped with its fractional coordinates intact',
+      wallDrift === null,
+      wallDrift ?? JSON.stringify(wallRow),
+    )
+
+    // ⚠️ **Ungated, but only about the board in front of you** — `fog.list`'s guard restated
+    // rather than borrowed, and closing the same hole for a different payload. Every wall on
+    // the *active* scene goes to every client, because the client cannot block a drag against
+    // geometry it does not have. A wall sketch of a map the party has not reached is a floor
+    // plan, and that is withheld. This scene is not the active one, so a player gets nothing.
+    check(
+      'a wall on a board nobody is looking at reached the DM and not the table',
+      wallRow !== null &&
+        (await client.query('walls:list', { code, sceneId: wallScene })).length === 0,
+      `${wallRows.length} to the DM`,
+    )
+
+    // THE BACKSTOP. A settling move from one side of the wall to the other, as the seat rather
+    // than as the DM, because walls do not block the DM.
+    const blocked = await refusalOf(() =>
+      client.mutation('board:moveToken', {
+        code,
+        playerId: wallSeat.playerId,
+        sceneId: wallScene,
+        tokenId: walker.tokenId,
+        x: 1100,
+        y: 400,
+        settle: true,
+      }),
+    )
+    check(
+      'board:moveToken refused a settling move across a wall, as WallBlocks and not TokenNotFound',
+      blocked !== null && blocked.kind === 'WallBlocks',
+      blocked ? JSON.stringify(blocked) : 'the deployment let the coin through',
+    )
+
+    // ⚠️ **THE ADVISORY CEILING, ASSERTED AS A POSITIVE.** The same move unsettled is accepted:
+    // the check is on the settling write only, so a client that never settles can park a coin
+    // anywhere. That is written into ADR 0015's costs, and a hole nobody tests is a hole
+    // somebody reports.
+    const unsettled = await refusalOf(() =>
+      client.mutation('board:moveToken', {
+        code,
+        playerId: wallSeat.playerId,
+        sceneId: wallScene,
+        tokenId: walker.tokenId,
+        x: 1100,
+        y: 400,
+        settle: false,
+      }),
+    )
+    check(
+      'and accepted the identical move unsettled — the advisory ceiling, on the record',
+      unsettled === null,
+      unsettled ? JSON.stringify(unsettled) : 'the unsettled write went through, as designed',
+    )
+
+    // The DM is not blocked. They place creatures inside sealed rooms and drag the party
+    // through a door they have just narrated open.
+    const asDm = await refusalOf(() =>
+      client.mutation('board:moveToken', {
+        code,
+        dmCode,
+        sceneId: wallScene,
+        tokenId: walker.tokenId,
+        x: 1400,
+        y: 400,
+        settle: true,
+      }),
+    )
+    check(
+      'a wall does not block the DM',
+      asDm === null,
+      asDm ? JSON.stringify(asDm) : 'the DM crossed it',
+    )
+
+    await refuses('walls:add refused a one-point wall', () =>
+      client.mutation('walls:add', {
+        code,
+        dmCode,
+        sceneId: wallScene,
+        points: [{ x: 10, y: 10 }],
+      }),
+    )
+    await refuses('walls:add refused a NaN vertex', () =>
+      client.mutation('walls:add', {
+        code,
+        dmCode,
+        sceneId: wallScene,
+        points: [
+          { x: Number.NaN, y: 10 },
+          { x: 20, y: 20 },
+        ],
+      }),
+    )
+    await refuses('walls:add refused a caller without the DM code', () =>
+      client.mutation('walls:add', {
+        code,
+        dmCode: 'not-the-dm-code',
+        sceneId: wallScene,
+        points: [
+          { x: 10, y: 10 },
+          { x: 20, y: 20 },
+        ],
+      }),
+    )
+    await refuses('walls:remove refused a caller without the DM code', () =>
+      client.mutation('walls:remove', { code, dmCode: 'not-the-dm-code', wallId: wall.wallId }),
+    )
+
+    const wallsCleared = await client.mutation('walls:clear', { code, dmCode, sceneId: wallScene })
+    check(
+      'walls:clear swept the scene and said how many',
+      wallsCleared.removed === 1 &&
+        (await client.query('walls:list', { code, sceneId: wallScene })).length === 0,
+      JSON.stringify(wallsCleared),
+    )
   } catch (error) {
     const data = error && error.data ? ` ${JSON.stringify(error.data)}` : ''
     record('the run completed without an unexpected error', false, `${error.message ?? error}${data}`)
