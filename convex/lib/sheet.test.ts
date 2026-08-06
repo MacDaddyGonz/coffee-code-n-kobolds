@@ -5,13 +5,30 @@ import { describe, expect, test } from 'vitest'
 import { kindOf, resolveSheet } from './resolve'
 
 import { CLASSES, SUBCLASS_LEVEL } from './classes'
-import { SPECIES_KEYS } from './species'
+import { SPECIES_KEYS, speciesKeyOf } from './species'
 import { SKILL_KEYS } from './skills'
 import type { SkillKey, SkillProficiencies } from './skills'
 import {
+  ABILITY_KEYS,
+  ABILITY_NAMES,
   HEALTH_BANDS,
   HIT_DIE_FACES,
   MAX_ABILITY_SCORE,
+  MAX_DAMAGE_LABELS,
+  MAX_DAMAGE_LABEL_LENGTH,
+  MAX_DEATH_SAVES,
+  MAX_SENSES_LENGTH,
+  MAX_TEMPORARY_HP,
+  abilitiesOf,
+  abilityKeyValidator,
+  clampDeathSaves,
+  clampTemporaryHp,
+  creatureSaveProficienciesOf,
+  damageTraitsOf,
+  sensesOf,
+  spellAttackBonusOf,
+  spellSaveDcOf,
+  spellcastingAbilityOf,
   MAX_ARMOUR_CLASS,
   MAX_CLASS_NAME_LENGTH,
   MAX_ENTRY_ID_LENGTH,
@@ -2446,5 +2463,366 @@ describe('normaliseSheet carries a creature’s group', () => {
     }
     const headings = CHARACTER_GROUPS.map((group) => CHARACTER_GROUP_LABELS[group])
     expect(new Set(headings).size).toBe(CHARACTER_GROUPS.length)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The 2024 widening: five optional fields on a hero, two on a creature, two on a
+// preset, and the accessors that decide what absent means for each.
+// ---------------------------------------------------------------------------
+
+describe('the ability-key union is spelled twice and the two spellings agree', () => {
+  /**
+   * ⚠️ **The direction the compiler cannot see.** `AbilityKey` is derived from `ABILITY_KEYS`,
+   * so `ABILITY_NAMES` and every `Record` over the union fail to compile for a *seventh key*
+   * — and none of them fires when a literal is added to `abilityKeyValidator` alone. That is
+   * the failure that matters, because the schema would then store an ability nothing can
+   * name, abbreviate, or resolve a `+STR`-style token for. `tokenLayerValidator` and
+   * `tokenMarkerValidator` are hand-spelled for exactly this reason and pinned exactly here.
+   */
+  test('the validator admits exactly the six abilities, in the same order', () => {
+    const members = (
+      abilityKeyValidator as unknown as { members: { kind: string; value: unknown }[] }
+    ).members
+    expect(members.map((member) => member.kind)).toEqual(ABILITY_KEYS.map(() => 'literal'))
+    expect(members.map((member) => member.value)).toEqual([...ABILITY_KEYS])
+  })
+
+  test('every ability the validator admits has a long name', () => {
+    // The reverse of what a `Record<AbilityKey, string>` gives for free: a `Record` is
+    // satisfied by extra keys, so a name left behind after a key was removed is invisible to
+    // `tsc`. `layers.test.ts` and `markers.test.ts` both make this assertion for that reason.
+    expect(Object.keys(ABILITY_NAMES).sort()).toEqual([...ABILITY_KEYS].sort())
+  })
+})
+
+describe('spellcastingAbilityOf and the two numbers derived from it', () => {
+  test('a sheet with no spellcasting ability has neither number', () => {
+    // ⚠️ **`null` and never 8 or 10.** `passivePerceptionFor`'s argument, one field over: a
+    // Fighter's sheet reading *Spell save DC 10* is not a number that is merely absent, it is
+    // a number that is wrong, and the table would act on it.
+    const fighter = pc({ level: 5 })
+    expect(spellcastingAbilityOf(fighter)).toBeNull()
+    expect(spellSaveDcOf(fighter)).toBeNull()
+    expect(spellAttackBonusOf(fighter)).toBeNull()
+  })
+
+  test('a level 5 caster prints both, from the score and the proficiency bonus alone', () => {
+    // The acceptance criterion, mechanised: **nothing is stored.** The sheet below carries a
+    // spellcasting *ability* and no DC and no attack bonus, and both numbers come back —
+    // which is what makes the same claim true of the sixty library sheets.
+    const cleric = pc({
+      level: 5,
+      abilities: { str: 10, dex: 10, con: 10, int: 10, wis: 18, cha: 10 },
+      spellcastingAbility: 'wis',
+    })
+    // Wisdom 18 is +4, level 5 is PROF +3. Worked by hand rather than by calling the
+    // functions under test, which would agree with a mangled formula just as readily.
+    expect(spellSaveDcOf(cleric)).toBe(15)
+    expect(spellAttackBonusOf(cleric)).toBe(7)
+    expect(cleric).not.toHaveProperty('spellSaveDc')
+    expect(cleric).not.toHaveProperty('spellAttackBonus')
+  })
+
+  test('the two always agree about whether the character casts at all', () => {
+    // One accessor answers *which ability*, and both numbers fall out of it — so there is no
+    // arrangement of the sheet in which one is a number and the other is null.
+    for (const ability of ABILITY_KEYS) {
+      const caster = pc({ level: 1, spellcastingAbility: ability })
+      expect(spellSaveDcOf(caster)).not.toBeNull()
+      expect(spellAttackBonusOf(caster)).not.toBeNull()
+      // And the difference between them is exactly the 8 the SRD writes into the DC.
+      expect(spellSaveDcOf(caster)! - spellAttackBonusOf(caster)!).toBe(8)
+    }
+  })
+
+  test('a stored ability outside the six reads as none rather than indexing into undefined', () => {
+    // A schema push is not atomic, so a document written by a newer deployment can be read by
+    // an older one. `sheet.abilities['luck']` is `undefined`, and `abilityModifier(undefined)`
+    // is `NaN` — a number that would then be printed on a sheet and stored in a roll.
+    const odd = { ...pc({ level: 5 }), spellcastingAbility: 'luck' } as unknown as PcSheet
+    expect(spellcastingAbilityOf(odd)).toBeNull()
+    expect(spellSaveDcOf(odd)).toBeNull()
+  })
+
+  test('a creature has neither, whatever is on it', () => {
+    expect(spellcastingAbilityOf(npc())).toBeNull()
+    expect(spellSaveDcOf(npc())).toBeNull()
+  })
+})
+
+describe('damageTraitsOf and sensesOf', () => {
+  test('a sheet that has none reads as three empty lists and an empty line', () => {
+    expect(damageTraitsOf(pc())).toEqual({
+      resistances: [],
+      immunities: [],
+      vulnerabilities: [],
+    })
+    // Empty string rather than null, which is the one place these accessors differ from the
+    // numeric ones on purpose — a line of prose has only two states, and `''` is how a string
+    // says the second. See the docblock.
+    expect(sensesOf(pc())).toBe('')
+  })
+
+  test('one list present does not make the other two undefined', () => {
+    // The shape a renderer relies on: `damageTraitsOf(sheet).immunities.map(...)` must not
+    // throw because the DM filled in resistances and nothing else.
+    const half = pc({ resistances: ['fire'] })
+    expect(damageTraitsOf(half)).toEqual({
+      resistances: ['fire'],
+      immunities: [],
+      vulnerabilities: [],
+    })
+  })
+
+  test('a creature has none of them, so the sheet renders nothing rather than throwing', () => {
+    expect(damageTraitsOf(npc())).toEqual({
+      resistances: [],
+      immunities: [],
+      vulnerabilities: [],
+    })
+    expect(sensesOf(npc())).toBe('')
+  })
+})
+
+describe('normaliseSheet carries the 2024 hero fields', () => {
+  test('all five survive the field-by-field rebuild', () => {
+    // ⚠️ **The sixth outing of the rebuild trap.** `normaliseSheet` rebuilds a sheet field by
+    // field rather than spreading it, so a field added to `pcSheetValidator` and not added
+    // there is silently discarded on every write while the form still shows it. It has
+    // happened to `skillProficiencies`, to `speed`, and to five NPC fields.
+    const full = pc({
+      spellcastingAbility: 'int',
+      resistances: ['fire', 'cold'],
+      immunities: ['poison'],
+      vulnerabilities: ['thunder'],
+      senses: 'Darkvision 60 ft.',
+    })
+    expect(normaliseSheet(full)).toMatchObject({
+      spellcastingAbility: 'int',
+      resistances: ['fire', 'cold'],
+      immunities: ['poison'],
+      vulnerabilities: ['thunder'],
+      senses: 'Darkvision 60 ft.',
+    })
+  })
+
+  test('absent stays absent, so a legacy sheet does not grow five keys on save', () => {
+    const bare = normaliseSheet(pc()) as PcSheet
+    for (const field of [
+      'spellcastingAbility',
+      'resistances',
+      'immunities',
+      'vulnerabilities',
+      'senses',
+    ]) {
+      expect(bare, field).not.toHaveProperty(field)
+    }
+  })
+
+  test('a list that tidies away to nothing is dropped rather than stored empty', () => {
+    // ⚠️ Two spellings of *none* is the thing CLAUDE.md invariant 9 makes a rule about, and
+    // `firstDifference` in scripts/board-smoke.mjs reports the difference as `present on one
+    // side only`. `[]` and absent both mean *resists nothing*, so only one may be stored.
+    const blanked = normaliseSheet(pc({ resistances: ['', '   '] })) as PcSheet
+    expect(blanked).not.toHaveProperty('resistances')
+  })
+
+  test('labels are trimmed and deduplicated, in the order the DM wrote them', () => {
+    // Not sorted: a stat block lists *bludgeoning, piercing, slashing* in that order, and
+    // re-sorting it alphabetically would be the application editing content it does not own.
+    const messy = normaliseSheet(
+      pc({ resistances: ['  slashing ', 'bludgeoning', 'slashing'] }),
+    ) as PcSheet
+    expect(messy.resistances).toEqual(['slashing', 'bludgeoning'])
+  })
+
+  test('a senses line is collapsed to one line, and blanked out entirely if empty', () => {
+    const wrapped = normaliseSheet(pc({ senses: '  Darkvision   60 ft.  ' })) as PcSheet
+    expect(wrapped.senses).toBe('Darkvision 60 ft.')
+    expect(normaliseSheet(pc({ senses: '   ' }))).not.toHaveProperty('senses')
+  })
+})
+
+describe('sheetProblem bounds the 2024 hero fields', () => {
+  const many = (count: number) => Array.from({ length: count }, (_, i) => `type-${i}`)
+
+  test('too many labels is refused, and exactly the limit is not', () => {
+    expect(sheetProblem(pc({ resistances: many(MAX_DAMAGE_LABELS) }))).toBeNull()
+    expect(sheetProblem(pc({ resistances: many(MAX_DAMAGE_LABELS + 1) }))?.path).toBe(
+      'resistances',
+    )
+    // Each of the three names itself, so the sentence a form prints says which box.
+    expect(sheetProblem(pc({ immunities: many(MAX_DAMAGE_LABELS + 1) }))?.path).toBe('immunities')
+    expect(sheetProblem(pc({ vulnerabilities: many(MAX_DAMAGE_LABELS + 1) }))?.path).toBe(
+      'vulnerabilities',
+    )
+  })
+
+  test('one over-long label is refused, and the path names which one', () => {
+    const long = 'x'.repeat(MAX_DAMAGE_LABEL_LENGTH + 1)
+    expect(sheetProblem(pc({ resistances: ['fire', long] }))?.path).toBe('resistances[1]')
+    expect(
+      sheetProblem(pc({ resistances: ['fire', 'x'.repeat(MAX_DAMAGE_LABEL_LENGTH)] })),
+    ).toBeNull()
+  })
+
+  test('an over-long senses line is refused, and exactly the limit is not', () => {
+    expect(sheetProblem(pc({ senses: 'x'.repeat(MAX_SENSES_LENGTH) }))).toBeNull()
+    expect(sheetProblem(pc({ senses: 'x'.repeat(MAX_SENSES_LENGTH + 1) }))?.path).toBe('senses')
+  })
+
+  test('a half-finished character in a label is refused like every other free-text field', () => {
+    // Milestone 1's lone surrogate, which is what `textProblem` exists for and what only
+    // `npm run test:smoke` had ever caught before it did.
+    expect(sheetProblem(pc({ resistances: ['fi\ud83c'] }))?.path).toBe('resistances[0]')
+    expect(sheetProblem(pc({ senses: 'Darkvision \ud83c' }))?.path).toBe('senses')
+  })
+})
+
+describe('a creature’s ability scores and save column', () => {
+  test('absent reads as null rather than as six tens', () => {
+    // `passivePerceptionOf`'s stance applied to six numbers: printing 10 in every column for
+    // a goblin somebody typed in by hand is inventing six statistics and presenting them as
+    // the creature's.
+    expect(abilitiesOf(npc())).toBeNull()
+    expect(creatureSaveProficienciesOf(npc())).toBeNull()
+  })
+
+  test('a hero has neither, because they are the creature’s spelling of a required field', () => {
+    // ⚠️ Named `creatureSaveProficienciesOf` rather than `saveProficienciesOf` precisely
+    // because `pcSheetValidator` has a required field of that name. A caller holding a hero
+    // reads the field; this answers about the reduced sheet.
+    expect(abilitiesOf(pc())).toBeNull()
+    expect(creatureSaveProficienciesOf(pc())).toBeNull()
+    expect(pc().saveProficiencies).toBeDefined()
+  })
+
+  test('both survive the field-by-field rebuild, and absent stays absent', () => {
+    const statted = npc({
+      abilities: { str: 18, dex: 12, con: 16, int: 6, wis: 11, cha: 7 },
+      saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
+    })
+    const stored = normaliseSheet(statted) as NpcSheet
+    expect(stored.abilities).toEqual({ str: 18, dex: 12, con: 16, int: 6, wis: 11, cha: 7 })
+    expect(stored.saveProficiencies?.str).toBe(true)
+    expect(normaliseSheet(npc())).not.toHaveProperty('abilities')
+    expect(normaliseSheet(npc())).not.toHaveProperty('saveProficiencies')
+  })
+
+  test('the scores are rounded and bounded exactly as a hero’s are', () => {
+    // One rule for one kind of value, rather than a range that depends on which sheet variant
+    // the number is sitting on.
+    const fractional = normaliseSheet(
+      npc({ abilities: { str: 17.6, dex: 12, con: 16, int: 6, wis: 11, cha: 7 } }),
+    ) as NpcSheet
+    expect(fractional.abilities?.str).toBe(18)
+    expect(
+      sheetProblem(
+        npc({
+          abilities: { str: MAX_ABILITY_SCORE + 1, dex: 12, con: 16, int: 6, wis: 11, cha: 7 },
+        }),
+      )?.path,
+    ).toBe('abilities.str')
+  })
+
+  test('the four pre-calculated fields are untouched by their arrival', () => {
+    // ⚠️ **THE ADDITION, NOT THE SIMPLIFICATION.** Derive what the SRD derives, store what
+    // the SRD prints — and `scaleCombat` measures a creature's offset against exactly these.
+    // A commit that deleted them in the name of "monsters have scores now" would delete the
+    // scaler, and this is the assertion that fails first.
+    const both = npc({
+      abilities: { str: 18, dex: 12, con: 16, int: 6, wis: 11, cha: 7 },
+      initiativeBonus: 4,
+      attackBonus: 7,
+      saveDc: 15,
+      passivePerception: 13,
+    })
+    const stored = normaliseSheet(both) as NpcSheet
+    expect(stored.initiativeBonus).toBe(4)
+    expect(stored.attackBonus).toBe(7)
+    expect(stored.saveDc).toBe(15)
+    expect(stored.passivePerception).toBe(13)
+  })
+})
+
+describe('clampTemporaryHp and clampDeathSaves', () => {
+  test('temporary hit points are not bounded by the sheet’s maximum', () => {
+    // ⚠️ The design, asserted as a *signature*: there is nowhere to pass a maximum, so the
+    // mistake of capping a level 1 Wizard's Heroism at 8 is unwriteable. They are not part of
+    // `maxHp` and not healing, so a character on full health with fifteen is ordinary.
+    expect(clampTemporaryHp(15)).toBe(15)
+    expect(clampTemporaryHp(MAX_TEMPORARY_HP + 40)).toBe(MAX_TEMPORARY_HP)
+    expect(clampTemporaryHp(-3)).toBe(0)
+    expect(clampTemporaryHp(4.6)).toBe(5)
+    for (const value of NOT_A_NUMBER) expect(clampTemporaryHp(value), String(value)).toBe(0)
+  })
+
+  test('a death-save column is bounded by the number of boxes on the sheet', () => {
+    expect(clampDeathSaves(2)).toBe(2)
+    expect(clampDeathSaves(MAX_DEATH_SAVES)).toBe(MAX_DEATH_SAVES)
+    expect(clampDeathSaves(MAX_DEATH_SAVES + 5)).toBe(MAX_DEATH_SAVES)
+    expect(clampDeathSaves(-1)).toBe(0)
+    for (const value of NOT_A_NUMBER) expect(clampDeathSaves(value), String(value)).toBe(0)
+  })
+})
+
+describe('a preset carries a species beside its race, and a lineage', () => {
+  const base: PresetSheet = {
+    kind: 'preset',
+    race: 'human',
+    classKey: 'fighter',
+    subclassKey: null,
+    level: 1,
+    locked: false,
+  }
+
+  test('speciesKeyOf reads the old field while nothing writes the new one', () => {
+    expect(speciesKeyOf(base)).toBe('human')
+  })
+
+  test('the new field wins when both are present, so the backfill is idempotent', () => {
+    // ⚠️ The direction that makes a migration interruptible: a run that stops half way leaves
+    // half the rows answering from the new field and half from the old, and both are right.
+    expect(speciesKeyOf({ ...base, species: 'elf' })).toBe('elf')
+  })
+
+  test('both survive the field-by-field rebuild, and absent stays absent for each', () => {
+    const migrated = normaliseStoredSheet({
+      ...base,
+      species: 'elf',
+      lineageKey: 'wood',
+    }) as PresetSheet
+    expect(migrated.species).toBe('elf')
+    expect(migrated.lineageKey).toBe('wood')
+
+    // ⚠️ Absent must stay absent on `species`, or every character looks migrated before the
+    // migration ran — and on `lineageKey`, where absence means *nobody was asked* and `null`
+    // means *asked, and this species has none*.
+    const untouched = normaliseStoredSheet(base) as PresetSheet
+    expect(untouched).not.toHaveProperty('species')
+    expect(untouched).not.toHaveProperty('lineageKey')
+  })
+
+  test('an explicit null lineage stays null rather than collapsing to absent', () => {
+    const asked = normaliseStoredSheet({ ...base, lineageKey: null }) as PresetSheet
+    expect('lineageKey' in asked).toBe(true)
+    expect(asked.lineageKey).toBeNull()
+  })
+
+  test('a blank lineage key is stored as null, not as an empty string', () => {
+    const blank = normaliseStoredSheet({ ...base, lineageKey: '   ' }) as PresetSheet
+    expect(blank.lineageKey).toBeNull()
+  })
+
+  test('an implausible lineage key is refused on write, and a plausible one is not', () => {
+    // Bounded and spell-checked here; matched to a species nowhere — this module may never
+    // import species content, exactly as it may never import the bestiary to check an
+    // `entryKey`. That check belongs to the resolver.
+    expect(storedSheetProblem({ ...base, lineageKey: 'wood' })).toBeNull()
+    expect(
+      storedSheetProblem({ ...base, lineageKey: 'x'.repeat(MAX_ENTRY_ID_LENGTH + 1) })?.path,
+    ).toBe('lineageKey')
+    expect(storedSheetProblem({ ...base, lineageKey: 'wo\ud83c' })?.path).toBe('lineageKey')
   })
 })

@@ -4,8 +4,14 @@ import { ConvexError } from 'convex/values'
 import { describe, expect, test } from 'vitest'
 
 import { api } from './_generated/api'
-import type { Id } from './_generated/dataModel'
-import { publicVitalsValidator } from './lib/characters'
+import type { Doc, Id } from './_generated/dataModel'
+import {
+  deathSavesOf,
+  heroicInspirationOf,
+  publicVitalsValidator,
+  spentUsesOf,
+  temporaryHpOf,
+} from './lib/characters'
 import type { PublicVitals } from './lib/characters'
 import type { HealthBand, NpcSheet, PcSheet } from './lib/sheet'
 import schema from './schema'
@@ -60,6 +66,33 @@ const TINT = '#c0392b'
  */
 const NPC_MAX_HP = 271
 const NPC_CURRENT_HP = 137
+
+/**
+ * THE 2024 STATE FIELDS AT REST — what every `exact` row carries when nobody has touched
+ * any of them, which is the state a fresh character is in and the state a long rest restores.
+ *
+ * ⚠️ **Spelled once and spread into every expectation, because the assertions these appear in
+ * are `toEqual` rather than `toMatchObject`** — that is deliberate and is what makes them
+ * catch a field arriving on a payload rather than merely a field going missing. The cost is
+ * that a sixth state field touches five expectations, and the point of collecting them here
+ * is that it touches them *all*: a partial edit that added the field to four of them would
+ * leave the fifth passing while asserting the payload no longer has it.
+ *
+ * ⚠️ **None of these appears on the `band` variant, and no edit should ever put one there.**
+ * Five new numbers arriving at once is exactly the pressure the union exists against — see
+ * the two assertions in *the vitals union is doing real work*, which pin the band variant's
+ * whole key set and its lack of any bare `float64`.
+ */
+const NO_2024_STATE = {
+  temporaryHp: 0,
+  deathSaveSuccesses: 0,
+  deathSaveFailures: 0,
+  heroicInspiration: false,
+  spentUses: [],
+}
+
+/** The same five as key names, for the key-set assertions that list them one per line. */
+const NO_2024_STATE_KEYS = Object.keys(NO_2024_STATE)
 
 /**
  * Four separate spoilers, so a partial leak cannot pass as a clean one. The
@@ -728,8 +761,13 @@ describe('the vitals union is doing real work', () => {
       'the player-facing variant declares a bare number',
     ).toEqual([])
 
-    // The control: the DM-facing variant does declare two, so the assertion above
+    // The control: the DM-facing variant does declare five now, so the assertion above
     // is about this branch rather than about numbers being impossible.
+    //
+    // ⚠️ **Listed by name rather than counted**, and the list is the point: three of the
+    // five arrived in one commit, which is the largest number of bare numbers this union has
+    // ever gained at once and therefore the likeliest occasion for one of them to be pasted
+    // onto the wrong member. A count would have gone from two to five either way.
     const exact = variantNamed('exact')
     expect(exact, 'no `exact` variant in the vitals union').toBeDefined()
     expect(
@@ -737,7 +775,22 @@ describe('the vitals union is doing real work', () => {
         .filter(([, field]) => field.kind === 'float64')
         .map(([name]) => name)
         .sort(),
-    ).toEqual(['current', 'max'])
+    ).toEqual(['current', 'deathSaveFailures', 'deathSaveSuccesses', 'max', 'temporaryHp'])
+
+    // ⚠️ **And the same claim from the other direction, which the `float64` filter alone
+    // cannot make.** `heroicInspiration` is a boolean and `spentUses` is an array, so neither
+    // would be caught by the assertion above if it were pasted onto `band` — and both are
+    // state about a creature that a player who may only see a health bar has no business
+    // receiving. The band variant's key set is pinned whole, twice in this file, so that the
+    // *shape* of the widening is asserted and not merely its numeric part.
+    expect(
+      Object.keys(band!.fields).some((name) => NO_2024_STATE_KEYS.includes(name)),
+      'a 2024 state field reached the player-facing variant',
+    ).toBe(false)
+    expect(
+      NO_2024_STATE_KEYS.every((name) => name in exact!.fields),
+      'positive control — without it the assertion above passes on a union that has neither',
+    ).toBe(true)
   })
 
   /** requirements.md asks for `20/45` above a hero's token — for both audiences. */
@@ -763,20 +816,26 @@ describe('the vitals union is doing real work', () => {
       // in the browser, which is the half that matters for a creature.
       armourClass: PC_ARMOUR_CLASS,
       passivePerception: PC_PASSIVE_PERCEPTION,
+      // The 2024 state at rest — see `NO_2024_STATE`. Five fields on this member and none
+      // on the band, which is the whole of what the widening was allowed to do.
+      ...NO_2024_STATE,
     }
 
     const asPlayer = await t.query(api.characters.vitals, { code: fixture.code })
-    expect(Object.keys(rowFor(asPlayer, fixture.pc)!).sort()).toEqual([
-      'armourClass',
-      'characterId',
-      'current',
-      'hitDiceCount',
-      'hitDiceRemaining',
-      'kind',
-      'max',
-      'passivePerception',
-      'spentPerRest',
-    ])
+    expect(Object.keys(rowFor(asPlayer, fixture.pc)!).sort()).toEqual(
+      [
+        'armourClass',
+        'characterId',
+        'current',
+        'hitDiceCount',
+        'hitDiceRemaining',
+        'kind',
+        'max',
+        'passivePerception',
+        'spentPerRest',
+        ...NO_2024_STATE_KEYS,
+      ].sort(),
+    )
     expect(rowFor(asPlayer, fixture.pc)).toEqual(exact)
 
     const asDm = await t.query(api.characters.vitals, {
@@ -800,6 +859,7 @@ describe('the vitals union is doing real work', () => {
       spentPerRest: [],
       armourClass: NPC_ARMOUR_CLASS,
       passivePerception: NPC_PASSIVE_PERCEPTION,
+      ...NO_2024_STATE,
     })
   })
 })
@@ -868,6 +928,7 @@ describe('the bands a player is told, through characters.vitals', () => {
         hitDiceCount: null,
         hitDiceRemaining: null,
         spentPerRest: [],
+        ...NO_2024_STATE,
         armourClass: NPC_ARMOUR_CLASS,
         passivePerception: NPC_PASSIVE_PERCEPTION,
       })
@@ -1224,6 +1285,7 @@ describe('refusing an NPC is indistinguishable from it not existing', () => {
       hitDiceCount: null,
       hitDiceRemaining: null,
       spentPerRest: [],
+      ...NO_2024_STATE,
     })
   })
 })
@@ -1545,6 +1607,7 @@ describe('Milestone 4: resolution runs server-side, and Milestone 3’s guarante
       // both of these had to come off the *resolved* sheet or they would be null.
       armourClass: PRESET_ARMOUR_CLASS,
       passivePerception: PRESET_PASSIVE_PERCEPTION,
+      ...NO_2024_STATE,
     }
 
     // The player playing them, another seat entirely, a caller with no seat at all,
@@ -2080,6 +2143,7 @@ describe('a granted seat is sent exact hit points, and only that seat', () => {
       hitDiceCount: null,
       hitDiceRemaining: null,
       spentPerRest: [],
+      ...NO_2024_STATE,
       armourClass: NPC_ARMOUR_CLASS,
       passivePerception: NPC_PASSIVE_PERCEPTION,
     })
@@ -2514,5 +2578,99 @@ describe('fog takes a creature’s health bar with it', () => {
     // And the DM is unaffected, as under a rectangle: fog filters the party's payload and
     // paints a veil on the DM's screen.
     expect(rowFor(await t.query(api.characters.vitals, { code, dmCode }), npc)?.kind).toBe('exact')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The four 2024 state accessors, against rows rather than through a query
+// ---------------------------------------------------------------------------
+
+/**
+ * ⚠️ **Every one of these is asked of a row that does NOT have the field**, which is the case
+ * that actually reaches them: `characterVitals` has held rows since Milestone 3 and every one
+ * of them predates the 2024 conversion. A schema push is not atomic either, so a row written
+ * by an older deployment can be read by a newer one for the seconds in between.
+ *
+ * Asserted against a hand-built row rather than through `characters.vitals`, because the query
+ * writes its own row first and so can never present the accessor with the shape it exists for.
+ * The payload half is asserted in *the vitals union is doing real work* above.
+ */
+describe('what an absent 2024 field means on a vitals row', () => {
+  /** A row as Milestone 3 wrote one: hit points, and nothing this milestone added. */
+  const legacy = { currentHp: 12 } as unknown as Doc<'characterVitals'>
+
+  test('temporary hit points read as none, because absent and zero are the same fact', () => {
+    // ⚠️ Zero rather than null, which is deliberately **not** what `passivePerceptionOf` does
+    // one file over. There is no such thing as a character with an unrecorded quantity of
+    // temporary hit points, only one with none — so a null here would be a state the sheet
+    // would then have to decide how to print.
+    expect(temporaryHpOf(legacy)).toBe(0)
+    expect(temporaryHpOf(null)).toBe(0)
+    expect(temporaryHpOf({ ...legacy, temporaryHp: 9 } as Doc<'characterVitals'>)).toBe(9)
+    // Clamped on read as well as on write, so a row a deployment stored before the bound
+    // existed cannot print a negative badge.
+    expect(temporaryHpOf({ ...legacy, temporaryHp: -4 } as Doc<'characterVitals'>)).toBe(0)
+  })
+
+  test('the death-save tally reads as nothing ticked, in both columns at once', () => {
+    // One accessor for both columns, so there is no arrangement in which one defaults
+    // differently from the other and a sheet shows three failures against no successes.
+    expect(deathSavesOf(legacy)).toEqual({ successes: 0, failures: 0 })
+    expect(deathSavesOf(null)).toEqual({ successes: 0, failures: 0 })
+    expect(
+      deathSavesOf({
+        ...legacy,
+        deathSaveSuccesses: 2,
+        deathSaveFailures: 9,
+      } as Doc<'characterVitals'>),
+      'a stored value past the number of boxes is clamped on read',
+    ).toEqual({ successes: 2, failures: 3 })
+  })
+
+  test('heroic inspiration reads as unheld', () => {
+    expect(heroicInspirationOf(legacy)).toBe(false)
+    expect(heroicInspirationOf(null)).toBe(false)
+    expect(
+      heroicInspirationOf({ ...legacy, heroicInspiration: true } as Doc<'characterVitals'>),
+    ).toBe(true)
+  })
+
+  test('the legacy per-rest keys fold in as one spent use each', () => {
+    // ⚠️ **`spentPerRest` is kept rather than migrated in place**, so this fold is the whole
+    // of what makes that survivable: the old field is a list of *keys*, where a key present
+    // means the one thing the character had is gone, and the new one counts. One legacy key
+    // is exactly one spent use, which is what the old field always meant.
+    expect(
+      spentUsesOf({
+        ...legacy,
+        spentPerRest: ['heroic-inspiration', 'relentless-endurance'],
+      } as Doc<'characterVitals'>),
+    ).toEqual([
+      { key: 'heroic-inspiration', spent: 1 },
+      { key: 'relentless-endurance', spent: 1 },
+    ])
+  })
+
+  test('a counted row wins over a legacy key of the same name, and is not listed twice', () => {
+    // The direction that makes the eventual backfill idempotent and interruptible — a re-run
+    // changes nothing, and a run that stopped half way has both halves answering correctly.
+    expect(
+      spentUsesOf({
+        ...legacy,
+        spentPerRest: ['rage', 'second-wind'],
+        spentUses: [{ key: 'rage', spent: 3 }],
+      } as Doc<'characterVitals'>),
+    ).toEqual([
+      // Legacy first, so the order a client renders is stable across the migration: a
+      // character whose Second Wind jumped position on the day the backfill ran would look
+      // like something had been reset.
+      { key: 'second-wind', spent: 1 },
+      { key: 'rage', spent: 3 },
+    ])
+  })
+
+  test('a row with neither field folds to nothing at all', () => {
+    expect(spentUsesOf(legacy)).toEqual([])
+    expect(spentUsesOf(null)).toEqual([])
   })
 })

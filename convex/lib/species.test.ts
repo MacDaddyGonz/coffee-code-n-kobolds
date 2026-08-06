@@ -3,12 +3,15 @@ import { describe, expect, test } from 'vitest'
 import { CLASS_KEYS, findClass } from './classes'
 import { LIBRARY, librarySheet } from './library'
 import {
+  RETIRED_SPECIES,
   SPECIES,
   SPECIES_KEYS,
   perRestAbilities,
   species,
+  speciesKeyOf,
   speciesKeyValidator,
   speciesLabel,
+  storedSpeciesKeyValidator,
 } from './species'
 import type { Species } from './species'
 import { resolveSheet } from './resolve'
@@ -629,5 +632,90 @@ describe('a stored species key that no longer resolves', () => {
     // making again, which is what it is.
     expect(speciesLabel(RETIRED)).toBe(RETIRED)
     expect(speciesLabel('human')).toBe('Human')
+  })
+})
+
+/**
+ * THE ROAD, BUILT BEFORE ANYTHING DRIVES DOWN IT.
+ *
+ * ⚠️ **Every assertion here is about a transition that has not happened yet**, and that is
+ * deliberate rather than premature. `'half-orc'` is still in `SPECIES_KEYS`, so
+ * `storedSpeciesKeyValidator` and `speciesKeyValidator` currently admit the same eight and
+ * `RETIRED_SPECIES['half-orc']` is unreachable through `speciesLabel`. What these pin is the
+ * *shape* the species branch needs on the day it deletes the content: a stored union that is a
+ * strict superset of the narrow one, a label that already exists, and one accessor that both
+ * fields are read through.
+ *
+ * The alternative was to add all three in the same commit that retires the species, which is
+ * the commit that also rewrites nine species' worth of content — and a schema-shaped change
+ * buried in a content diff is the one nobody reviews.
+ */
+describe('the stored species union carries what the narrow one will drop', () => {
+  const membersOf = (validator: unknown) =>
+    (validator as { members: { kind: string; value: unknown }[] }).members
+
+  test('every narrow literal is also a stored one', () => {
+    // The direction that must never break: a key a builder can *choose* and the schema cannot
+    // *store* is a character that fails to save with a validator error nobody can act on.
+    const stored = membersOf(storedSpeciesKeyValidator).map((member) => member.value)
+    for (const member of membersOf(speciesKeyValidator)) {
+      expect(stored, String(member.value)).toContain(member.value)
+    }
+  })
+
+  test('the stored union admits half-orc, which is the whole reason it exists', () => {
+    // ⚠️ Anti-vacuity in the only form available before the retirement: today this passes
+    // because both unions contain it. What it refuses is a species branch that removes the
+    // literal from *both*, which is the edit that makes `npx convex deploy` fail against any
+    // deployment holding a Half-Orc — the push validates existing documents, and that failure
+    // arrives before `species()` is ever called.
+    expect(membersOf(storedSpeciesKeyValidator).map((member) => member.value)).toContain(
+      'half-orc',
+    )
+  })
+
+  test('every member of the stored union is a literal and not something else', () => {
+    // `markers.test.ts`' reasoning: `members` on a union of anything else has a `value` of
+    // `undefined`, so a `v.string()` slipped in beside the literals would read as a member
+    // with no value rather than as the hole in the vocabulary that it is.
+    const members = membersOf(storedSpeciesKeyValidator)
+    expect(members.map((member) => member.kind)).toEqual(members.map(() => 'literal'))
+  })
+
+  test('half-orc has a retirement label already, spelled as the species spells it', () => {
+    // Unreachable through `speciesLabel` today, because `species('half-orc')` still resolves —
+    // asserted directly for that reason. A sheet that changed its mind about the hyphen on the
+    // day the species left would look like the migration had mangled it.
+    expect(RETIRED_SPECIES['half-orc']).toBe('Half-Orc')
+    expect(species('half-orc')?.name).toBe(RETIRED_SPECIES['half-orc'])
+  })
+})
+
+describe('speciesKeyOf reads one fact out of two fields', () => {
+  test('the old field answers while nothing writes the new one', () => {
+    expect(speciesKeyOf(preset({ race: 'dwarf' }))).toBe('dwarf')
+  })
+
+  test('the new field wins when both are present', () => {
+    // The direction that makes the backfill idempotent and interruptible: a run that stops
+    // half way leaves half the rows answering from the new field and half from the old, and
+    // both are right. The other order would make the migration's own writes invisible until
+    // the narrowing commit deleted `race`.
+    expect(speciesKeyOf(preset({ race: 'dwarf', species: 'elf' }))).toBe('elf')
+  })
+
+  test('a retired key comes back as itself rather than being repaired', () => {
+    // It takes a `string` and hands one back, like `species()` and `findClass`, because a
+    // caller holding a *stored* key by definition holds something the narrow type says cannot
+    // exist. Repairing it here would hide the very state the sheet has to tell somebody about.
+    //
+    // ⚠️ Cast through `unknown` for the reason the retired-key suite above gives: a key that
+    // no longer resolves is unconstructable *in new code*, and the database has no such type.
+    const orphan = {
+      ...preset(),
+      species: 'ancient-halfling-subspecies',
+    } as unknown as PresetSheet
+    expect(speciesKeyOf(orphan)).toBe('ancient-halfling-subspecies')
+    expect(species(speciesKeyOf(orphan))).toBeNull()
   })
 })

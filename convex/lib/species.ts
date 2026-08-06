@@ -13,7 +13,7 @@
 
 import { v } from 'convex/values'
 
-import type { AbilityKey, ContentEntry } from './sheet'
+import type { AbilityKey, ContentEntry, PresetSheet } from './sheet'
 
 export const SPECIES_KEYS = [
   'human',
@@ -32,6 +32,50 @@ export const speciesKeyValidator = v.union(
   v.literal('elf'),
   v.literal('dwarf'),
   v.literal('halfling'),
+  v.literal('half-orc'),
+  v.literal('tiefling'),
+  v.literal('dragonborn'),
+  v.literal('goliath'),
+)
+
+/**
+ * The union **as it may still be found in the database**: every narrow literal above, plus
+ * the ones this application used to offer and no longer will.
+ *
+ * ⚠️ **Today its membership is identical to `speciesKeyValidator`'s, and that is the whole
+ * point of writing it now.** `'half-orc'` is still in `SPECIES_KEYS` because retiring the
+ * *content* is the species branch's job, not this one's — this commit builds the road it
+ * drives down. On the day that branch removes `'half-orc'` from the narrow union, the two
+ * spellings part company: the narrow one is what every argument takes, so no new character
+ * can be built as a Half-Orc, and this one is what the *stored* field is validated against,
+ * so every character who already is one survives the push.
+ *
+ * ⚠️ **The push is the first failure and the lookup is the second, and they are not the same
+ * bug.** `species()` above already returns null rather than dereferencing `undefined`, which
+ * is the second one fixed. But Convex validates existing documents on a schema push, so
+ * removing a literal from the union a stored field is declared with makes `npx convex deploy`
+ * *fail* against any deployment holding a row that uses it — before a single line of that
+ * function runs. `storedTokenLayerValidator` in lib/layers.ts is the precedent this is copied
+ * from, down to the ⚠️ TRANSITION comment it will earn once the narrowing is in sight.
+ *
+ * ⚠️ **Used by `presetSheetValidator.species` and by nothing else.** That is the same
+ * discipline `storedTokenLayerValidator` keeps — one stored field, spelled wide; every
+ * argument and every projection spelled narrow. There is one honest difference from that
+ * precedent and it is worth stating rather than discovering: `characters.create` and
+ * `characters.updateSheet` take `storedSheetValidator` *as their argument validator*, so a
+ * stored union on this type widens the write path as well as the read path. That is why
+ * `race` beside it is deliberately left on the narrow union and why this one is optional —
+ * absent is what every existing row says, and a retired key can only ever arrive here from
+ * the migration that writes it, never from a builder.
+ */
+export const storedSpeciesKeyValidator = v.union(
+  v.literal('human'),
+  v.literal('elf'),
+  v.literal('dwarf'),
+  v.literal('halfling'),
+  // ⚠️ The member that will still be here when it has gone from the union above. Retired by
+  // the 2024 conversion — 2024 has no Half-Orc — and kept readable for the characters who
+  // chose one. See `RETIRED_SPECIES` below, which is what such a row is labelled with.
   v.literal('half-orc'),
   v.literal('tiefling'),
   v.literal('dragonborn'),
@@ -260,7 +304,46 @@ export function speciesLabel(key: string): string {
  * nothing lets a *new* character be built with one, because `speciesKeyValidator` — the narrow
  * union every argument takes — does not contain it.
  */
-export const RETIRED_SPECIES: Record<string, string> = {}
+export const RETIRED_SPECIES: Record<string, string> = {
+  // ⚠️ **Listed here BEFORE it leaves `SPECIES`, deliberately, and it is the one entry in
+  // this record whose key currently resolves.** `speciesLabel` asks `species()` first, so
+  // while the content is still present this line is unreachable and answers the same word
+  // the entry does. That is the widen half of widen → migrate → narrow applied to a *label*:
+  // the name a retired Half-Orc will be shown by exists, is spelled once, and is already
+  // wired into the one function that prints a stored key — so the species branch retires the
+  // content in one edit rather than in one edit plus a bug report from whoever opens the
+  // first orphaned character.
+  //
+  // Capitalised as the entry spells it, because the two are the same word to a reader and a
+  // sheet that changed its mind about the hyphen on the day the species left would look like
+  // the migration had mangled it.
+  'half-orc': 'Half-Orc',
+}
+
+/**
+ * WHICH SPECIES A STORED PRESET IS, whichever of the two fields it happens to carry.
+ *
+ * ⚠️ **The only place `species` and `race` are ever both read**, which is the whole of what
+ * makes a two-field transition survivable. `presetSheetValidator` carries `race` (required,
+ * every row has one) and `species` (optional, nothing writes one yet), because renaming a
+ * stored field in Convex is widen → migrate → narrow and this is the widen: the new name
+ * exists, one accessor answers the question, and every caller is already reading through it
+ * by the time the migration starts writing.
+ *
+ * **`species` wins when both are present.** That is the direction that makes the migration
+ * idempotent and interruptible — a run that stops half way leaves half the rows answering
+ * from the new field and half from the old, and both are right. The other order would make
+ * the migration's own writes invisible until the narrowing commit deleted `race`, which is
+ * exactly the window a migration wants to be able to verify.
+ *
+ * **Returns `string` and not `SpeciesKey`**, like `species()` and `findClass` take one: a
+ * caller holding a *stored* key by definition holds something the narrow type says cannot
+ * exist. Every consumer already goes through `species()` or `speciesLabel`, both of which
+ * take a `string` and neither of which throws on a key that has been retired.
+ */
+export function speciesKeyOf(preset: PresetSheet): string {
+  return preset.species ?? preset.race
+}
 
 /**
  * Every once-per-rest ability a race brings. Flat, because the sheet shows one list
