@@ -488,6 +488,84 @@ are opposites — fog decides what a client is *sent*, a wall decides where a co
 *dragged* — and a wall panel under a Fog heading is one glance away from a DM planning an
 ambush behind a barrier.
 
+### One armed tool on the board, not three
+
+⚠️ **A real bug, found by somebody using the two tools together, and not a tidy-up.**
+`useFogMode` and `useGridTrace` were two module-level cells that could each say *my tool is
+out*, and could say it at the same time. Both mount a Konva draw surface spanning the whole
+image, the tracer's is mounted last, and Konva dispatches to the topmost hit-testing node — so
+a DM with the fog brush and the tracer both lit could drag all afternoon, get a blue measuring
+box every time, and be looking at a lit fog button while they did it. The wall tool made it
+three.
+
+`useBoardLayers`' docblock had already argued the exact case: *two `useState`s seeded from the
+same key are two pieces of state that agree only until somebody presses something — a toggle
+that hides nothing, which is worse than no toggle.* The three cells were that sentence with
+three subjects.
+
+**One cell, `src/lib/boardTool.ts`, over one union:** `off | fog-draw | fog-polygon |
+fog-erase | grid | wall-draw | wall-erase`. One value, so arming one tool disarms the others
+**by construction**. There is nothing left to keep in step and no ordering between setters.
+
+⚠️ **`grid` is one member where fog is three and walls are two, and the roadmap's sketch of
+this union spelled it `grid-trace`.** The asymmetry is deliberate. Fog's and walls' members are
+*modes* — a rectangle, a polygon and an eraser are three gestures, and which is armed decides
+what pressing the map does. The grid's two tools are a **preference**: `GridCalibrator`'s
+picker chooses which one the toolbar button will give you and arms nothing, and that panel's
+own copy says so. Folding the choice in here would give the toolbar button two things to mean
+and leave the picker silently arming the board, so `GridTool` stays in `useGridTrace` beside
+the box it measures and what lives in the union is the one bit that says a grid tool is out.
+`calibrating` in `Board` stops being a `useState` and becomes `tool === 'grid'` — the second
+spelling of *a tool is out* was the bug.
+
+**The renderer iterates a `Record` rather than naming members in JSX.**
+`BOARD_TOOL_SURFACE: Record<BoardTool, BoardSurface>` answers *which overlay owns the pointer*,
+and `Board` looks a tool up in it rather than writing three `tool === 'fog-…'` comparisons.
+CLAUDE.md invariant 9's rule stated as *find the place a wrong answer does damage*: for this
+union that place is the mount, where three comparisons would let a new member arrive, compile,
+pass, and mount nothing at all — a lit button that does nothing when the map is pressed. It is
+a `Record` rather than a `switch` with a `never` arm for `TokenMarker`'s reason: nothing here
+guards a secret and there is no runtime default worth having, so the compile-time refusal is
+the whole of the guard.
+
+⚠️ **Each panel keys its label `Record` by its own hand-spelled slice — `FOG_TOOLS`,
+`WALL_TOOLS` — and not by the whole union**, which would demand fog copy for the wall eraser.
+A `filter` over the surface map would give `BoardTool[]` and degrade those `Record`s to partial
+maps, losing the refusal that makes a new mode arrive with somewhere to be pressed. So the
+slices are spelled out, and `boardTool.test.ts` sweeps each against the surface map **in both
+directions** — a tool missing from a slice has no button, and a tool in the wrong slice is a
+button in the wrong panel. That is `lib/layers.test.ts`' job for `TOKEN_LAYERS`, arriving on
+the client.
+
+⚠️ **`putDownBoardSurface` is the one behaviour that would have been quietly lost.** Each panel
+disarms itself when it unmounts, because `DmToolsTab`'s sub-tab strip is uncontrolled and its
+subtree is not force-mounted — arming the eraser, glancing at the Feed and coming back used to
+reach an armed tool with no lit button anywhere on screen. With three cells an unconditional
+`setMode('off')` was correct, because a panel could only put down its own tool. With one cell
+it is not: leaving the Fog tab while the *grid tracer* is out would disarm the tracer from a
+component that has nothing to do with it. So the caller names its surface and the store asks
+whether it is the one holding the pointer. `Board` does the same for `grid` on unmount, which
+is the one surface no sub-tab owns and which used to die with a `useState`.
+
+**Everything else about the three cells is inherited unchanged**: keyed by game code, nothing
+written to `localStorage` — an armed eraser is one click from deleting an afternoon's drawing,
+and a tool still armed after a refresh nobody remembers doing is how that click happens — and
+*a view and never a permission*, since every write any of these tools leads to re-verifies the
+DM code server-side.
+
+⚠️ **The vocabulary and the store are in `src/lib/` and only the subscription is a hook**,
+which is a testability constraint rather than a preference: vitest runs the client project in a
+plain `node` environment with no renderer, so a hook is not testable here and a module is. That
+split is what lets `boardTool.test.ts` assert the thing worth asserting — that arming one
+really does disarm the rest.
+
+**Two things deliberately did not change.** `TraceBoxLayer` still takes `enabled: true` rather
+than reading the cell, because it is mounted only while the grid tool is armed and a
+subscription there could answer nothing but `true` — a guard that cannot fail, which this
+project does not keep. And `GridCalibrator` reads the cell for exactly one thing: which of two
+true sentences to print under its picker, since *press the grid button* while the tool is
+already on the board is the feature reading as broken in the other direction.
+
 ## Consequences
 
 ### Good
@@ -504,6 +582,9 @@ ambush behind a barrier.
 - **`convex/lib/grid.ts` is still the one definition of where a square is**, and it now holds
   the one definition of what crossing a line means too — shared by the browser's drag and the
   server's settling write, so the coin's stop and the refusal cannot disagree.
+- **The milestone ends with fewer pieces of board state than it started with.** Three
+  armed-tool cells and a `useState` became one cell over one union, and the bug they carried
+  cannot recur without somebody deliberately adding a second cell.
 
 ### Costs and constraints we are accepting
 
@@ -542,6 +623,14 @@ ambush behind a barrier.
   here.
 - **A wall cannot be edited, only rubbed out and redrawn** — the same surface `fog.erase` and
   `fog.draw` have, for the same reason, and the polygon bullet above carries the argument.
+- **Arming any board tool now disarms the rest, which is a behaviour change and not only a
+  refactor.** A DM who liked having the grid tracer out while they blacked a room in cannot,
+  and the two never worked together anyway — that is the bug. Worth knowing before somebody
+  reports it as one.
+- **`BOARD_TOOLS` and its two panel slices can disagree, and only a test catches it.** The
+  compiler holds `Record<BoardTool, …>` complete; the arrays are swept by
+  `boardTool.test.ts` in both directions, which is the same arrangement `lib/layers.test.ts`
+  has and the same reason it exists.
 - **`ROLL_PATTERN`-style arithmetic now exists for two caps that nothing profiles.**
   `MAX_WALLS_PER_SCENE × MAX_WALL_POINTS` bounds a per-settle cost at roughly 6,300 segment
   tests. Generous, finite, and a guess about what a dungeon level needs.

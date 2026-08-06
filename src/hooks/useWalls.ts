@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import { useMemo } from 'react'
 import { useQuery } from 'convex/react'
 
 import { api } from '@convex/_generated/api'
@@ -6,7 +6,13 @@ import type { Id } from '@convex/_generated/dataModel'
 import type { Point } from '@convex/lib/grid'
 import type { PublicWall } from '@convex/lib/walls'
 
-// WALLS, in the browser: the barriers on this map, and the tool the DM has armed.
+// WALLS, in the browser: the barriers on this map.
+//
+// ⚠️ **The armed tool used to live here too, for exactly one commit.** `useWallMode` was the
+// third module-level cell of its kind on one board and made the collision the other two
+// already had impossible to ignore: three draw surfaces spanning the whole image, and the last
+// one rendered swallowing every press. There is one cell now, `src/lib/boardTool.ts`, whose
+// header carries the argument and inherits every clause this store's docblock had.
 //
 // ⚠️ **Nothing here decides what anybody may see, and unlike `useFog` next door there is
 // not even a cue that could be mistaken for a filter.** `walls.list` is ungated by design —
@@ -84,91 +90,3 @@ export function useWallPaths(
   )
 }
 
-/**
- * Which wall tool the DM has armed. `off` is the board behaving normally.
- *
- * Two rather than fog's four, because a wall has one shape and there is nothing to erase it
- * with but a click on the line itself.
- */
-export type WallMode = 'off' | 'draw' | 'erase'
-
-/**
- * The modes, in the order they are offered. Iterated rather than three buttons written out,
- * for `TOKEN_LAYERS`' and `FOG_MODES`' reason: a mode cannot arrive with nowhere to be
- * pressed.
- */
-export const WALL_MODES: readonly WallMode[] = ['off', 'draw', 'erase']
-
-type Store = { mode: WallMode; listeners: Set<() => void> }
-
-/**
- * ⚠️ **A module-level store rather than `useState`, and it is `useFogMode`'s argument for the
- * third time with the same two halves of the screen in it.** The controls are in `WallTools`,
- * deep inside the right-hand pane; the gesture they arm is in `WallLayer`, inside the Konva
- * tree in the map pane. Two `useState`s cannot be that, and hoisting the mode to `GameShell`
- * would thread a board concern through the component whose job is to arrange two panes.
- *
- * Keyed by game code so a browser that has been in two games does not carry the first one's
- * armed tool into the second, and **nothing is written to `localStorage`** — `useFogMode`'s
- * departure from `useBoardLayers`, for a reason that applies here too: a tool still armed
- * after a refresh nobody remembers doing is how a press meant for a coin deletes a barrier.
- *
- * ⚠️⚠️ **AND THAT IS NOW THE THIRD SUCH CELL ON ONE BOARD, WHICH IS A BUG RATHER THAN A
- * PATTERN.** `useFogMode`, `useGridTrace` and this one can all be armed at once, and each
- * mounts a draw surface spanning the whole image — so whichever is rendered last swallows
- * every press and the other two silently stop working. `useBoardLayers`' docblock already
- * makes the argument this is a case of: *two `useState`s seeded from the same key are two
- * pieces of state that agree only until somebody presses something.* The fix is one cell
- * over one union, and it is the commit after this one; this store exists so that the wall
- * tool lands whole and the collision is fixed once for all three rather than twice.
- */
-const stores = new Map<string, Store>()
-
-function storeFor(code: string): Store {
-  const existing = stores.get(code)
-  if (existing) return existing
-
-  const store: Store = { mode: 'off', listeners: new Set() }
-  stores.set(code, store)
-  return store
-}
-
-/**
- * The wall tool this browser has armed, and the way to change it.
- *
- * ⚠️ **A view and never a permission**, on ADR 0004's terms and word for word `useFogMode`'s:
- * arming the eraser paints a cursor and makes the lines clickable on *this* screen, and the
- * refusal behind the click is `requireDm` inside every one of `walls.add`, `walls.remove` and
- * `walls.clear` (CLAUDE.md invariant 7).
- */
-export function useWallMode(code: string): {
-  mode: WallMode
-  setMode: (mode: WallMode) => void
-} {
-  const subscribe = useCallback(
-    (listener: () => void) => {
-      const store = storeFor(code)
-      store.listeners.add(listener)
-      return () => {
-        store.listeners.delete(listener)
-      }
-    },
-    [code],
-  )
-
-  const mode = useSyncExternalStore(subscribe, useCallback(() => storeFor(code).mode, [code]))
-
-  const setMode = useCallback(
-    (next: WallMode) => {
-      const store = storeFor(code)
-      // Not tidiness: `useSyncExternalStore` re-renders every subscriber on any
-      // notification, so pressing the tool you are already holding would repaint the board.
-      if (store.mode === next) return
-      store.mode = next
-      for (const listener of store.listeners) listener()
-    },
-    [code],
-  )
-
-  return { mode, setMode }
-}

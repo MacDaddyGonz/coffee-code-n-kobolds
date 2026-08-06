@@ -6,7 +6,8 @@ import type Konva from 'konva'
 
 import { setCursor, swallowLeftPress } from '@/components/board/konvaPointer'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
-import { useFog, useFogMode } from '@/hooks/useFog'
+import { useBoardTool } from '@/hooks/useBoardTool'
+import { useFog } from '@/hooks/useFog'
 import { usePolygonDraw } from '@/hooks/usePolygonDraw'
 import { useRubberBand, type Band } from '@/hooks/useRubberBand'
 import { errorMessage } from '@/lib/errors'
@@ -82,7 +83,7 @@ export type FogLayerProps = {
    * to everybody. See `useBoardLayers` for why this distinction is stated everywhere it
    * appears rather than once.
    *
-   * A prop rather than a second read of the store, unlike `useFogMode` beside it, because
+   * A prop rather than a second read of the store, unlike `useBoardTool` beside it, because
    * `Board` is already holding it for `TokenLayers` and the badge. One cell, one read, three
    * consumers.
    */
@@ -135,7 +136,10 @@ export const FogLayer = memo(function FogLayer({
 }: FogLayerProps) {
   const isDm = dmCode !== null
   const rects = useFog(code, scene._id, dmCode)
-  const { mode } = useFogMode(code)
+  // The one armed tool on this board — see `src/lib/boardTool.ts`. It used to be `useFogMode`,
+  // one of three cells that could each be lit at once; arming the grid tracer or a wall tool
+  // now puts this one down by construction rather than by three effects agreeing to.
+  const { tool } = useBoardTool(code)
 
   const drawFog = useMutation(api.fog.draw)
   const eraseFog = useMutation(api.fog.erase)
@@ -153,9 +157,9 @@ export const FogLayer = memo(function FogLayer({
   // words, in a toast, over a board that has already settled.
   const { run } = useLobbyAction()
 
-  const drawing = isDm && mode === 'draw'
-  const tracing = isDm && mode === 'polygon'
-  const erasing = isDm && mode === 'erase'
+  const drawing = isDm && tool === 'fog-draw'
+  const tracing = isDm && tool === 'fog-polygon'
+  const erasing = isDm && tool === 'fog-erase'
 
   const commit = useCallback(
     (gesture: Band) => {

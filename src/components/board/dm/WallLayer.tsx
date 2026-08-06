@@ -6,8 +6,9 @@ import type Konva from 'konva'
 
 import { setCursor, swallowLeftPress } from '@/components/board/konvaPointer'
 import { useLobbyAction } from '@/components/lobby/useLobbyAction'
+import { useBoardTool } from '@/hooks/useBoardTool'
 import { usePolylineDraw } from '@/hooks/usePolylineDraw'
-import { useWallMode, useWalls } from '@/hooks/useWalls'
+import { useWalls } from '@/hooks/useWalls'
 import { errorMessage } from '@/lib/errors'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
@@ -96,7 +97,8 @@ export const WallLayer = memo(function WallLayer({
   scale,
 }: WallLayerProps) {
   const walls = useWalls(code, scene._id, dmCode)
-  const { mode } = useWallMode(code)
+  // The one armed tool on this board — see `src/lib/boardTool.ts`.
+  const { tool } = useBoardTool(code)
 
   const addWall = useMutation(api.walls.add)
   const removeWall = useMutation(api.walls.remove)
@@ -109,8 +111,8 @@ export const WallLayer = memo(function WallLayer({
   // by accident and wrong for a gesture the DM repeats as fast as they can click.
   const { run } = useLobbyAction()
 
-  const drawing = mode === 'draw'
-  const erasing = mode === 'erase'
+  const drawing = tool === 'wall-draw'
+  const erasing = tool === 'wall-erase'
 
   /**
    * ⚠️ **Corners snap the way a fog shape's do, through the same zero-square trick.**

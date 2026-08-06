@@ -13,8 +13,10 @@ import {
 } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { WallMode } from '@/hooks/useWalls'
-import { WALL_MODES, useWallMode, useWalls } from '@/hooks/useWalls'
+import { useBoardTool } from '@/hooks/useBoardTool'
+import { useWalls } from '@/hooks/useWalls'
+import type { WallTool } from '@/lib/boardTool'
+import { WALL_TOOLS, isWallTool } from '@/lib/boardTool'
 import { api } from '@convex/_generated/api'
 
 export type WallToolsProps = {
@@ -27,23 +29,27 @@ export type WallToolsProps = {
  * What each tool is called and what pressing the map does while it is armed, keyed by the
  * union so a fourth mode fails to compile here rather than arriving as a button with no
  * label — `MODE_LABELS` in `FogTools`, `TOOL_LABELS` in `GridCalibrator`, and CLAUDE.md
- * invariant 9. `WALL_MODES` is iterated below rather than three buttons being written out,
+ * invariant 9. `WALL_TOOLS` is iterated below rather than three buttons being written out,
  * so the array is the order they are offered in.
+ *
+ * ⚠️ **Keyed by `WallTool` — this panel's slice of the one armed-tool union — and not by
+ * `BoardTool`**, which would demand wall copy for the fog brush and the grid tracer. See
+ * `src/lib/boardTool.ts` for why the slices are hand-spelled and how they are swept.
  *
  * **Not a `Record<FogBase, …>` of these**, which is the one structural difference from the
  * fog panel and is worth knowing rather than inferring: every sentence there inverts because
  * the same three tools do opposite things on a lit map and a dark one. A wall does one thing.
  */
-const MODE_LABELS: Record<WallMode, { label: string; hint: string }> = {
+const MODE_LABELS: Record<WallTool, { label: string; hint: string }> = {
   off: {
     label: 'Off',
     hint: 'The board behaves normally: coins are yours to pick up and the walls are scenery.',
   },
-  draw: {
+  'wall-draw': {
     label: 'Draw a wall',
     hint: 'Click a corner at a time to trace a barrier. Corners snap to the lines between squares. Double-click or press Enter to finish it; Esc throws it away. To seal a room, click back onto the corner you started at.',
   },
-  erase: {
+  'wall-erase': {
     label: 'Rub out',
     hint: 'Click a wall to take it away — the door the party has just opened, or the wall you traced one square out.',
   },
@@ -66,9 +72,11 @@ const MODE_LABELS: Record<WallMode, { label: string; hint: string }> = {
  * the thing being gestured at, in `WallLayer`, and this panel only says which of them is
  * armed. Clearing is a button, and a button belongs on a panel.
  *
- * **The mode does not leave this component as a prop.** It goes into `useWallMode`, a cell
- * keyed by game code, because the control is here in the right-hand pane and the gesture is
- * inside the Konva tree in the map pane — `useBoardLayers`' arrangement for the third time.
+ * **The mode does not leave this component as a prop.** It goes into `useBoardTool`, the one
+ * armed-tool cell, keyed by game code, because the control is here in the right-hand pane and
+ * the gesture is inside the Konva tree in the map pane — `useBoardLayers`' arrangement. It is
+ * shared with the fog brush and the grid tracer and holds exactly one value, so arming a tool
+ * here puts either of those down by construction.
  *
  * Rendered on the strength of the DM code being present, and that display gate authorises
  * nothing: all three mutations re-verify the code server-side on every call (CLAUDE.md
@@ -82,15 +90,22 @@ export function WallTools({ code, dmCode }: WallToolsProps) {
   const sceneId = active?._id ?? null
 
   const walls = useWalls(code, sceneId, dmCode)
-  const { mode, setMode } = useWallMode(code)
+  const { tool, setTool, putDown } = useBoardTool(code)
+  // One cell holds every overlay's tool, so this panel reads `off` whenever the armed one is
+  // somebody else's — which is the honest answer, and is what keeps the `Record` lookups total.
+  const mode: WallTool = isWallTool(tool) ? tool : 'off'
 
   /**
    * ⚠️ **Put down on the way out**, which is `FogTools`' three lines and the same bug they
    * were written for: `DmToolsTab`'s sub-tab strip is uncontrolled and its subtree is not
    * force-mounted, so arming the eraser, glancing at the Feed and coming back would leave an
    * armed tool with no lit button anywhere on screen and presses on the map deleting walls.
+   *
+   * ⚠️ **Conditional on the surface**, because the cell is now shared: an unconditional
+   * put-down here would disarm the fog brush or the grid tracer on the way out of the Walls
+   * tab. See `putDownBoardSurface`.
    */
-  useEffect(() => () => setMode('off'), [setMode])
+  useEffect(() => () => putDown('wall'), [putDown])
 
   const clearWalls = useMutation(api.walls.clear)
   const action = useLobbyAction()
@@ -131,7 +146,7 @@ export function WallTools({ code, dmCode }: WallToolsProps) {
             <div className="flex flex-col gap-2">
               <Label>Tool</Label>
               <div className="flex flex-wrap gap-2">
-                {WALL_MODES.map((choice) => (
+                {WALL_TOOLS.map((choice) => (
                   <Button
                     key={choice}
                     type="button"
@@ -142,7 +157,7 @@ export function WallTools({ code, dmCode }: WallToolsProps) {
                     // putting a tool down is the way out of a mistake, and a refused wall is
                     // exactly the moment somebody reaches for it. `FogTools` makes the same
                     // call for the same reason.
-                    onClick={() => setMode(choice)}
+                    onClick={() => setTool(choice)}
                   >
                     {MODE_LABELS[choice].label}
                   </Button>

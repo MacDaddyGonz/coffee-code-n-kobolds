@@ -22,13 +22,13 @@ import { useBoardCamera } from '@/hooks/useBoardCamera'
 import { useBoardKeys } from '@/hooks/useBoardKeys'
 import { useBoardLayers } from '@/hooks/useBoardLayers'
 import type { Dm } from '@/hooks/useDm'
-import { useFogMode } from '@/hooks/useFog'
+import { useBoardTool } from '@/hooks/useBoardTool'
 import { useGridTrace } from '@/hooks/useGridTrace'
 import { useGridWrite } from '@/hooks/useGridWrite'
 import { useHpTarget } from '@/hooks/useHpTarget'
 import { useSmoothPositions, useTokenMove } from '@/hooks/useTokenMove'
 import { useTokenSelection } from '@/hooks/useTokenSelection'
-import { useWallMode, useWallPaths } from '@/hooks/useWalls'
+import { useWallPaths } from '@/hooks/useWalls'
 import { useHpActions } from '@/hooks/useVitals'
 import type { GridBox, GridHandle } from '@/lib/gridBox'
 import { boxOfGrid, dragBox, gridOfBox } from '@/lib/gridBox'
@@ -146,42 +146,43 @@ export function Board({
   const layers = useBoardLayers(code)
 
   /**
-   * ⚠️ **The second mode that takes the pointer off the coins, and the drag gate below had
-   * only ever heard of the first.**
+   * ⚠️⚠️ **THE ONE ARMED TOOL ON THIS BOARD, AND IT REPLACED THREE CELLS THAT COULD EACH BE
+   * LIT AT ONCE.** The fog brush, the grid tracer and the wall tool each mount a Konva draw
+   * surface spanning the whole image, so with three cells the last one rendered took every
+   * press while the other two panels went on showing a lit button for a tool that had
+   * silently stopped working. One cell over one union makes arming any of them put the others
+   * down by construction — `src/lib/boardTool.ts` carries the argument.
    *
-   * `FogTools` tells the DM in as many words that while a tool is armed "pressing the map
-   * draws or rubs out fog instead of picking up a coin", and `FogLayer` is mounted *under*
-   * the token layers for the reason written out at that mount — so without this a press that
-   * landed on a creature picked the creature up, which is the one gesture the panel promises
-   * it will not do.
+   * ⚠️ **`surface` is looked up rather than derived by naming members**, which is the other
+   * half of what the merge bought. `BOARD_TOOL_SURFACE` is a `Record` over the union, so a new
+   * tool cannot arrive, compile, pass and then mount nothing at all — a lit button that does
+   * nothing when the map is pressed. CLAUDE.md invariant 9's rule, applied at the place a
+   * wrong answer does damage.
    *
-   * Read here rather than threaded down from `FogTools`, which is exactly what the
-   * module-level cell in `useFog` exists for: the control is in the right-hand pane and both
-   * readers of it are in this one.
+   * Read here rather than threaded down from the panels, which is what the cell exists for:
+   * the controls are in the right-hand pane and every reader of the answer is in this one.
    *
-   * ⚠️ **The drag half of the promise and not the whole of it.** The coins sit above the
-   * fog, so a press on one still finds the coin rather than the rectangle underneath it and
-   * selects instead of erasing. Closing that too means giving the veil the pointer over the
-   * party's own figures, which is the trade the mount order already declined. What this
-   * closes is the half that *moves something the DM did not mean to move*.
+   * ⚠️ **`armed` is the drag half of the panels' promise and not the whole of it.** `FogTools`
+   * tells the DM that while a tool is armed "pressing the map draws or rubs out areas instead
+   * of picking up a coin", and this is what makes that true for a *drag*. The coins sit above
+   * the fog, so a press on one still finds the coin and selects rather than erasing — closing
+   * that too means giving the veil the pointer over the party's own figures, which is the
+   * trade the mount order declined. `WallLayer` sits above the coins and so has no such gap.
    */
-  const { mode: fogMode } = useFogMode(code)
-  const fogArmed = board.isDm && fogMode !== 'off'
+  const { tool, surface, setTool, putDown } = useBoardTool(code)
+  const armed = board.isDm && surface !== 'none'
 
   /**
-   * The wall tool, read here for exactly `fogMode`'s reason: the control is in the
-   * right-hand pane and both of the things that care about it are in this one.
-   *
-   * ⚠️ **That is now three module-level cells that can be armed at once, and it is a bug
-   * rather than a pattern** — see the ⚠️ on the tracer's mount below, which has described
-   * one half of it since the grid tracer landed. Each of the three mounts a draw surface
-   * spanning the whole image, so whichever is rendered last takes every press and the others
-   * silently stop working. The fix is one cell over one union and it is the next commit;
-   * this is the shape the wall tool ships in so that the collision is fixed once for all
-   * three rather than twice.
+   * ⚠️ **The board puts the tool down when it unmounts, and none of the panels can do it for
+   * it.** Calibration used to be a `useState` here, so leaving the board took it with it. It
+   * is a module-level cell now, and the *only* control that arms it lives in the board's own
+   * toolbar — `GridCalibrator` chooses which grid tool the button gives you and deliberately
+   * arms nothing — so a DM who left a game with the tracer out would come back to an armed
+   * board. `FogTools` and `WallTools` disarm their own surfaces on the way out of a sub-tab;
+   * this is the same discipline for the one surface no sub-tab owns, and it is conditional for
+   * the same reason theirs are.
    */
-  const { mode: wallMode } = useWallMode(code)
-  const wallArmed = board.isDm && wallMode !== 'off'
+  useEffect(() => () => putDown('grid'), [putDown])
 
   /**
    * The barriers on this board, as bare geometry, for the drag.
@@ -257,19 +258,26 @@ export function Board({
    * write it through `useGridWrite`. The draft below is the only thing local to a drag,
    * and it lasts about a tenth of a second.
    *
-   * ⚠️ **Two tools and never both.** `calibrating` says a tool is in the DM's hand;
+   * ⚠️ **Two tools and never both.** `calibrating` says a grid tool is in the DM's hand;
    * `useGridTrace`'s cell says which one, because the picker for it is in the other pane.
    * The handles box is square by construction and anchored to the grid origin; the trace box
    * is free-aspect and anchored wherever the map's printed squares are legible — see
    * `GridTool` for why widening one of them into the other was never on the table. Both end
    * up in the same `setDraftGrid` and the same `gridWrite`.
    *
+   * ⚠️ **`calibrating` is derived from the shared armed-tool cell now and is not state**,
+   * which is what stops the grid tracer and a fog brush being out at once. It used to be a
+   * `useState` here, and the two spellings of *a tool is out* were the bug. The choice between
+   * `handles` and `trace` stays where it is: it is a preference the DM sets in the panel and
+   * it arms nothing, so folding it into the union would give the toolbar button two things to
+   * mean — `BoardTool`'s docblock argues the asymmetry.
+   *
    * `useGridWrite` is called unconditionally with a nullable code and scene, so a player's
    * board runs the same hooks in the same order as the DM's and simply never sends
    * anything. Whether the button is offered is display only; `scenes.updateGrid` verifies
    * the DM code server-side on every write (invariant 7).
    */
-  const [calibrating, setCalibrating] = useState(false)
+  const calibrating = tool === 'grid'
   const [draftGrid, setDraftGrid] = useState<Grid | null>(null)
 
   const trace = useGridTrace(code)
@@ -358,8 +366,10 @@ export function Board({
     [gridWrite.settle],
   )
 
+  // Arming the grid puts down whatever else was out, which is the whole of what the shared
+  // cell buys here: there is no second flag to clear and no ordering between two setters.
   const onToggleCalibrate = useCallback(() => {
-    setCalibrating((on) => !on)
+    setTool(calibrating ? 'off' : 'grid')
     // Cleared in both directions. Leaving drops a draft that has already been written
     // anyway; entering makes sure the handles start from the stored grid rather than from
     // a refused write left over from last time.
@@ -368,7 +378,7 @@ export function Board({
     // measurement of a block of *this* map, and one still on screen when the tool next comes
     // out would be numbers in the panel that nobody in this session traced.
     setTrace({ box: null })
-  }, [setTrace])
+  }, [calibrating, setTool, setTrace])
 
   // Hand the grid back to the subscription once the server agrees, which is the discipline
   // `useSmoothPositions` applies to a token and is needed for the same reason: a draft that
@@ -557,7 +567,7 @@ export function Board({
   const onEscape = useCallback(() => {
     if (tracing && trace.box !== null) setTrace({ box: null })
     else if (calibrating) {
-      setCalibrating(false)
+      setTool('off')
       setDraftGrid(null)
       setTrace({ box: null })
     } else if (hpTarget.hpTokenId !== null) hpTarget.clear()
@@ -567,6 +577,7 @@ export function Board({
     trace.box,
     setTrace,
     calibrating,
+    setTool,
     hpTarget.hpTokenId,
     hpTarget.clear,
     selection.clear,
@@ -696,11 +707,11 @@ export function Board({
               // containment test.
               hideFogged={layers.tableView}
               // Held space turns the whole board into a pan surface, so a press that
-              // lands on a token has to move the view rather than the creature. The
-              // calibration handles borrow the same mechanism: while the box is out, a
-              // press anywhere near a coin is aimed at the grid underneath it — and an
-              // armed fog tool is the third of them, for the reason `fogArmed` carries.
-              draggable={!camera.spacePanning && !calibrating && !fogArmed && !wallArmed}
+              // lands on a token has to move the view rather than the creature. Any armed
+              // board tool does the same: while one is out, a press anywhere near a coin is
+              // aimed at the overlay rather than at the creature — and `armed` is now one
+              // lookup rather than three flags that had to be remembered separately.
+              draggable={!camera.spacePanning && !armed}
               onSelect={onSelect}
               onDragStart={move.onDragStart}
               onDragMove={move.onDragMove}
@@ -751,20 +762,14 @@ export function Board({
               `gridWrite` and set the same `draftGrid`, so what changes between them is the
               gesture and not the consequence.
 
-              ⚠️⚠️ **THE TRACER, AN ARMED FOG TOOL AND AN ARMED WALL TOOL CAN NOW ALL THREE BE
-              OUT AT ONCE, AND THE TRACER WINS THE POINTER.** This layer is mounted last, so its
-              draw surface takes every press on the map and neither of the others ever starts.
-              The handles never collided this way because they cover four squares rather than
-              the whole image.
-
-              This paragraph used to end by saying it was left alone because the failure is not
-              the silent one `FogLayer`'s docblock is about — two buttons are lit, and a drag
-              produces a blue measuring box rather than a dark rectangle, which says which tool
-              answered. **That was a reasonable trade for two tools and it is not one for
-              three**, and the two panes' controls it said wanted deciding have now been
-              decided: one armed cell over one union, so arming any of them disarms the rest by
-              construction. It is the commit after the one that added walls, and this comment
-              goes with it.
+              ⚠️ **This mount used to carry a paragraph about the tracer, the fog brush and the
+              wall tool all being out at once and the tracer winning the pointer**, because it
+              is mounted last and its draw surface spans the whole image. That is no longer
+              possible: `useBoardTool` holds one value, so arming the grid disarms the other two
+              by construction and this ternary can only run when nothing else is out. The
+              paragraph is kept as a sentence rather than deleted, because the failure it
+              described is the one a fourth overlay would reintroduce — and the answer that day
+              is a member on `BoardTool`, not a second cell.
             */}
             {board.isDm && calibrating ? (
               tracing ? (

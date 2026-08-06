@@ -108,8 +108,12 @@ export const TraceBoxLayer = memo(function TraceBoxLayer({
     `enabled` is a literal `true`, and that is honest rather than lazy. The flag exists so a
     tool put down mid-drag abandons its band instead of committing it — and putting *this*
     tool down unmounts the whole layer, which abandons the band and everything else with it.
-    `Board` owns that condition, and duplicating it here as a prop would be two components
-    agreeing about one fact.
+
+    ⚠️ **Deliberately still not a read of `useBoardTool`**, now that there is one cell to read.
+    This layer is mounted only while `tool === 'grid'`, so a subscription here could answer
+    nothing but `true` — a guard that cannot fail, which is the thing `leakGuard.test.ts` and
+    `lib/markers.ts` both argue this project does not keep. `Board` owns the condition and
+    duplicating it here would be two components agreeing about one fact.
   */
   const { begin, band } = useRubberBand({ enabled: true, onCommit: commit })
 

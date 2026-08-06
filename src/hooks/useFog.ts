@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
+import { useMemo, useRef } from 'react'
 import { useQuery } from 'convex/react'
 
 import { api } from '@convex/_generated/api'
@@ -10,8 +10,15 @@ import type { FogBase } from '@convex/lib/fogBase'
 import { startsCovered } from '@convex/lib/fogBase'
 import { positionsArgs } from '@/hooks/useBoard'
 
-// FOG OF WAR, in the browser: the rectangles, the tool the DM has armed, and who is
-// standing in the dark.
+// FOG OF WAR, in the browser: the shapes, and who is standing in the dark.
+//
+// ⚠️ **The armed tool used to live here and does not any more.** `useFogMode` was one of
+// three module-level cells that could each say *my tool is out* — and could all say it at
+// once, which mounted three draw surfaces spanning the whole image and let the last one
+// rendered swallow every press. There is one cell now, `src/lib/boardTool.ts`, and its
+// header carries the argument. Everything that paragraph said about *why a module-level cell
+// rather than `useState`*, and about never writing an armed eraser to `localStorage`, moved
+// with it unchanged.
 //
 // Nothing here decides what anybody may see. `fog.list` is ungated by design — a player
 // who cannot see that the corridor is black does not experience suspense, they wonder
@@ -64,99 +71,6 @@ export function useFog(
   dmCode: string | null,
 ): PublicFog[] | undefined {
   return useQuery(api.fog.list, sceneId === null ? 'skip' : fogArgs(code, sceneId, dmCode))
-}
-
-/**
- * Which fog tool the DM has armed. `off` is the board behaving normally.
- *
- * ⚠️ **`draw` is the rectangle and `polygon` is the other one, and the asymmetric names are
- * the lesser of two evils.** Renaming `draw` to `rect` would read better and would rename
- * nothing on screen, because these are keys into `MODE_LABELS` rather than copy — but the
- * mode is the one piece of fog state that *is* named in the interface's own vocabulary, and
- * three files spell `'draw'` including the `useLobbyAction` key the refusal toast is bound to.
- * Not worth a rename in the commit that adds the second shape; worth one the day a third
- * arrives, which the roadmap says will not happen.
- */
-export type FogMode = 'off' | 'draw' | 'polygon' | 'erase'
-
-/**
- * The modes, in the order they are offered. Iterated rather than four buttons written
- * out, for `TOKEN_LAYERS`' reason: a fifth mode arrives with a control rather than with
- * nowhere to be pressed.
- *
- * The two draw tools sit together and the eraser last, which is the order of the gesture
- * rather than the order they were built in.
- */
-export const FOG_MODES: readonly FogMode[] = ['off', 'draw', 'polygon', 'erase']
-
-type Store = { mode: FogMode; listeners: Set<() => void> }
-
-/**
- * ⚠️ **A module-level store rather than `useState`, and it is `useBoardLayers`' argument
- * with the same two halves of the screen in it.** The controls are in `FogTools`, deep
- * inside the right-hand pane; the gesture they arm is in `FogLayer`, inside the Konva
- * tree in the map pane. Two `useState`s cannot be that, and hoisting the mode to
- * `GameShell` would thread a board concern through the component whose job is to arrange
- * two panes — the same trade that file makes and declines, for the same reason.
- *
- * Keyed by game code so a browser that has been in two games does not carry the first
- * one's armed eraser into the second.
- *
- * **Nothing is written to `localStorage`, and that is the one place this departs from
- * `useBoardLayers`.** A layer preference is worth remembering across a reload; an armed
- * eraser is one click from deleting the ambush the DM spent the afternoon drawing, and a
- * tool that is still armed after a refresh nobody remembers doing is exactly how that
- * click happens. Off is the only safe thing to open at.
- */
-const stores = new Map<string, Store>()
-
-function storeFor(code: string): Store {
-  const existing = stores.get(code)
-  if (existing) return existing
-
-  const store: Store = { mode: 'off', listeners: new Set() }
-  stores.set(code, store)
-  return store
-}
-
-/**
- * The fog tool this browser has armed, and the way to change it.
- *
- * ⚠️ **A view and never a permission, on ADR 0004's terms.** Arming the eraser paints a
- * cursor and makes the rectangles clickable on *this* screen; the refusal behind the
- * click is `requireDm` on every one of `fog.draw`, `fog.erase` and `fog.clear`
- * (CLAUDE.md invariant 7). A player who reached into this cell would arm a tool over a
- * layer that is not listening for them and get a refusal from the mutation if they got
- * past that.
- */
-export function useFogMode(code: string): { mode: FogMode; setMode: (mode: FogMode) => void } {
-  const subscribe = useCallback(
-    (listener: () => void) => {
-      const store = storeFor(code)
-      store.listeners.add(listener)
-      return () => {
-        store.listeners.delete(listener)
-      }
-    },
-    [code],
-  )
-
-  const mode = useSyncExternalStore(subscribe, useCallback(() => storeFor(code).mode, [code]))
-
-  const setMode = useCallback(
-    (next: FogMode) => {
-      const store = storeFor(code)
-      // Not tidiness: `useSyncExternalStore` re-renders every subscriber on any
-      // notification, so pressing the tool you are already holding would repaint the
-      // board. `setTools` next door declines the same no-op for the same reason.
-      if (store.mode === next) return
-      store.mode = next
-      for (const listener of store.listeners) listener()
-    },
-    [code],
-  )
-
-  return { mode, setMode }
 }
 
 /**
