@@ -28,13 +28,7 @@ import { addedNames, duplicateNames } from './names'
 import { findClaimHolder, holderByCharacter, listSeats } from './players'
 import type { Grid, Point, Rect } from './grid'
 import { anyRectCovers, cellOf, centreOfCell, snapToGrid } from './grid'
-import {
-  layerOf,
-  maySeeLayer,
-  mayPlayersMove,
-  tokenLayerValidator,
-  type TokenLayer,
-} from './layers'
+import { maySeeLayer, mayPlayersMove, tokenLayerValidator, type TokenLayer } from './layers'
 
 // The layer union used to be declared in this file, and moving it to lib/layers.ts is not
 // a loosening of the choke point. What left is a function of a *string* — three literals,
@@ -169,7 +163,7 @@ export const TOKEN_NOT_MOVABLE = {
  * `ReadonlySet`s the compiler cannot tell apart, one of which publishes everything.
  */
 function maySee(token: Doc<'tokens'>, isDm: boolean): boolean {
-  return isDm || maySeeLayer(layerOf(token.layer))
+  return isDm || maySeeLayer(token.layer)
 }
 
 type FogVeil = {
@@ -416,12 +410,7 @@ export async function publicTokens(
       return {
         _id: token._id,
         name: token.name,
-        // Normalised on the way out, which is what keeps the rename of the GM layer
-        // invisible to the browser: `publicTokenValidator` carries the narrow three-member
-        // union, so a row still stored as the legacy `dm` is projected as `gm` and no
-        // client ever learns the transition happened. It is also why the relabel can run at
-        // any point after this deploy rather than during it.
-        layer: layerOf(token.layer),
+        layer: token.layer,
         sizeSquares: token.sizeSquares,
         // Null rather than undefined: `undefined` is not a Convex value, so an
         // optional field has to become something on the way out. A getUrl of a blob
@@ -748,7 +737,7 @@ export async function requireMovableToken(
   // It is also the cheaper order on a handler that runs ten times a second: a drag on
   // scenery is refused with no index read at all, the same instinct as `requireFinite`
   // running before any read in `moveToken`.
-  if (!mayPlayersMove(layerOf(token.layer))) throw new ConvexError(TOKEN_NOT_MOVABLE)
+  if (!mayPlayersMove(token.layer)) throw new ConvexError(TOKEN_NOT_MOVABLE)
 
   // Be honest about the ceiling. `playerId` is a routing argument, so anyone can pass
   // another seat's id and walk straight past the check below; it stops a misclick
@@ -1031,7 +1020,7 @@ export async function setTokenAppearance(
  * broadest one on the board** — this is the field the whole of invariant 8's structural
  * guard exists to act on.
  *
- * ⚠️ Moving a token to `'dm'` does all of the following, in one patch, with nothing
+ * ⚠️ Moving a token to `'gm'` does all of the following, in one patch, with nothing
  * else written anywhere:
  *
  * - **the coin leaves every player's `board.tokens`**, because `visibleTokens` filters
@@ -1058,14 +1047,6 @@ export async function setTokenAppearance(
  * union `board.setLayer` validates its argument against, so there is no fourth member to
  * reject and nowhere for one to appear in one copy and not the other. That is the point of
  * the union being spelled once.
- *
- * ⚠️ **The schema's union is one member wider than this one while the rename is in flight**,
- * and the no-op guard reads across that gap correctly by accident and then on purpose: a
- * token still stored as the legacy `dm` compares unequal to `'gm'`, so re-layering it writes
- * the canonical spelling. Every token the DM touches migrates itself. That does not replace
- * the sweep — a token nobody moves keeps the old value, which is what `relabelGmLayer` is
- * for — but it does mean the two mechanisms cannot disagree, because both write the same
- * canonical value through the same field.
  */
 export async function setTokenLayer(
   ctx: MutationCtx,
@@ -1075,54 +1056,6 @@ export async function setTokenLayer(
   if (token.layer === layer) return
 
   await ctx.db.patch('tokens', token._id, { layer })
-}
-
-/**
- * TRANSITION ONLY — rewrite every `dm` layer in one game to `gm`. Deleted with the rest of
- * the rename scaffolding once the sweep has run against every deployment.
- *
- * Lives here rather than in `convex/admin.ts` because it reads and writes `tokens`, and
- * `leakGuard.test.ts` sweeps `admin.ts` like every other module — a migration is not an
- * exemption from the choke point. What `admin.ts` keeps is the `internalMutation` wrapper,
- * where the authorisation question lives, which is the same split `purgeGame` already makes.
- *
- * One game per call, bounded by `MAX_TOKENS_PER_GAME`, so the natural transaction is a game
- * and the script above it can be resumable and report per game. That bound is also the
- * argument against adding `@convex-dev/migrations` for this: the component exists for
- * cursor-driven batching across a table too large for one transaction, and two hundred rows
- * is not that.
- *
- * Patches only the rows that need it, like `revokeControlForSeat` — a no-op patch is a write
- * that invalidates every subscription reading the row for no change at all.
- */
-export async function relabelGmLayer(ctx: MutationCtx, gameId: Id<'games'>): Promise<number> {
-  const tokens = await ctx.db
-    .query('tokens')
-    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
-    .take(MAX_TOKENS_PER_GAME)
-
-  let relabelled = 0
-  for (const token of tokens) {
-    if (token.layer !== 'dm') continue
-    await ctx.db.patch('tokens', token._id, { layer: 'gm' })
-    relabelled += 1
-  }
-  return relabelled
-}
-
-/**
- * TRANSITION ONLY — how many tokens in this game still carry the legacy spelling.
- *
- * The check that has to read zero across every deployment before the narrowing commit
- * lands. Returns a count and never a row, like `countTokensInGame` beside it.
- */
-export async function countLegacyLayers(ctx: QueryCtx, gameId: Id<'games'>): Promise<number> {
-  const tokens = await ctx.db
-    .query('tokens')
-    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
-    .take(MAX_TOKENS_PER_GAME)
-
-  return tokens.filter((token) => token.layer === 'dm').length
 }
 
 /**
@@ -1754,9 +1687,6 @@ export async function nextTokenNames(
  * deployment. It is also exactly what makes the smoke script's field-by-field comparison
  * report `present on one side only`. `insertCharacter` carries the same warning for the
  * same reason.
- *
- * `layer` is carried as **stored**, legacy spelling and all, because `layerOf` is a
- * read-time reader and a copy is not the place to migrate a row.
  *
  * ⚠️ **`controllerIds` is omitted rather than written as `[]`**, matching `addToken` — a
  * duplicate is `addToken`'s decision made a second time, and both spellings read

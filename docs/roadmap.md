@@ -1727,18 +1727,23 @@ is `gm` in the database, not `dm`, through widen → migrate → narrow. Convex 
 that narrows a union while a non-conforming row survives, which makes the sequence self-enforcing: a
 blocked pipeline rather than broken data.
 
-⚠️ **The narrowing commit is deliberately NOT on this branch, and that is the one outstanding step.**
-The widened schema and the relabel tooling are merged; the migration has been run against **dev**
-(6 tokens across 6 games, verified zero remaining). Production has not been migrated, and a push of
-the narrow union would be refused until it is. The sequence for `main`:
+✅ **The narrowing is done, and the runbook it replaced is left here in outline because the shape is
+the deliverable rather than the steps.** This section used to say the narrowing commit was
+deliberately not on that branch and was the one outstanding step; it ran as four steps — deploy the
+widened schema, sweep production with `npm run relabel-layers`, confirm
+`admin:gamesWithLegacyLayers` reports zero, then a `chore/` branch taking the widening back out.
 
-1. Merge this work and deploy it. No `dm` value can be created from that deploy forward, and none
-   ever leaves the server — the public projection normalises through `layerOf` — so the browser never
-   sees the transition and the set of legacy rows only shrinks.
-2. `npm run relabel-layers` against production (dry run first; it is the default).
-3. `npx convex run admin:gamesWithLegacyLayers` must report zero.
-4. Then a `chore/` branch deleting `storedTokenLayerValidator`, `layerOf`, `relabelGmLayer`,
-   `countLegacyLayers`, the two `admin` functions and `scripts/relabel-layers.mjs`.
+What that last branch deleted, listed because the next migration copies this set: the fourth member
+of the stored union, `storedTokenLayerValidator` and `layerOf` in `convex/lib/layers.ts`,
+`relabelGmLayer` and `countLegacyLayers` in `convex/lib/board.ts`, `gamesWithLegacyLayers` and
+`relabelDmLayer` in `convex/admin.ts`, `scripts/relabel-layers.mjs` and its npm script, the widening
+assertion in `lib/layers.test.ts`, and the legacy-row instrument in `board.test.ts` — that last one
+because a needle for a value the schema can no longer hold is a guard that cannot fail.
+
+⚠️ **The one thing worth carrying forward is why the sequence is safe rather than merely careful.**
+Convex refuses a push that narrows a union while a non-conforming row survives, so the narrow schema
+*is* the proof the sweep landed. Nothing had to be trusted, and step 3 was a confirmation rather
+than a gate.
 
 **Acceptance, as met:** the DM switches scenes from a list of thumbnails and every client follows,
 each restoring its own camera rather than jumping. An NPC dragged from the GM layer to the Player

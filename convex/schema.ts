@@ -9,13 +9,7 @@ import { v } from 'convex/values'
 // The two from lib/roll.ts are the same arrangement for a document a client never
 // projects field by field: a feed row's subject and its result travel whole, so the
 // stored shape and the public one are one definition rather than two that agree.
-// ⚠️ **The *stored* layer union, which is wider than the one every other module uses.**
-// It carries the legacy `dm` spelling of the GM layer across the rename, so a row written
-// before it still validates. The public projection, `board.addToken` and `board.setLayer`
-// all take the narrow three-member `tokenLayerValidator` from the same file, so nothing
-// can create a `dm` row from here forward and nothing can send one to a client. Both this
-// import and the fourth member go away once the relabel has run — see `layerOf`.
-import { storedTokenLayerValidator } from './lib/layers'
+import { tokenLayerValidator } from './lib/layers'
 import { gameStatusValidator } from './lib/games'
 // The condition vocabulary. Imported here for the table's validator and nowhere else in
 // this file — `markerGuard.test.ts` allows exactly three importers inside `convex/`, and
@@ -265,9 +259,10 @@ export default defineSchema({
     // the same shape as a 'player' one — so a `returns:` validator cannot catch a
     // leak of it. Every read goes through lib/board.ts. See invariant 8.
     //
-    // The stored union is one member wider than the canonical one while the rename of
-    // `dm` → `gm` is in flight; see the import at the top of this file.
-    layer: storedTokenLayerValidator,
+    // The stored union and the canonical one are the same three members. They were not
+    // during the `dm` → `gm` rename, and that they are again is the sweep having landed:
+    // Convex refuses a push that narrows a union while a row still holds the old value.
+    layer: tokenLayerValidator,
     // Diameter in grid squares. 1 = one square, 2 = a 2×2 ogre.
     sizeSquares: v.number(),
     // Absent → drawn as a coloured coin with the name's initials, which is enough
