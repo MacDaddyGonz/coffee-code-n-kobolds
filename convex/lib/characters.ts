@@ -71,8 +71,14 @@ import {
   healthBand,
   presetSheetValidator,
   reconcileHp,
+  sheetEntriesOf,
   sheetValidator,
+  usesOf,
 } from './sheet'
+// The rest arithmetic, and the one place `restores` is asked in `convex/`. No mastery is
+// imported here and none may be — `masteryGuard.test.ts` allows lib/sheet.ts alone.
+import { restores } from './rest'
+import type { Resource } from './rest'
 
 /**
  * Deliberately indistinguishable from "no such character" and "character in
@@ -1367,35 +1373,123 @@ export async function changeHitDiceRemaining(
   return next
 }
 
+// ⚠️ **`setPerRestSpent` used to be here and is gone, deliberately — `spentPerRest` is now
+// READ-ONLY until the narrowing commit.** It marked a key spent by adding it to the legacy
+// array, and `setUsesSpent` below replaces it: 2024 has features with two, three or
+// proficiency-bonus-many uses, and a list of keys cannot say *two*.
+//
+// Deleted rather than kept beside it, and that is the important half. Two writers against one
+// fact is how the two fields would come to disagree — a spend through the old one and a
+// hand-back through the new one leaves a key present in `spentPerRest` and absent from
+// `spentUses`, which `spentUsesOf` then folds back into *one spent use* for ever. With one
+// writer, the legacy array only ever shrinks: `longRest` clears it, nothing adds to it, and
+// every existing row drains as characters sleep. That is what makes the narrowing a deletion
+// rather than a migration.
+
 /**
- * Mark a once-per-long-rest ability spent, or hand it back.
+ * Set how many uses of one thing have been spent, or hand some back.
  *
- * Keys are stored rather than counted, so a race with two of them tracks both
- * independently and a race that gains one later needs no migration — an absent key
- * is simply unspent. The set is bounded by what a race defines, which is at most a
- * couple, so there is no growth to worry about.
+ * `setPerRestSpent`'s successor, and it keeps that function's asymmetry deliberately — see
+ * `characters.setUses`, where the check lives: **a spend is validated against what the
+ * character actually has, and a hand-back never is.** That is what stops a stale key becoming
+ * permanent when a DM changes somebody's species or deletes an entry.
  *
- * The app never enforces the effect of any of these. It remembers whether one has
- * been used, which is the part a table actually forgets.
+ * ⚠️ **It writes the counted field and leaves `spentPerRest` alone.** The legacy array is
+ * folded in on *read* by `spentUsesOf`, and a write that also rewrote it would have to decide
+ * what a legacy key means when its count goes to two — which is a question the old field
+ * cannot answer. So the counted field is where every write from here lands, the legacy one
+ * drains as characters take long rests, and the narrowing commit deletes it.
+ *
+ * A count of zero is stored as **absence from the array** rather than as `{ spent: 0 }`, on
+ * this codebase's usual rule: two spellings of none is what every field-by-field rebuild then
+ * has to agree about, and `firstDifference` in scripts/board-smoke.mjs reports the difference
+ * as an extra element rather than as equality.
  */
-export async function setPerRestSpent(
+export async function setUsesSpent(
   ctx: MutationCtx,
   character: Doc<'characters'>,
   key: string,
-  spent: boolean,
-): Promise<string[]> {
+  spent: number,
+): Promise<{ key: string; spent: number }[]> {
   const vitals = await vitalsFor(ctx, character._id)
-  const current = new Set(vitals?.spentPerRest ?? [])
-  if (spent) current.add(key)
-  else current.delete(key)
+  const counted = (vitals?.spentUses ?? []).filter((use) => use.key !== key)
+  const whole = Number.isFinite(spent) ? Math.max(0, Math.round(spent)) : 0
+  const next = whole > 0 ? [...counted, { key, spent: whole }] : counted
 
-  const next = [...current]
   if (vitals) {
-    await ctx.db.patch('characterVitals', vitals._id, { spentPerRest: next })
+    await ctx.db.patch('characterVitals', vitals._id, { spentUses: next })
   } else {
-    await upsertVitals(ctx, character, { spentPerRest: next })
+    await upsertVitals(ctx, character, { spentUses: next })
   }
-  return next
+  // The folded view, so the caller's answer and the subscription's are the same shape and the
+  // same list — a client that read one from the mutation and the other from the query would
+  // otherwise see the legacy keys appear and disappear.
+  return spentUsesOf({ ...(vitals ?? ({} as Doc<'characterVitals'>)), spentUses: next })
+}
+
+/**
+ * A SHORT REST: whatever comes back on one comes back, and **nothing else happens.**
+ *
+ * ⚠️ **It does NOT heal and does NOT return hit dice, and both absences are the feature.**
+ * *Spending* hit dice is what a short rest is *for* — returning them would make the button
+ * undo the only thing the rest exists to let somebody do — and healing is what spending them
+ * achieves, one die at a time, by a person choosing how many to burn. A short rest that
+ * quietly restored hit points would take that choice away and would be the application
+ * adjudicating a rule rather than counting one.
+ *
+ * `HitDiceControls`' history is the precedent and it is worth carrying: it shipped a button
+ * labelled *"Long rest"* that only returned hit dice, and it read as broken the first time
+ * somebody pressed it at 1 hit point, because the label promised the thing the button did not
+ * do. This is the same trap pointing the other way, which is why both rests read their label
+ * **and their explanation** out of `REST_LABELS` in lib/rest.ts rather than out of whichever
+ * component drew them.
+ *
+ * What it does do is walk the counted uses and ask `restores` about each one. Three outcomes,
+ * and the third is the interesting one:
+ *
+ * - **Fully back** — the entry recharges on a short rest, so the row goes.
+ * - **Partly back** — the entry recharges on a long rest but hands one or more back on a
+ *   short one, which is the *normal* case in 2024 and the reason `regainOnShortRest` exists
+ *   at all. See `resourceValidator`.
+ * - **Left alone** — including, deliberately, every key whose entry this sheet no longer has.
+ *   That is `restores`' fail-conservative direction applied to data rather than to a union: a
+ *   key with no declaration might have been anything, and leaving it spent costs one click on
+ *   a counter anybody can edit, where clearing it hands out a resource nobody asked for.
+ *
+ * `spentPerRest` is untouched, because everything in it is a once-per-**long**-rest species
+ * ability by construction — a short rest has nothing to say about it, and saying nothing is
+ * the correct answer rather than an omission.
+ */
+export async function shortRest(ctx: MutationCtx, character: Doc<'characters'>): Promise<void> {
+  const vitals = await vitalsFor(ctx, character._id)
+  const counted = vitals?.spentUses ?? []
+  // Nothing spent is nothing to do. An early return rather than a patch of the same value,
+  // because a write here would invalidate the health-bar subscription for every client at the
+  // table every time somebody pressed a button that changed nothing.
+  if (counted.length === 0) return
+
+  const sheet = resolveSheet(character)
+  const declared = new Map<string, Resource>()
+  for (const entry of sheetEntriesOf(sheet)) {
+    const uses = usesOf(entry)
+    if (uses) declared.set(entry.id, uses)
+  }
+
+  const next: { key: string; spent: number }[] = []
+  for (const use of counted) {
+    const uses = declared.get(use.key)
+    if (uses === undefined) {
+      next.push(use)
+      continue
+    }
+    if (restores(uses.recharge, 'short')) continue
+    const remaining = Math.max(0, Math.round(use.spent) - (uses.regainOnShortRest ?? 0))
+    if (remaining > 0) next.push({ key: use.key, spent: remaining })
+  }
+
+  // A row always exists by here — `counted` came out of one — so this is a patch rather than
+  // an upsert, and the early return above is what makes that true rather than a guess.
+  if (vitals) await ctx.db.patch('characterVitals', vitals._id, { spentUses: next })
 }
 
 /**

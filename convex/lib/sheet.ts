@@ -22,6 +22,14 @@ import { collapseWhitespace, hasLoneSurrogate } from './codes'
 // here without dragging the bestiary corpus behind it — the same relationship
 // lib/classes.ts has to lib/library/.
 import { crIndex, crValidator } from './creatures'
+// ⚠️ **This module is the ONLY one in `convex/` allowed to name a mastery**, and
+// `convex/masteryGuard.test.ts` fails the build on any other quoted specifier for it. What
+// this file does with it is store one and refuse one on the wrong category — no roll, no
+// speed, no condition. See the header of lib/mastery.ts.
+import { WEAPON_MASTERIES, weaponMasteryValidator } from './mastery'
+import type { WeaponMastery } from './mastery'
+import { MAX_RESOURCE_USES, resourceValidator, restores } from './rest'
+import type { Resource } from './rest'
 import { speciesKeyValidator, storedSpeciesKeyValidator } from './species'
 // Type-only, and it has to stay that way: skills.ts imports `abilityModifier` and
 // `proficiencyBonus` from this module at runtime, so a value import back would close
@@ -596,6 +604,39 @@ export const sheetEntryValidator = v.object({
    * closed against one written by a deployment this one has not heard of.
    */
   toHit: v.optional(v.string()),
+  // ⚠️ BOTH OPTIONAL FOR THE REASON `category` AND `toHit` ABOVE ARE: THE TABLE ALREADY
+  // HOLDS ENTRIES WITHOUT THEM, AND A REQUIRED FIELD ON A POPULATED TABLE FAILS THE PUSH.
+  //
+  // **Absent, never null**, on the convention this file already states above — an optional
+  // field has a spelling for none and a second would be two states for one meaning, which
+  // `firstDifference` in scripts/board-smoke.mjs reports as `present on one side only`.
+  /**
+   * The 2024 mastery property, on a weapon and on nothing else.
+   *
+   * ⚠️ **It is a word and it does nothing.** Push does not shove, Slow does not halve a
+   * speed, Topple does not set Prone, and `convex/lib/dice.ts` never learns the vocabulary
+   * — see the header of lib/mastery.ts, and `convex/masteryGuard.test.ts`, which is what
+   * makes that a promise rather than an intention.
+   *
+   * **Only a weapon has one**, and `entriesProblem` refuses it on anything else, exactly as
+   * it refuses a to-hit — a mastery on a passive is a value nothing will ever print beside
+   * a weapon name, and a category lying about its shape.
+   */
+  mastery: v.optional(weaponMasteryValidator),
+  /**
+   * How many times this can be used, and what brings the uses back.
+   *
+   * Absent on almost everything: most entries are not limited. See `resourceValidator` in
+   * lib/rest.ts for why a partial hand-back on a short rest is a field rather than a
+   * rounding-down to long-rest-only, which is the absorbed milestone's decision reversed on
+   * the record.
+   *
+   * ⚠️ **Nothing spends this and nothing refuses a cast because of it.** The count lives on
+   * the entry; how many have gone lives in `characterVitals.spentUses`, because one is what
+   * the character *is* and the other is what changes during play (ADR 0005). A roll never
+   * consults either.
+   */
+  uses: v.optional(resourceValidator),
 })
 export type SheetEntry = Infer<typeof sheetEntryValidator>
 
@@ -1347,6 +1388,50 @@ export function toHitOf(entry: SheetEntry): string | null {
   // and it is the place the compiler makes somebody answer.
   if (!rollShapeOf(categoryOf(entry)).toHit) return null
   return entry.toHit === undefined || entry.toHit === '' ? null : entry.toHit
+}
+
+/**
+ * The only place the optional `mastery` is read. **Null on anything that is not a weapon**,
+ * whatever is stored on it.
+ *
+ * `toHitOf`'s shape exactly, and asked the same way: *does this category carry one* rather
+ * than *is it the weapon*, because those are the same question today and the second stops
+ * being right the moment a fourth category is added. `rollShapeOf` is the place the compiler
+ * makes somebody answer that.
+ *
+ * ⚠️ **Reading it does not make anything happen, and this accessor is where somebody will
+ * first be tempted.** It returns a word. Nothing in `convex/` may call it except this module
+ * — `convex/masteryGuard.test.ts` sweeps for exactly that — because the plausible next commit
+ * is `lib/dice.ts` asking whether the weapon has Vex. The renderer calls it, prints the word,
+ * and stops.
+ *
+ * Fail-closed against a value the vocabulary has never heard of, for `normaliseMarkers`'
+ * reason: a schema push is not atomic, so a row written by a newer deployment can be read by
+ * an older one, and an unrecognised mastery must be absent rather than printed raw.
+ */
+export function masteryOf(entry: SheetEntry): WeaponMastery | null {
+  if (!rollShapeOf(categoryOf(entry)).toHit) return null
+  const stored = entry.mastery
+  if (stored === undefined) return null
+  return (WEAPON_MASTERIES as readonly string[]).includes(stored) ? stored : null
+}
+
+/**
+ * The only place the optional `uses` block is read. **Null on an entry with nothing to
+ * count**, which is almost all of them.
+ *
+ * **Absent, never a zero-max object** — see `resourceValidator` in lib/rest.ts, where *absent,
+ * never zero* is the absorbed milestone's rule kept verbatim, and `entriesProblem` below,
+ * which refuses the pairing that would break it. A caller therefore never has to decide
+ * whether `max: 0` means *unlimited* or *unusable*.
+ *
+ * Kind-agnostic and category-agnostic, unlike `toHitOf` and `masteryOf` above: a limited-use
+ * thing is as likely to be a passive (Rage, Second Wind) as an action, and a creature's
+ * recharge abilities are the same shape. There is no arity rule to enforce here because there
+ * is no category for which a use count would be meaningless.
+ */
+export function usesOf(entry: SheetEntry): Resource | null {
+  return entry.uses ?? null
 }
 
 /**
@@ -2301,6 +2386,28 @@ function normaliseEntry(entry: SheetEntry): SheetEntry {
     // untested code that nobody notices is wrong.
     ...(entry.category === undefined ? {} : { category: entry.category }),
     ...(toHit === undefined || toHit === '' ? {} : { toHit }),
+    // **The fifth and sixth fields on this one function**, and the same note applies: a field
+    // added to `sheetEntryValidator` and not added here is silently discarded on every write.
+    // This entry shape is shared across a hero's feats, a hero's spells, a monster's actions
+    // and both override diffs, so it is six array positions fixed by these two lines.
+    //
+    // A mastery is a literal and has nothing to tidy. `uses` is rebuilt field by field rather
+    // than spread, for this function's own reason — spreading would carry an unknown field
+    // into the database — and its two numbers are rounded because a stepper and a scaler can
+    // both produce a fraction. `regainOnShortRest` stays absent when it is absent: it means
+    // *no partial hand-back*, and a materialised 0 would be a second spelling of that.
+    ...(entry.mastery === undefined ? {} : { mastery: entry.mastery }),
+    ...(entry.uses === undefined
+      ? {}
+      : {
+          uses: {
+            max: Math.round(entry.uses.max),
+            recharge: entry.uses.recharge,
+            ...(entry.uses.regainOnShortRest === undefined
+              ? {}
+              : { regainOnShortRest: Math.round(entry.uses.regainOnShortRest) }),
+          },
+        }),
   }
 }
 
@@ -2589,6 +2696,47 @@ function creatureSkillsProblem(skills: CreatureSkills | undefined): SheetProblem
   return null
 }
 
+/**
+ * The first thing wrong with an entry's use count, or null.
+ *
+ * ⚠️ **`max` is bounded from ONE rather than from zero, which is *absent, never zero* enforced
+ * rather than merely written down.** A `uses` object with a `max` of 0 is a thing that exists
+ * and can never be used — a state no sheet wants, and one that would make every reader decide
+ * for itself whether 0 meant *unlimited* or *unusable*. An entry with nothing to count has no
+ * `uses` at all, which is what `usesOf` returning null means.
+ *
+ * ⚠️ **A partial hand-back on a SHORT-rest resource is refused, and it is a contradiction
+ * rather than a cap.** A short-rest resource already comes back in full on a short rest, so
+ * `regainOnShortRest` beside it is two rules about the same rest that disagree — the same
+ * shape as a to-hit on a passive, and refused in the same place for the same reason. Written
+ * as `restores(recharge, 'short')` rather than `recharge === 'short'` so that a third rest
+ * period is answered by the one function that has a `never` arm.
+ */
+function usesProblem(uses: Resource | undefined, path: string): SheetProblem | null {
+  if (uses === undefined) return null
+  if (!isWholeWithin(uses.max, 1, MAX_RESOURCE_USES)) {
+    return {
+      path: `${path}.max`,
+      message: `A use count has to be a whole number from 1 to ${MAX_RESOURCE_USES}. Leave it off entirely if it is not limited.`,
+    }
+  }
+  const regain = uses.regainOnShortRest
+  if (regain === undefined) return null
+  if (restores(uses.recharge, 'short')) {
+    return {
+      path: `${path}.regainOnShortRest`,
+      message: 'That already comes back in full on a short rest, so it has nothing partial to hand back.',
+    }
+  }
+  if (!isWholeWithin(regain, 1, uses.max)) {
+    return {
+      path: `${path}.regainOnShortRest`,
+      message: `A short rest hands back a whole number from 1 to ${uses.max}. Leave it off if it hands back nothing.`,
+    }
+  }
+  return null
+}
+
 function entriesProblem(
   entries: SheetEntry[],
   list: string,
@@ -2688,6 +2836,24 @@ function entriesProblem(
         message: 'Only a weapon rolls to hit. Make it a weapon, or clear the to-hit roll.',
       }
     }
+    // ⚠️ **The arity rule reaching a second field, and the same reason as the to-hit half:**
+    // a mastery on a passive is a value nothing will ever print beside a weapon name, and a
+    // category lying about its shape. Refused on the way in rather than ignored on the way
+    // out, so a stored mastery that nothing will read cannot exist — which is also what keeps
+    // `masteryOf`'s null branch about a *stale deployment* rather than about ordinary data.
+    //
+    // Asked as `shape.toHit` rather than `category === 'weapon'` for `toHitOf`'s stated
+    // reason: those are the same question today and only the first stays right when a fourth
+    // category arrives. **There is no rule the other way** — a weapon without a mastery is
+    // every weapon in the SRD that has no mastery property, and most sheets built by hand.
+    if (!shape.toHit && entry.mastery !== undefined) {
+      return {
+        path: `${path}.mastery`,
+        message: 'Only a weapon carries a mastery property. Make it a weapon, or clear it.',
+      }
+    }
+    const uses = usesProblem(entry.uses, `${path}.uses`)
+    if (uses) return uses
     if (shape.roll && entry.roll === null) {
       return {
         path: `${path}.roll`,

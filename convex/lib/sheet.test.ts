@@ -5,6 +5,7 @@ import { describe, expect, test } from 'vitest'
 import { kindOf, resolveSheet } from './resolve'
 
 import { CLASSES, SUBCLASS_LEVEL } from './classes'
+import { MAX_RESOURCE_USES } from './rest'
 import { SPECIES_KEYS, speciesKeyOf } from './species'
 import { SKILL_KEYS } from './skills'
 import type { SkillKey, SkillProficiencies } from './skills'
@@ -19,6 +20,8 @@ import {
   MAX_DEATH_SAVES,
   MAX_SENSES_LENGTH,
   MAX_TEMPORARY_HP,
+  masteryOf,
+  usesOf,
   abilitiesOf,
   abilityKeyValidator,
   clampDeathSaves,
@@ -2826,3 +2829,147 @@ describe('a preset carries a species beside its race, and a lineage', () => {
     expect(storedSheetProblem({ ...base, lineageKey: 'wo\ud83c' })?.path).toBe('lineageKey')
   })
 })
+
+describe('an entry carries a mastery and a use count', () => {
+  const weapon = (overrides: Partial<SheetEntry> = {}): SheetEntry =>
+    entry({
+      id: 'w1',
+      category: 'weapon',
+      roll: '2d6+STR',
+      toHit: '1d20+STR+PROF',
+      ...overrides,
+    })
+
+  test('masteryOf answers the word on a weapon and null on everything else', () => {
+    expect(masteryOf(weapon({ mastery: 'graze' }))).toBe('graze')
+    // ⚠️ Asked as *does this category carry one* rather than *is it the weapon*, so a stored
+    // mastery that outlived its category is dropped rather than printed on a passive.
+    expect(masteryOf(entry({ category: 'passive', mastery: 'graze' } as Partial<SheetEntry>))).toBeNull()
+    expect(masteryOf(weapon())).toBeNull()
+  })
+
+  test('a value the vocabulary has never heard of reads as absent', () => {
+    // A schema push is not atomic, so a row written by a newer deployment can be read by an
+    // older one — and an unrecognised mastery must be absent rather than printed raw.
+    const odd = { ...weapon(), mastery: 'sunder' } as unknown as SheetEntry
+    expect(masteryOf(odd)).toBeNull()
+  })
+
+  test('usesOf answers the block or null, and never a zero-max object', () => {
+    // *Absent, never zero* — the absorbed milestone's rule, enforced by `entriesProblem`
+    // below rather than merely written down, so a caller never has to decide whether `max: 0`
+    // means unlimited or unusable.
+    expect(usesOf(entry())).toBeNull()
+    expect(usesOf(entry({ uses: { max: 3, recharge: 'long' } }))).toEqual({
+      max: 3,
+      recharge: 'long',
+    })
+  })
+
+  test('both survive the field-by-field rebuild, and absent stays absent', () => {
+    const stored = normaliseSheet(
+      pc({
+        feats: [
+          weapon({ mastery: 'vex', uses: { max: 2.4, recharge: 'long', regainOnShortRest: 1.2 } }),
+        ],
+      }),
+    ) as PcSheet
+    expect(stored.feats[0]).toMatchObject({
+      mastery: 'vex',
+      // Both numbers rounded, because a stepper and a scaler can each produce a fraction.
+      uses: { max: 2, recharge: 'long', regainOnShortRest: 1 },
+    })
+
+    const bare = normaliseSheet(pc({ feats: [weapon()] })) as PcSheet
+    expect(bare.feats[0]).not.toHaveProperty('mastery')
+    expect(bare.feats[0]).not.toHaveProperty('uses')
+  })
+
+  test('an absent partial hand-back stays absent rather than becoming a zero', () => {
+    // `regainOnShortRest: 0` would be a second spelling of *no partial hand-back*, which is
+    // the two-states-for-one-meaning CLAUDE.md invariant 9 makes a rule about.
+    const stored = normaliseSheet(
+      pc({ feats: [weapon({ uses: { max: 3, recharge: 'long' } })] }),
+    ) as PcSheet
+    expect(stored.feats[0].uses).toEqual({ max: 3, recharge: 'long' })
+    expect(stored.feats[0].uses).not.toHaveProperty('regainOnShortRest')
+  })
+
+  test('a mastery on anything but a weapon is refused', () => {
+    // ⚠️ The arity rule reaching a second field. A mastery on a passive is a value nothing
+    // will ever print beside a weapon name, and a category lying about its shape — the same
+    // reasoning that refuses a to-hit on one.
+    expect(sheetProblem(pc({ feats: [weapon({ mastery: 'topple' })] }))).toBeNull()
+    for (const category of ['action', 'passive'] as SheetEntryCategory[]) {
+      const wrong = entry({
+        id: 'x1',
+        category,
+        roll: category === 'action' ? '1d8' : null,
+        mastery: 'topple',
+      })
+      expect(sheetProblem(pc({ feats: [wrong] }))?.path, category).toBe('feats[0].mastery')
+    }
+  })
+
+  test('there is deliberately no rule the other way — a weapon needs no mastery', () => {
+    // Most weapons in the SRD have no mastery property at all, and every weapon on every
+    // sheet built by hand has none.
+    expect(sheetProblem(pc({ feats: [weapon()] }))).toBeNull()
+  })
+
+  test('a use count of nought is refused, because absent is how none is said', () => {
+    expect(sheetProblem(pc({ feats: [weapon({ uses: { max: 0, recharge: 'long' } })] }))?.path).toBe(
+      'feats[0].uses.max',
+    )
+    expect(
+      sheetProblem(
+        pc({ feats: [weapon({ uses: { max: MAX_RESOURCE_USES + 1, recharge: 'long' } })] }),
+      )?.path,
+    ).toBe('feats[0].uses.max')
+    expect(
+      sheetProblem(pc({ feats: [weapon({ uses: { max: MAX_RESOURCE_USES, recharge: 'long' } })] })),
+    ).toBeNull()
+  })
+
+  test('a partial hand-back on a short-rest resource is refused as a contradiction', () => {
+    // ⚠️ Not a cap: a short-rest resource already comes back in full on a short rest, so a
+    // partial hand-back beside it is two rules about the same rest that disagree.
+    expect(
+      sheetProblem(
+        pc({ feats: [weapon({ uses: { max: 3, recharge: 'short', regainOnShortRest: 1 } })] }),
+      )?.path,
+    ).toBe('feats[0].uses.regainOnShortRest')
+  })
+
+  test('a hand-back larger than the pool, or of nothing, is refused', () => {
+    const withRegain = (regainOnShortRest: number) =>
+      sheetProblem(
+        pc({ feats: [weapon({ uses: { max: 3, recharge: 'long', regainOnShortRest } })] }),
+      )?.path
+    expect(withRegain(4)).toBe('feats[0].uses.regainOnShortRest')
+    expect(withRegain(0)).toBe('feats[0].uses.regainOnShortRest')
+    // The 2024 normal case, and the one this whole field exists for: *regain one expended use
+    // on a short rest, all on a long rest.*
+    expect(withRegain(1)).toBeUndefined()
+    expect(withRegain(3)).toBeUndefined()
+  })
+
+  test('every entry list gets the same checks, including an override’s', () => {
+    // The entry shape is shared across a hero's feats, a hero's spells, a monster's actions
+    // and both override diffs — six array positions fixed by one function.
+    expect(sheetProblem(pc({ spells: [weapon({ id: 's1', mastery: 'nick' })] }))).toBeNull()
+    expect(sheetProblem(npc({ actions: [weapon({ id: 'a1', mastery: 'cleave' })] }))).toBeNull()
+    expect(
+      storedSheetProblem({
+        kind: 'preset',
+        race: 'human',
+        classKey: 'fighter',
+        subclassKey: null,
+        level: 1,
+        locked: false,
+        overrides: { extraFeats: [weapon({ id: 'o1', uses: { max: 0, recharge: 'long' } })] },
+      })?.path,
+    ).toBe('overrides.extraFeats[0].uses.max')
+  })
+})
+
