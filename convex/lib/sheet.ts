@@ -22,7 +22,7 @@ import { collapseWhitespace, hasLoneSurrogate } from './codes'
 // here without dragging the bestiary corpus behind it — the same relationship
 // lib/classes.ts has to lib/library/.
 import { crIndex, crValidator } from './creatures'
-import { speciesKeyValidator } from './species'
+import { species, speciesLabel, storedSpeciesKeyValidator } from './species'
 // Type-only, and it has to stay that way: skills.ts imports `abilityModifier` and
 // `proficiencyBonus` from this module at runtime, so a value import back would close
 // a cycle. See the note on `skillProficienciesValidator`.
@@ -823,7 +823,13 @@ export type PresetOverrides = Infer<typeof presetOverridesValidator>
  */
 export const presetSheetValidator = v.object({
   kind: v.literal('preset'),
-  race: speciesKeyValidator,
+  // ⚠️ **The STORED union, which is one member wider than the one every other spelling uses.**
+  // It carries the retired `half-orc` so a character created before the 2024 conversion still
+  // validates on a schema push — without it `npx convex deploy` is REFUSED outright, which is
+  // how this was found. Every argument validator takes the narrow `speciesKeyValidator`, so
+  // nothing can create one from here forward and nothing sends one to a client that has not
+  // been through `speciesLabel`. Both this and the tenth member go away once the sweep has run.
+  race: storedSpeciesKeyValidator,
   classKey: classKeyValidator,
   /** Null below level 2, when no archetype has been chosen yet. */
   subclassKey: v.union(v.string(), v.null()),
@@ -2500,6 +2506,32 @@ export function storedSheetProblem(sheet: StoredSheet): SheetProblem | null {
     return null
   }
 
+  // ⚠️⚠️ **THE WRITE-SIDE REFUSAL FOR A RETIRED SPECIES, AND IT HAS TO BE HERE RATHER THAN IN
+  // A VALIDATOR — WHICH IS NOT WHERE IT STARTED.**
+  //
+  // The layer rename kept two unions and got this for free: `storedTokenLayerValidator` on the
+  // schema, `tokenLayerValidator` on `board.addToken`'s argument, and a legacy value could be
+  // stored but not created. **A sheet has no such split.** `characters.create` and
+  // `characters.updateSheet` take `storedSheetValidator` — the *same* union the schema takes —
+  // so widening `race` to admit `half-orc` for the sake of the schema push widened the argument
+  // with it, and a brand-new Half-Orc became creatable.
+  //
+  // Found by `characters.test.ts`'s argument-boundary test, which had been updated to probe
+  // `half-orc` and started getting a `NotDm` — the handler running — where it expected a bare
+  // `Error` from the validator. The alternative fix was a second sheet union for arguments,
+  // which is four validators and two more places for a field to be added to one and not the
+  // other; this is one predicate on the path every write already takes.
+  //
+  // So: **tolerated on read, refused here on write** — the asymmetry `subclassOf`,
+  // `catalogueEntry` and `librarySheet` all keep, now spelled out for a species too. A
+  // character holding one opens, keeps its name, its class and its hit points, and cannot be
+  // saved again until somebody picks one of the nine.
+  if (species(sheet.race) === null) {
+    return {
+      path: 'race',
+      message: `${speciesLabel(sheet.race)} is not one of the species this game has. Choose again.`,
+    }
+  }
   if (!isWholeWithin(sheet.level, MIN_LEVEL, MAX_LEVEL)) {
     return {
       path: 'level',

@@ -347,7 +347,9 @@ export function CharacterBuilder({
             onClick={() =>
               candidate &&
               onConfirm({
-                race: candidate.race,
+                // Narrow at the boundary rather than in the type: `confirmable` is false unless the
+                // dropdown holds one of the nine, so by here it genuinely is a `SpeciesKey`.
+                race: candidate.race as SpeciesKey,
                 lineageKey: candidate.lineageKey ?? null,
                 classKey: candidate.classKey,
                 subclassKey: candidate.subclassKey,
@@ -431,7 +433,17 @@ function LevelControl({
 }
 
 type PartialSelections = {
-  race: SpeciesKey | null
+  /**
+   * ⚠️ **A `string`, not a `SpeciesKey`, because a STORED species may have been retired.**
+   * `presetSheetValidator` takes the widened `storedSpeciesKeyValidator` so a character built
+   * before the 2024 conversion still validates on a schema push, and this is the first place
+   * that key is read by a person. Narrowing here would be the compiler agreeing with a
+   * comfortable fiction — the same one `species()` used to rest on.
+   *
+   * `speciesLabel` renders it either way; the dropdown offers only the nine that resolve, so
+   * choosing again is the only thing a retired key can become.
+   */
+  race: string | null
   lineageKey: string | null
   classKey: ClassKey | null
   subclassKey: string | null
@@ -477,11 +489,16 @@ function changed(chosen: PartialSelections, against: PresetSheet | null): boolea
  * to write it.
  */
 function candidateOf(chosen: PartialSelections, level: number): PresetSheet | null {
+  // ⚠️ **A RETIRED species is not a candidate, which is the whole of ''says plainly which
+  // species it needs choosing again''.** The character keeps the key it has — nothing here
+  // rewrites it — and simply cannot be confirmed until the player picks one of the nine. That
+  // is the same refusal `storedSheetProblem` would give, reached before anything is sent.
   if (chosen.race === null || chosen.classKey === null) return null
+  if (speciesByKey(chosen.race) === null) return null
   const hasLineages = speciesByKey(chosen.race)?.lineages !== undefined
   return {
     kind: 'preset',
-    race: chosen.race,
+    race: chosen.race as SpeciesKey,
     lineageKey: hasLineages ? chosen.lineageKey : null,
     classKey: chosen.classKey,
     subclassKey: level >= SUBCLASS_LEVEL ? chosen.subclassKey : null,

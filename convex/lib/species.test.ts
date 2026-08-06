@@ -937,40 +937,59 @@ describe('a stored species key that no longer resolves', () => {
    * ⚠️ **Tolerated on READ and refused on WRITE — and writing this test found that the refusal
    * is not where it looks like it should be.**
    *
-   * `storedSheetProblem` answers **null** for the sheet below, and that is correct rather than a
-   * hole: it validates numbers, entries and roll grammar, and it takes a `PresetSheet` — a type
-   * whose `race` field is `SpeciesKey` and therefore cannot hold a retired key in any code the
-   * compiler has seen. Adding a hand-written key check there would be a second opinion about
-   * something the type already decides.
+   * ⚠️⚠️ **THIS TEST SAID THE OPPOSITE A FEW HOURS AGO, AND THE REAL DEPLOYMENT IS WHAT MOVED
+   * IT.** It used to assert that `storedSheetProblem` was SILENT about a retired species and
+   * that `speciesKeyValidator` did the refusing at the function boundary — the same mechanical
+   * refusal `tokenLayerValidator` gives a layer. That was true, and it stopped being true.
    *
-   * **What actually refuses the write is `speciesKeyValidator`**, at the Convex function
-   * boundary, before a handler runs — the same mechanical refusal `tokenLayerValidator` gives a
-   * layer. That is the stronger of the two and it is the one asserted here. The asymmetry the
-   * roadmap names is therefore real and is spelled: the NARROW validator is what every argument
-   * takes, and only the widened stored one admits a retired key at all, which is what lets an
-   * existing row survive a push without letting a new one be created.
+   * `npx convex deploy` was refused: a character created months ago holds `race: "half-orc"`,
+   * and Convex validates **existing rows** on a push. So `presetSheetValidator.race` had to
+   * widen to `storedSpeciesKeyValidator`. The layer rename got away with two unions —
+   * `storedTokenLayerValidator` on the schema, the narrow one on `board.addToken`'s argument —
+   * but **a sheet has no such split**: `characters.create` and `characters.updateSheet` take
+   * `storedSheetValidator`, the very union the schema takes. Widening for the push widened the
+   * argument with it, and a brand-new Half-Orc became creatable.
+   *
+   * So the refusal moved to `storedSheetProblem`, on the path every write already takes. The
+   * rejected alternative was a second sheet union for arguments: four validators instead of
+   * two, and two more places for a field to be added to one and not the other.
+   *
+   * The asymmetry the roadmap names is intact and is now spelled in one predicate rather than
+   * inherited from a type: **tolerated on read, refused on write.**
    */
-  test('is refused on write by the validator, which is where that refusal lives', () => {
+  test('is refused on write by storedSheetProblem, which is where that refusal now lives', () => {
+    for (const race of [INVENTED, RETIRED]) {
+      const problem = storedSheetProblem({
+        kind: 'preset',
+        race,
+        classKey: 'fighter',
+        subclassKey: 'champion',
+        level: 3,
+        locked: false,
+      } as unknown as PresetSheet)
+      expect(problem, race).not.toBeNull()
+      expect(problem?.path, race).toBe('race')
+    }
+
+    // The control: a species that resolves passes the same check, so the refusal above is
+    // about the key rather than about the fixture being malformed some other way.
+    expect(
+      storedSheetProblem({
+        kind: 'preset',
+        race: 'human',
+        classKey: 'fighter',
+        subclassKey: 'champion',
+        level: 3,
+        locked: false,
+      } as PresetSheet),
+    ).toBeNull()
+
+    // And the NARROW validator still refuses both too, which is what stops a retired key ever
+    // arriving through an argument that takes it rather than through the stored sheet.
     const literals = speciesKeyValidator.members.map((member) => member.value)
     expect(literals).toEqual([...SPECIES_KEYS])
     expect(literals).not.toContain(INVENTED)
     expect(literals).not.toContain(RETIRED)
-
-    // And the sheet checker is silent about it, deliberately — see above. Asserted rather than
-    // left implicit, so a later reader does not add a redundant check to "fix" the gap.
-    for (const race of [INVENTED, RETIRED]) {
-      expect(
-        storedSheetProblem({
-          kind: 'preset',
-          race,
-          classKey: 'fighter',
-          subclassKey: 'champion',
-          level: 3,
-          locked: false,
-        } as unknown as PresetSheet),
-        race,
-      ).toBeNull()
-    }
   })
 
   /**

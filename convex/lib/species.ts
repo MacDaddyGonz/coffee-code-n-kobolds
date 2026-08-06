@@ -772,6 +772,49 @@ export const RETIRED_SPECIES: Record<string, string> = {
   'half-orc': 'Half-Orc',
 }
 
+// ─── TRANSITION ONLY ────────────────────────────────────────────────────────────────
+// Everything below carries the retired species keys across a schema push, and is deleted
+// once the sweep has run against every deployment. Nothing new should be built on it.
+
+/**
+ * The union **as it may still be found in the database**: the nine canonical species plus
+ * every key in `RETIRED_SPECIES`.
+ *
+ * ⚠️⚠️ **THIS IS NOT BELT AND BRACES. WITHOUT IT `npx convex deploy` IS REFUSED**, and that is
+ * how it was found rather than how it was designed: the branch typechecked, 1711 tests passed,
+ * and the push failed against the dev deployment with *Document … in table "characters" does
+ * not match the schema* over a character created months ago with `race: "half-orc"`. Convex
+ * validates **existing rows** on a push, so removing a literal from a stored union is a
+ * *deploy* failure long before it is the `TypeError` `species()` was fixed to prevent. The
+ * lookup is the second failure; this is the first, and only a real deployment could say so.
+ *
+ * Used by `presetSheetValidator` and by nothing else, which is the whole shape of the
+ * widen–migrate–narrow: the **stored** union is wide enough to validate a row written before
+ * a species was retired, and every other spelling in the codebase — `characters.create`'s
+ * argument validator, `characters.updateSheet`'s, the builder's dropdown — is already the
+ * narrow one. So no `half-orc` can be created from this commit forward and the browser never
+ * learns that the transition happened. `storedTokenLayerValidator` did exactly this for the
+ * `dm` → `gm` layer rename one milestone ago, and this is the second instance rather than a
+ * new idea.
+ *
+ * ⚠️ **Hand-spelled rather than built from `RETIRED_SPECIES`**, for `speciesKeyValidator`'s
+ * reason: a Convex validator is a value, the record is a value too, and a generated union
+ * would make the two agree by construction — deleting the only check that can fail.
+ * `species.test.ts` pins the members of both against each other.
+ */
+export const storedSpeciesKeyValidator = v.union(
+  v.literal('dragonborn'),
+  v.literal('dwarf'),
+  v.literal('elf'),
+  v.literal('gnome'),
+  v.literal('goliath'),
+  v.literal('halfling'),
+  v.literal('human'),
+  v.literal('orc'),
+  v.literal('tiefling'),
+  v.literal('half-orc'),
+)
+
 /**
  * Every once-per-rest ability a species brings. Flat, because the sheet shows one list
  * and a species with two of them should not need the caller to know that.

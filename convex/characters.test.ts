@@ -3902,7 +3902,14 @@ describe('characters.create — a character built from the library', () => {
       // nobody had looked. A *retired* key is the only key that can reach this boundary in
       // anger: `species()` tolerates one on read, and this union is where the write is
       // refused.
-      { ...presetSheet(), race: 'half-orc' },
+      // ⚠️ **NOT `half-orc` any more, and the reason is worth the comment.** That key *is* now
+      // admitted by the argument validator, because `presetSheetValidator.race` had to widen to
+      // `storedSpeciesKeyValidator` or `npx convex deploy` is refused over characters created
+      // before the conversion. A sheet has no narrow/wide split the way a layer does — the same
+      // union is the schema AND the argument — so the write-side refusal for a retired species
+      // moved into `storedSheetProblem`, where it is a `ConvexError` and is tested next door.
+      // What this test is about is the OTHER refusal, the one that never reaches a handler.
+      { ...presetSheet(), race: 'kobold' },
       { ...presetSheet(), classKey: 'warlock' },
     ]) {
       const thrown = await t

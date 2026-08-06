@@ -473,10 +473,23 @@ const FIGHTER = {
   base: { maxHp: 12, hitDice: { count: 1, faces: 10 } },
 }
 
-/** The three races that move a number, and the only three. */
-const ELF_DEX_BONUS = 2
+/**
+ * The species that move a number, and what they move.
+ *
+ * ⚠️ **`ELF_DEX_BONUS` is gone, and its absence is the sharpest single statement of the 2024
+ * conversion.** No species grants an ability score increase any more — the spread comes from a
+ * *background*, which stays excluded and whose numbers are absorbed into the premade sheet. The
+ * assertion that used to read `base.dex + 2` now reads `base.dex`, which looks like a weaker
+ * test and is the stronger one: it says the library's number reaches the sheet **untouched**,
+ * which is what "allocated without considering species" became true *by construction* rather
+ * than by discipline.
+ *
+ * The Goliath moved 45 (35 + a 10 bonus) and now moves 35 (an absolute base). Same species,
+ * same reason it exists, different arithmetic — `speedBonus` became `baseSpeed` so that a
+ * number the SRD prints is stored rather than computed.
+ */
 const DWARF_HP_PER_LEVEL = 1
-const GOLIATH_SPEED = 45
+const GOLIATH_SPEED = 35
 
 /** The DM's thumb on the scale, in the one field this section overrides. */
 const DM_ARMOUR_CLASS = 21
@@ -2373,12 +2386,11 @@ async function main() {
     // class and a level; the scores, the armour class, the hit dice, the thirteen
     // skill flags and every feat below came back out of the library.
     const built = elfAtOne ? elfAtOne.sheet : null
+    // ⚠️ The library's abilities, UNCHANGED — see the note on `DWARF_HP_PER_LEVEL` above. An
+    // Elf used to arrive with +2 Dexterity on top of this; no 2024 species touches a score, so
+    // a drift of even one point here means something reintroduced a species ability bonus.
     const abilityDrift = built
-      ? firstDifference(
-          { ...ROGUE.base.abilities, dex: ROGUE.base.abilities.dex + ELF_DEX_BONUS },
-          built.abilities,
-          'abilities',
-        )
+      ? firstDifference({ ...ROGUE.base.abilities }, built.abilities, 'abilities')
       : 'no sheet came back'
     const skillDrift = built
       ? firstDifference(ROGUE_SKILLS, built.skillProficiencies, 'skillProficiencies')
@@ -2467,14 +2479,14 @@ async function main() {
     const goliathSheet = await readSheet(goliath.characterId)
     const wantedDwarfHp = ROGUE.thief3.maxHp + DWARF_HP_PER_LEVEL * 3
     check(
-      'each race landed on the library sheet exactly once',
+      'each species landed on the library sheet exactly once',
       built &&
-        built.abilities.dex === ROGUE.base.abilities.dex + ELF_DEX_BONUS &&
+        built.abilities.dex === ROGUE.base.abilities.dex &&
         dwarfSheet &&
         dwarfSheet.sheet.maxHp === wantedDwarfHp &&
         goliathSheet &&
         goliathSheet.sheet.speed === GOLIATH_SPEED,
-      `elf dex ${built ? built.abilities.dex : '—'} of ${ROGUE.base.abilities.dex}+${ELF_DEX_BONUS}, dwarf ${dwarfSheet ? dwarfSheet.sheet.maxHp : '—'} hp of ${wantedDwarfHp}, goliath ${goliathSheet ? goliathSheet.sheet.speed : '—'} feet`,
+      `elf dex ${built ? built.abilities.dex : '—'} of ${ROGUE.base.abilities.dex} unchanged, dwarf ${dwarfSheet ? dwarfSheet.sheet.maxHp : '—'} hp of ${wantedDwarfHp}, goliath ${goliathSheet ? goliathSheet.sheet.speed : '—'} feet`,
     )
 
     // Levelling up. Nothing below sends a sheet except the one call that supplies
@@ -2713,12 +2725,17 @@ async function main() {
     // while asserting nothing at all about archetypes. The two argument-validator cases
     // above it would still refuse for the right reason, and they carry the code anyway so
     // that the whole block is refused by the bound it names rather than by the gate.
-    await refuses('characters:create refused a race that is not one of the eight', () =>
+    // ⚠️ **The probe was `gnome`, which is now a real species.** It has to be a key the narrow
+    // validator genuinely refuses, and the interesting one is `half-orc`: it is the key this
+    // application *used to* accept, so it is the one somebody reintroduces — from an old
+    // fixture, an old comment, or a stored validator widened "for compatibility". A made-up
+    // string would refuse for a reason nothing is under pressure to break.
+    await refuses('characters:create refused the retired half-orc species', () =>
       client.mutation('characters:create', {
         code,
         dmCode,
-        name: 'Uninvited Gnome',
-        sheet: presetSheet({ race: 'gnome', classKey: 'rogue' }),
+        name: 'Uninvited Half-Orc',
+        sheet: presetSheet({ race: 'half-orc', classKey: 'rogue' }),
       }),
     )
     await refuses('characters:create refused a class that is not one of the eight', () =>
