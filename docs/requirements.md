@@ -104,6 +104,15 @@ decision instead of its consequences. What that milestone changes:
   **backgrounds remain excluded**, there is still no background on a character, and there is still no
   third source a proficiency can come from.
 
+✅ **All of those are now realised rather than predicted**, by
+[ADR 0016](adr/0016-the-5e-2024-conversion.md) and the Milestone 14 entry at the foot of this
+section: nine species, no ability score moved by any of them, up to five traits and a lineage behind
+the dropdown, thirty feet, eighteen skills. Nothing above is deleted — this entry is still the
+record of what Milestone 4 decided, and the marks are how the record and the build stay
+distinguishable. ⚠️ **One small discrepancy, left in place and named rather than corrected:** the
+paragraph introducing the marks says *four sentences* and the list has **five**. The list is the
+accurate half; the count was written before the Orc was found.
+
 **What survives untouched is the Equipment paragraph**, and it is worth ending on: a fixed kit as a
 line of text is exactly as true of an SRD starting-equipment package as of a hand-written one, and
 *"No inventory — set equipment per character"* has now governed two entirely different rule sets
@@ -144,9 +153,17 @@ are still the next milestone's work — it is the spec's own sentence made preci
 implement, and the wording of the roll announcement is generated from it rather than written per
 entry.
 
-**Skills are listed alphabetically now**, thirteen of them, each annotated with its ability —
+🚫 **The paragraph below is superseded by [ADR 0016](adr/0016-the-5e-2024-conversion.md): skills are
+grouped under their ability again, and there are eighteen of them.** Struck through in place rather
+than corrected, per [the ADR convention](adr/README.md). Read it as *this conclusion was overruled*
+and not as *this reasoning was wrong* — the argument was right about a flat list of thirteen and
+stopped being right at eighteen, which is a fact about the length of the list rather than about the
+argument. Eighteen rows in one column is a list a reader scans; six short blocks under the ability
+that decides the bonus is the same information with the grouping doing work.
+
+~~**Skills are listed alphabetically now**, thirteen of them, each annotated with its ability —
 `Athletics (STR)` — rather than grouped under ability headings. The grouping made a reader learn
-the grouping before they could find a skill; the annotation answers the same question in place.
+the grouping before they could find a skill; the annotation answers the same question in place.~~
 
 #### Seats, sheets and control — 2026-08-01 — [ADR 0009](adr/0009-who-plays-what-and-what-control-grants.md)
 
@@ -280,6 +297,11 @@ promised them. Two of the four have since been reopened deliberately, so read th
   is stored, through one accessor that already existed. **Still true after the conversion**, and the
   only one of the four that is: derive what the SRD derives, store what the SRD prints, and a
   creature's initiative is printed.
+
+✅ **All three "not yet built" marks are now built**, by the Milestone 14 entry at the foot of this
+section and [ADR 0016](adr/0016-the-5e-2024-conversion.md), which is the amendment those bullets
+promised. The bullets are left as written, because they are the record of a decision being reversed
+and the reversal is the interesting half.
 
 ⚠️ **The three reversals change what the app *counts* and *prints*, and not what it *adjudicates*,
 which is why they are amendments rather than a change of character.** No roll is compared to anything,
@@ -435,6 +457,129 @@ different number, in the same place, refusing the same way.
 **Nothing else moved.** The other seven items in that milestone are a menu entry that was never
 wired up, four controls filed where nobody looks for them, a name that was clipped and a circle that
 was too small — none of them a rule, and none of them a secret.
+
+#### Milestone 14 — 2026-08-07 — [ADR 0016](adr/0016-the-5e-2024-conversion.md)
+
+⚠️ **The largest amendment in this file, and the first that replaces the rule set rather than
+adjusting it.** Every entry above records the build being allowed to differ from the two lists at the
+top of this page by one rule, or two. This one records the **subset those lists describe being
+withdrawn** and a published rule set put in its place. The lists stay verbatim, as they always do,
+and they are now a record of the game this application was originally asked for rather than a
+description of the game it plays.
+
+**1. "Dungeons and Dragons Lite" is replaced by the D&D 5e (2024) SRD 5.2.1, at character levels 1
+to 5.** Not extended, not a superset of, not "Lite plus some things" — replaced. Where a number, a
+list or a name in this application disagrees with SRD 5.2.1 from here on, **the SRD is right and the
+application is wrong**, which is the opposite of the relationship the *DnD Lite rule set* lists set
+up. The level cap is the whole of what is reduced: levels 1–5, which caps a spell at level 3 and a
+prepared creature at challenge rating 6. Everything below is either a consequence of that sentence or
+an exclusion that survived it.
+
+**2. "No racial abilities" and "No skills from backgrounds / proficiencies" stay lifted — and both
+are lifted for a different reason than Milestone 4 gave.** Neither exclusion comes back; what changes
+is the answer to *where does this come from*, which is the question the exclusions were really
+about.
+
+- A species ability is now **SRD text**, not a trait somebody wrote for this application. Nine
+  species carry up to five traits each, and a lineage or ancestry choice behind five of them. **No
+  species moves an ability score** — in 2024 none does — so the Milestone 4 sentence about the Elf's
+  +2 Dexterity describes arithmetic that no longer exists anywhere in the codebase.
+- A skill proficiency now comes from the premade sheet's **absorbed background**, and from the DM's
+  override, and from nothing else. Milestone 4's phrasing was *from the class*; the source moved and
+  the count did not. **There is still exactly one source and one override**, which is the whole of
+  what that half-lifting ever promised.
+
+**3. Background remains excluded, and its numbers are absorbed — the exclusion is what forces the
+absorption.** This is the sentence most likely to be read backwards, so it is stated in the order the
+reasoning runs. In 2024 the **background** grants the ability score spread, two skill proficiencies
+and an Origin feat; the species grants none of them. Excluding backgrounds therefore removes the
+*source* of numbers a playable character must have. The resolution is that the premade sheet stores
+the finished numbers, which is what a premade sheet has always been for: `LibrarySheet.abilities`
+already held *"the standard array, allocated for the class and without considering race"*, and after
+this it holds the standard array with the build's background increases already in it.
+
+⚠️ **A reader who concludes "backgrounds were lifted" has it exactly inverted.** There is still **no
+background on a character**, no background list, no background dropdown, and — the part that matters
+— **no second source of proficiency**. The distinction Milestone 4 drew is not merely preserved, it
+is the mechanism: one authority for a fixed set of numbers, plus the DM's override, and nothing
+third. Adding backgrounds as an entity would put the second source back on the day it landed.
+
+**4. "35 speed for all characters" — superseded by 30.** Milestone 4 made it a default rather than a
+rule; this makes the default **30**, because eight of the nine SRD species have `Speed: 30 feet` and
+one — the Goliath — has 35. The *mechanism* that entry describes is untouched and was built right: a
+stored field, absent by default, read through one accessor. Only the number moves, and it moves
+because a species now **prints** its speed rather than adding to a constant. A Wood Elf reads 35
+because its lineage says 35, not because anything added five.
+
+**5. A spell's level stops being a label.** *"Limited / basic list of spells"* on the Included list is
+now the SRD's own list at levels 0–3, and a level is a **resource**: slots are counted, spent and
+returned by a rest. ⚠️ **Counting is not adjudicating, and the distinction is the same one this
+section has drawn at every previous entry.** No cast is refused, no roll is compared to a save DC or
+an armour class, and casting at a higher slot level changes no die of damage. A person presses a
+button that says what it will spend; a counter goes down. Death saves, temporary hit points, heroic
+inspiration and per-feature use counts arrive on the same terms and for the same reason.
+
+**6. What stays out, and it is most of what was ever out.** **Backgrounds as an entity, inventory,
+weight, encumbrance, experience points, money, languages, multiclassing, every biography field**
+(personality trait, ideal, bond, flaw, ally, organisation, backstory, alignment, faith, gender, age,
+height, eye and hair), **levels 6–20, magic items and attunement, the action economy, and
+concentration as a check.** Two of those are worth a sentence each because the conversion put them
+within arm's reach. **Equipment is still a line of text** — an SRD starting-equipment package reduced
+to `LibrarySheet.equipment`, which is exactly what *"No inventory — set equipment per character"*
+permitted for the hand-written kits and permits unchanged for these. And **languages are the one
+un-crossed box on a 2024 sheet that stays out**: the *Proficiencies & Training* panel lists Armour,
+Weapons, Tools and Languages, and that box keeps three of its four sections.
+
+**7. Weapon mastery, casting times and concentration are labels, and they lift nothing.** Every SRD
+weapon carries one of eight **mastery properties** — Cleave, Graze, Nick, Push, Sap, Slow, Topple,
+Vex. Three of the eight name effects this document excludes by name: **Push** shoves a creature ten
+feet, **Slow** reduces its Speed by ten, **Topple** knocks it Prone. *"No movement-detriment status
+effects (prone, stand up, difficult terrain, etc.)"* **stands exactly as written.** What ships is the
+word on the weapon entry: nothing shoves, nothing halves a speed, nothing sets Prone, and no roll
+consults a mastery. A spell row likewise prints a casting time (`1A`, `1BA`, `1h`) and a duration
+that may read *Concentration, up to 1 minute* — printed because the rulebook prints them, checked by
+nothing. No spell is dropped when its caster takes damage and no bonus action is counted.
+
+⚠️ **This is recorded for the reason the condition pips were, and it is held the same way.**
+`markerGuard.test.ts` greps `convex/` for a quoted import of the condition vocabulary and allows
+exactly three modules; **`masteryGuard.test.ts` does the same for the mastery vocabulary**, and the
+module both exist to keep out is `convex/lib/dice.ts` — because the way this exclusion breaks is
+somebody writing three reasonable lines that grant advantage for Vex, and a comment there would not
+stop them. A near-miss that goes unrecorded is indistinguishable from a quiet lifting, and this
+milestone puts the excluded words themselves on screen.
+
+**8. The content is SRD 5.2.1, used under CC BY 4.0, and the attribution is a licence condition
+rather than a courtesy.** This work includes material taken from the System Reference Document 5.2
+("SRD 5.2") by Wizards of the Coast LLC, available at <https://www.dndbeyond.com/srd>. The SRD 5.2 is
+licensed under the Creative Commons Attribution 4.0 International License, available at
+<https://creativecommons.org/licenses/by/4.0/legalcode>. The notice also lives in
+[README.md](../README.md), which is the file a person reading this repository sees first. ⚠️ **The
+numbers are transcribed and every description is paraphrased**, so no SRD prose ships in this
+repository and no SRD file is vendored into it — which is a promise about the bundle as much as about
+the licence.
+
+**9. ⚠️ Two Goliath ancestries brush the movement-detriment exclusion, and they are named here so
+the near-miss is on the record.** *Hill's Tumble* gives a target the **Prone** condition and *Frost's
+Chill* **reduces its Speed by 10 feet** — the two effects that exclusion names most directly, printed
+on a hero's own sheet for the first time. They ship as **words on a sheet**, in the same register as
+a weapon mastery, a condition pip and a creature's loot: nothing shoves, nothing halves a speed,
+nothing sets a condition, and the only thing the application does with either row is roll the damage
+die the SRD prints beside it. Written down because an unrecorded near-miss is indistinguishable from
+a quiet lifting, and because these two are close enough that a future reader would otherwise assume
+the exclusion had gone.
+
+**10. Skills are grouped under their ability again, and there are eighteen.** This **supersedes the
+sentence in *The screen and the sheet taxonomy* above** — *"Skills are listed alphabetically now,
+thirteen of them"* — which is struck through in place there rather than corrected. That entry's
+argument was right about thirteen: a flat annotated list is easier to scan than six headings, when
+the list is short enough to scan at all. Eighteen is not, and the ability heading is the thing a
+reader is looking the skill up in order to find. **Neither the count nor the grouping is a rule** —
+what a skill *is*, what grants it and what it rolls are all unchanged from point 2.
+
+**Nothing on the Included list gained an adjudication, and the test that decided the previous six
+milestones is the test this one passed too:** the moment something changes a number a player rolls
+against without a person asking it to, it needs an amendment and an ADR. Every number here moves
+because somebody pressed something — a level, a lineage, a challenge rating, a slot, a rest.
 
 ## Accounts and games
 
