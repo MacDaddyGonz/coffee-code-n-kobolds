@@ -3,8 +3,10 @@ import { convexTest } from 'convex-test'
 import { describe, expect, test } from 'vitest'
 
 import { api, internal } from './_generated/api'
-import type { Id } from './_generated/dataModel'
-import { defaultNpcSheet } from './lib/sheet'
+import type { Doc, Id } from './_generated/dataModel'
+import { PRE_2024_SPEED_FEET } from './lib/migrate'
+import { SPEED_FEET, defaultNpcSheet, defaultPcSheet, noSkills, speedOf } from './lib/sheet'
+import type { NpcSheet, PcSheet, PresetSheet, StoredSheet } from './lib/sheet'
 import schema from './schema'
 
 const modules = import.meta.glob('./**/*.ts')
@@ -479,5 +481,657 @@ describe('admin.listByPrefix', () => {
 
     const listing = await t.query(internal.admin.listByPrefix, { prefix: 'Board Smoke ' })
     expect(listing).toEqual({ truncated: false, games: [] })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// TRANSITION ONLY — Milestone 14's sweep
+// ---------------------------------------------------------------------------
+
+/**
+ * The suite for `admin.listUnmigrated` and `admin.migrateGame`, and it is a different
+ * shape of test again from the purge above.
+ *
+ * A destructive tool goes wrong by leaving something behind or by taking something it was
+ * not asked for. A **migration** goes wrong in three ways, and each has a block below:
+ *
+ * - it **does not run** — so every fixture here is a document the sweep demonstrably
+ *   changes, and every assertion has a before as well as an after;
+ * - it **runs twice** — so the whole thing is run twice and the second pass must write
+ *   nothing at all, which is what makes it safe against a deployment somebody is playing
+ *   on;
+ * - it **rehearses and writes anyway** — so the dry run is asserted against a fixture the
+ *   real run is then shown to change, because "nothing was written" passes trivially over
+ *   a game that had nothing to write.
+ *
+ * ⚠️ **Every fixture is inserted through `ctx.db` rather than through a mutation, and the
+ * awkwardness is the job rather than a nuisance.** These are rows as a deployment holds
+ * them — a `race` with no `species`, thirteen skill flags, a `spentPerRest` — and no
+ * mutation in the application produces one any more. They still *validate*, because this is
+ * the wide half of the transition and the schema is deliberately wide enough to hold both
+ * the shapes the sweep reads and the shapes it writes. The narrowing commit is what takes
+ * that away, and it is what forces this block to relax the harness.
+ */
+
+/** The thirteen skill flags a `pc` sheet carried before the 2024 conversion. */
+const THIRTEEN_SKILLS = {
+  athletics: false,
+  acrobatics: true,
+  sleightOfHand: false,
+  stealth: true,
+  arcana: false,
+  investigation: false,
+  animalHandling: false,
+  insight: false,
+  perception: true,
+  deception: false,
+  intimidation: false,
+  performance: false,
+  persuasion: false,
+}
+
+/** The five the 2024 conversion added, which a sheet stored before it does not carry. */
+const ADDED_IN_2024 = ['history', 'nature', 'religion', 'medicine', 'survival'] as const
+
+/**
+ * A `preset` as the database holds one from before the rename: `race` required, no
+ * `species`.
+ */
+function legacyPreset(overrides: Record<string, unknown> = {}): StoredSheet {
+  return {
+    kind: 'preset',
+    race: 'human',
+    classKey: 'fighter',
+    subclassKey: null,
+    level: 1,
+    locked: false,
+    ...overrides,
+  } as unknown as StoredSheet
+}
+
+/** A hand-typed hero with thirteen skill flags and no `speed`. */
+function legacyPc(overrides: Partial<PcSheet> = {}): StoredSheet {
+  return {
+    ...defaultPcSheet(),
+    className: 'Rogue',
+    skillProficiencies: THIRTEEN_SKILLS,
+    ...overrides,
+  } as unknown as StoredSheet
+}
+
+/** A hand-typed creature with no `speed`, which is every one written before the bestiary. */
+function legacyNpc(overrides: Partial<NpcSheet> = {}): StoredSheet {
+  return { ...defaultNpcSheet(), notes: 'A goblin somebody typed in.', ...overrides }
+}
+
+async function makeGame(t: Harness, name: string) {
+  const { code, dmCode } = await t.mutation(api.games.create, {
+    name,
+    dmName: 'Mike',
+    recoveryPhrase: 'brass lantern',
+  })
+  const gameId = await t.run(async (ctx) => {
+    const game = await ctx.db
+      .query('games')
+      .withIndex('by_code', (q) => q.eq('code', code))
+      .unique()
+    if (!game) throw new Error(`no game with code ${code}`)
+    return game._id
+  })
+  return { code, dmCode, gameId }
+}
+
+/**
+ * Inserts a character and its vitals row straight into the tables, bypassing every
+ * mutation.
+ *
+ * That is the only way to produce a pre-conversion document now that the narrowing has
+ * landed, and it is also the honest fixture: what this sweep meets on a real deployment is
+ * a row, not a request.
+ */
+async function insertLegacy(
+  t: Harness,
+  gameId: Id<'games'>,
+  name: string,
+  sheet: StoredSheet,
+  vitals: Record<string, unknown> = {},
+): Promise<Id<'characters'>> {
+  return await t.run(async (ctx) => {
+    const characterId = await ctx.db.insert('characters', { gameId, name, sheet })
+    await ctx.db.insert('characterVitals', {
+      gameId,
+      characterId,
+      currentHp: 10,
+      ...vitals,
+    } as unknown as Omit<Doc<'characterVitals'>, '_id' | '_creationTime'>)
+    return characterId
+  })
+}
+
+async function storedSheet(t: Harness, characterId: Id<'characters'>) {
+  const row = await t.run(async (ctx) => await ctx.db.get('characters', characterId))
+  if (!row) throw new Error('no such character')
+  return row.sheet as StoredSheet & Record<string, unknown>
+}
+
+async function storedVitals(t: Harness, characterId: Id<'characters'>) {
+  const row = await t.run(
+    async (ctx) =>
+      await ctx.db
+        .query('characterVitals')
+        .withIndex('by_characterId', (q) => q.eq('characterId', characterId))
+        .unique(),
+  )
+  if (!row) throw new Error('no vitals row')
+  return row as Doc<'characterVitals'> & Record<string, unknown>
+}
+
+/** Every row of a game, as JSON, so "nothing was written" can be asserted whole. */
+async function snapshot(t: Harness, gameId: Id<'games'>) {
+  return await t.run(async (ctx) => {
+    const characters = await ctx.db
+      .query('characters')
+      .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+      .collect()
+    const vitals = await ctx.db
+      .query('characterVitals')
+      .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+      .collect()
+    return JSON.stringify({ characters, vitals })
+  })
+}
+
+function unmigrated(t: Harness) {
+  return t.query(internal.admin.listUnmigrated, {
+    paginationOpts: { numItems: 25, cursor: null },
+  })
+}
+
+const NOTHING = {
+  species: 0,
+  archetypes: 0,
+  skills: 0,
+  overrideSkills: 0,
+  speeds: 0,
+  uses: 0,
+}
+
+describe('admin.listUnmigrated', () => {
+  test('names a game with unswept documents and counts each kind of change', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'The Undercroft')
+    await insertLegacy(t, game.gameId, 'Seraphine', legacyPreset())
+    await insertLegacy(t, game.gameId, 'Thorn', legacyPc())
+    await insertLegacy(t, game.gameId, 'Goblin', legacyNpc(), {
+      spentPerRest: ['relentless-endurance'],
+    })
+
+    const listing = await unmigrated(t)
+    expect(listing.isDone).toBe(true)
+    expect(listing.page).toHaveLength(1)
+    expect(listing.page[0]).toMatchObject({
+      _id: game.gameId,
+      name: 'The Undercroft',
+      code: game.code,
+      createdByName: 'Mike',
+      counts: { species: 1, archetypes: 0, skills: 1, overrideSkills: 0, speeds: 2, uses: 1 },
+    })
+  })
+
+  test('a game with nothing to do is absent rather than listed with six zeroes', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'Already Swept')
+    // Built through the real mutation, so it is exactly what a premade character created
+    // today looks like: a `species`, eighteen flags, and no legacy array.
+    await t.mutation(api.characters.create, {
+      code: game.code,
+      dmCode: game.dmCode,
+      name: 'Modern Hero',
+      sheet: {
+        kind: 'preset',
+        species: 'human',
+        classKey: 'fighter',
+        subclassKey: null,
+        level: 1,
+        locked: false,
+      },
+    })
+
+    const listing = await unmigrated(t)
+    expect(listing.page).toEqual([])
+    expect(listing.isDone).toBe(true)
+  })
+
+  /**
+   * ⚠️ **THE ONE PLACE THIS SWEEP CANNOT TELL A LEGACY ROW FROM A NEW ONE, WRITTEN DOWN
+   * RATHER THAN DISCOVERED BY WHOEVER RUNS IT SECOND.**
+   *
+   * `characters.create` with no sheet writes `defaultPcSheet()`, which carries **no
+   * `speed`** — deliberately, because absent means *the default*, and that is the whole
+   * design `speedOf` exists for. But *absent* is also exactly what a sheet typed in 2023
+   * looks like, and the pin has nothing else to go on. So a blank hero made five minutes
+   * ago is pinned to 35 like everything else, and 35 is the wrong number for it.
+   *
+   * Two consequences, and both are accepted rather than fixed:
+   *
+   * - a character created between the deploy that moved `SPEED_FEET` and the run of this
+   *   sweep gets five feet it did not ask for — visible on the sheet, and one field for a
+   *   DM to correct;
+   * - **this tool does not converge to "nothing left" on a deployment somebody is still
+   *   playing on**, because every new blank hero is another pinnable sheet. Run it
+   *   promptly after the deploy; it is transition code, not a cron job.
+   *
+   * The fix, if this is ever run months late, is a creation-time cutoff passed to both
+   * functions — the shape the Convex guidelines prescribe for a query that needs the wall
+   * clock. It is not built because the sweep is meant to run once, and an argument the
+   * operator has to guess a value for is its own hazard.
+   */
+  test('a blank hero created today is pinned too, because absent means the same thing', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'The Window')
+    await t.mutation(api.characters.create, {
+      code: game.code,
+      dmCode: game.dmCode,
+      name: 'Brand New',
+    })
+
+    const listing = await unmigrated(t)
+    expect(listing.page).toHaveLength(1)
+    expect(listing.page[0]!.counts).toEqual({ ...NOTHING, speeds: 1 })
+  })
+
+  /**
+   * ⚠️ **THE DRY RUN, WITH A POSITIVE CONTROL.** "Nothing was written" passes trivially
+   * over a game that had nothing to write, so the same fixture is listed, asserted
+   * byte-identical, and then demonstrably changed by the real run.
+   *
+   * The claim is structural rather than behavioural: `listUnmigrated` is an
+   * `internalQuery`, and a `QueryCtx` has no `patch`, no `insert` and no `replace`. There
+   * is no edit to it that could start writing.
+   */
+  test('listing a game changes nothing about it, and the real run then does', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'Rehearsal')
+    await insertLegacy(t, game.gameId, 'Seraphine', legacyPreset())
+    await insertLegacy(t, game.gameId, 'Thorn', legacyPc())
+
+    const before = await snapshot(t, game.gameId)
+
+    await unmigrated(t)
+    await unmigrated(t)
+    expect(await snapshot(t, game.gameId)).toBe(before)
+
+    // The positive control: the fixture really was one the sweep changes, so the two
+    // assertions above are about the dry run rather than about an inert game.
+    await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+    expect(await snapshot(t, game.gameId)).not.toBe(before)
+  })
+})
+
+describe('admin.migrateGame', () => {
+  test('folds race into species and drops the old field', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'The Rename')
+    const characterId = await insertLegacy(t, game.gameId, 'Seraphine', legacyPreset())
+
+    expect(await storedSheet(t, characterId)).toMatchObject({ race: 'human' })
+
+    const receipt = await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+    expect(receipt).toMatchObject({ name: 'The Rename', code: game.code })
+    expect(receipt.counts).toEqual({ ...NOTHING, species: 1 })
+
+    const sheet = await storedSheet(t, characterId)
+    expect(sheet.species).toBe('human')
+    // ⚠️ Dropped rather than left beside the new field. A row carrying both still fails the
+    // narrowed push, because `v.object` refuses a field it does not name.
+    expect(sheet).not.toHaveProperty('race')
+  })
+
+  test('the new field wins when a half-finished pass left both', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'Interrupted')
+    const characterId = await insertLegacy(
+      t,
+      game.gameId,
+      'Seraphine',
+      legacyPreset({ race: 'human', species: 'elf' }),
+    )
+
+    await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+
+    // `speciesKeyOf`'s rule, not a second copy of it: the new field wins, which is what
+    // made the backfill interruptible in the first place.
+    const sheet = await storedSheet(t, characterId)
+    expect(sheet.species).toBe('elf')
+    expect(sheet).not.toHaveProperty('race')
+  })
+
+  /**
+   * ⚠️ **The acceptance criterion for the species half of the milestone, and the reason
+   * `'half-orc'` stays in `storedSpeciesKeyValidator`.** A Half-Orc created before the
+   * conversion has to open, keep its name, and say plainly which species needs choosing
+   * again — which requires the key to remain **storable**. The sweep therefore renames the
+   * field and leaves the value entirely alone: remapping it onto Orc would satisfy the
+   * schema and hand somebody a different character.
+   */
+  test('a half-orc keeps its key through the sweep rather than being remapped', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'The Retired Species')
+    const characterId = await insertLegacy(
+      t,
+      game.gameId,
+      'Grukk',
+      legacyPreset({ race: 'half-orc' }),
+    )
+
+    await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+
+    const sheet = await storedSheet(t, characterId)
+    expect(sheet.species).toBe('half-orc')
+    expect(sheet).not.toHaveProperty('race')
+    // And the character still resolves, which is the half a player sees.
+    const payload = await t.query(api.characters.list, { code: game.code, dmCode: game.dmCode })
+    expect(payload.find((row) => row._id === characterId)?.name).toBe('Grukk')
+  })
+
+  /**
+   * ⚠️ **CLEARED AND UNLOCKED, NEVER REMAPPED — and `locked: false` is the half people
+   * forget.** A Rogue whose Assassin became a Thief has been given a different character;
+   * a locked sheet whose selection was cleared is a sheet nobody can fix, because the
+   * builder refuses to save it and only the DM can unlock.
+   */
+  test('a retired archetype is cleared and the sheet unlocked', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'The Retired Archetype')
+    const characterId = await insertLegacy(
+      t,
+      game.gameId,
+      'Vex',
+      legacyPreset({ classKey: 'rogue', subclassKey: 'assassin', level: 3, locked: true }),
+    )
+
+    const receipt = await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+    expect(receipt.counts).toEqual({ ...NOTHING, species: 1, archetypes: 1 })
+
+    const sheet = await storedSheet(t, characterId)
+    expect(sheet.subclassKey).toBeNull()
+    expect(sheet.locked).toBe(false)
+    // Nothing else about the character moved. Clearing is not remapping.
+    expect(sheet).toMatchObject({ classKey: 'rogue', level: 3, species: 'human' })
+  })
+
+  test('an archetype that still resolves is left alone, lock included', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'The Surviving Archetype')
+    const characterId = await insertLegacy(
+      t,
+      game.gameId,
+      'Kessa',
+      legacyPreset({ classKey: 'rogue', subclassKey: 'thief', level: 3, locked: true }),
+    )
+
+    const receipt = await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+    expect(receipt.counts.archetypes).toBe(0)
+
+    const sheet = await storedSheet(t, characterId)
+    expect(sheet.subclassKey).toBe('thief')
+    // ⚠️ The lock is the DM's, so an untouched selection must not quietly unlock. The two
+    // halves of "cleared and unlocked" travel together or not at all.
+    expect(sheet.locked).toBe(true)
+  })
+
+  test('back-fills the five 2024 skill flags on a hand-built hero', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'The Skills')
+    const characterId = await insertLegacy(t, game.gameId, 'Thorn', legacyPc())
+
+    const receipt = await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+    expect(receipt.counts).toEqual({ ...NOTHING, skills: 1, speeds: 1 })
+
+    const sheet = (await storedSheet(t, characterId)) as PcSheet
+    expect(Object.keys(sheet.skillProficiencies!).sort()).toEqual(Object.keys(noSkills()).sort())
+    for (const key of ADDED_IN_2024) {
+      expect(sheet.skillProficiencies![key], key).toBe(false)
+    }
+    // A fill rather than a reset: the three the DM had ticked are still ticked.
+    expect(sheet.skillProficiencies).toMatchObject({
+      acrobatics: true,
+      stealth: true,
+      perception: true,
+    })
+  })
+
+  /**
+   * ⚠️ **The second place the five live, and the one a sweep forgets.** A DM who has typed
+   * over a premade character's skills has a thirteen-key object inside the override diff,
+   * checked by the same `skillProficienciesValidator` and refused by the same narrowed
+   * push. A sweep that only walked `pc` sheets would leave the deploy failing with no
+   * obvious reason why.
+   */
+  test('back-fills the five inside a preset override diff too', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'The Override Diff')
+    const characterId = await insertLegacy(
+      t,
+      game.gameId,
+      'Seraphine',
+      legacyPreset({
+        overrides: { armourClass: 21, skillProficiencies: THIRTEEN_SKILLS },
+      }),
+    )
+
+    const receipt = await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+    expect(receipt.counts).toEqual({ ...NOTHING, species: 1, overrideSkills: 1 })
+
+    const sheet = (await storedSheet(t, characterId)) as PresetSheet
+    const flags = sheet.overrides!.skillProficiencies!
+    expect(Object.keys(flags).sort()).toEqual(Object.keys(noSkills()).sort())
+    for (const key of ADDED_IN_2024) expect(flags[key], key).toBe(false)
+    expect(flags).toMatchObject({ acrobatics: true, stealth: true, perception: true })
+    // The rest of the diff is untouched — the sweep is not a normalisation pass.
+    expect(sheet.overrides!.armourClass).toBe(21)
+  })
+
+  /**
+   * ⚠️ **THE SPEED PIN, AND THE ASYMMETRY IS THE WHOLE OF IT.** `speedOf` answers
+   * `SPEED_FEET` for any sheet with the field absent, and the migration commit moved that
+   * constant 35 → 30 — so a hand-typed goblin would silently lose five feet. A `preset`
+   * stores no speed at all and must NOT be pinned: `resolvePreset` writes the constant into
+   * the *resolved* sheet and a 2024 species then sets its own absolute over the top, so
+   * flipping the constant re-resolves those correctly, Goliaths and Wood Elves included.
+   */
+  test('pins a hand-built sheet to the speed it already meant, and leaves a preset alone', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'The Speed Pin')
+    const hero = await insertLegacy(t, game.gameId, 'Thorn', legacyPc())
+    const goblin = await insertLegacy(t, game.gameId, 'Goblin', legacyNpc())
+    const premade = await insertLegacy(t, game.gameId, 'Seraphine', legacyPreset())
+
+    // The pin writes 35 while the constant now says 30 — which is the whole reason
+    // `PRE_2024_SPEED_FEET` is a literal rather than an import of `SPEED_FEET`.
+    expect(PRE_2024_SPEED_FEET).toBe(35)
+    expect(SPEED_FEET).toBe(30)
+
+    const receipt = await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+    expect(receipt.counts.speeds).toBe(2)
+
+    expect((await storedSheet(t, hero)).speed).toBe(PRE_2024_SPEED_FEET)
+    expect((await storedSheet(t, goblin)).speed).toBe(PRE_2024_SPEED_FEET)
+    expect(speedOf((await storedSheet(t, hero)) as PcSheet)).toBe(35)
+
+    // The preset is untouched and re-resolves through the species instead: a Human prints
+    // 30 because the SRD says so, not because a constant does.
+    expect(await storedSheet(t, premade)).not.toHaveProperty('speed')
+    const payload = await t.query(api.characters.sheet, {
+      code: game.code,
+      dmCode: game.dmCode,
+      characterId: premade,
+    })
+    expect((payload!.sheet as PcSheet).speed).toBe(30)
+  })
+
+  test('a sheet that already carries a speed is not repinned', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'The Fast Goblin')
+    const characterId = await insertLegacy(t, game.gameId, 'Worg', legacyNpc({ speed: 50 }))
+
+    const receipt = await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+    expect(receipt.counts.speeds).toBe(0)
+    expect((await storedSheet(t, characterId)).speed).toBe(50)
+  })
+
+  /**
+   * ⚠️ **The fold is `spentUsesOf`'s, reused rather than re-derived**: one legacy key is
+   * exactly one spent use, a counted row wins a collision, and legacy keys come first so a
+   * client's render order does not jump on the day the sweep runs.
+   */
+  test('folds the legacy per-rest array into the counted one and removes the field', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'The Spent Uses')
+    const characterId = await insertLegacy(t, game.gameId, 'Grukk', legacyNpc({ speed: 30 }), {
+      spentPerRest: ['second-wind', 'rage'],
+      spentUses: [{ key: 'rage', spent: 3 }],
+    })
+
+    const receipt = await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+    expect(receipt.counts).toEqual({ ...NOTHING, uses: 1 })
+
+    const row = await storedVitals(t, characterId)
+    expect(row.spentUses).toEqual([
+      { key: 'second-wind', spent: 1 },
+      { key: 'rage', spent: 3 },
+    ])
+    // ⚠️ Removed, not emptied. `spentPerRest: []` refuses the narrowed push exactly as a
+    // full one does, and `ctx.db.patch` reading `undefined` as *delete this field* is the
+    // one place in this codebase where naming a field and handing it `undefined` is right.
+    expect(row).not.toHaveProperty('spentPerRest')
+  })
+
+  test('an empty legacy array is removed rather than left, and writes no empty spentUses', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'The Empty Array')
+    const characterId = await insertLegacy(t, game.gameId, 'Grukk', legacyNpc({ speed: 30 }), {
+      spentPerRest: [],
+    })
+
+    const receipt = await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+    expect(receipt.counts.uses).toBe(1)
+
+    const row = await storedVitals(t, characterId)
+    expect(row).not.toHaveProperty('spentPerRest')
+    // *Absent, never zero* — this table's rule for every count on it. Writing `spentUses: []`
+    // would grow every row in the deployment to say nothing.
+    expect(row).not.toHaveProperty('spentUses')
+  })
+
+  /**
+   * ⚠️ **IDEMPOTENCE, ASSERTED AS *NOTHING WAS WRITTEN* RATHER THAN AS *THE ANSWER IS THE
+   * SAME*.** A second pass returning the same sheet would look correct and still be a write
+   * per character, which on this table is a re-push of the health-bar subscription for
+   * every client at the table. Every planner answers null for a document that already
+   * agrees with the schema, so the second pass patches nothing — and the whole-game
+   * snapshot is what proves it, `_creationTime` and all.
+   */
+  test('running it twice writes nothing the second time', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'Twice')
+    await insertLegacy(
+      t,
+      game.gameId,
+      'Seraphine',
+      legacyPreset({ classKey: 'rogue', subclassKey: 'assassin', level: 3, locked: true }),
+    )
+    await insertLegacy(t, game.gameId, 'Thorn', legacyPc())
+    await insertLegacy(t, game.gameId, 'Goblin', legacyNpc(), { spentPerRest: ['rage'] })
+
+    const first = await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+    expect(first.counts).toEqual({
+      species: 1,
+      archetypes: 1,
+      skills: 1,
+      overrideSkills: 0,
+      speeds: 2,
+      uses: 1,
+    })
+
+    const afterFirst = await snapshot(t, game.gameId)
+
+    const second = await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+    expect(second.counts).toEqual(NOTHING)
+    expect(await snapshot(t, game.gameId)).toBe(afterFirst)
+
+    // And the listing agrees, which is what makes the CLI stop rather than loop.
+    const listing = await unmigrated(t)
+    expect(listing.page).toEqual([])
+  })
+
+  test('leaves a second game in the same deployment completely untouched', async () => {
+    const t = harness()
+    const doomed = await makeGame(t, 'Swept')
+    const spared = await makeGame(t, 'Spared')
+    await insertLegacy(t, doomed.gameId, 'Seraphine', legacyPreset())
+    await insertLegacy(t, spared.gameId, 'Thorn', legacyPreset())
+
+    const before = await snapshot(t, spared.gameId)
+    // The positive control: the spared game really does hold a row the sweep would change.
+    expect(before).toContain('race')
+
+    await t.mutation(internal.admin.migrateGame, { gameId: doomed.gameId })
+    expect(await snapshot(t, spared.gameId)).toBe(before)
+  })
+
+  test('refuses an id it cannot find rather than reporting an empty success', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'Gone')
+    await t.mutation(internal.admin.purgeGame, { gameId: game.gameId })
+
+    await expect(
+      t.mutation(internal.admin.migrateGame, { gameId: game.gameId }),
+    ).rejects.toMatchObject({ data: { kind: 'GameNotFound' } })
+  })
+
+  /**
+   * A Milestone 1 character has no `sheet` field at all. `resolveSheet` reads that as a
+   * default hero on the way out and stores nothing, so there is nothing to migrate — and
+   * materialising one would be this sweep inventing a document nobody wrote.
+   */
+  test('a character with no sheet at all is left without one', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'Milestone One')
+    const characterId = await t.run(
+      async (ctx) => await ctx.db.insert('characters', { gameId: game.gameId, name: 'Nobody' }),
+    )
+
+    const receipt = await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+    expect(receipt.counts).toEqual(NOTHING)
+    expect(
+      await t.run(async (ctx) => await ctx.db.get('characters', characterId)),
+    ).not.toHaveProperty('sheet')
+  })
+
+  /**
+   * ⚠️ **`spentUsesOf` still folds a legacy array although the field is off the schema**,
+   * which is the tolerance a non-atomic push needs: a row written by an older deployment
+   * has to keep meaning what it meant until the sweep reaches it. This is the assertion
+   * that moved here out of `characters.test.ts`, where the fixture had stopped being
+   * producible.
+   */
+  test('a legacy row reads correctly through the payload before the sweep touches it', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'Before The Sweep')
+    const characterId = await insertLegacy(t, game.gameId, 'Aldis', legacyNpc({ speed: 30 }), {
+      spentPerRest: ['heroic-inspiration'],
+    })
+
+    const rows = await t.query(api.characters.vitals, { code: game.code, dmCode: game.dmCode })
+    expect(rows.find((row) => row.characterId === characterId)).toMatchObject({
+      spentUses: [{ key: 'heroic-inspiration', spent: 1 }],
+    })
+
+    // And the sweep then makes the same answer true of the stored row.
+    await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+    expect((await storedVitals(t, characterId)).spentUses).toEqual([
+      { key: 'heroic-inspiration', spent: 1 },
+    ])
   })
 })

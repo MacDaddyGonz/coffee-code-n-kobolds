@@ -1412,7 +1412,7 @@ describe('the labels a creature carries beside its sheet', () => {
       {
         sheet: {
           kind: 'preset',
-          race: 'human',
+          species: 'human',
           classKey: 'fighter',
           subclassKey: null,
           level: 1,

@@ -78,7 +78,7 @@ const SPEEDS: Record<string, number> = {
 function preset(overrides: Partial<PresetSheet> = {}): PresetSheet {
   return {
     kind: 'preset',
-    race: 'human',
+    species: 'human',
     classKey: 'fighter',
     subclassKey: 'champion',
     level: 3,
@@ -154,7 +154,7 @@ describe('the nine species', () => {
         const selections = preset({ classKey, subclassKey, level })
         const base = source(selections)
         for (const key of SPECIES_KEYS) {
-          const resolved = resolve({ ...selections, race: key })
+          const resolved = resolve({ ...selections, species: key })
           const where = `${classKey}/${subclassKey}/${level} + ${key}`
           for (const ability of ABILITIES) {
             expect(resolved.abilities[ability], `${where} ${ability}`).toBe(base.abilities[ability])
@@ -206,12 +206,14 @@ describe('the nine species', () => {
   /**
    * ⚠️ **`baseSpeed` is an absolute, and it is spelled out on all nine on purpose.**
    * The type leaves it optional, so eight of them could have relied on `SPEED_FEET`
-   * being the default — and `SPEED_FEET` is still **35**, because flipping it to 30 is a
-   * stored-value change that belongs to the migration branch. A species that leaned on
-   * it would therefore be wrong today and right later, which is the worst of both.
+   * being the default — and while that constant said **35**, a species that leaned on it
+   * would have been wrong until the migration commit moved it and right afterwards, which
+   * is the worst of both.
    *
-   * `SPEED_FEET` is deliberately not imported by this test for the same reason: a
-   * literal 30 goes on saying the same thing after the constant moves.
+   * `SPEED_FEET` is still deliberately not imported, and now for the other half of the
+   * reason: it says 30 today, so a test written against it would agree with a corpus that
+   * had quietly dropped `baseSpeed` from eight species. A literal keeps saying what the
+   * SRD prints.
    */
   test('every species prints its own speed, and only the Goliath is not 30', () => {
     for (const entry of SPECIES) {
@@ -346,29 +348,29 @@ describe('lineages, legacies and ancestries', () => {
    * its own criterion — *"a Wood Elf moves 35 and a Human moves 30"* — is unsatisfiable
    * if Wood Elf cannot be chosen, which is what made this a builder field.
    *
-   * ⚠️ **`SPEED_FEET` is deliberately not imported.** It is still 35, and a test written
-   * as `SPEED_FEET - 5` would go on passing after the migration branch moves it to 30
-   * while saying nothing about whether these two numbers are still different.
+   * ⚠️ **`SPEED_FEET` is deliberately not imported.** It said 35 when this was written and
+   * says 30 now, and a test written as `SPEED_FEET + 5` would have gone on passing across
+   * that move while saying nothing about whether these two numbers are still different.
    */
   test('a Wood Elf moves 35 and a Human moves 30', () => {
-    expect(resolve(preset({ race: 'elf', lineageKey: 'wood' })).speed).toBe(35)
-    expect(resolve(preset({ race: 'human' })).speed).toBe(30)
+    expect(resolve(preset({ species: 'elf', lineageKey: 'wood' })).speed).toBe(35)
+    expect(resolve(preset({ species: 'human' })).speed).toBe(30)
     // And the lineage is applied *after* the species rather than before it. Reversed,
     // the Elf's printed 30 would overwrite the 35 and this whole feature would be
     // invisible.
-    expect(resolve(preset({ race: 'elf' })).speed).toBe(30)
-    expect(resolve(preset({ race: 'elf', lineageKey: 'high' })).speed).toBe(30)
+    expect(resolve(preset({ species: 'elf' })).speed).toBe(30)
+    expect(resolve(preset({ species: 'elf', lineageKey: 'high' })).speed).toBe(30)
   })
 
   test('a species with no lineages ignores a stored lineageKey entirely', () => {
-    const plain = resolve(preset({ race: 'halfling' }))
+    const plain = resolve(preset({ species: 'halfling' }))
     for (const stray of ['wood', 'red', 'infernal', 'not-a-lineage']) {
-      expect(resolve(preset({ race: 'halfling', lineageKey: stray })), stray).toEqual(plain)
+      expect(resolve(preset({ species: 'halfling', lineageKey: stray })), stray).toEqual(plain)
     }
     // And a lineage belonging to some other species is equally inert — a Goliath holding
     // `wood` is a Goliath, not a Goliath who moves 35.
-    expect(resolve(preset({ race: 'goliath', lineageKey: 'wood' }))).toEqual(
-      resolve(preset({ race: 'goliath' })),
+    expect(resolve(preset({ species: 'goliath', lineageKey: 'wood' }))).toEqual(
+      resolve(preset({ species: 'goliath' })),
     )
   })
 
@@ -381,13 +383,13 @@ describe('lineages, legacies and ancestries', () => {
     const problems: string[] = []
     for (const { species: entry, lineage } of allLineages()) {
       for (const classKey of CLASS_KEYS) {
-        const without = resolve(preset({ classKey, subclassKey: null, level: 1, race: entry.key }))
+        const without = resolve(preset({ classKey, subclassKey: null, level: 1, species: entry.key }))
         const withIt = resolve(
           preset({
             classKey,
             subclassKey: null,
             level: 1,
-            race: entry.key,
+            species: entry.key,
             lineageKey: lineage.key,
           }),
         )
@@ -432,7 +434,7 @@ describe('a species changes its numbers exactly once', () => {
   test("the Dwarf's hit points are the library's plus one per level, at every level", () => {
     for (const level of [1, 2, 3, 4, 5, 12, 20]) {
       const selections = preset({
-        race: 'dwarf',
+        species: 'dwarf',
         level,
         subclassKey: level < 2 ? null : 'champion',
       })
@@ -445,11 +447,11 @@ describe('a species changes its numbers exactly once', () => {
   })
 
   test('the Goliath moves 35 and everybody else moves 30, whatever the library says', () => {
-    expect(resolve(preset({ race: 'goliath' })).speed).toBe(35)
-    expect(resolve(preset({ race: 'goliath' })).abilities).toEqual(
-      source(preset({ race: 'goliath' })).abilities,
+    expect(resolve(preset({ species: 'goliath' })).speed).toBe(35)
+    expect(resolve(preset({ species: 'goliath' })).abilities).toEqual(
+      source(preset({ species: 'goliath' })).abilities,
     )
-    expect(resolve(preset({ race: 'goliath' })).maxHp).toBe(source(preset()).maxHp)
+    expect(resolve(preset({ species: 'goliath' })).maxHp).toBe(source(preset()).maxHp)
   })
 
   /**
@@ -466,7 +468,7 @@ describe('a species changes its numbers exactly once', () => {
 
     for (const key of SPECIES_KEYS) {
       if (key === 'dwarf') continue
-      const selections = preset({ race: key })
+      const selections = preset({ species: key })
       const base = source(selections)
       const resolved = resolve(selections)
       expect(resolved.abilities, key).toEqual(base.abilities)
@@ -495,7 +497,7 @@ describe('a species changes its numbers exactly once', () => {
         const base = source(selections)
         for (const key of SPECIES_KEYS) {
           const chosen = species(key)!
-          const resolved = resolve({ ...selections, race: key })
+          const resolved = resolve({ ...selections, species: key })
           const where = `${classKey}/${subclassKey}/${level} + ${key}`
           expect(resolved.maxHp, where).toBe(base.maxHp + (chosen.hpPerLevel ?? 0) * level)
           expect(resolved.speed, where).toBe(chosen.baseSpeed)
@@ -527,7 +529,7 @@ describe('the traits land on the sheet', () => {
           const resolved = resolve(
             preset({
               classKey,
-              race: key,
+              species: key,
               level,
               subclassKey: level < 2 ? null : findClass(classKey)!.subclasses[0].key,
             }),
@@ -566,7 +568,7 @@ describe('the traits land on the sheet', () => {
             const resolved = resolve(
               preset({
                 classKey,
-                race: key,
+                species: key,
                 level,
                 subclassKey: level < 2 ? null : findClass(classKey)!.subclasses[0].key,
               }),
@@ -586,7 +588,7 @@ describe('the traits land on the sheet', () => {
   })
 
   test('the Tiefling gets Thaumaturgy, on the spell list, exactly once', () => {
-    const resolved = resolve(preset({ race: 'tiefling' }))
+    const resolved = resolve(preset({ species: 'tiefling' }))
     const matching = resolved.spells.filter((entry) => entry.name === 'Thaumaturgy')
     expect(matching).toHaveLength(1)
     expect(matching[0].level).toBe(0)
@@ -595,7 +597,7 @@ describe('the traits land on the sheet', () => {
     for (const key of SPECIES_KEYS) {
       if (key === 'tiefling') continue
       expect(
-        resolve(preset({ race: key })).spells.some((entry) => entry.name === 'Thaumaturgy'),
+        resolve(preset({ species: key })).spells.some((entry) => entry.name === 'Thaumaturgy'),
         key,
       ).toBe(false)
     }
@@ -609,7 +611,7 @@ describe('the traits land on the sheet', () => {
    * `Breath Weapon` are two rows saying two different things.
    */
   test('a Dragonborn breathes what its ancestry breathes, and only then', () => {
-    const plain = resolve(preset({ race: 'dragonborn' }))
+    const plain = resolve(preset({ species: 'dragonborn' }))
     expect(plain.feats.filter((entry) => entry.roll !== null && entry.id.startsWith('lineage:'))).toEqual(
       [],
     )
@@ -627,7 +629,7 @@ describe('the traits land on the sheet', () => {
       white: 'Cold',
     }
     for (const lineage of species('dragonborn')!.lineages ?? []) {
-      const resolved = resolve(preset({ race: 'dragonborn', lineageKey: lineage.key })).feats
+      const resolved = resolve(preset({ species: 'dragonborn', lineageKey: lineage.key })).feats
       const breath = resolved.find((entry) => entry.name === `${damageByKey[lineage.key]} Breath`)
       expect(breath, lineage.key).toBeDefined()
       expect(breath!.roll, lineage.key).toBe('1d10')
@@ -645,7 +647,7 @@ describe('the traits land on the sheet', () => {
     for (const key of SPECIES_KEYS) {
       const keys: (string | null)[] = [null, ...(species(key)!.lineages ?? []).map((l) => l.key)]
       for (const lineageKey of keys) {
-        const resolved = resolve(preset({ race: key, lineageKey }))
+        const resolved = resolve(preset({ species: key, lineageKey }))
         const names = [...resolved.feats, ...resolved.spells].map((entry) => entry.name)
         for (const [index, name] of names.entries()) {
           if (names.indexOf(name) !== index) offenders.push(`${key}/${lineageKey}: ${name}`)
@@ -669,7 +671,7 @@ describe('the traits land on the sheet', () => {
         for (const level of [2, 5]) {
           for (const key of SPECIES_KEYS) {
             const resolved = resolve(
-              preset({ classKey, subclassKey: subclass.key, level, race: key }),
+              preset({ classKey, subclassKey: subclass.key, level, species: key }),
             )
             const problem = sheetProblem(resolved)
             if (problem) {
@@ -829,7 +831,7 @@ describe('species and the library stay out of each other', () => {
           const resolved = resolve(
             preset({
               classKey,
-              race: key,
+              species: key,
               lineageKey,
               // The one archetype every class has. `subclasses` is a tuple of exactly
               // one — no SRD contains more than one subclass per class — so there is
@@ -912,9 +914,9 @@ describe('a stored species key that no longer resolves', () => {
     // way to write the test at all. `storedSpeciesKeyValidator` is what lets such a row survive
     // a schema push; this is what happens once it does.
     const party = [
-      { kind: 'preset', race: 'human', classKey: 'fighter', subclassKey: 'champion', level: 3, locked: false },
-      { kind: 'preset', race: RETIRED, classKey: 'wizard', subclassKey: 'evocation', level: 3, locked: false },
-      { kind: 'preset', race: 'elf', classKey: 'rogue', subclassKey: 'thief', level: 3, locked: false },
+      { kind: 'preset', species: 'human', classKey: 'fighter', subclassKey: 'champion', level: 3, locked: false },
+      { kind: 'preset', species: RETIRED, classKey: 'wizard', subclassKey: 'evocation', level: 3, locked: false },
+      { kind: 'preset', species: 'elf', classKey: 'rogue', subclassKey: 'thief', level: 3, locked: false },
     ] as unknown as PresetSheet[]
 
     const resolved = party.map((sheet) => resolveSheet({ sheet }) as PcSheet)
@@ -940,7 +942,7 @@ describe('a stored species key that no longer resolves', () => {
     // than the same build with a species that resolves. Asserted against a *real* build rather
     // than against a literal, so a change to what the library grants does not make this a lie.
     const intact = resolveSheet({
-      sheet: { ...party[1], race: 'human' } as PresetSheet,
+      sheet: { ...party[1], species: 'human' } as PresetSheet,
     }) as PcSheet
     expect(orphan.feats.length).toBeLessThan(intact.feats.length)
   })
@@ -954,7 +956,7 @@ describe('a stored species key that no longer resolves', () => {
    * that `speciesKeyValidator` did the refusing at the function boundary — the same mechanical
    * refusal `tokenLayerValidator` gives a layer. That was true, and it stopped being true.
    *
-   * `npx convex deploy` was refused: a character created months ago holds `race: "half-orc"`,
+   * `npx convex deploy` was refused: a character created months ago holds `species: "half-orc"`,
    * and Convex validates **existing rows** on a push. So `presetSheetValidator.race` had to
    * widen to `storedSpeciesKeyValidator`. The layer rename got away with two unions —
    * `storedTokenLayerValidator` on the schema, the narrow one on `board.addToken`'s argument —
@@ -970,17 +972,20 @@ describe('a stored species key that no longer resolves', () => {
    * inherited from a type: **tolerated on read, refused on write.**
    */
   test('is refused on write by storedSheetProblem, which is where that refusal now lives', () => {
-    for (const race of [INVENTED, RETIRED]) {
+    for (const speciesKey of [INVENTED, RETIRED]) {
       const problem = storedSheetProblem({
         kind: 'preset',
-        race,
+        species: speciesKey,
         classKey: 'fighter',
         subclassKey: 'champion',
         level: 3,
         locked: false,
       } as unknown as PresetSheet)
-      expect(problem, race).not.toBeNull()
-      expect(problem?.path, race).toBe('race')
+      expect(problem, speciesKey).not.toBeNull()
+      // ⚠️ **The path moved `race` → `species` with the field**, which is the last thing the
+      // rename owed: `messageAtField` matches on it, so a stale `'race'` would be a refusal
+      // the builder could not attach to the control that caused it.
+      expect(problem?.path, speciesKey).toBe('species')
     }
 
     // The control: a species that resolves passes the same check, so the refusal above is
@@ -988,7 +993,7 @@ describe('a stored species key that no longer resolves', () => {
     expect(
       storedSheetProblem({
         kind: 'preset',
-        race: 'human',
+        species: 'human',
         classKey: 'fighter',
         subclassKey: 'champion',
         level: 3,
@@ -1085,17 +1090,26 @@ describe('the stored species union carries what the narrow one will drop', () =>
   })
 })
 
+/**
+ * ⚠️ **The accessor that crosses the rename, and the one place `species` and `race` are ever
+ * both read.** Both are optional on the validator while the sweep runs, so it has to answer
+ * for three shapes: the old field alone, the new one alone, and both where a run stopped half
+ * way. `species` winning is the direction that makes the backfill idempotent and
+ * interruptible — the other order would make the migration's own writes invisible until the
+ * narrowing deleted `race`.
+ *
+ * The fourth shape, neither field, is deliberately **not** handled here: `''` exists to be
+ * refused by `storedSheetProblem` rather than to be a state anything downstream thinks about.
+ */
 describe('speciesKeyOf reads one fact out of two fields', () => {
-  test('the old field answers while nothing writes the new one', () => {
-    expect(speciesKeyOf(preset({ race: 'dwarf' }))).toBe('dwarf')
-  })
-
-  test('the new field wins when both are present', () => {
-    // The direction that makes the backfill idempotent and interruptible: a run that stops
-    // half way leaves half the rows answering from the new field and half from the old, and
-    // both are right. The other order would make the migration's own writes invisible until
-    // the narrowing commit deleted `race`.
+  test('the stored key answers, whichever field holds it', () => {
+    expect(speciesKeyOf(preset({ species: 'dwarf' }))).toBe('dwarf')
+    expect(speciesKeyOf(preset({ species: undefined, race: 'dwarf' }))).toBe('dwarf')
+    // The direction that makes the backfill interruptible.
     expect(speciesKeyOf(preset({ race: 'dwarf', species: 'elf' }))).toBe('elf')
+    // And the fourth shape answers the empty string, which `storedSheetProblem` refuses on
+    // write rather than anything downstream having to handle.
+    expect(speciesKeyOf(preset({ species: undefined }))).toBe('')
   })
 
   test('a retired key comes back as itself rather than being repaired', () => {

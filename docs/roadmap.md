@@ -3109,14 +3109,13 @@ library sheets. ADR 0016, the requirements amendment, the CLAUDE.md *Rules scope
 attribution went in **ahead of** the content they describe, deliberately — an ADR that argues a
 decision is worth more before the code than after it — which is why the next paragraph exists.
 
-**The documents led the code on three things, and two of them have since landed.** `SUBCLASS_LEVEL`
-is 3 and the library is sixty sheets. **The one still outstanding is `SPEED_FEET`, which is still
-35**, and it is outstanding on purpose: it is the milestone's only genuine stored-value change
-disguised as a constant edit. A `preset` sheet stores no speed — `resolvePreset` writes the constant
-into the *resolved* sheet, so flipping it re-resolves correctly, Goliaths included. What breaks is
-every hand-built `pc` and `npc` sheet, whose stored-absent field would silently turn a DM-typed goblin
-from 35 into 30. **The pin sweep runs first and the constant moves after it**, in that order, in
-`chore/m14-migration`.
+**The documents led the code on three things, and all three have now landed.** `SUBCLASS_LEVEL` is 3,
+the library is sixty sheets, and **`SPEED_FEET` is 30** — the last of them, and the milestone's only
+genuine stored-value change disguised as a constant edit. A `preset` sheet stores no speed —
+`resolvePreset` writes the constant into the *resolved* sheet, so flipping it re-resolves correctly,
+Goliaths included. What would have broken is every hand-built `pc` and `npc` sheet, whose
+stored-absent field would silently turn a DM-typed goblin from 35 into 30. **The pin sweep ran first
+and the constant moved after it**, in that order, in `chore/m14-migration`.
 
 **Two branches remain, and here is what each owes.**
 
@@ -3131,21 +3130,43 @@ for the DM and for a controlled creature only, and `publicVitalsValidator`'s `ba
 nothing. A third published stat is a separate decision with its own ADR, which is exactly what that
 ADR says.
 
-*`chore/m14-migration`* — last, because it cannot be written until every rename is known, and it now
-is. It owes the pin sweep and `SPEED_FEET` above; clearing eight retired archetype keys to `null`
-with `locked: false` rather than remapping them, because remapping changes a character nobody asked
-to change; rewriting `preset.race` to `species` and back-filling five `false` skill booleans on every
-stored `pc` sheet and inside both override diffs; folding `characterVitals.spentPerRest` into
-`spentUses`; and then the narrowings that make the widenings temporary — dropping `race`, dropping
-`half-orc` from `storedSpeciesKeyValidator`, making all eighteen booleans required, and dropping
-`spentPerRest`. **One widening is deliberately never narrowed**: `rollResultValidator`'s optional
-multi-part array, because a feed row is historical and must render forever.
+*`chore/m14-migration`* — last, because it could not be written until every rename was known, and it
+is **two commits that deploy separately**. The first is the **sweep**: the pin and `SPEED_FEET`
+above; clearing retired archetype keys to `null` with `locked: false` rather than remapping them,
+because remapping changes a character nobody asked to change; rewriting `preset.race` to `species`
+and back-filling five `false` skill booleans on every stored `pc` sheet and inside the preset
+override diff; folding `characterVitals.spentPerRest` into `spentUses`; `convex/lib/migrate.ts`,
+`admin.listUnmigrated`, `admin.migrateGame` and `npm run migrate-sheets`. The second is **three of
+the four narrowings** — dropping `race`, making all eighteen booleans required, and dropping
+`spentPerRest` — and it cannot be pushed until the sweep has run everywhere. **One widening is
+deliberately never narrowed**: `rollResultValidator`'s optional multi-part array, because a feed row
+is historical and must render forever.
 
-⚠️ **`half-orc` is why the branch cannot merge early.** `storedSpeciesKeyValidator` carries ten
-literals today, nine live species and the retired one, because a schema push validates *existing*
-rows — the dev deployment refused the push outright until it did. The tenth literal comes out on the
-far side of the sweep and not before, and until then the branch is honestly mid-migration rather than
-finished.
+🚫 **The fourth narrowing was planned and is declined, and the plan was wrong rather than the
+branch.** `half-orc` **stays** in `storedSpeciesKeyValidator`, which is therefore ten literals for
+nine species, permanently. The milestone's own acceptance criterion is that a Half-Orc character
+created before this milestone *opens, with its name, and says plainly which species needs choosing
+again* — which requires the key to remain **storable**, and no sweep can change that. Removing it
+makes the schema push fail against any deployment holding one, which is how it was found the first
+time. `RETIRED_SPECIES` exists for exactly this; the validator says so where somebody would look.
+
+⚠️ **What the branch cannot do is land on a deployment in one push, and that is a property of Convex
+rather than of the branch.** A schema push validates *existing* rows, so a deployment holding one
+unswept character refuses the narrowed schema outright — and all three narrowings block it, since
+every stored `preset` carries a `race`, every `pc` sheet with skills carries thirteen booleans, and
+every vitals row that ever spent an ability carries a `spentPerRest`. **This is
+`chore/narrow-token-layer`'s four steps a second time**, and the property that makes it safe rather
+than merely careful is the same one recorded there: *the narrow schema is the proof the sweep
+landed*, so step 4 cannot succeed early and nothing has to be trusted. The runbook lives in the
+header of `scripts/migrate-sheets.mjs` — in the tool rather than in an ADR, for the reason this
+file's own note about ADR 0012 gives: a runbook goes stale the moment it is followed.
+
+⚠️ **Two hunks in the sweep commit are there for the *deploy* rather than for the feature**, and
+both would look like tidying to somebody rebasing. `preset.race` becomes **optional**, because the
+sweep writes rows with a `species` and no `race` and a validator that still required it would reject
+the migration's own writes. And `longRest` stops writing `spentPerRest: []`, because a long rest
+taken between the sweep and the narrowing push would otherwise put back the exact field that push
+refuses.
 
 **One thing worth carrying forward about how this was built.** Every defect the integration found was
 at a **seam** rather than inside any one agent's work: four in Milestone 13, three here. A duplicated

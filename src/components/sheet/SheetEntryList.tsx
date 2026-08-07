@@ -82,7 +82,7 @@ export type SheetEntryListProps = {
    * still answering.
    *
    * Read off the vitals payload's `spentUses`, which is the counted successor to
-   * `spentPerRest` and already has the legacy array folded into it server-side — so a
+   * the retired `spentPerRest` and still has a legacy array folded into it server-side — so a
    * caller passing this one alone is correct for both.
    *
    * Absent entirely on a list nobody is playing from: a creature's actions and the DM's

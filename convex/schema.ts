@@ -198,9 +198,13 @@ export default defineSchema({
     // reason hit points do: it is what changes during play, not what the character
     // is. A rest clears it; an edit does not touch it.
     //
-    // The app never enforces the effect, only remembers whether it has been used,
-    // which is the part a table forgets. Optional because most races have nothing to
-    // spend and a row for one of them should not carry an empty array.
+    // ⚠️ **NOTHING WRITES IT ANY MORE, AND NOTHING MAY.** `setPerRestSpent` is gone,
+    // `setUsesSpent` never touched it, and `longRest` stopped clearing it in the sweep
+    // commit — because a long rest taken between the sweep and the narrowing push would
+    // otherwise put back the exact field that push refuses. So this can now only shrink,
+    // which is what makes the narrowing a **deletion** rather than a migration of its own:
+    // `planVitalsMigration` in lib/characters.ts folds it into `spentUses` below and
+    // removes it, and the narrowing commit takes the field out.
     spentPerRest: v.optional(v.array(v.string())),
     // ⚠️ ALL FIVE OPTIONAL BECAUSE THIS TABLE HAS HELD ROWS SINCE MILESTONE 3, AND ADDING
     // A REQUIRED FIELD TO A POPULATED TABLE FAILS THE SCHEMA PUSH.
@@ -235,7 +239,8 @@ export default defineSchema({
     // 2024 is full of features with two, three or a proficiency-bonus-many. So this counts,
     // and `spentUsesOf` folds the legacy array in as *every key is one spent use*. Both are
     // live at once on purpose: a schema push is not atomic, and a row written by an older
-    // deployment must keep meaning what it meant.
+    // deployment must keep meaning what it meant. The fold outlives the field, and goes with
+    // lib/migrate.ts rather than with the schema.
     spentUses: v.optional(v.array(v.object({ key: v.string(), spent: v.number() }))),
     // SPELL SLOTS SPENT, PER SPELL LEVEL — `spentUses`' sibling, and shaped like it on
     // purpose rather than by habit.

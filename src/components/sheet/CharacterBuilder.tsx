@@ -16,13 +16,13 @@ import {
   subclassOf,
 } from '@convex/lib/classes'
 import type { SpeciesKey } from '@convex/lib/species'
-import { SPECIES, lineageOf, species as speciesByKey } from '@convex/lib/species'
+import { SPECIES, lineageOf, species as speciesByKey, speciesKeyOf } from '@convex/lib/species'
 import type { PresetSheet, SheetProblem } from '@convex/lib/sheet'
 import { MAX_LEVEL, MIN_LEVEL, storedSheetProblem } from '@convex/lib/sheet'
 
 /** What the dropdowns come to. Everything else about a preset is not chosen here. */
 export type BuilderSelections = {
-  race: SpeciesKey
+  species: SpeciesKey
   /** Null for the four species with no lineage table, and for one nobody has picked from. */
   lineageKey: string | null
   classKey: ClassKey
@@ -111,8 +111,8 @@ export function CharacterBuilder({
   const readOnly = locked && !isDm
   const disabled = busy || readOnly
 
-  const chosenRace = chosen.race === null ? null : speciesByKey(chosen.race)
-  const chosenLineage = lineageOf(chosenRace, chosen.lineageKey)
+  const chosenSpecies = chosen.species === null ? null : speciesByKey(chosen.species)
+  const chosenLineage = lineageOf(chosenSpecies, chosen.lineageKey)
   const chosenClass = chosen.classKey === null ? null : findClass(chosen.classKey)
   const chosenSubclass =
     chosen.classKey === null ? null : subclassOf(chosen.classKey, chosen.subclassKey)
@@ -180,14 +180,14 @@ export function CharacterBuilder({
 
       <div className="grid grid-cols-2 gap-3">
         <SheetField
-          id="builder-race"
+          id="builder-species"
           label="Species"
-          hint={chosenRace?.blurb ?? 'What your character is.'}
+          hint={chosenSpecies?.blurb ?? 'What your character is.'}
         >
           <NativeSelect
-            id="builder-race"
+            id="builder-species"
             className="w-full"
-            value={chosen.race ?? ''}
+            value={chosen.species ?? ''}
             disabled={disabled}
             onChange={(event) =>
               // The lineage goes with the species it belonged to, for the reason the
@@ -196,7 +196,7 @@ export function CharacterBuilder({
               // would have explained it is about to be redrawn with different options.
               setChosen({
                 ...chosen,
-                race: event.target.value as SpeciesKey,
+                species: event.target.value as SpeciesKey,
                 lineageKey: null,
               })
             }
@@ -252,13 +252,13 @@ export function CharacterBuilder({
           has not failed to choose a lineage — a Halfling has none. Drawn the moment the
           species has one, at every level, because a lineage is a level 1 choice unlike an
           archetype. */}
-      {chosenRace !== null && chosenRace.lineages !== undefined ? (
+      {chosenSpecies !== null && chosenSpecies.lineages !== undefined ? (
         <SheetField
           id="builder-lineage"
           label="Lineage"
           hint={
             chosenLineage?.blurb ??
-            `Your ${chosenRace.name} picks one of ${chosenRace.lineages.length}, and it comes with magic of its own.`
+            `Your ${chosenSpecies.name} picks one of ${chosenSpecies.lineages.length}, and it comes with magic of its own.`
           }
         >
           <NativeSelect
@@ -271,7 +271,7 @@ export function CharacterBuilder({
             }
           >
             <option value="">Not chosen yet</option>
-            {chosenRace.lineages.map((lineage) => (
+            {chosenSpecies.lineages.map((lineage) => (
               <option key={lineage.key} value={lineage.key}>
                 {lineage.name} — {lineage.blurb}
               </option>
@@ -330,16 +330,16 @@ export function CharacterBuilder({
           symptom. The lineage's own trait joins the same list rather than getting a second
           box, because a Wood Elf's 35 feet is a species trait as far as the reader is
           concerned. */}
-      {chosenRace ? (
+      {chosenSpecies ? (
         <div className="bg-muted/40 flex flex-col gap-2 rounded-lg border p-3">
           <span className="flex flex-wrap items-center gap-2">
-            <span className="font-heading text-sm font-medium">What a {chosenRace.name} can do</span>
+            <span className="font-heading text-sm font-medium">What a {chosenSpecies.name} can do</span>
             <Badge variant="secondary">
-              {chosenRace.traits.length + (chosenLineage ? 1 : 0)} traits
+              {chosenSpecies.traits.length + (chosenLineage ? 1 : 0)} traits
             </Badge>
           </span>
           {[
-            ...chosenRace.traits,
+            ...chosenSpecies.traits,
             ...(chosenLineage
               ? [{ name: chosenLineage.traitName, text: chosenLineage.traitText }]
               : []),
@@ -375,7 +375,7 @@ export function CharacterBuilder({
               onConfirm({
                 // Narrow at the boundary rather than in the type: `confirmable` is false unless the
                 // dropdown holds one of the nine, so by here it genuinely is a `SpeciesKey`.
-                race: candidate.race as SpeciesKey,
+                species: candidate.species as SpeciesKey,
                 lineageKey: candidate.lineageKey ?? null,
                 classKey: candidate.classKey,
                 subclassKey: candidate.subclassKey,
@@ -469,7 +469,7 @@ type PartialSelections = {
    * `speciesLabel` renders it either way; the dropdown offers only the nine that resolve, so
    * choosing again is the only thing a retired key can become.
    */
-  race: string | null
+  species: string | null
   lineageKey: string | null
   classKey: ClassKey | null
   subclassKey: string | null
@@ -477,9 +477,12 @@ type PartialSelections = {
 
 function selectionsOf(preset: PresetSheet | null): PartialSelections {
   return preset === null
-    ? { race: null, lineageKey: null, classKey: null, subclassKey: null }
+    ? { species: null, lineageKey: null, classKey: null, subclassKey: null }
     : {
-        race: preset.race,
+        // Through `speciesKeyOf`, which crosses the two stored fields the rename is
+        // mid-way between and answers `''` for the row that has neither. `|| null` turns
+        // that into the same "nothing chosen" the null branch above produces.
+        species: speciesKeyOf(preset) || null,
         // Absent and null both mean "nothing chosen" — see `presetSheetValidator` — and
         // this is where the two are flattened, so nothing above has to know that a
         // character stored before the field existed is not a character who declined.
@@ -492,7 +495,7 @@ function selectionsOf(preset: PresetSheet | null): PartialSelections {
 function changed(chosen: PartialSelections, against: PresetSheet | null): boolean {
   const saved = selectionsOf(against)
   return (
-    chosen.race !== saved.race ||
+    chosen.species !== saved.species ||
     chosen.lineageKey !== saved.lineageKey ||
     chosen.classKey !== saved.classKey ||
     chosen.subclassKey !== saved.subclassKey
@@ -519,12 +522,12 @@ function candidateOf(chosen: PartialSelections, level: number): PresetSheet | nu
   // species it needs choosing again''.** The character keeps the key it has — nothing here
   // rewrites it — and simply cannot be confirmed until the player picks one of the nine. That
   // is the same refusal `storedSheetProblem` would give, reached before anything is sent.
-  if (chosen.race === null || chosen.classKey === null) return null
-  if (speciesByKey(chosen.race) === null) return null
-  const hasLineages = speciesByKey(chosen.race)?.lineages !== undefined
+  if (chosen.species === null || chosen.classKey === null) return null
+  if (speciesByKey(chosen.species) === null) return null
+  const hasLineages = speciesByKey(chosen.species)?.lineages !== undefined
   return {
     kind: 'preset',
-    race: chosen.race as SpeciesKey,
+    species: chosen.species as SpeciesKey,
     lineageKey: hasLineages ? chosen.lineageKey : null,
     classKey: chosen.classKey,
     subclassKey: level >= SUBCLASS_LEVEL ? chosen.subclassKey : null,

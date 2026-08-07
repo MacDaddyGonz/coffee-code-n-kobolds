@@ -24,12 +24,14 @@
 //     moved to 30, and invited the next reader to add it to something. Store what the SRD
 //     prints.
 //
-// ⚠️ **`SPEED_FEET` in lib/sheet.ts is still 35 and this file does not depend on it.**
-// Flipping that constant to 30 is a *stored-value* change — every sheet written before it
-// has the field absent, so `speedOf` would silently slow every existing character by five
-// feet — and it belongs to the migration branch. That is why `baseSpeed` is spelled out on
-// all nine species rather than left absent on the eight that match a default: this module
-// must produce the right speed whatever that constant currently says.
+// ⚠️ **`SPEED_FEET` in lib/sheet.ts has now moved 35 → 30, and this file did not have to
+// change — which is the whole reason it was written this way.** Flipping that constant was
+// a *stored-value* change, because every sheet written before it has the field absent and
+// `speedOf` answers the constant for those; the migration commit pinned the hand-built
+// ones first and then moved it. `baseSpeed` is spelled out on all nine species rather than
+// left absent on the eight that happen to match the new default, so this module produces
+// the right speed whatever that constant says — and the Goliath's 35 survived the move
+// without anybody having to remember it.
 //
 // Shared with the browser, and deliberately free of any `lib/library/` import: the picker
 // needs these nine names and blurbs, and nothing else about them. See the note at the top
@@ -784,11 +786,9 @@ export const RETIRED_SPECIES: Record<string, string> = {
  * WHICH SPECIES A STORED PRESET IS, whichever of the two fields it happens to carry.
  *
  * ⚠️ **The only place `species` and `race` are ever both read**, which is the whole of what
- * makes a two-field transition survivable. `presetSheetValidator` carries `race` (required,
- * every row has one) and `species` (optional, nothing writes one yet), because renaming a
- * stored field in Convex is widen → migrate → narrow and this is the widen: the new name
- * exists, one accessor answers the question, and every caller is already reading through it
- * by the time the migration starts writing.
+ * makes a two-field transition survivable. `presetSheetValidator` carries both, both
+ * optional, because three shapes are all real at once: `race` alone before the sweep,
+ * `species` alone after it, and both where a run stopped half way.
  *
  * **`species` wins when both are present.** That is the direction that makes the migration
  * idempotent and interruptible — a run that stops half way leaves half the rows answering
@@ -796,22 +796,31 @@ export const RETIRED_SPECIES: Record<string, string> = {
  * the migration's own writes invisible until the narrowing commit deleted `race`, which is
  * exactly the window a migration wants to be able to verify.
  *
- * **Returns `string` and not `SpeciesKey`**, like `species()` and `findClass` take one: a
- * caller holding a *stored* key by definition holds something the narrow type says cannot
- * exist. Every consumer already goes through `species()` or `speciesLabel`, both of which
- * take a `string` and neither of which throws on a key that has been retired.
+ * ⚠️ **The empty string is the fourth shape and it is deliberately not a special case.** A
+ * preset carrying neither field is not a row anything has ever written — `race` was required
+ * for the whole of the field's life and the sweep only ever replaces it — so `''` exists to
+ * be *refused* rather than handled: `species('')` answers null, and `storedSheetProblem`
+ * turns that into a write-side refusal. Fail-closed, in one place, rather than an
+ * `undefined` every caller has to think about. It collapses to `preset.species` in the
+ * narrowing commit.
+ *
+ * **Returns `string` and not `SpeciesKey`**, like `species()` and `findClass` take one: the
+ * stored union is wider than the live one by exactly one retired key, so a caller holding a
+ * *stored* key by definition holds something the narrow type says cannot exist. Every
+ * consumer already goes through `species()` or `speciesLabel`, both of which take a `string`
+ * and neither of which throws on a key that has been retired.
  */
 export function speciesKeyOf(preset: PresetSheet): string {
-  return preset.species ?? preset.race
+  return preset.species ?? preset.race ?? ''
 }
 
-// ─── TRANSITION ONLY ────────────────────────────────────────────────────────────────
-// Everything below carries the retired species keys across a schema push, and is deleted
-// once the sweep has run against every deployment. Nothing new should be built on it.
+// ─── THE ONE NARROWING THIS MILESTONE DECLINED ──────────────────────────────────────
+// What follows is the retired species key, still storable, on purpose and indefinitely.
+// It was written as a transition and it is not one.
 
 /**
  * The union **as it may still be found in the database**: the nine canonical species plus
- * every key in `RETIRED_SPECIES`.
+ * every key in `RETIRED_SPECIES`. **Ten literals for nine species, and the tenth stays.**
  *
  * ⚠️⚠️ **THIS IS NOT BELT AND BRACES. WITHOUT IT `npx convex deploy` IS REFUSED**, and that is
  * how it was found rather than how it was designed: the branch typechecked, 1711 tests passed,
@@ -821,14 +830,24 @@ export function speciesKeyOf(preset: PresetSheet): string {
  * *deploy* failure long before it is the `TypeError` `species()` was fixed to prevent. The
  * lookup is the second failure; this is the first, and only a real deployment could say so.
  *
- * Used by `presetSheetValidator` and by nothing else, which is the whole shape of the
- * widen–migrate–narrow: the **stored** union is wide enough to validate a row written before
- * a species was retired, and every other spelling in the codebase — `characters.create`'s
- * argument validator, `characters.updateSheet`'s, the builder's dropdown — is already the
- * narrow one. So no `half-orc` can be created from this commit forward and the browser never
- * learns that the transition happened. `storedTokenLayerValidator` did exactly this for the
- * `dm` → `gm` layer rename one milestone ago, and this is the second instance rather than a
- * new idea.
+ * ⚠️⚠️ **THE MIGRATION COMMIT WAS PLANNED TO DELETE `'half-orc'` FROM HERE AND DELIBERATELY
+ * DID NOT. Read this before tidying it away.** Nothing the sweep can write makes the literal
+ * removable, because the milestone's own acceptance criterion is that *a Half-Orc character
+ * created before this milestone opens, with its name, and says plainly which species needs
+ * choosing again* — which requires the key to remain **storable**. A sweep that remapped
+ * Half-Orc onto Orc would satisfy the schema and violate the criterion: the SRD's Orc has
+ * three traits of its own, 120 feet of Darkvision and a bonus-action Dash the Half-Orc never
+ * had, so it is a different character and nobody asked for it. `RETIRED_SPECIES` exists for
+ * exactly this, and the choice belongs to whoever built the character.
+ *
+ * So the two unions are permanent rather than transitional: **wide where a row is stored,
+ * narrow everywhere a value is chosen.** Used by `presetSheetValidator` and by nothing else;
+ * every other spelling in the codebase — `characters.create`'s argument validator,
+ * `characters.updateSheet`'s, the builder's dropdown — is `speciesKeyValidator`, so no
+ * `half-orc` can be created and the browser never learns that any of this happened. The
+ * write-side refusal that closes the one gap those two validators being the *same* union
+ * opens is in `storedSheetProblem`. `storedTokenLayerValidator` did the same thing for the
+ * `dm` → `gm` layer rename one milestone ago.
  *
  * ⚠️ **Hand-spelled rather than built from `RETIRED_SPECIES`**, for `speciesKeyValidator`'s
  * reason: a Convex validator is a value, the record is a value too, and a generated union

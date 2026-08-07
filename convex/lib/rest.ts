@@ -14,7 +14,7 @@
 // the application enters: no clock runs, nothing checks that eight hours have passed, nothing
 // refuses a second short rest, and no roll anywhere consults a rest. What this module gives
 // is the arithmetic of *how much of a counter comes back*, which is the same register as
-// `spentPerRest` remembering whether Rage has been used — the app counts, and the table
+// `spentUses` remembering how much of Rage has been used — the app counts, and the table
 // adjudicates.
 //
 // Deliberately free of any corpus import, and it must stay that way: every function here runs

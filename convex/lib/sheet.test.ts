@@ -1247,7 +1247,7 @@ describe('skillProficienciesOf and speedOf', () => {
    * the validator for ever — which makes reading one directly a bug waiting for
    * the first legacy character to be opened.
    */
-  test('a sheet with neither field reads as untrained and 35 feet', () => {
+  test('a sheet with neither field reads as untrained and at the default speed', () => {
     const legacy = defaultPcSheet()
     expect(legacy.skillProficiencies).toBeUndefined()
     expect(legacy.speed).toBeUndefined()
@@ -1300,7 +1300,7 @@ describe('storedSheetProblem on a preset', () => {
   function preset(overrides: Partial<PresetSheet> = {}): PresetSheet {
     return {
       kind: 'preset',
-      race: 'human',
+      species: 'human',
       classKey: 'fighter',
       subclassKey: 'champion',
       level: 3,
@@ -1325,8 +1325,8 @@ describe('storedSheetProblem on a preset', () => {
         ).toBeNull()
       }
     }
-    for (const race of SPECIES_KEYS) {
-      expect(storedSheetProblem(preset({ race })), race).toBeNull()
+    for (const speciesKey of SPECIES_KEYS) {
+      expect(storedSheetProblem(preset({ species: speciesKey })), speciesKey).toBeNull()
     }
   })
 
@@ -1443,7 +1443,7 @@ describe('storedSheetProblem on a preset', () => {
     const messy = preset({ level: 3.6, overrides: { armourClass: 21 } })
     const tidied = normaliseStoredSheet(messy) as PresetSheet
     expect(tidied.level).toBe(4)
-    expect(tidied.race).toBe(messy.race)
+    expect(tidied.species).toBe(messy.species)
     expect(tidied.classKey).toBe(messy.classKey)
     expect(tidied.subclassKey).toBe(messy.subclassKey)
     expect(tidied.locked).toBe(messy.locked)
@@ -2257,7 +2257,7 @@ describe('a sheet written before this milestone is still saveable', () => {
   test('and a legacy preset override still validates', () => {
     const stored: StoredSheet = {
       kind: 'preset',
-      race: 'human',
+      species: 'human',
       classKey: 'fighter',
       subclassKey: 'champion',
       level: 3,
@@ -2770,41 +2770,61 @@ describe('clampTemporaryHp and clampDeathSaves', () => {
   })
 })
 
-describe('a preset carries a species beside its race, and a lineage', () => {
+describe('a preset carries a species and a lineage', () => {
   const base: PresetSheet = {
     kind: 'preset',
-    race: 'human',
+    species: 'human',
     classKey: 'fighter',
     subclassKey: null,
     level: 1,
     locked: false,
   }
 
-  test('speciesKeyOf reads the old field while nothing writes the new one', () => {
+  /**
+   * ⚠️ **THE MIDDLE OF THE RENAME, WHERE THREE SHAPES ARE ALL REAL AT ONCE** — `race` alone
+   * for a row written before the conversion, `species` alone for one the sweep has reached
+   * or a character built from this commit onward, and both for a run that stopped half way.
+   * `speciesKeyOf` is the one place any of them is read, and the direction it prefers is what
+   * makes the backfill idempotent and interruptible.
+   *
+   * The narrowing commit collapses all of this to one required field. It cannot be pushed
+   * until the sweep has run everywhere, so until then these are the claims that matter.
+   */
+  test('speciesKeyOf prefers the new field and falls back to the old one', () => {
     expect(speciesKeyOf(base)).toBe('human')
-  })
-
-  test('the new field wins when both are present, so the backfill is idempotent', () => {
+    expect(speciesKeyOf({ ...base, species: undefined, race: 'dwarf' })).toBe('dwarf')
     // ⚠️ The direction that makes a migration interruptible: a run that stops half way leaves
     // half the rows answering from the new field and half from the old, and both are right.
-    expect(speciesKeyOf({ ...base, species: 'elf' })).toBe('elf')
+    expect(speciesKeyOf({ ...base, race: 'dwarf', species: 'elf' })).toBe('elf')
   })
 
-  test('both survive the field-by-field rebuild, and absent stays absent for each', () => {
-    const migrated = normaliseStoredSheet({
+  test('all three shapes survive the field-by-field rebuild, and absent stays absent', () => {
+    const rebuilt = normaliseStoredSheet({
       ...base,
+      race: 'dwarf',
       species: 'elf',
       lineageKey: 'wood',
     }) as PresetSheet
-    expect(migrated.species).toBe('elf')
-    expect(migrated.lineageKey).toBe('wood')
+    expect(rebuilt.race).toBe('dwarf')
+    expect(rebuilt.species).toBe('elf')
+    expect(rebuilt.lineageKey).toBe('wood')
 
-    // ⚠️ Absent must stay absent on `species`, or every character looks migrated before the
-    // migration ran — and on `lineageKey`, where absence means *nobody was asked* and `null`
+    // ⚠️ Absent must stay absent on all three. A materialised `species` makes every character
+    // look migrated before the sweep ran; a materialised `race` puts back the field the sweep
+    // exists to remove; and on `lineageKey` absence means *nobody was asked* where `null`
     // means *asked, and this species has none*.
-    const untouched = normaliseStoredSheet(base) as PresetSheet
-    expect(untouched).not.toHaveProperty('species')
-    expect(untouched).not.toHaveProperty('lineageKey')
+    const swept = normaliseStoredSheet(base) as PresetSheet
+    expect(swept.species).toBe('human')
+    expect(swept).not.toHaveProperty('race')
+    expect(swept).not.toHaveProperty('lineageKey')
+
+    const unswept = normaliseStoredSheet({
+      ...base,
+      species: undefined,
+      race: 'dwarf',
+    }) as PresetSheet
+    expect(unswept.race).toBe('dwarf')
+    expect(unswept).not.toHaveProperty('species')
   })
 
   test('an explicit null lineage stays null rather than collapsing to absent', () => {
@@ -2962,7 +2982,7 @@ describe('an entry carries a mastery and a use count', () => {
     expect(
       storedSheetProblem({
         kind: 'preset',
-        race: 'human',
+        species: 'human',
         classKey: 'fighter',
         subclassKey: null,
         level: 1,

@@ -25,7 +25,7 @@ import type { PublicSheet, PublicVitals } from '@convex/lib/characters'
 import { MAX_CHARACTER_NAME_LENGTH, collapseWhitespace } from '@convex/lib/codes'
 import type { ChallengeRating } from '@convex/lib/creatures'
 import type { RestKind } from '@convex/lib/rest'
-import { perRestAbilities } from '@convex/lib/species'
+import { perRestAbilities, speciesKeyOf } from '@convex/lib/species'
 import type { NpcSheet, PcSheet, PresetSheet, StoredSheet } from '@convex/lib/sheet'
 import {
   normaliseStoredSheet,
@@ -130,7 +130,7 @@ export type CharacterSheetEditorProps = {
  *
  * ⚠️ **The draft is a `StoredSheet` and the thing it is compared against is not.**
  * `saved.sheet` is the *resolved* sheet — for a library character, the class's numbers
- * with the race applied and the DM's overrides on top; for a creature off the bestiary
+ * with the species applied and the DM's overrides on top; for a creature off the bestiary
  * shelf, the entry scaled to its rating with the same treatment — while `saved.preset`
  * and `saved.creature` say what the document actually holds. Only the stored form can be
  * sent back, because resolving needs the corpora, which must never reach the browser. So
@@ -354,7 +354,7 @@ export function CharacterSheetEditor({
   }
 
   /**
-   * Committing a character's race, class and archetype, and locking them behind it.
+   * Committing a character's species, class and archetype, and locking them behind it.
    *
    * Written here rather than in the builder because it has to merge with whatever else
    * the draft is carrying: a DM who has typed an armour class and *then* changed the
@@ -375,7 +375,7 @@ export function CharacterSheetEditor({
 
     const built: StoredSheet = {
       kind: 'preset',
-      race: selections.race,
+      species: selections.species,
       // ⚠️ **A third field-by-field rebuild of a preset**, beside `candidateOf` in the
       // builder and `normaliseStoredSheet` on the server. The note on `withOverrides`
       // records this codebase dropping `skillProficiencies` and then `speed` by updating
@@ -494,7 +494,7 @@ export function CharacterSheetEditor({
             // travel. A hand-built sheet stores no species and so has none to spend — the
             // empty list is a case `RestControls` handles, because most species have
             // nothing either and the rest buttons belong to all of them.
-            perRest={heroPreset ? perRestAbilities(heroPreset.race) : []}
+            perRest={heroPreset ? perRestAbilities(speciesKeyOf(heroPreset)) : []}
             onFeats={handBuilt ? (feats) => setDraft({ ...sheet, feats }) : undefined}
             onAdjustHitDice={onAdjustHitDice}
             onSetUses={onSetUses}

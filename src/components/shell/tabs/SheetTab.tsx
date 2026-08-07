@@ -87,7 +87,7 @@ export function SheetTab({
             it is the difference between one route and half of one.** The copy used to
             stop at "pick one up from the table", which describes the button and not the
             outcome: a new player claims a character whose sheet is a blank `pc` — ten
-            across, no race, no class — and the two dropdowns that turn it into somebody
+            across, no species, no class — and the two dropdowns that turn it into somebody
             are on this panel, in `CharacterBuilder`'s *Build a character* form. Nothing
             on the Table tab says so, and nothing needs to, because they land back here
             the moment the claim succeeds (`onClaimed` in `RightPane`). Copy that
@@ -100,8 +100,10 @@ export function SheetTab({
             from `SUBCLASS_LEVEL` up, so promising three choices would be wrong for every
             character that has just been made. ⚠️ **The word is *species* now and *race*
             before the 2024 conversion**, which is the rename reaching the last piece of
-            copy that had it; the stored field on a preset is still called `race`, and
-            `speciesKeyOf` is the accessor that crosses the two.
+            copy that had it. The builder writes a stored field called `species` too, as of
+            the migration commit; `speciesKeyOf` is the accessor everything reads it
+            through, because a character built before the conversion may still be holding
+            the old field until the sweep reaches it.
 
             It also names the Build tab, which the sheet did not have when this was
             written: landing on a blank Play pane and being told to choose a species is a

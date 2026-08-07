@@ -31,7 +31,7 @@ import { WEAPON_MASTERIES, weaponMasteryValidator } from './mastery'
 import type { WeaponMastery } from './mastery'
 import { MAX_RESOURCE_USES, resourceValidator, restores } from './rest'
 import type { Resource } from './rest'
-import { species, speciesLabel, storedSpeciesKeyValidator } from './species'
+import { species, speciesKeyOf, speciesLabel, storedSpeciesKeyValidator } from './species'
 // Type-only, and it has to stay that way: skills.ts imports `abilityModifier` and
 // `proficiencyBonus` from this module at runtime, so a value import back would close
 // a cycle. See the note on `skillProficienciesValidator`.
@@ -141,9 +141,32 @@ export const MAX_SPELL_LEVEL = 9
  * lifted that exclusion for one race: the Goliath is Large and moves 45. So `speed`
  * is a field on the PC sheet, optional because the table already held sheets without
  * it, and read through `speedOf` — which returns this whenever nothing has said
- * otherwise, which is seven races out of eight. See ADR 0006.
+ * otherwise. See ADR 0006.
+ *
+ * ⚠️⚠️ **IT WAS 35 AND IT IS 30, AND MOVING IT WAS A STORED-VALUE CHANGE WEARING A
+ * CONSTANT'S CLOTHES.** SRD 5.2.1 prints 30 for eight of the nine species and 35 for the
+ * Goliath, so 35 was never the SRD's number — but `speedOf` answers this constant for
+ * every sheet whose `speed` is absent, and **every sheet stored before the conversion has
+ * it absent**. Editing the literal alone would therefore have slowed every hand-typed
+ * goblin in every game by five feet, silently, with nothing on any screen to say so.
+ *
+ * **So the sweep ran first and this moved after it**, in that order, in one commit:
+ * `PRE_2024_SPEED_FEET` in lib/migrate.ts pins every hand-built `pc` and `npc` sheet to
+ * the 35 it already meant, and a `preset` is deliberately left alone because it stores no
+ * speed and re-resolves correctly — Goliaths and Wood Elves included, since a 2024 species
+ * carries an absolute `baseSpeed`. Getting that order backwards writes 30 into the pin and
+ * makes the change invisible and permanent.
+ *
+ * ⚠️ **This docblock is the checklist, on `MAX_ROLL_DICE`'s precedent, and it was used as
+ * one.** Moving this number moves: this constant; `PRE_2024_SPEED_FEET` and its pin;
+ * `speedHint` in `src/components/sheet/SheetFields.tsx`, the one client surface that
+ * compares against it and which mis-captioned almost every character while the two
+ * disagreed; `GOLIATH_SPEED` in `scripts/board-smoke.mjs`; and the four suites that name
+ * a number here rather than importing one. `lib/species.ts` is deliberately **not** on
+ * that list — its nine `baseSpeed` values are absolutes read off the SRD and depend on
+ * nothing in this file, which is why the Goliath survived the move untouched.
  */
-export const SPEED_FEET = 35
+export const SPEED_FEET = 30
 
 /**
  * Feats, spells and NPC actions are bounded arrays on the character document
@@ -438,8 +461,12 @@ export const skillProficienciesValidator = v.object({
   // held `pc` sheets since Milestone 3 and every one of them carries thirteen booleans, so
   // making these required fails the schema push — the trap `games.status`, `speed` and
   // `skillProficiencies` itself each hit in turn. They are read through
-  // `skillProficienciesOf`, which fills them in, and they become required in the narrowing
-  // commit after the sweep. Widen → migrate → narrow, as always.
+  // `skillProficienciesOf`, which fills them in.
+  //
+  // `planSheetMigration` in lib/migrate.ts back-fills `false` on every stored `pc` sheet
+  // **and inside every `preset.overrides.skillProficiencies`** — the second place they live
+  // and the one a sweep forgets, since it is this same validator. They become required in
+  // the narrowing commit, which cannot be pushed until that sweep has run everywhere.
   history: v.optional(v.boolean()),
   nature: v.optional(v.boolean()),
   religion: v.optional(v.boolean()),
@@ -1027,45 +1054,50 @@ export type PresetOverrides = Infer<typeof presetOverridesValidator>
 export const presetSheetValidator = v.object({
   kind: v.literal('preset'),
   /**
-   * ⚠️ **The OLD name, still required, still the narrow union, and read through
-   * `speciesKeyOf` rather than directly.** `species` below is the new one. Two fields for
-   * one fact is the widen half of widen → migrate → narrow applied to a *rename*: renaming
-   * a stored field in Convex is not an edit, it is a second field, a backfill of every row
-   * in every game, a window where both are live, and then a narrowing.
+   * ⚠️ **THE OLD NAME, AND IT IS OPTIONAL NOW WHERE IT USED TO BE REQUIRED — WHICH IS THE
+   * ONE SCHEMA CHANGE THE SWEEP ITSELF DEPENDS ON.** Read this before "tidying" it back.
    *
-   * It stays on `speciesKeyValidator` — the narrow union — on purpose, and the reason is
-   * unusual enough to write down. `storedSheetValidator` is not only the schema's spelling
-   * of this document; it is also `characters.create`'s and `characters.updateSheet`'s
-   * **argument** validator, so widening a field here widens the write path too. The
-   * precedent this transition copies, `storedTokenLayerValidator` in lib/layers.ts, has no
-   * such problem because a token's layer arrives through an argument validator of its own.
+   * Renaming a stored field in Convex is not an edit: it is a second field, a backfill of
+   * every row in every game, a window in which both are live, and then a narrowing. This
+   * is the middle of that, and the middle has a requirement of its own — **the sweep
+   * writes rows that have `species` and no `race`.** A validator that still *required*
+   * `race` would reject the migration's own writes, so widening it is not a courtesy to
+   * legacy rows, it is what makes `admin.migrateGame` able to write at all.
    *
-   * ⚠️⚠️ **AND THAT PREDICTION CAME TRUE BEFORE THE BRANCH MERGED, WHICH IS WHY THIS FIELD
-   * TAKES THE WIDE UNION AND NOT THE NARROW ONE.** The sentence that stood here said removing
-   * `'half-orc'` from `speciesKeyValidator` while `race` was still narrow would fail
-   * `npx convex deploy` against any deployment holding a Half-Orc, and that the migration
-   * should write `species` first. The species branch retired the content on a parallel branch;
-   * the push was refused exactly as described, over a character created months ago.
+   * Both optional therefore admits exactly three shapes, and all three are real:
+   * `race` alone (every row written before the conversion), `species` alone (every row the
+   * sweep has reached, and every character built from this commit onward), and both (a run
+   * that stopped half way). `speciesKeyOf` in lib/species.ts is the one place any of them
+   * is read, and it prefers `species`, which is what makes the backfill idempotent and
+   * interruptible.
    *
-   * So `race` widened rather than the migration going first. The order in the abstract was
-   * right and the ordering in practice was not available: two branches cannot land in a
-   * sequence when they land at the same time.
-   *
-   * ⚠️ **The consequence the paragraph above names is real and is handled elsewhere.** Widening
-   * here widens the write path too, because `storedSheetValidator` is also
-   * `characters.create`'s argument validator — so a brand-new Half-Orc became creatable, and
-   * `characters.test.ts`'s argument-boundary probe caught it. The write-side refusal now lives
-   * in `storedSheetProblem`, on the path every write already takes. The rejected alternative
-   * was a second sheet union for arguments: four validators instead of two, and two more
-   * places for a field to be added to one and not the other.
+   * **Neither field is optional because absence is meaningful**, and the fourth shape —
+   * neither present — is refused on write by `storedSheetProblem` below rather than being
+   * a state anything has to handle. `species` becomes **required** and `race` disappears in
+   * the narrowing commit, which cannot be pushed until the sweep has run everywhere.
    */
-  race: storedSpeciesKeyValidator,
+  race: v.optional(storedSpeciesKeyValidator),
   /**
    * The new name for the same fact, on the union that admits a retired key.
    *
-   * Optional because nothing writes one yet — this commit builds the road and the migration
-   * drives down it. `speciesKeyOf` in lib/species.ts is the one place both are read, and it
-   * prefers this one, which is what makes the backfill idempotent and interruptible.
+   * ⚠️⚠️ **IT TAKES THE WIDE UNION AND NOT THE NARROW ONE, AND THAT SURVIVES THE
+   * NARROWING.** `storedSpeciesKeyValidator` is ten literals for nine species,
+   * deliberately: a Half-Orc created before this milestone must still be **storable**, or
+   * `npx convex deploy` is refused over a character created months ago — which is how this
+   * was found the first time rather than how it was designed. Narrowing it to
+   * `speciesKeyValidator` is the one narrowing this milestone declined, and lib/species.ts
+   * argues it where the union is spelled.
+   *
+   * ⚠️ **Wide here means wide on the WRITE path too, which is handled elsewhere.**
+   * `storedSheetValidator` is not only the schema's spelling of this document; it is also
+   * `characters.create`'s and `characters.updateSheet`'s **argument** validator, so a
+   * brand-new Half-Orc would be creatable if nothing else refused it —
+   * `characters.test.ts`'s argument-boundary probe caught exactly that. The write-side
+   * refusal lives in `storedSheetProblem` below, on the path every write already takes.
+   * The rejected alternative was a second sheet union for arguments: four validators
+   * instead of two, and two more places for a field to be added to one and not the other.
+   * (`storedTokenLayerValidator` in lib/layers.ts has no such problem, because a token's
+   * layer arrives through an argument validator of its own.)
    */
   species: v.optional(storedSpeciesKeyValidator),
   /**
@@ -1510,9 +1542,14 @@ export function noSkills(): SkillProficiencies {
  * renderer's `SKILLS.map`.
  *
  * Spread over `noSkills()` rather than `??`-ed field by field, so a nineteenth skill needs no
- * edit here. The five become required after the sweep, at which point this collapses back to
- * the pass-through it used to be — but not before, because a schema push is not atomic and a
- * row written by an older deployment can be read by a newer one in the window between.
+ * edit here.
+ *
+ * ⚠️ **It does NOT collapse back to a pass-through when the five become required**, which is
+ * the obvious tidy-up and the wrong one. A schema push is not atomic, so a row written by an
+ * older deployment can be read by a newer one, and in that window handing back a thirteen-key
+ * object typed as eighteen is a type that lies — which is the whole failure this function
+ * exists to prevent. `normaliseMarkers` keeps its fail-soft intersection past its own
+ * narrowing for the same reason. One object per read is not a price worth arguing about.
  */
 export function skillProficienciesOf(sheet: CharacterSheet): SkillProficiencies {
   if (sheet.kind !== 'pc' || sheet.skillProficiencies === undefined) return noSkills()
@@ -2938,12 +2975,13 @@ export function normaliseStoredSheet(sheet: StoredSheet): StoredSheet {
 
   return {
     kind: 'preset',
-    race: sheet.race,
     // **The trap's sixth outing again, on the third of the four stored shapes.** Absent has
-    // to stay absent for both: `speciesKeyOf` reads `species` in preference to `race`, so a
-    // materialised copy here would make every character look migrated before the migration
-    // ran; and `lineageKey` distinguishes *nobody was asked* (absent) from *asked, and this
-    // species has none* (`null`), which a rebuild that filled one in would collapse.
+    // to stay absent for all three: materialising a `species` here would make every
+    // character look migrated before the sweep ran, materialising a `race` would put back
+    // the field the sweep exists to remove, and `lineageKey` distinguishes *nobody was
+    // asked* (absent) from *asked, and this species has none* (`null`), which a rebuild
+    // that filled one in would collapse.
+    ...(sheet.race === undefined ? {} : { race: sheet.race }),
     ...(sheet.species === undefined ? {} : { species: sheet.species }),
     ...(sheet.lineageKey === undefined
       ? {}
@@ -3197,8 +3235,7 @@ export function storedSheetProblem(sheet: StoredSheet): SheetProblem | null {
   // schema, `tokenLayerValidator` on `board.addToken`'s argument, and a legacy value could be
   // stored but not created. **A sheet has no such split.** `characters.create` and
   // `characters.updateSheet` take `storedSheetValidator` — the *same* union the schema takes —
-  // so widening `race` to admit `half-orc` for the sake of the schema push widened the argument
-  // with it, and a brand-new Half-Orc became creatable.
+  // so the wide union that keeps a Half-Orc *storable* also makes a brand-new one creatable.
   //
   // Found by `characters.test.ts`'s argument-boundary test, which had been updated to probe
   // `half-orc` and started getting a `NotDm` — the handler running — where it expected a bare
@@ -3210,10 +3247,21 @@ export function storedSheetProblem(sheet: StoredSheet): SheetProblem | null {
   // `catalogueEntry` and `librarySheet` all keep, now spelled out for a species too. A
   // character holding one opens, keeps its name, its class and its hit points, and cannot be
   // saved again until somebody picks one of the nine.
-  if (species(sheet.race) === null) {
+  //
+  // ⚠️ **Through `speciesKeyOf` and reported at `species`, whichever field the row holds.**
+  // The accessor is what lets one predicate serve all three shapes the validator now admits,
+  // and the path names the field the builder writes rather than the one it may have read —
+  // `messageAtField` matches on it, and a control called `builder-species` cannot be handed
+  // a problem at `race`.
+  //
+  // **It is also what refuses the fourth shape.** A preset carrying neither field makes
+  // `speciesKeyOf` answer the empty string, `species('')` answer null, and this refuse the
+  // write — fail-closed, rather than a state anything downstream has to handle.
+  const speciesKey = speciesKeyOf(sheet)
+  if (species(speciesKey) === null) {
     return {
-      path: 'race',
-      message: `${speciesLabel(sheet.race)} is not one of the species this game has. Choose again.`,
+      path: 'species',
+      message: `${speciesLabel(speciesKey)} is not one of the species this game has. Choose again.`,
     }
   }
   if (!isWholeWithin(sheet.level, MIN_LEVEL, MAX_LEVEL)) {

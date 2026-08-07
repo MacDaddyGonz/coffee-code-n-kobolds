@@ -573,15 +573,21 @@ function applyPresetPermissions(
   // The lock is the one thing a player may still be told "no" about, because here a
   // refusal is information they need: their choices are set, and somebody has to
   // unlock them.
+  // ⚠️ **Through `speciesKeyOf` rather than off the field**, which is what let the
+  // `race` → `species` rename move under this comparison without it being edited twice.
+  // ⚠️ And `lineageKey` is deliberately **not** in this list, which is a gap rather than a
+  // decision — a locked Wood Elf can still be made a High Elf. Named here rather than
+  // fixed in a migration commit, because widening what a lock refuses is a change to what
+  // a player is told "no" about.
   const selectionsChanged =
-    before.race !== after.race ||
+    speciesKeyOf(before) !== speciesKeyOf(after) ||
     before.classKey !== after.classKey ||
     before.subclassKey !== after.subclassKey
 
   if (before.locked && (selectionsChanged || !after.locked)) {
     throw new ConvexError({
       kind: 'CharacterLocked',
-      message: 'Your race, class and archetype are set. Ask the DM to unlock them.',
+      message: 'Your species, class and archetype are set. Ask the DM to unlock them.',
     })
   }
 

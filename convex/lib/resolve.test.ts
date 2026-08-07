@@ -46,7 +46,7 @@ import type { ChallengeRating } from './creatures'
 function preset(overrides: Partial<PresetSheet> = {}): PresetSheet {
   return {
     kind: 'preset',
-    race: 'human',
+    species: 'human',
     classKey: 'fighter',
     subclassKey: 'champion',
     level: 3,
@@ -108,47 +108,47 @@ describe('library, then race, then the DM', () => {
     const dexterous: AbilityScores = { str: 8, dex: 20, con: 8, int: 8, wis: 8, cha: 8 }
 
     for (const key of SPECIES_KEYS) {
-      expect(resolve(preset({ race: key })).abilities, key).toEqual(CHAMPION_3.abilities)
+      expect(resolve(preset({ species: key })).abilities, key).toEqual(CHAMPION_3.abilities)
     }
 
-    const overridden = resolve(preset({ race: 'elf', overrides: { abilities: dexterous } }))
+    const overridden = resolve(preset({ species: 'elf', overrides: { abilities: dexterous } }))
     expect(overridden.abilities).toEqual(dexterous)
     expect(overridden.abilities.dex).toBe(20)
   })
 
   test('an override beats the race, which beats the library, on the hit points', () => {
     const level = 3
-    const plain = resolve(preset({ race: 'human', level }))
+    const plain = resolve(preset({ species: 'human', level }))
     expect(plain.maxHp).toBe(CHAMPION_3.maxHp)
 
-    const dwarf = resolve(preset({ race: 'dwarf', level }))
+    const dwarf = resolve(preset({ species: 'dwarf', level }))
     expect(dwarf.maxHp).toBe(CHAMPION_3.maxHp + level)
 
-    const overridden = resolve(preset({ race: 'dwarf', level, overrides: { maxHp: 99 } }))
+    const overridden = resolve(preset({ species: 'dwarf', level, overrides: { maxHp: 99 } }))
     expect(overridden.maxHp).toBe(99)
   })
 
   /**
    * ⚠️ **Speed is now an absolute the species SETS, and the numbers here come from the
    * SRD rather than from `SPEED_FEET`.** The Human moves 30 and the Goliath 35 because
-   * `character-origins.md` prints those; the constant is still 35 and is now only the
-   * answer for a sheet with the field *absent*, which no resolved preset ever has. That
-   * is why nothing below reads it — a test written as `SPEED_FEET + something` would go
-   * on passing through the migration branch that moves the constant to 30 and would say
-   * nothing about whether a Goliath still outpaces a Human.
+   * `character-origins.md` prints those; the constant is only ever the answer for a sheet
+   * with the field *absent*, which no resolved preset ever has. That is why nothing below
+   * reads it — a test written as `SPEED_FEET + something` went on passing straight
+   * through the migration commit that moved the constant 35 → 30 and said nothing about
+   * whether a Goliath still outpaces a Human.
    */
   test('an override beats the lineage, which beats the species, on the speed', () => {
-    expect(resolve(preset({ race: 'human' })).speed).toBe(30)
-    expect(resolve(preset({ race: 'goliath' })).speed).toBe(35)
+    expect(resolve(preset({ species: 'human' })).speed).toBe(30)
+    expect(resolve(preset({ species: 'goliath' })).speed).toBe(35)
     // The acceptance criterion for the whole step, in one line: the lineage is applied
     // after the species, so 35 overwrites the Elf's printed 30 rather than the other way
     // round.
-    expect(resolve(preset({ race: 'elf' })).speed).toBe(30)
-    expect(resolve(preset({ race: 'elf', lineageKey: 'wood' })).speed).toBe(35)
-    expect(resolve(preset({ race: 'elf', lineageKey: 'drow' })).speed).toBe(30)
-    expect(resolve(preset({ race: 'goliath', overrides: { speed: 25 } })).speed).toBe(25)
+    expect(resolve(preset({ species: 'elf' })).speed).toBe(30)
+    expect(resolve(preset({ species: 'elf', lineageKey: 'wood' })).speed).toBe(35)
+    expect(resolve(preset({ species: 'elf', lineageKey: 'drow' })).speed).toBe(30)
+    expect(resolve(preset({ species: 'goliath', overrides: { speed: 25 } })).speed).toBe(25)
     expect(
-      resolve(preset({ race: 'elf', lineageKey: 'wood', overrides: { speed: 25 } })).speed,
+      resolve(preset({ species: 'elf', lineageKey: 'wood', overrides: { speed: 25 } })).speed,
     ).toBe(25)
   })
 
@@ -205,9 +205,9 @@ describe('library, then race, then the DM', () => {
     const gift = entry({ id: 'dm-blade', name: 'The Sunder Blade' })
     const cantrip = entry({ id: 'dm-cantrip', name: 'A Borrowed Cantrip', level: 0 })
 
-    const plain = resolve(preset({ race: 'tiefling' }))
+    const plain = resolve(preset({ species: 'tiefling' }))
     const resolved = resolve(
-      preset({ race: 'tiefling', overrides: { extraFeats: [gift], extraSpells: [cantrip] } }),
+      preset({ species: 'tiefling', overrides: { extraFeats: [gift], extraSpells: [cantrip] } }),
     )
 
     expect(resolved.feats).toHaveLength(plain.feats.length + 1)
@@ -429,8 +429,10 @@ describe('resolveSheet passes through everything that is not a preset', () => {
    * A Milestone 3 character, exactly as the table holds one: `kind: 'pc'` with
    * neither `skillProficiencies` nor `speed`, because both fields were added
    * afterwards and a required field cannot be added to a table that already has
-   * rows. It has to resolve, validate, read as thirteen untrained skills and
-   * read as the D&D Lite 35 feet.
+   * rows. It has to resolve, validate, read as eighteen untrained skills and
+   * read as the default speed — which the migration commit moved 35 → 30 under it, and
+   * which this reads through `SPEED_FEET` rather than as a literal because the point here
+   * is that the accessor answers the constant, not what the constant currently is.
    */
   test('a legacy sheet with no skills and no speed resolves and reads as the defaults', () => {
     const legacy: StoredSheet = {
@@ -626,7 +628,7 @@ describe('a preset the store would accept always resolves to a sheet it would ac
   test('and the species is applied for every class', () => {
     for (const classKey of Object.keys(LIBRARY) as ClassKey[]) {
       const source = librarySheet(classKey, null, 1)
-      const elf = resolve(preset({ classKey, subclassKey: null, level: 1, race: 'elf' }))
+      const elf = resolve(preset({ classKey, subclassKey: null, level: 1, species: 'elf' }))
       // Untouched, because no 2024 species moves a score. Asserted against the library
       // sheet rather than against a literal, so it keeps meaning what it says.
       expect(elf.abilities, classKey).toEqual(source?.abilities)
@@ -674,7 +676,7 @@ describe('the category survives every layer of resolution', () => {
    */
   test('every species trait resolves to a passive that carries no rolls', () => {
     for (const key of SPECIES_KEYS) {
-      const sheet = resolve(preset({ race: key }))
+      const sheet = resolve(preset({ species: key }))
       for (const trait of traitsOf(sheet, key)) {
         const built = trait as unknown as Record<string, unknown>
         const where = `${key}: ${trait.name}`
@@ -690,7 +692,7 @@ describe('the category survives every layer of resolution', () => {
   test('and there is a trait line for every one of the thirty-three', () => {
     expect(SPECIES_KEYS.length).toBe(9)
     const found = SPECIES_KEYS.flatMap((key) =>
-      traitsOf(resolve(preset({ race: key })), key).map((line) => line.id),
+      traitsOf(resolve(preset({ species: key })), key).map((line) => line.id),
     )
     expect(found).toHaveLength(33)
   })
@@ -701,14 +703,14 @@ describe('the category survives every layer of resolution', () => {
    * species' however either is edited.
    */
   test('a lineage trait resolves to a passive under the lineage prefix', () => {
-    const wood = resolve(preset({ race: 'elf', lineageKey: 'wood' }))
+    const wood = resolve(preset({ species: 'elf', lineageKey: 'wood' }))
     const line = wood.feats.find((entry) => entry.id.startsWith('lineage:'))
     expect(line?.name).toBe('Elven Lineage: Wood Elf')
     expect(line?.category).toBe('passive')
     expect(line?.roll).toBeNull()
     // And a species with no lineages contributes no such line at all.
     expect(
-      resolve(preset({ race: 'halfling' })).feats.some((entry) =>
+      resolve(preset({ species: 'halfling' })).feats.some((entry) =>
         entry.id.startsWith('lineage:'),
       ),
     ).toBe(false)
@@ -731,7 +733,7 @@ describe('the category survives every layer of resolution', () => {
     let checked = 0
     for (const key of SPECIES_KEYS) {
       const chosen = species(key)!
-      const sheet = resolve(preset({ race: key }))
+      const sheet = resolve(preset({ species: key }))
       const granted = [
         ...(chosen.grantedFeats ?? []).map((source) => ({ source, list: sheet.feats })),
         ...(chosen.grantedSpells ?? []).map((source) => ({ source, list: sheet.spells })),
@@ -768,20 +770,20 @@ describe('the category survives every layer of resolution', () => {
    * twice with only one of the two rollable.
    */
   test('a Red Dragonborn breathes fire as an action and the Tiefling’s cantrip is a passive', () => {
-    const plain = resolve(preset({ race: 'dragonborn' }))
+    const plain = resolve(preset({ species: 'dragonborn' }))
     expect(plain.feats.find((line) => line.name === 'Breath Weapon')?.category).toBe('passive')
     expect(plain.feats.some((line) => line.roll !== null && line.id.startsWith('lineage:'))).toBe(
       false,
     )
 
-    const red = resolve(preset({ race: 'dragonborn', lineageKey: 'red' }))
+    const red = resolve(preset({ species: 'dragonborn', lineageKey: 'red' }))
     const breath = red.feats.find((line) => line.name === 'Fire Breath')
     expect(breath?.category).toBe('action')
     expect(breath?.roll).toBe('1d10')
     expect(breath?.id.startsWith('lineage:')).toBe(true)
     expect('toHit' in (breath as unknown as Record<string, unknown>)).toBe(false)
 
-    const tiefling = resolve(preset({ race: 'tiefling' }))
+    const tiefling = resolve(preset({ species: 'tiefling' }))
     const cantrip = tiefling.spells.find((line) => line.name === 'Thaumaturgy')
     expect(cantrip?.category).toBe('passive')
     expect(cantrip?.roll).toBeNull()
@@ -797,7 +799,7 @@ describe('the category survives every layer of resolution', () => {
     const at = { classKey: 'fighter' as ClassKey, subclassKey: 'champion', level: 3 }
     const found = librarySheet(at.classKey, at.subclassKey, at.level)
     expect(found, 'the fixture sheet is missing').toBeDefined()
-    const sheet = resolve(preset({ ...at, race: 'human' }))
+    const sheet = resolve(preset({ ...at, species: 'human' }))
 
     let checked = 0
     for (const source of [...(found?.feats ?? []), ...(found?.spells ?? [])]) {
@@ -919,7 +921,7 @@ describe('the category survives every layer of resolution', () => {
         for (const level of [MIN_LEVEL, SUBCLASS_LEVEL, MAX_LIBRARY_LEVEL]) {
           const subclassKey = level < SUBCLASS_LEVEL ? null : definition.subclasses[0].key
           const sheet = resolve(
-            preset({ race: key, classKey: definition.key, subclassKey, level }),
+            preset({ species: key, classKey: definition.key, subclassKey, level }),
           )
           const problem = sheetProblem(sheet)
           if (problem) {

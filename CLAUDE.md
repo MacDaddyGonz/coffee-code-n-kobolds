@@ -737,12 +737,31 @@ never in the way.
 moves, or a count a person ticks.** A conversion that changed one of the guards above would be doing
 something other than converting.
 
-⚠️ **One thing that *is* stale in the tree rather than settled**, and it is named so nobody reads it
-as the decision: `SPEED_FEET` is still 35 and `SUBCLASS_LEVEL` is still 2, while the nine species
-print 30 (35 for the Goliath) and the SRD chooses a subclass at 3. Both move in the migration commit,
-because `speedOf` answers the constant for every sheet with `speed` absent and every stored sheet has
-it absent — a **stored-value change wearing a constant's clothes**. Until then the application is
-half-converted and the code is not the specification.
+⭐ **The migration commit has landed and the two constants this section used to name as stale have
+moved.** `SUBCLASS_LEVEL` is 3 and `SPEED_FEET` is **30**. The second one was the milestone's only
+genuine **stored-value change wearing a constant's clothes** — `speedOf` answers the constant for
+every sheet whose `speed` is absent, and every sheet stored before the conversion has it absent — so
+the order was load-bearing and is worth keeping: **the sweep pinned every hand-built `pc` and `npc`
+sheet to the 35 it already meant, and then the constant moved.** A `preset` was deliberately left
+alone, because it stores no speed and a 2024 species prints an absolute one over the resolver's
+default.
+
+⚠️ **What that sweep is, and the one thing to know before running it.** `convex/lib/migrate.ts`
+holds the six changes, `admin.listUnmigrated` and `admin.migrateGame` are the internal pair (no
+public mutation — `purgeGame`'s argument, applied to a tool that rewrites every sheet in a game), and
+`npm run migrate-sheets` is the driver, dry run by default. **The sweep and the narrowings it makes
+possible cannot land on a deployment in one push**: Convex validates existing rows on a schema push,
+so a deployment holding one unswept row refuses the narrowed schema outright. Push the wide schema
+with the migration functions, run the sweep, then push the narrowed one — `chore/narrow-token-layer`'s
+shape a second time. **The runbook is the header of `scripts/migrate-sheets.mjs`**, which is what
+somebody has open when they need it.
+
+⚠️ **So `chore/m14-migration` is two commits and they deploy separately.** The first is the sweep and
+stands on its own against a deployment full of unswept rows; the second narrows
+`presetSheetValidator`, the eighteen skill booleans and `characterVitals`, and **must not be pushed
+until the sweep has run everywhere**. Until it has, the schema is deliberately wide enough to hold
+both the rows the sweep reads and the rows it writes — which is why `preset.race` is *optional* rather
+than required, and why nothing writes `spentPerRest` any more although the field is still there.
 
 ## Commands
 
@@ -754,6 +773,7 @@ npm run lint         # typecheck only — both src/ and convex/
 npm test             # vitest run — the convex-test suites in convex/*.test.ts
 npm run test:smoke   # scripts/board-smoke.mjs — the board API against the REAL dev deployment
 npm run prune-games  # scripts/prune-games.mjs — deletes the games test:smoke leaves behind
+npm run migrate-sheets  # scripts/migrate-sheets.mjs — Milestone 14's sweep. DRY RUN unless --yes
 ```
 
 `npm run test:smoke` is not a second copy of `npm test`, and the difference is the point:
@@ -777,6 +797,16 @@ that puts the authorisation question back, and that question wants an ADR. The s
 deliberately does *not* call it: it authenticates with a game code over `ConvexHttpClient` like any
 other client, and wiring the purge into its cleanup path would make a test depend on deploy
 credentials it does not otherwise need.
+
+**`npm run migrate-sheets` is the same arrangement a second time, for Milestone 14's sweep** —
+`admin.listUnmigrated` (an `internalQuery`, so the dry run is structurally unable to write) and
+`admin.migrateGame` (an `internalMutation`, one game per transaction), driven by
+`scripts/migrate-sheets.mjs`. ⚠️ **Neither gets a public mutation either**, and the reason is
+`purgeGame`'s word for word: an internal function does not have to answer *who* may run it, and
+rewriting every character sheet in a deployment is if anything the stronger case for staying
+internal. It writes nothing without `--yes`, it is idempotent — a second pass over a swept game
+patches no document at all — and it is transition code that goes away with
+`convex/lib/migrate.ts`.
 
 **`npm run dev:backend` is needed whenever you are changing anything under `convex/`** — it watches
 those files and pushes them to the dev deployment. It also writes `.env.local`, which the frontend

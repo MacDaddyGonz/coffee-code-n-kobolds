@@ -2114,7 +2114,7 @@ describe('sheet entry categories and to-hit rolls', () => {
       dmCode,
       sheet: {
         kind: 'preset',
-        race: 'elf',
+        species: 'elf',
         classKey: 'rogue',
         subclassKey: null,
         level: 1,
@@ -4504,7 +4504,7 @@ const FIGHTER_MAX_HP: Record<number, number> = { 1: 12, 2: 20, 3: 28, 4: 36, 5: 
 function presetSheet(overrides: Partial<PresetSheet> = {}): PresetSheet {
   return {
     kind: 'preset',
-    race: 'human',
+    species: 'human',
     classKey: 'fighter',
     subclassKey: null,
     level: 1,
@@ -4580,7 +4580,7 @@ describe('characters.create — a character built from the library', () => {
   test('the document stores the selections, and the query resolves them', async () => {
     const t = convexTest(schema, modules)
     const { code, dmCode } = await makeGame(t)
-    const selections = presetSheet({ race: 'human', classKey: 'fighter', level: 1 })
+    const selections = presetSheet({ species: 'human', classKey: 'fighter', level: 1 })
     const thorin = await makePreset(t, code, 'Thorin', selections)
 
     // Nothing derived is stored: no maximum, no hit dice, no feats.
@@ -4596,8 +4596,10 @@ describe('characters.create — a character built from the library', () => {
       maxHp: FIGHTER_MAX_HP[1],
       hitDice: { count: 1, faces: 10 },
       // ⚠️ **The Human's printed 30, not `SPEED_FEET`.** A 2024 species states its own
-      // speed and the resolver *sets* it, so the constant — still 35 — is reached only
-      // by a sheet with the field absent, which a resolved preset never is.
+      // speed and the resolver *sets* it, so the constant is reached only by a sheet with
+      // the field absent, which a resolved preset never is. The two happen to agree now
+      // that the constant is also 30, which is exactly why this line names the species'
+      // number rather than importing one: the day either moves, only one of them should.
       speed: 30,
     })
     // The library's allocation of the standard array, not the flat tens a
@@ -4744,7 +4746,7 @@ describe('characters.create — a character built from the library', () => {
       // from eight to twelve in the 2024 conversion — so the line it used to be on would
       // have gone on passing for entirely the wrong reason if nobody had looked. Widening
       // a stored union is additive and safe, which is exactly why it is invisible.
-      { ...presetSheet(), race: 'kobold' },
+      { ...presetSheet(), species: 'kobold' },
       { ...presetSheet(), classKey: 'artificer' },
     ]) {
       const thrown = await t
@@ -4784,12 +4786,12 @@ describe('characters.create — a character built from the library', () => {
         // From `SUBCLASS_LEVEL`, which is 3 in 2024. Below it there is no archetype to
         // pair a class with, and `storedSheetProblem` refuses the pair outright.
         for (const level of [SUBCLASS_LEVEL, 4, 5]) {
-          for (const race of SPECIES_KEYS) {
-            const sheet = presetSheet({ race, classKey, subclassKey: subclass.key, level })
+          for (const speciesKey of SPECIES_KEYS) {
+            const sheet = presetSheet({ species: speciesKey, classKey, subclassKey: subclass.key, level })
             await update(t, code, thorin, sheet, { dmCode })
 
             const resolved = await resolvedSheet(t, code, thorin, { dmCode })
-            const where = `${race}/${classKey}/${subclass.key}/${level}`
+            const where = `${speciesKey}/${classKey}/${subclass.key}/${level}`
             expect(resolved.className, where).toContain(subclass.name)
             expect(resolved.maxHp, where).toBeGreaterThan(0)
             // Every one of the species' own traits is on every sheet, whether or
@@ -4797,7 +4799,7 @@ describe('characters.create — a character built from the library', () => {
             // them one. Three to five each since the 2024 conversion, so this is
             // checked per trait rather than against one `race:<key>` id.
             const names = resolved.feats.map((entry) => entry.name)
-            for (const trait of species(race)!.traits) {
+            for (const trait of species(speciesKey)!.traits) {
               expect(names, `${where}: ${trait.name}`).toContain(trait.name)
             }
             // Ids are a React key set and Milestone 6's roll targets, merged
@@ -4816,11 +4818,11 @@ describe('characters.create — a character built from the library', () => {
     const thorin = await makePreset(t, code, 'Sweep')
 
     for (const classKey of CLASS_KEYS) {
-      for (const race of SPECIES_KEYS) {
-        await update(t, code, thorin, presetSheet({ race, classKey, level: 1 }), { dmCode })
+      for (const speciesKey of SPECIES_KEYS) {
+        await update(t, code, thorin, presetSheet({ species: speciesKey, classKey, level: 1 }), { dmCode })
         const resolved = await resolvedSheet(t, code, thorin, { dmCode })
-        expect(resolved.level, `${race}/${classKey}`).toBe(1)
-        expect(resolved.hitDice.count, `${race}/${classKey}`).toBe(1)
+        expect(resolved.level, `${speciesKey}/${classKey}`).toBe(1)
+        expect(resolved.hitDice.count, `${speciesKey}/${classKey}`).toBe(1)
       }
     }
   })
@@ -4874,13 +4876,13 @@ describe('characters.updateSheet — the permission split over a premade charact
       // A race change is something this player *is* allowed, sent in the same call
       // as the level they are not — so a passing test cannot be the whole write
       // being dropped on the floor.
-      const wanted = presetSheet({ level: 3, race: 'elf' })
+      const wanted = presetSheet({ level: 3, species: 'elf' })
 
       if (who === 'dm') {
         await update(t, fixture.code, fixture.characterId, wanted, actorFor(who, fixture))
         expect(await storedPreset(t, fixture.characterId)).toMatchObject({
           level: 3,
-          race: 'elf',
+          species: 'elf',
         })
         continue
       }
@@ -4889,7 +4891,7 @@ describe('characters.updateSheet — the permission split over a premade charact
         await update(t, fixture.code, fixture.characterId, wanted, actorFor(who, fixture))
         expect(await storedPreset(t, fixture.characterId), who).toMatchObject({
           level: 1,
-          race: 'elf',
+          species: 'elf',
         })
         // And the sheet everybody reads followed the level that is stored, not the
         // one that was asked for.
@@ -4909,7 +4911,7 @@ describe('characters.updateSheet — the permission split over a premade charact
       // Nothing moved at all, which is the other half of a refusal.
       expect(await storedPreset(t, fixture.characterId), who).toMatchObject({
         level: 1,
-        race: 'human',
+        species: 'human',
       })
     }
   })
@@ -4973,10 +4975,10 @@ describe('characters.updateSheet — the permission split over a premade charact
     }
   })
 
-  test('a locked character keeps its race, class and archetype against its own player', async () => {
+  test('a locked character keeps its species, class and archetype against its own player', async () => {
     const locked = presetSheet({ level: 3, subclassKey: 'champion', locked: true })
     const changes: [string, PresetSheet][] = [
-      ['race', { ...locked, race: 'elf' }],
+      ['race', { ...locked, species: 'elf' }],
       ['class', { ...locked, classKey: 'wizard', subclassKey: 'evocation' }],
       // ⚠️ **Dropping the archetype rather than swapping it, because there is nothing to
       // swap to.** Every class has exactly one archetype in 2024 — a licensing fact, not a
@@ -4996,7 +4998,7 @@ describe('characters.updateSheet — the permission split over a premade charact
       )
       expect(refusal.kind, label).toBe('CharacterLocked')
       expect(refusal.message, label).toBe(
-        'Your race, class and archetype are set. Ask the DM to unlock them.',
+        'Your species, class and archetype are set. Ask the DM to unlock them.',
       )
       expect(await storedPreset(t, fixture.characterId), label).toEqual(locked)
 
@@ -5011,7 +5013,7 @@ describe('characters.updateSheet — the permission split over a premade charact
     const fixture = await presetFixture(t, presetSheet({ level: 3, subclassKey: 'champion' }))
 
     const wanted = presetSheet({
-      race: 'elf',
+      species: 'elf',
       classKey: 'rogue',
       subclassKey: 'thief',
       level: 3,
@@ -5048,7 +5050,7 @@ describe('characters.updateSheet — the permission split over a premade charact
     )
     expect(refusal.kind).toBe('CharacterLocked')
     expect(refusal.message).toBe(
-      'Your race, class and archetype are set. Ask the DM to unlock them.',
+      'Your species, class and archetype are set. Ask the DM to unlock them.',
     )
     expect((await storedPreset(t, fixture.characterId)).locked).toBe(true)
 
@@ -5069,10 +5071,10 @@ describe('characters.updateSheet — the permission split over a premade charact
     expect((await storedPreset(t, fixture.characterId)).locked).toBe(false)
 
     // And now the player may change what the lock was protecting.
-    await update(t, fixture.code, fixture.characterId, presetSheet({ race: 'goliath' }), {
+    await update(t, fixture.code, fixture.characterId, presetSheet({ species: 'goliath' }), {
       playerId: fixture.ana,
     })
-    expect((await storedPreset(t, fixture.characterId)).race).toBe('goliath')
+    expect((await storedPreset(t, fixture.characterId)).species).toBe('goliath')
   })
 
   /**
@@ -5092,14 +5094,14 @@ describe('characters.updateSheet — the permission split over a premade charact
       t,
       fixture.code,
       fixture.characterId,
-      presetSheet({ overrides, race: 'elf' }),
+      presetSheet({ overrides, species: 'elf' }),
       { playerId: fixture.ana },
     )
-    expect(await storedPreset(t, fixture.characterId)).toMatchObject({ race: 'elf' })
+    expect(await storedPreset(t, fixture.characterId)).toMatchObject({ species: 'elf' })
     expect((await storedPreset(t, fixture.characterId)).overrides).toBeUndefined()
 
     // The DM sets one, and it reaches the sheet everybody reads.
-    await update(t, fixture.code, fixture.characterId, presetSheet({ overrides, race: 'elf' }), {
+    await update(t, fixture.code, fixture.characterId, presetSheet({ overrides, species: 'elf' }), {
       dmCode: fixture.dmCode,
     })
     const asOwner = () =>
@@ -5116,10 +5118,10 @@ describe('characters.updateSheet — the permission split over a premade charact
       t,
       fixture.code,
       fixture.characterId,
-      { ...stored, race: 'halfling' },
+      { ...stored, species: 'halfling' },
       { playerId: fixture.ana },
     )
-    expect(await storedPreset(t, fixture.characterId)).toMatchObject({ race: 'halfling' })
+    expect(await storedPreset(t, fixture.characterId)).toMatchObject({ species: 'halfling' })
     expect((await storedPreset(t, fixture.characterId)).overrides).toEqual(overrides)
 
     // Editing it, or quietly dropping it, changes nothing either.
@@ -5197,7 +5199,7 @@ describe('characters.updateSheet — the permission split over a premade charact
     const fixture = await presetFixture(t, presetSheet({ locked: true }))
 
     const wanted = presetSheet({
-      race: 'dragonborn',
+      species: 'dragonborn',
       classKey: 'cleric',
       // The Life Domain, which is the Cleric's one SRD subclass. Light Domain appears in
       // no SRD and is retired by name in `RETIRED_SUBCLASSES`.
@@ -5217,14 +5219,14 @@ describe('characters.updateSheet — the permission split over a premade charact
     const thorin = await makePreset(t, code, 'Thorin')
 
     const refusal = await refusalOf(
-      update(t, code, thorin, presetSheet({ race: 'elf' }), { playerId: ana }),
+      update(t, code, thorin, presetSheet({ species: 'elf' }), { playerId: ana }),
     )
     expect(refusal.kind).toBe('CharacterNotYours')
     expect(refusal.message).toBe(
       'Nobody is playing that character yet, so only the DM can change it.',
     )
-    await update(t, code, thorin, presetSheet({ race: 'elf' }), { dmCode })
-    expect((await storedPreset(t, thorin)).race).toBe('elf')
+    await update(t, code, thorin, presetSheet({ species: 'elf' }), { dmCode })
+    expect((await storedPreset(t, thorin)).species).toBe('elf')
   })
 
   test('a premade character cannot be turned into a monster, nor a monster into one', async () => {
@@ -5598,7 +5600,7 @@ describe('hit points against a resolved sheet', () => {
     const t = convexTest(schema, modules)
     const fixture = await presetFixture(
       t,
-      presetSheet({ race: 'dwarf', level: 3, subclassKey: 'champion' }),
+      presetSheet({ species: 'dwarf', level: 3, subclassKey: 'champion' }),
     )
     const { code, dmCode, characterId } = fixture
     const dwarfMax = FIGHTER_MAX_HP[3] + 3
@@ -5628,7 +5630,7 @@ describe('hit points against a resolved sheet', () => {
     const fixture = await presetFixture(
       t,
       presetSheet({
-        race: 'dwarf',
+        species: 'dwarf',
         level: 3,
         subclassKey: 'champion',
         overrides: { maxHp: 25 },
@@ -5666,17 +5668,19 @@ describe('hit points against a resolved sheet', () => {
  * test below reads the counted field for that reason, and `spent: 1` is what the old
  * `spent: true` meant.
  *
- * ⚠️ **`spentPerRest` is still on the row and is deliberately NOT written by `setUses`.** It
- * is folded in on *read* by `spentUsesOf`, so a row written by an older deployment keeps
- * meaning what it meant, and it drains as characters take long rests. The narrowing commit
- * deletes it. A test asserting that a spend landed therefore asserts on `spentUses`.
+ * ⚠️ **`spentPerRest` is still on the row and NOTHING writes it any more.** It is folded in on
+ * *read* by `spentUsesOf`, so a row written by an older deployment keeps meaning what it
+ * meant; `setUses` never touched it, and **`longRest` stopped clearing it** — because a long
+ * rest taken between the sweep and the narrowing push would otherwise put back the exact
+ * field that push refuses. So it can only shrink, and `admin.migrateGame` is what empties it
+ * for good. A test asserting that a spend landed therefore asserts on `spentUses`.
  */
 describe('long rest and once-per-rest abilities', () => {
   test('a long rest restores hit points, hit dice and spent abilities in one call', async () => {
     const t = convexTest(schema, modules)
     const fixture = await presetFixture(
       t,
-      presetSheet({ race: 'human', level: 5, subclassKey: 'champion' }),
+      presetSheet({ species: 'human', level: 5, subclassKey: 'champion' }),
     )
     const { code, characterId, ana } = fixture
 
@@ -5706,16 +5710,13 @@ describe('long rest and once-per-rest abilities', () => {
     expect(await rawVitals(t, characterId)).toMatchObject({
       currentHp: FIGHTER_MAX_HP[5],
       hitDiceRemaining: 5,
-      // Both fields, because a long rest is what drains the legacy one — see the ⚠️ on this
-      // describe block.
-      spentPerRest: [],
       spentUses: [],
     })
   })
 
   test('a long rest also clears the 2024 state, and leaves heroic inspiration alone', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ race: 'human', level: 5, subclassKey: 'champion' }))
+    const fixture = await presetFixture(t, presetSheet({ species: 'human', level: 5, subclassKey: 'champion' }))
     const { code, dmCode, characterId } = fixture
 
     // Written directly, because nothing on the sheet path sets a death save or a temporary
@@ -5746,7 +5747,7 @@ describe('long rest and once-per-rest abilities', () => {
 
   test('the spent state travels on the vitals row, for the player and the DM alike', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ race: 'human' }))
+    const fixture = await presetFixture(t, presetSheet({ species: 'human' }))
     const { code, dmCode, characterId, ana } = fixture
 
     expect(
@@ -5786,7 +5787,7 @@ describe('long rest and once-per-rest abilities', () => {
 
   test('setting the same count twice is absolute rather than cumulative', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ race: 'human' }))
+    const fixture = await presetFixture(t, presetSheet({ species: 'human' }))
     const { code, characterId, ana } = fixture
 
     for (let i = 0; i < 3; i += 1) {
@@ -5808,7 +5809,7 @@ describe('long rest and once-per-rest abilities', () => {
 
   test('a key the character’s race does not have is refused', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ race: 'human' }))
+    const fixture = await presetFixture(t, presetSheet({ species: 'human' }))
     const { code, characterId, ana } = fixture
 
     for (const key of ['relentless-endurance', 'lucky', '', 'heroic_inspiration']) {
@@ -5845,7 +5846,7 @@ describe('long rest and once-per-rest abilities', () => {
 
   test('a count of nonsense or of more than anything has is refused outright', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ race: 'human' }))
+    const fixture = await presetFixture(t, presetSheet({ species: 'human' }))
     const { code, characterId, ana } = fixture
 
     // Refused *before* the key is looked at, because these are shapes rather than
@@ -5870,11 +5871,11 @@ describe('long rest and once-per-rest abilities', () => {
   test('a Dwarf has nothing to spend, and an Orc has exactly one thing', async () => {
     const t = convexTest(schema, modules)
     const { code, dmCode } = await makeGame(t)
-    const dwarf = await makePreset(t, code, 'Dwalin', presetSheet({ race: 'dwarf' }))
+    const dwarf = await makePreset(t, code, 'Dwalin', presetSheet({ species: 'dwarf' }))
     // The Half-Orc used to be the one holding `relentless-endurance`. The Orc holds it
     // now, under the same key, which is what makes retiring that species cheap — a
     // character who had already spent their survival keeps the flag stored for it.
-    const orc = await makePreset(t, code, 'Grash', presetSheet({ race: 'orc' }))
+    const orc = await makePreset(t, code, 'Grash', presetSheet({ species: 'orc' }))
 
     for (const key of ['heroic-inspiration', 'relentless-endurance', 'dwarven-toughness']) {
       await expectKind(
@@ -5984,7 +5985,7 @@ describe('long rest and once-per-rest abilities', () => {
 
   test('a rest is refused to a seat that is not playing the character, and to nobody', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ race: 'human', level: 3, subclassKey: 'champion' }))
+    const fixture = await presetFixture(t, presetSheet({ species: 'human', level: 3, subclassKey: 'champion' }))
     const { code, characterId, ana, ben } = fixture
     await t.mutation(api.characters.adjustHp, { code, characterId, delta: -10, playerId: ana })
 
@@ -6029,7 +6030,6 @@ describe('long rest and once-per-rest abilities', () => {
     expect(await rawVitals(t, legacy)).toMatchObject({
       currentHp: defaultPcSheet().maxHp,
       hitDiceRemaining: defaultPcSheet().hitDice.count,
-      spentPerRest: [],
     })
   })
 
@@ -6037,7 +6037,7 @@ describe('long rest and once-per-rest abilities', () => {
     const t = convexTest(schema, modules)
     const fixture = await presetFixture(
       t,
-      presetSheet({ race: 'human', level: 3, subclassKey: 'champion' }),
+      presetSheet({ species: 'human', level: 3, subclassKey: 'champion' }),
     )
     const { code, dmCode, characterId, ana } = fixture
 
@@ -6056,7 +6056,7 @@ describe('long rest and once-per-rest abilities', () => {
       t,
       code,
       characterId,
-      presetSheet({ race: 'human', classKey: 'rogue', level: 4, subclassKey: 'thief' }),
+      presetSheet({ species: 'human', classKey: 'rogue', level: 4, subclassKey: 'thief' }),
       { dmCode },
     )
 
@@ -6206,7 +6206,7 @@ describe('the short rest', () => {
   test('it leaves the legacy per-rest array entirely alone', async () => {
     const t = convexTest(schema, modules)
     const { code, dmCode } = await makeGame(t)
-    const human = await makePreset(t, code, 'Aldis', presetSheet({ race: 'human' }))
+    const human = await makePreset(t, code, 'Aldis', presetSheet({ species: 'human' }))
 
     // Written directly, as an older deployment would have: everything in `spentPerRest` is a
     // once-per-**long**-rest species ability by construction, so a short rest has nothing to
@@ -6229,7 +6229,7 @@ describe('the short rest', () => {
 
   test('a rest is refused to a seat that is not playing the character, exactly as a long one is', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ race: 'human', level: 3, subclassKey: 'champion' }))
+    const fixture = await presetFixture(t, presetSheet({ species: 'human', level: 3, subclassKey: 'champion' }))
     const { code, characterId, ben } = fixture
 
     await expectKind(
