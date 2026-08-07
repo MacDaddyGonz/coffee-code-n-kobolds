@@ -3090,11 +3090,9 @@ than in a branch note because the thing a reader needs on picking this up is the
 what the ten steps above promise and what the branch currently does — and that difference is a fact
 about the milestone, not about a working copy.
 
-**Green on the branch as it stands:** `npm run lint`, `npm run build` and `npm test` (**1938 tests
-over 49 files**). ⚠️ **`npm run test:smoke` has NOT been run since the schema last moved** — it needs
-the new schema pushed to the dev deployment first, and that push has not happened. It is the single
-biggest outstanding item and the reason this section still exists; see *What is left* below. No guard
-test was
+**Green on the branch as it stands:** `npm run lint`, `npm run build`, `npm test` (**1938 tests over
+49 files**) and `npm run test:smoke` (**331 checks against the real dev deployment**, run against both
+the wide and the narrowed schema). No guard test was
 weakened, skipped or exempted to get there, which was the condition the whole fan-out was run under.
 `leakGuard.test.ts`, `corpusGuard.test.ts`, `markerGuard.test.ts`, `storageGuard.test.ts`,
 `lib/layers.test.ts` and `lib/markers.test.ts` are byte-identical to `dev`. `bundleGuard.test.ts` is
@@ -3189,23 +3187,37 @@ the migration's own writes. And `longRest` stops writing `spentPerRest: []`, bec
 taken between the sweep and the narrowing push would otherwise put back the exact field that push
 refuses.
 
-### What is left, in the order it has to happen
+### The runbook has been walked end to end on the dev deployment
 
-1. ⚠️ **Push the sweep half to the dev deployment and run `npm run test:smoke`.** The schema has moved
-   several times since it was last run — `spentSlots`, the three vitals fields, the ability-score
-   projection — and it carries a **new, unexercised block**: a Wizard and a Warlock created side by
-   side, both spending slots, both taking a short rest, asserting the Warlock's came back and the
-   Wizard's did not. That block is written and has never executed. `test:smoke` is the only thing in
-   this project that has ever caught the field-by-field rebuild trap, and this milestone is the
-   largest surface it has ever had.
-2. **Run `npm run migrate-sheets`** — dry first, then `--yes` — following the runbook in that
-   script's header.
-3. **Then, and only then, `chore/m14-narrowings`.** It is held off the integration branch on purpose,
-   exactly as `chore/narrow-token-layer` was: a branch that cannot deploy until a sweep has run is a
-   branch that does not sit on a branch somebody might deploy.
-4. **Hand verification in two browsers** — a Gnome Wizard built from nothing to level 3, a Wood Elf's
+All four steps, in order, with the results — recorded because *"the sweep works"* is a claim and this
+is the evidence for it.
+
+| Step | What happened |
+| --- | --- |
+| 1. Deploy the sweep half | Accepted. |
+| 2. `npm run migrate-sheets` (dry) | **10 games**: 9 species keys, 1 retired archetype, 6 pinned speeds. |
+| 3. `npm run migrate-sheets -- --yes` | Swept 10/10. **The receipt matched the rehearsal exactly.** A second dry pass reported *nothing to do*, which is the idempotence claim discharged against real rows rather than fixtures. |
+| 4. Deploy the narrowing half | Accepted — **and that acceptance is the proof step 3 finished**, since a deployment holding one unswept row would have refused it. |
+
+⭐ **Step 4 found two stale smoke fixtures that nothing else could have.** One read `spentPerRest` off
+a payload the narrowing had just removed it from; the other sent a thirteen-key `skillProficiencies`
+where eighteen are now required. **Neither was visible to `npm run lint` or to 1938 passing tests** —
+`convex-test` calls the typed API, which fills the object in, and the smoke script sends the literal
+over the wire. Sixth outing of the field-by-field trap, by exactly the route that script's own header
+describes.
+
+### What is left
+
+1. ⚠️ **Production has NOT been swept, and that is the maintainer's to run.** Until it has,
+   `chore/m14-narrowings` must not reach `main` — the deploy would be refused. It is held off the
+   integration branch on purpose, exactly as `chore/narrow-token-layer` was: a branch that cannot
+   deploy until a sweep has run is a branch that does not sit on one somebody might deploy.
+   **Take a snapshot export first; there is no undo.** And run it promptly after deploying the sweep
+   — `convex/lib/migrate.ts` records why the speed pin cannot converge on a deployment people are
+   still playing on.
+2. **Hand verification in two browsers** — a Gnome Wizard built from nothing to level 3, a Wood Elf's
    speed, a Warlock's short rest beside a Wizard's, a pre-conversion Half-Orc opening, and a full
-   round played from both chairs.
+   round played from both chairs. Every milestone so far has found something this way and no other.
 
 **One thing worth carrying forward about how this was built.** Every defect the integration found was
 at a **seam** rather than inside any one agent's work: four in Milestone 13, and here a duplicated
