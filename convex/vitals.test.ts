@@ -1481,7 +1481,19 @@ function presetSheet(
       | 'human'
       | 'orc'
       | 'tiefling'
-    classKey: 'barbarian' | 'bard' | 'cleric' | 'fighter' | 'paladin' | 'ranger' | 'rogue' | 'wizard'
+    classKey:
+      | 'barbarian'
+      | 'bard'
+      | 'cleric'
+      | 'druid'
+      | 'fighter'
+      | 'monk'
+      | 'paladin'
+      | 'ranger'
+      | 'rogue'
+      | 'sorcerer'
+      | 'warlock'
+      | 'wizard'
     subclassKey: string | null
     level: number
     locked: boolean
@@ -1509,7 +1521,7 @@ const PRESET_NAME = 'Brannoc Emberhand'
  * only on a hand-built one — the passive perception is derived from ability scores the
  * library supplied, through a chain that never touches the stored document.
  */
-const PRESET_ARMOUR_CLASS = 18
+const PRESET_ARMOUR_CLASS = 17
 const PRESET_PASSIVE_PERCEPTION = 13
 
 describe('Milestone 4: resolution runs server-side, and Milestone 3’s guarantee holds', () => {

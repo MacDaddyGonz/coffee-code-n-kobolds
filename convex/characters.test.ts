@@ -3769,7 +3769,7 @@ describe('characters.create — a character built from the library', () => {
       kind: 'pc',
       level: 1,
       className: 'Fighter',
-      armourClass: 18,
+      armourClass: 17,
       maxHp: FIGHTER_MAX_HP[1],
       hitDice: { count: 1, faces: 10 },
       // ⚠️ **The Human's printed 30, not `SPEED_FEET`.** A 2024 species states its own
@@ -3778,21 +3778,28 @@ describe('characters.create — a character built from the library', () => {
       speed: 30,
     })
     // The library's allocation of the standard array, not the flat tens a
-    // hand-built sheet starts on.
+    // hand-built sheet starts on — **with the Soldier background's +2 Strength and +1
+    // Constitution already in it**, which is change 1 of the 2024 conversion. See
+    // `LibrarySheet.abilities`: backgrounds are still excluded, and the exclusion is
+    // what forces the premade sheet to be the authority on where the three points went.
     expect((payload!.sheet as PcSheet).abilities).toEqual({
-      str: 15,
+      str: 17,
       dex: 13,
-      con: 14,
+      con: 15,
       int: 8,
       wis: 12,
       cha: 10,
     })
     // A resolved sheet always carries both optional fields, whatever the stored
     // shape does — that is what `skillProficienciesOf` and `speedOf` default for.
+    // Four trained skills: the class's two, and the background's Athletics and
+    // Intimidation absorbed the same way the ability spread was.
     expect((payload!.sheet as PcSheet).skillProficiencies).toEqual({
       ...noSkills(),
       athletics: true,
+      intimidation: true,
       perception: true,
+      survival: true,
     })
   })
 
@@ -3910,8 +3917,12 @@ describe('characters.create — a character built from the library', () => {
       // union is the schema AND the argument — so the write-side refusal for a retired species
       // moved into `storedSheetProblem`, where it is a `ConvexError` and is tested next door.
       // What this test is about is the OTHER refusal, the one that never reaches a handler.
+      // ⚠️ **`artificer`, not `warlock`.** That key *is* a class now — `CLASS_KEYS` went
+      // from eight to twelve in the 2024 conversion — so the line it used to be on would
+      // have gone on passing for entirely the wrong reason if nobody had looked. Widening
+      // a stored union is additive and safe, which is exactly why it is invisible.
       { ...presetSheet(), race: 'kobold' },
-      { ...presetSheet(), classKey: 'warlock' },
+      { ...presetSheet(), classKey: 'artificer' },
     ]) {
       const thrown = await t
         .mutation(api.characters.create, {
@@ -3947,7 +3958,9 @@ describe('characters.create — a character built from the library', () => {
     for (const classKey of CLASS_KEYS) {
       const definition = CLASSES.find((entry) => entry.key === classKey)!
       for (const subclass of definition.subclasses) {
-        for (const level of [2, 3, 4, 5]) {
+        // From `SUBCLASS_LEVEL`, which is 3 in 2024. Below it there is no archetype to
+        // pair a class with, and `storedSheetProblem` refuses the pair outright.
+        for (const level of [SUBCLASS_LEVEL, 4, 5]) {
           for (const race of SPECIES_KEYS) {
             const sheet = presetSheet({ race, classKey, subclassKey: subclass.key, level })
             await update(t, code, thorin, sheet, { dmCode })
@@ -4122,7 +4135,7 @@ describe('characters.updateSheet — the permission split over a premade charact
 
   test('the level a player sends is ignored, whatever nonsense it is', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ level: 2, subclassKey: 'champion' }))
+    const fixture = await presetFixture(t, presetSheet({ level: 3, subclassKey: 'champion' }))
     const stored = await storedPreset(t, fixture.characterId)
 
     for (const level of [5, 20, 0, -3, Number.NaN, Number.POSITIVE_INFINITY]) {
@@ -4133,7 +4146,7 @@ describe('characters.updateSheet — the permission split over a premade charact
         { ...stored, level },
         { playerId: fixture.ana },
       ).catch(() => undefined)
-      expect((await storedPreset(t, fixture.characterId)).level, String(level)).toBe(2)
+      expect((await storedPreset(t, fixture.characterId)).level, String(level)).toBe(3)
     }
   })
 
@@ -4142,7 +4155,13 @@ describe('characters.updateSheet — the permission split over a premade charact
     const changes: [string, PresetSheet][] = [
       ['race', { ...locked, race: 'elf' }],
       ['class', { ...locked, classKey: 'wizard', subclassKey: 'evocation' }],
-      ['archetype', { ...locked, subclassKey: 'battle-master' }],
+      // ⚠️ **Dropping the archetype rather than swapping it, because there is nothing to
+      // swap to.** Every class has exactly one archetype in 2024 — a licensing fact, not a
+      // design one — so the only change a player can attempt is back to *unchosen*, which
+      // is the mid-decision state `librarySheet` handles and which the lock must still
+      // refuse. This used to reach for `battle-master`, an archetype that appears in no
+      // SRD and is now retired by name.
+      ['archetype', { ...locked, subclassKey: null }],
     ]
 
     for (const [label, wanted] of changes) {
@@ -4171,7 +4190,7 @@ describe('characters.updateSheet — the permission split over a premade charact
     const wanted = presetSheet({
       race: 'elf',
       classKey: 'rogue',
-      subclassKey: 'assassin',
+      subclassKey: 'thief',
       level: 3,
     })
     await update(t, fixture.code, fixture.characterId, wanted, { playerId: fixture.ana })
@@ -4182,7 +4201,7 @@ describe('characters.updateSheet — the permission split over a premade charact
     const resolved = await resolvedSheet(t, fixture.code, fixture.characterId, {
       playerId: fixture.ana,
     })
-    expect(resolved.className).toBe('Rogue (Assassin)')
+    expect(resolved.className).toBe('Rogue (Thief)')
     expect(resolved.feats.map((entry) => entry.name)).toContain('Elven Lineage')
   })
 
@@ -4357,7 +4376,9 @@ describe('characters.updateSheet — the permission split over a premade charact
     const wanted = presetSheet({
       race: 'dragonborn',
       classKey: 'cleric',
-      subclassKey: 'light',
+      // The Life Domain, which is the Cleric's one SRD subclass. Light Domain appears in
+      // no SRD and is retired by name in `RETIRED_SUBCLASSES`.
+      subclassKey: 'life',
       level: 4,
       locked: true,
       overrides: { armourClass: 20 },
@@ -4415,13 +4436,13 @@ describe('characters.updateSheet — the permission split over a premade charact
     const thorin = await makePc(t, code, 'Thorin', pcSheet({ maxHp: 40, className: 'By hand' }))
     await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -30, dmCode })
 
-    await update(t, code, thorin, presetSheet({ level: 2, subclassKey: 'champion' }), { dmCode })
+    await update(t, code, thorin, presetSheet({ level: 3, subclassKey: 'champion' }), { dmCode })
 
     expect((await storedPreset(t, thorin)).classKey).toBe('fighter')
     // 10 hit points survive the swap; the maximum is now the library's.
     expect(await exactVitals(t, code, thorin, { dmCode })).toEqual({
       current: 10,
-      max: FIGHTER_MAX_HP[2],
+      max: FIGHTER_MAX_HP[3],
     })
   })
 })
@@ -4465,7 +4486,7 @@ describe('characters.setLevel', () => {
     expect((await storedPreset(t, fixture.characterId)).level).toBe(5)
   })
 
-  test('dropping below level 2 clears the archetype, and level 2 keeps it', async () => {
+  test('dropping below level 3 clears the archetype, and level 3 keeps it', async () => {
     const t = convexTest(schema, modules)
     const fixture = await presetFixture(t, presetSheet({ level: 5, subclassKey: 'champion' }))
     const setLevel = (level: number) =>
@@ -4480,21 +4501,21 @@ describe('characters.setLevel', () => {
     // The stored document, not the response — an archetype that survived only in a
     // payload would reapply itself on the way back up.
     expect(await storedPreset(t, fixture.characterId)).toMatchObject({
-      level: 2,
+      level: SUBCLASS_LEVEL,
       subclassKey: 'champion',
     })
 
-    await setLevel(1)
+    await setLevel(SUBCLASS_LEVEL - 1)
     expect(await storedPreset(t, fixture.characterId)).toMatchObject({
-      level: 1,
+      level: SUBCLASS_LEVEL - 1,
       subclassKey: null,
     })
 
     // And back up: the archetype is genuinely gone rather than hidden, so the
     // character is level 3 with no archetype until somebody chooses again.
-    await setLevel(3)
+    await setLevel(SUBCLASS_LEVEL)
     expect(await storedPreset(t, fixture.characterId)).toMatchObject({
-      level: 3,
+      level: SUBCLASS_LEVEL,
       subclassKey: null,
     })
     expect(
@@ -4505,7 +4526,7 @@ describe('characters.setLevel', () => {
 
   test('a level moves the whole sheet without anybody editing one', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ level: 2, subclassKey: 'champion' }))
+    const fixture = await presetFixture(t, presetSheet({ level: 3, subclassKey: 'champion' }))
     const at = async (level: number) => {
       await t.mutation(api.characters.setLevel, {
         code: fixture.code,
@@ -4516,18 +4537,24 @@ describe('characters.setLevel', () => {
       return await resolvedSheet(t, fixture.code, fixture.characterId, { playerId: fixture.ana })
     }
 
-    const two = await at(2)
-    expect(two).toMatchObject({ maxHp: FIGHTER_MAX_HP[2], hitDice: { count: 2, faces: 10 } })
-    expect(two.feats.map((entry) => entry.id)).not.toContain('lib:extra-attack')
+    // ⚠️ **Three and five rather than two and five, and the reason is `setLevel` doing
+    // its job.** Dropping to level 2 *clears the archetype*, because an archetype is
+    // chosen at level 3 in 2024 — so the way back up would land on the archetype-less
+    // fallback rather than on the level 5 Champion sheet, and this test would be pinning
+    // the fallback. That is the behaviour the test above this one exists to check.
+    const three = await at(3)
+    expect(three).toMatchObject({ maxHp: FIGHTER_MAX_HP[3], hitDice: { count: 3, faces: 10 } })
+    expect(three.feats.map((entry) => entry.id)).not.toContain('lib:extra-attack')
 
     const five = await at(5)
     expect(five).toMatchObject({ maxHp: FIGHTER_MAX_HP[5], hitDice: { count: 5, faces: 10 } })
     // Features arrive with the level, out of the library rather than out of a form.
     expect(five.feats.map((entry) => entry.id)).toContain('lib:extra-attack')
-    expect(five.feats.length).toBeGreaterThan(two.feats.length)
-    // Level 3 is where this build takes its ability score improvement.
-    expect(five.abilities.str).toBe(17)
-    expect(two.abilities.str).toBe(15)
+    expect(five.feats.length).toBeGreaterThan(three.feats.length)
+    // Level 4 is where this build takes its ability score improvement — and 17 rather
+    // than 15 below it, because the Soldier background's +2 is already in the array.
+    expect(five.abilities.str).toBe(19)
+    expect(three.abilities.str).toBe(17)
   })
 
   test('a level past the library’s last one stops gaining rather than falling back', async () => {
@@ -4567,10 +4594,10 @@ describe('characters.setLevel', () => {
     }
     const fixture = await presetFixture(
       t,
-      presetSheet({ level: 2, subclassKey: 'champion', overrides }),
+      presetSheet({ level: 3, subclassKey: 'champion', overrides }),
     )
 
-    for (const level of [3, 5, 4, 2, 5]) {
+    for (const level of [3, 5, 4, 3, 5]) {
       await t.mutation(api.characters.setLevel, {
         code: fixture.code,
         dmCode: fixture.dmCode,
@@ -5185,7 +5212,10 @@ describe('long rest and once-per-rest abilities', () => {
 
   test('the spent state survives a level change and an edit', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ race: 'human', level: 2, subclassKey: 'champion' }))
+    const fixture = await presetFixture(
+      t,
+      presetSheet({ race: 'human', level: 3, subclassKey: 'champion' }),
+    )
     const { code, dmCode, characterId, ana } = fixture
 
     await t.mutation(api.characters.setUses, {
@@ -5196,7 +5226,16 @@ describe('long rest and once-per-rest abilities', () => {
       playerId: ana,
     })
     await t.mutation(api.characters.setLevel, { code, dmCode, characterId, level: 4 })
-    await update(t, code, characterId, presetSheet({ race: 'human', level: 4, subclassKey: 'battle-master' }), { dmCode })
+    // An edit that changes the *class* as well as the level, which is the widest rebuild
+    // a DM can make in one call. It used to swap Champion for Battle Master; that
+    // archetype appears in no SRD and is retired, and every class has exactly one now.
+    await update(
+      t,
+      code,
+      characterId,
+      presetSheet({ race: 'human', classKey: 'rogue', level: 4, subclassKey: 'thief' }),
+      { dmCode },
+    )
 
     // A rest clears it; an edit does not touch it (ADR 0005).
     expect((await rawVitals(t, characterId))?.spentUses).toEqual([

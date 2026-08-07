@@ -1,1303 +1,404 @@
-// The Cleric: nine premade sheets, level 1 to 5, Life Domain and Light Domain.
+// The Cleric: five premade sheets, level 1 to 5, Life Domain.
 //
-// Content only — the shape is in ./types.ts and nothing here is ever imported by the
-// browser. See the note at the top of ./types.ts for why that separation matters.
+// Content only — the shape is in ./types.ts, and see barbarian.ts for why an entry is
+// named once and listed rather than written out at every level that carries it.
 //
-// Two things about the wording are deliberate rather than stylistic. Where a spell
-// already exists in ../rules.ts the text is **copied byte for byte** and
-// `catalogueKey` names it, because two descriptions of Cure Wounds is exactly the
-// drift the catalogue exists to prevent; a `catalogueKey` of null means the entry is
-// new here and has no template to disagree with. And nothing below describes a
-// movement-impairing condition or a change of speed — Spirit Guardians is written by
-// the damage it deals rather than by what it does to anybody's movement, which is the
-// one spell on this sheet where the 5e original would have crept outside the D&D Lite
-// subset (docs/requirements.md).
+// **The build: Acolyte.** The standard array goes 15 Wisdom, 14 Constitution, 13
+// Strength, 12 Charisma, 10 Dexterity, 8 Intelligence, and the Acolyte background's
+// **+2 Wisdom and +1 Charisma** are already in the numbers below. Insight and Religion
+// are the Acolyte's two skills; Medicine and Persuasion are the class's own.
 //
-// The archetypes are meant to feel unalike from the moment they are chosen. Life is
-// the strongest healer in the game — bigger heals than anyone, Preserve Life, and
-// heavier armour. Light is fire and radiance, defended by a flare of light rather
-// than by plate. Both spend most of their list on exploration and talking, because
-// this is not a combat-heavy game.
+// **Divine Order: Protector**, which is the choice a beginner is better served by —
+// martial weapons and heavy armour training, against Thaumaturge's extra cantrip. The
+// starting package is still a chain shirt and a shield, so the armour class on these
+// sheets is 15 and the heavier armour is something to buy.
+//
+// ⚠️ **Channel Divinity is ONE entry rather than three, and that is the shared-pool
+// problem being avoided rather than solved.** Divine Spark, Turn Undead and Preserve Life
+// all spend the same two uses, and this application has no way for a child entry to spend
+// a parent's — the roadmap keeps that open deliberately, because a pointer to a
+// resolver-minted id orphans its children at the next level-up. So the uses live on one
+// line that names all three effects, and Preserve Life sits beside it as a passive whose
+// text says which pool it draws on. Three entries with two uses each would be the app
+// quietly tripling the feature.
 
-import type { ClassLibrary } from './types'
+import { noSkills } from '../sheet'
+import type { ClassLibrary, LibraryEntry } from './types'
+
+const SKILLS = {
+  ...noSkills(),
+  insight: true,
+  religion: true,
+  medicine: true,
+  persuasion: true,
+}
+
+const MACE: LibraryEntry = {
+  name: 'Mace',
+  text: 'A flanged head on a short haft, reach 5 feet. It is not why anybody brought you, but it is what you swing when the spells run out.',
+  roll: '1d6+STR',
+  level: null,
+  catalogueKey: null,
+  category: 'weapon',
+  toHit: '1d20+STR+PROF',
+  mastery: 'sap',
+}
+
+const DIVINE_ORDER: LibraryEntry = {
+  name: 'Divine Order: Protector',
+  text: 'You took the fighting half of the calling: proficiency with martial weapons and training with heavy armour. The chain shirt and shield on this sheet are what you can afford; the heavy armour is what you are allowed.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const MAGIC_INITIATE: LibraryEntry = {
+  name: 'Magic Initiate',
+  text: 'Origin feat. Two cantrips and one 1st-level spell from the Cleric, Druid or Wizard list, cast with an ability you choose when you take this. The 1st-level spell can be cast once a day without a slot, or with any slot you have. Swap one of the three whenever you gain a level.',
+  roll: null,
+  level: null,
+  catalogueKey: 'magic-initiate',
+  category: 'passive',
+}
+
+/**
+ * Two uses, one back on a short rest and all on a long one — the SRD's own recharge,
+ * expressible because `resourceValidator` carries an amount as well as a period.
+ */
+const CHANNEL_DIVINITY: LibraryEntry = {
+  name: 'Channel Divinity',
+  text: 'Power straight off the Outer Planes, twice between rests. **Divine Spark**: point your holy symbol at something within 30 feet and either heal it for the roll plus your Wisdom, or make it save against that much radiant or necrotic damage. **Turn Undead**: every undead within 30 feet saves or spends a minute frightened and fleeing.',
+  roll: '1d8',
+  level: null,
+  catalogueKey: null,
+  category: 'action',
+  uses: { max: 2, recharge: 'long', regainOnShortRest: 1 },
+}
+
+const DISCIPLE_OF_LIFE: LibraryEntry = {
+  name: 'Disciple of Life',
+  text: 'Every spell you cast with a slot that restores hit points restores more: 2 extra, plus the level of the slot you spent. It applies to each creature the spell heals.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const PRESERVE_LIFE: LibraryEntry = {
+  name: 'Preserve Life',
+  text: 'A third thing to do with a Channel Divinity use, spending one from the pool above. Five hit points per cleric level, divided as you like among bloodied creatures within 30 feet — none of them healed past half their maximum.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const ABILITY_SCORE_IMPROVEMENT: LibraryEntry = {
+  name: 'Ability Score Improvement',
+  text: 'General feat, from level 4. Raise one ability score by 2, or two of them by 1 each, to a maximum of 20. It can be taken again every time you are offered a feat. Taken here as +2 Wisdom.',
+  roll: null,
+  level: null,
+  catalogueKey: 'ability-score-improvement',
+  category: 'passive',
+}
+
+/** A number of d8s equal to your Wisdom modifier, which is +4 once level 4 has been taken. */
+const SEAR_UNDEAD: LibraryEntry = {
+  name: 'Sear Undead',
+  text: 'Turn Undead now burns as well as frightens. Every undead that fails its save against it takes this much radiant damage, and the damage does not break the fleeing.',
+  roll: '4d8',
+  level: null,
+  catalogueKey: null,
+  category: 'action',
+}
+
+// --- spells ---------------------------------------------------------------
+
+const GUIDANCE: LibraryEntry = {
+  name: 'Guidance',
+  text: 'Touch a willing creature and, once in the next minute, they add this to one ability check of their choice. The cheapest good thing you can do for somebody.',
+  roll: '1d4',
+  level: 0,
+  catalogueKey: 'guidance',
+  category: 'action',
+}
+
+const SACRED_FLAME: LibraryEntry = {
+  name: 'Sacred Flame',
+  text: 'A column of light falls on something within 60 feet. Dexterity save for none, and cover does not help it — which is what makes this the cantrip you reach for when the target is behind something.',
+  roll: '1d8',
+  level: 0,
+  catalogueKey: 'sacred-flame',
+  category: 'action',
+}
+
+const SACRED_FLAME_AT_5: LibraryEntry = { ...SACRED_FLAME, roll: '2d8' }
+
+/**
+ * ⚠️ **Light rather than Thaumaturgy, and that is a NAME COLLISION rather than a
+ * preference.** Thaumaturgy is the cantrip the SRD recommends for a Cleric, and it is
+ * also the spell the Tiefling is granted — and `species.test.ts` refuses a library entry
+ * named after a species trait or grant, because the two arrive on one sheet under
+ * different id prefixes and read as the same line printed twice. A Tiefling Cleric is a
+ * perfectly ordinary character, so the library is the half that moves.
+ */
+const LIGHT: LibraryEntry = {
+  name: 'Light',
+  text: 'An object you touch, no bigger than ten feet across, sheds bright light for 20 feet and dim light 20 feet past that. A colour of your choosing, and it goes out when you say so.',
+  roll: null,
+  level: 0,
+  catalogueKey: 'light',
+  category: 'passive',
+}
+
+const SPARE_THE_DYING: LibraryEntry = {
+  name: 'Spare the Dying',
+  text: 'A touch, or a gesture within 30 feet, at a creature on 0 hit points. It stops dying and stabilises. No healing — just an end to the death saves.',
+  roll: null,
+  level: 0,
+  catalogueKey: 'spare-the-dying',
+  category: 'passive',
+}
+
+const BLESS: LibraryEntry = {
+  name: 'Bless',
+  text: 'Three creatures within 30 feet add this to every attack roll and every saving throw they make while you concentrate, for a minute. Unglamorous, and the best level 1 spell in the game.',
+  roll: '1d4',
+  level: 1,
+  catalogueKey: 'bless',
+  category: 'action',
+}
+
+const CURE_WOUNDS: LibraryEntry = {
+  name: 'Cure Wounds',
+  text: 'A hand laid on somebody within reach, and the wound closes. Disciple of Life adds 2 more plus the level of the slot you spent.',
+  roll: '2d8+WIS',
+  level: 1,
+  catalogueKey: 'cure-wounds',
+  category: 'action',
+}
+
+const GUIDING_BOLT: LibraryEntry = {
+  name: 'Guiding Bolt',
+  text: 'A lance of light at something up to 120 feet away. On a hit it takes radiant damage and glimmers until your next turn ends, so the next attack against it is rolled with advantage.',
+  roll: '4d6',
+  level: 1,
+  catalogueKey: 'guiding-bolt',
+  category: 'weapon',
+  toHit: '1d20+WIS+PROF',
+}
+
+const SHIELD_OF_FAITH: LibraryEntry = {
+  name: 'Shield of Faith',
+  text: 'A bonus action and a shimmer around somebody within 60 feet: +2 Armour Class for ten minutes while you concentrate. Put it on whoever is about to be hit the most.',
+  roll: null,
+  level: 1,
+  catalogueKey: 'shield-of-faith',
+  category: 'passive',
+}
+
+const AID: LibraryEntry = {
+  name: 'Aid',
+  text: 'Three creatures within 30 feet gain 5 hit points and 5 more of maximum for eight hours. It is healing that arrives before the fight rather than during it.',
+  roll: null,
+  level: 2,
+  catalogueKey: 'aid',
+  category: 'passive',
+}
+
+const LESSER_RESTORATION: LibraryEntry = {
+  name: 'Lesser Restoration',
+  text: 'A touch ends one condition on a creature: blinded, deafened, paralyzed or poisoned. The answer to the fight that has gone quietly wrong.',
+  roll: null,
+  level: 2,
+  catalogueKey: 'lesser-restoration',
+  category: 'passive',
+}
+
+const SPIRITUAL_WEAPON: LibraryEntry = {
+  name: 'Spiritual Weapon',
+  text: 'A bonus action calls up a floating weapon of light within 60 feet, and a bonus action each turn after that moves it and swings it. It lasts a minute and it costs you nothing else on your turn.',
+  roll: '1d8+WIS',
+  level: 2,
+  catalogueKey: 'spiritual-weapon',
+  category: 'weapon',
+  toHit: '1d20+WIS+PROF',
+}
+
+const MASS_HEALING_WORD: LibraryEntry = {
+  name: 'Mass Healing Word',
+  text: 'A bonus action, one word, and up to six creatures within 60 feet are healed at once. Disciple of Life adds its bonus to every one of them.',
+  roll: '2d4+WIS',
+  level: 3,
+  catalogueKey: 'mass-healing-word',
+  category: 'action',
+}
+
+const REVIVIFY: LibraryEntry = {
+  name: 'Revivify',
+  text: 'A creature that died within the last minute comes back on 1 hit point. It does not regrow anything that is missing, and it costs 300 gold in diamonds every time.',
+  roll: null,
+  level: 3,
+  catalogueKey: 'revivify',
+  category: 'passive',
+}
+
+const EQUIPMENT =
+  'A chain shirt, a shield, a mace, a holy symbol and a priest\'s pack, plus the acolyte\'s calligrapher\'s supplies, book of prayers, parchment and robe.'
+
+const HIT_DIE = 8
+const ARMOUR_CLASS = 15
 
 export const CLERIC: ClassLibrary = {
   classKey: 'cleric',
-
-  // -------------------------------------------------------------------------
-  // Level 1 — shared, before there is an archetype to choose
-  // -------------------------------------------------------------------------
   base: {
-    level: 1,
-    abilities: { str: 8, dex: 10, con: 14, int: 12, wis: 15, cha: 13 },
-    saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-    skillProficiencies: {
-      athletics: false,
-      acrobatics: false,
-      sleightOfHand: false,
-      stealth: false,
-      arcana: true,
-      investigation: false,
-      history: false,
-      nature: false,
-      religion: false,
-      animalHandling: false,
-      insight: true,
-      perception: true,
-      medicine: false,
-      survival: false,
-      deception: false,
-      intimidation: false,
-      performance: false,
-      persuasion: true,
+    1: {
+      level: 1,
+      // Wisdom first because every spell, the save DC and half the skills come off it;
+      // Constitution second because a cleric in the front rank is a cleric being hit.
+      // Dexterity is dumped deliberately — medium armour caps what it would buy anyway.
+      abilities: { str: 13, dex: 10, con: 14, int: 8, wis: 17, cha: 13 },
+      saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
+      skillProficiencies: SKILLS,
+      armourClass: ARMOUR_CLASS,
+      maxHp: 10,
+      hitDice: { count: 1, faces: HIT_DIE },
+      feats: [MACE, DIVINE_ORDER, MAGIC_INITIATE],
+      spells: [GUIDANCE, SACRED_FLAME, LIGHT, BLESS, CURE_WOUNDS, GUIDING_BOLT],
+      equipment: EQUIPMENT,
+      levellingNotes:
+        'Where you start: armour and a shield, three cantrips, and Bless — which quietly makes everybody at the table better at hitting things and better at not dying. Cure Wounds is the other half of the job.',
     },
-    armourClass: 16,
-    maxHp: 10,
-    hitDice: { count: 1, faces: 8 },
-    feats: [
-      {
-        name: 'Spellcasting',
-        text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
-        roll: '1d20+WIS+PROF',
-        level: null,
-        category: 'action',
-        catalogueKey: null,
-      },
-      {
-        name: 'Ritual Casting',
-        text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
-        roll: null,
-        level: null,
-        category: 'passive',
-        catalogueKey: null,
-      },
-    ],
-    spells: [
-      {
-        name: 'Sacred Flame',
-        text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
-        roll: '1d8',
-        level: 0,
-        category: 'action',
-        catalogueKey: 'sacred-flame',
-      },
-      {
-        name: 'Guidance',
-        text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
-        roll: '1d4',
-        level: 0,
-        category: 'action',
-        catalogueKey: 'guidance',
-      },
-      {
-        name: 'Cure Wounds',
-        text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-        roll: '2d8+WIS',
-        level: 1,
-        category: 'action',
-        catalogueKey: 'cure-wounds',
-      },
-    ],
-    equipment:
-      'Scale mail, a shield painted with your god\'s symbol, a mace, a light crossbow with twenty bolts, a holy symbol, a priest\'s pack and a prayer book.',
-    levellingNotes:
-      'Where you start. Sacred Flame is your dependable attack at range, Guidance quietly improves whatever anybody else in the party is attempting, and Cure Wounds is the reason the group wanted a cleric along. At level 2 you choose a domain, and the two go in very different directions.',
+    2: {
+      level: 2,
+      abilities: { str: 13, dex: 10, con: 14, int: 8, wis: 17, cha: 13 },
+      saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
+      skillProficiencies: SKILLS,
+      armourClass: ARMOUR_CLASS,
+      maxHp: 17,
+      hitDice: { count: 2, faces: HIT_DIE },
+      feats: [MACE, DIVINE_ORDER, CHANNEL_DIVINITY, MAGIC_INITIATE],
+      spells: [
+        GUIDANCE,
+        SACRED_FLAME,
+        LIGHT,
+        BLESS,
+        CURE_WOUNDS,
+        GUIDING_BOLT,
+        SHIELD_OF_FAITH,
+      ],
+      equipment: EQUIPMENT,
+      levellingNotes:
+        'Channel Divinity: twice between rests you either heal or hurt with Divine Spark, or send every undead in the room running with Turn Undead. One use comes back on a short rest.',
+    },
   },
-
   paths: {
-    // -----------------------------------------------------------------------
-    // Life Domain — the strongest healer in the game
-    // -----------------------------------------------------------------------
     life: {
-      2: {
-        level: 2,
-        abilities: { str: 8, dex: 10, con: 14, int: 12, wis: 15, cha: 13 },
-        saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: false,
-          history: false,
-          nature: false,
-          religion: false,
-          animalHandling: true,
-          insight: true,
-          perception: true,
-          medicine: false,
-          survival: false,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: true,
-        },
-        armourClass: 18,
-        maxHp: 17,
-        hitDice: { count: 2, faces: 8 },
-        feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
-            roll: '1d20+WIS+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Ritual Casting',
-            text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity',
-            text: 'Once between rests you may call on your god directly. For now the one use is Turn Undead: every undead within 30 feet that can see or hear you makes a Wisdom saving throw, and on a failure it is turned for a minute — it keeps well away from you and can neither attack you nor cast a spell at you until somebody harms it.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Disciple of Life',
-            text: 'Your healing runs deeper than anybody else\'s. Whenever you restore hit points to a creature with a prayer of 1st level or higher, that creature regains an extra 2 hit points, plus 1 more for each level of the slot you spent. It applies to every target of the spell, every time, and you never have to remember to switch it on.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Sacred Flame',
-            text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
-            roll: '1d8',
-            level: 0,
-            category: 'action',
-            catalogueKey: 'sacred-flame',
-          },
-          {
-            name: 'Guidance',
-            text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
-            roll: '1d4',
-            level: 0,
-            category: 'action',
-            catalogueKey: 'guidance',
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Healing Word',
-            text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
-            roll: '2d4+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'healing-word',
-          },
-          {
-            name: 'Bless',
-            text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
-            roll: '1d4',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'bless',
-          },
-        ],
-        equipment:
-          'Chain mail, a shield painted with your god\'s symbol, a mace, a light crossbow with twenty bolts, a holy symbol, a healer\'s kit, a priest\'s pack and a prayer book.',
-        levellingNotes:
-          'You chose the Life Domain. Channel Divinity arrives — Turn Undead, once between rests — and Disciple of Life quietly makes every heal you cast bigger than any other cleric\'s. The domain\'s heavier armour takes your Armour Class to 18, and Healing Word and Bless join your prayers.',
-      },
-
       3: {
         level: 3,
-        abilities: { str: 8, dex: 10, con: 14, int: 12, wis: 17, cha: 13 },
+        abilities: { str: 13, dex: 10, con: 14, int: 8, wis: 17, cha: 13 },
         saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: false,
-          history: false,
-          nature: false,
-          religion: false,
-          animalHandling: true,
-          insight: true,
-          perception: true,
-          medicine: false,
-          survival: false,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: true,
-        },
-        armourClass: 18,
+        skillProficiencies: SKILLS,
+        armourClass: ARMOUR_CLASS,
         maxHp: 24,
-        hitDice: { count: 3, faces: 8 },
+        hitDice: { count: 3, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
-            roll: '1d20+WIS+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Ritual Casting',
-            text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity',
-            text: 'Once between rests you may call on your god directly, choosing either Turn Undead or Preserve Life below. Turn Undead: every undead within 30 feet that can see or hear you makes a Wisdom saving throw, and on a failure it is turned for a minute — it keeps well away from you and can neither attack you nor cast a spell at you until somebody harms it.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Disciple of Life',
-            text: 'Your healing runs deeper than anybody else\'s. Whenever you restore hit points to a creature with a prayer of 1st level or higher, that creature regains an extra 2 hit points, plus 1 more for each level of the slot you spent. It applies to every target of the spell, every time, and you never have to remember to switch it on.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Preserve Life',
-            text: 'Your domain\'s use of Channel Divinity. Hold up your holy symbol and restore hit points equal to five times your cleric level, divided between any creatures you choose within 30 feet. It will not take a creature past half its hit point maximum, and it does nothing for undead or constructs.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Ability Score Improvement',
-            text: 'This level let you raise an ability score, and Wisdom was the obvious one: 15 becomes 17. Every spell save your enemies make is a point harder, every heal that scales with Wisdom is a point bigger, and your Insight and Perception each improve by 1.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          MACE,
+          DIVINE_ORDER,
+          CHANNEL_DIVINITY,
+          DISCIPLE_OF_LIFE,
+          PRESERVE_LIFE,
+          MAGIC_INITIATE,
         ],
         spells: [
-          {
-            name: 'Sacred Flame',
-            text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
-            roll: '1d8',
-            level: 0,
-            category: 'action',
-            catalogueKey: 'sacred-flame',
-          },
-          {
-            name: 'Guidance',
-            text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
-            roll: '1d4',
-            level: 0,
-            category: 'action',
-            catalogueKey: 'guidance',
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Healing Word',
-            text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
-            roll: '2d4+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'healing-word',
-          },
-          {
-            name: 'Bless',
-            text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
-            roll: '1d4',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'bless',
-          },
-          {
-            name: 'Aid',
-            text: 'Three creatures gain 5 hit points, to both their current and their maximum, for eight hours. Another 5 for each slot level above 2nd.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: 'aid',
-          },
-          {
-            name: 'Spiritual Weapon',
-            text: 'A bonus action conjures a floating spectral weapon for a minute. On this turn and each turn after, a bonus action moves it 20 feet and attacks with it.',
-            roll: '1d8+WIS',
-            level: 2,
-            category: 'weapon',
-            toHit: '1d20+WIS+PROF',
-            catalogueKey: 'spiritual-weapon',
-          },
+          GUIDANCE,
+          SACRED_FLAME,
+          LIGHT,
+          BLESS,
+          CURE_WOUNDS,
+          GUIDING_BOLT,
+          SHIELD_OF_FAITH,
+          AID,
+          LESSER_RESTORATION,
         ],
-        equipment:
-          'Chain mail, a shield painted with your god\'s symbol, a mace, a light crossbow with twenty bolts, a holy symbol, a healer\'s kit, a priest\'s pack and a prayer book.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'An ability score improvement rather than a feat: Wisdom 15 to 17, which lifts every spell save, every Wisdom heal, and your Insight and Perception at once. Channel Divinity gains Preserve Life, and 2nd-level slots bring Aid and Spiritual Weapon.',
+          'The Life Domain. Every healing spell you cast does more from now on, Preserve Life gives you a third thing to spend Channel Divinity on, and the domain keeps Aid and Lesser Restoration permanently prepared for free.',
       },
-
       4: {
         level: 4,
-        abilities: { str: 8, dex: 10, con: 14, int: 12, wis: 17, cha: 13 },
+        // The improvement goes into Wisdom: 17 → 19. It raises the spell save DC, every
+        // healing roll, Sear Undead's dice and four skills at once — nothing else on this
+        // sheet is paid for that many times.
+        abilities: { str: 13, dex: 10, con: 14, int: 8, wis: 19, cha: 13 },
         saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: false,
-          history: false,
-          nature: false,
-          religion: false,
-          animalHandling: true,
-          insight: true,
-          perception: true,
-          medicine: false,
-          survival: false,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: true,
-        },
-        armourClass: 18,
+        skillProficiencies: SKILLS,
+        armourClass: ARMOUR_CLASS,
         maxHp: 31,
-        hitDice: { count: 4, faces: 8 },
+        hitDice: { count: 4, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
-            roll: '1d20+WIS+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Ritual Casting',
-            text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity',
-            text: 'Once between rests you may call on your god directly, choosing either Turn Undead or Preserve Life below. Turn Undead: every undead within 30 feet that can see or hear you makes a Wisdom saving throw, and on a failure it is turned for a minute — it keeps well away from you and can neither attack you nor cast a spell at you until somebody harms it.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Disciple of Life',
-            text: 'Your healing runs deeper than anybody else\'s. Whenever you restore hit points to a creature with a prayer of 1st level or higher, that creature regains an extra 2 hit points, plus 1 more for each level of the slot you spent. It applies to every target of the spell, every time, and you never have to remember to switch it on.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Preserve Life',
-            text: 'Your domain\'s use of Channel Divinity. Hold up your holy symbol and restore hit points equal to five times your cleric level, divided between any creatures you choose within 30 feet. It will not take a creature past half its hit point maximum, and it does nothing for undead or constructs.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Ability Score Improvement',
-            text: 'This level let you raise an ability score, and Wisdom was the obvious one: 15 becomes 17. Every spell save your enemies make is a point harder, every heal that scales with Wisdom is a point bigger, and your Insight and Perception each improve by 1.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          MACE,
+          DIVINE_ORDER,
+          CHANNEL_DIVINITY,
+          DISCIPLE_OF_LIFE,
+          PRESERVE_LIFE,
+          ABILITY_SCORE_IMPROVEMENT,
+          MAGIC_INITIATE,
         ],
         spells: [
-          {
-            name: 'Sacred Flame',
-            text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
-            roll: '1d8',
-            level: 0,
-            category: 'action',
-            catalogueKey: 'sacred-flame',
-          },
-          {
-            name: 'Guidance',
-            text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
-            roll: '1d4',
-            level: 0,
-            category: 'action',
-            catalogueKey: 'guidance',
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Healing Word',
-            text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
-            roll: '2d4+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'healing-word',
-          },
-          {
-            name: 'Bless',
-            text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
-            roll: '1d4',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'bless',
-          },
-          {
-            name: 'Aid',
-            text: 'Three creatures gain 5 hit points, to both their current and their maximum, for eight hours. Another 5 for each slot level above 2nd.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: 'aid',
-          },
-          {
-            name: 'Spiritual Weapon',
-            text: 'A bonus action conjures a floating spectral weapon for a minute. On this turn and each turn after, a bonus action moves it 20 feet and attacks with it.',
-            roll: '1d8+WIS',
-            level: 2,
-            category: 'weapon',
-            toHit: '1d20+WIS+PROF',
-            catalogueKey: 'spiritual-weapon',
-          },
-          {
-            name: 'Revivify',
-            text: 'Touch a creature that died within the last minute and it returns to life with 1 hit point. It does not regrow anything it lost, and the diamond you spend is gone.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: 'revivify',
-          },
-          {
-            name: 'Spirit Guardians',
-            text: 'Spectral guardians in your god\'s image swirl in a 15-foot radius around you for ten minutes, while you concentrate. Any creature you are hostile to that starts its turn among them takes radiant damage, halved on a successful Wisdom saving throw. Your friends walk through them untouched, so this is a fight-long effect you cast once and then forget about.',
-            roll: '3d8',
-            level: 3,
-            category: 'action',
-            catalogueKey: null,
-          },
+          GUIDANCE,
+          SACRED_FLAME,
+          LIGHT,
+          SPARE_THE_DYING,
+          BLESS,
+          CURE_WOUNDS,
+          GUIDING_BOLT,
+          SHIELD_OF_FAITH,
+          AID,
+          LESSER_RESTORATION,
+          SPIRITUAL_WEAPON,
         ],
-        equipment:
-          'Chain mail, a shield painted with your god\'s symbol, a mace, a light crossbow with twenty bolts, a holy symbol, a healer\'s kit, a priest\'s pack and a prayer book.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'The power spike: 3rd-level spells. Revivify brings back somebody who died in the last minute, which changes what the party dares to try, and Spirit Guardians wraps you in radiant damage for a whole fight. Nothing else changed, because those two are quite enough for one level.',
+          'Wisdom goes from 17 to 19: a harder save DC, better healing and a better everything-else. A fourth cantrip, and Spiritual Weapon — a floating blade that attacks off a bonus action while you keep casting.',
       },
-
       5: {
         level: 5,
-        abilities: { str: 8, dex: 10, con: 14, int: 12, wis: 17, cha: 13 },
+        abilities: { str: 13, dex: 10, con: 14, int: 8, wis: 19, cha: 13 },
         saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: false,
-          history: false,
-          nature: false,
-          religion: false,
-          animalHandling: true,
-          insight: true,
-          perception: true,
-          medicine: false,
-          survival: false,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: true,
-        },
-        armourClass: 18,
+        skillProficiencies: SKILLS,
+        armourClass: ARMOUR_CLASS,
         maxHp: 38,
-        hitDice: { count: 5, faces: 8 },
+        hitDice: { count: 5, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
-            roll: '1d20+WIS+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Ritual Casting',
-            text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity',
-            text: 'Twice between rests now, rather than once, and you choose Turn Undead or Preserve Life each time. Turn Undead: every undead within 30 feet that can see or hear you makes a Wisdom saving throw, and on a failure it is turned for a minute — it keeps well away from you and can neither attack you nor cast a spell at you until somebody harms it.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Disciple of Life',
-            text: 'Your healing runs deeper than anybody else\'s. Whenever you restore hit points to a creature with a prayer of 1st level or higher, that creature regains an extra 2 hit points, plus 1 more for each level of the slot you spent. It applies to every target of the spell, every time, and you never have to remember to switch it on.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Preserve Life',
-            text: 'Your domain\'s use of Channel Divinity. Hold up your holy symbol and restore hit points equal to five times your cleric level, divided between any creatures you choose within 30 feet. It will not take a creature past half its hit point maximum, and it does nothing for undead or constructs.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Blessed Healer',
-            text: 'The healing you hand out comes back to you. Whenever you restore hit points to somebody else with a prayer of 1st level or higher, you regain 2 hit points yourself, plus 1 more for each level of the slot you spent — so looking after the party is now also how you look after yourself.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Ability Score Improvement',
-            text: 'This level let you raise an ability score, and Wisdom was the obvious one: 15 becomes 17. Every spell save your enemies make is a point harder, every heal that scales with Wisdom is a point bigger, and your Insight and Perception each improve by 1.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          MACE,
+          DIVINE_ORDER,
+          CHANNEL_DIVINITY,
+          DISCIPLE_OF_LIFE,
+          PRESERVE_LIFE,
+          SEAR_UNDEAD,
+          ABILITY_SCORE_IMPROVEMENT,
+          MAGIC_INITIATE,
         ],
         spells: [
-          {
-            name: 'Sacred Flame',
-            text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
-            roll: '1d8',
-            level: 0,
-            category: 'action',
-            catalogueKey: 'sacred-flame',
-          },
-          {
-            name: 'Guidance',
-            text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
-            roll: '1d4',
-            level: 0,
-            category: 'action',
-            catalogueKey: 'guidance',
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Healing Word',
-            text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
-            roll: '2d4+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'healing-word',
-          },
-          {
-            name: 'Bless',
-            text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
-            roll: '1d4',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'bless',
-          },
-          {
-            name: 'Aid',
-            text: 'Three creatures gain 5 hit points, to both their current and their maximum, for eight hours. Another 5 for each slot level above 2nd.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: 'aid',
-          },
-          {
-            name: 'Spiritual Weapon',
-            text: 'A bonus action conjures a floating spectral weapon for a minute. On this turn and each turn after, a bonus action moves it 20 feet and attacks with it.',
-            roll: '1d8+WIS',
-            level: 2,
-            category: 'weapon',
-            toHit: '1d20+WIS+PROF',
-            catalogueKey: 'spiritual-weapon',
-          },
-          {
-            name: 'Revivify',
-            text: 'Touch a creature that died within the last minute and it returns to life with 1 hit point. It does not regrow anything it lost, and the diamond you spend is gone.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: 'revivify',
-          },
-          {
-            name: 'Spirit Guardians',
-            text: 'Spectral guardians in your god\'s image swirl in a 15-foot radius around you for ten minutes, while you concentrate. Any creature you are hostile to that starts its turn among them takes radiant damage, halved on a successful Wisdom saving throw. Your friends walk through them untouched, so this is a fight-long effect you cast once and then forget about.',
-            roll: '3d8',
-            level: 3,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Beacon of Hope',
-            text: 'For a minute, while you concentrate, any number of creatures you choose have advantage on Wisdom saving throws and on death saving throws, and every spell or effect that heals them restores the very highest the dice could have given. Cast this first and your Cure Wounds stops being a gamble.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Dispel Magic',
-            text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: 'dispel-magic',
-          },
+          GUIDANCE,
+          SACRED_FLAME_AT_5,
+          LIGHT,
+          SPARE_THE_DYING,
+          BLESS,
+          CURE_WOUNDS,
+          GUIDING_BOLT,
+          SHIELD_OF_FAITH,
+          AID,
+          LESSER_RESTORATION,
+          SPIRITUAL_WEAPON,
+          MASS_HEALING_WORD,
+          REVIVIFY,
         ],
-        equipment:
-          'Chain mail, a shield painted with your god\'s symbol, a mace, a light crossbow with twenty bolts, a holy symbol, a healer\'s kit, a priest\'s pack and a prayer book.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'Blessed Healer heals you every time you heal somebody else, and Channel Divinity now works twice between rests instead of once. Beacon of Hope makes every heal in the party roll its maximum, and Dispel Magic gives you an answer to an enemy\'s spell.',
-      },
-    },
-
-    // -----------------------------------------------------------------------
-    // Light Domain — fire, radiance and blazing damage
-    // -----------------------------------------------------------------------
-    light: {
-      2: {
-        level: 2,
-        abilities: { str: 8, dex: 10, con: 14, int: 12, wis: 15, cha: 13 },
-        saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: true,
-          history: false,
-          nature: false,
-          religion: false,
-          animalHandling: false,
-          insight: true,
-          perception: true,
-          medicine: false,
-          survival: false,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: true,
-        },
-        armourClass: 16,
-        maxHp: 17,
-        hitDice: { count: 2, faces: 8 },
-        feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
-            roll: '1d20+WIS+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Ritual Casting',
-            text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity',
-            text: 'Once between rests you may call on your god directly. For now the one use is Turn Undead: every undead within 30 feet that can see or hear you makes a Wisdom saving throw, and on a failure it is turned for a minute — it keeps well away from you and can neither attack you nor cast a spell at you until somebody harms it.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Warding Flare',
-            text: 'A reaction, a number of times between rests equal to your Wisdom modifier. When a creature you can see attacks you, answer it with a sudden flare of light and that attack roll has disadvantage. You need not be able to see the attacker, but a creature that cannot be dazzled by light is unaffected. This is your armour: you wear less of it than a Life cleric on purpose.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Sacred Flame',
-            text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
-            roll: '1d8',
-            level: 0,
-            category: 'action',
-            catalogueKey: 'sacred-flame',
-          },
-          {
-            name: 'Guidance',
-            text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
-            roll: '1d4',
-            level: 0,
-            category: 'action',
-            catalogueKey: 'guidance',
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Burning Hands',
-            text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
-            roll: '3d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'burning-hands',
-          },
-          {
-            name: 'Guiding Bolt',
-            text: 'A lance of light against one creature within 120 feet. The next attack made against that creature before your next turn has advantage.',
-            roll: '4d6',
-            level: 1,
-            category: 'weapon',
-            toHit: '1d20+WIS+PROF',
-            catalogueKey: 'guiding-bolt',
-          },
-        ],
-        equipment:
-          'Scale mail, a shield painted with your god\'s sunburst, a mace, a light crossbow with twenty bolts, a holy symbol, a bullseye lantern, a tinderbox, a priest\'s pack and a prayer book.',
-        levellingNotes:
-          'You chose the Light Domain. Channel Divinity arrives — Turn Undead, once between rests — and Warding Flare answers an attack on you with a burst of light that gives it disadvantage, which is what you have instead of heavier armour. Burning Hands and Guiding Bolt make you the party\'s fire.',
-      },
-
-      3: {
-        level: 3,
-        abilities: { str: 8, dex: 10, con: 14, int: 12, wis: 17, cha: 13 },
-        saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: true,
-          history: false,
-          nature: false,
-          religion: false,
-          animalHandling: false,
-          insight: true,
-          perception: true,
-          medicine: false,
-          survival: false,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: true,
-        },
-        armourClass: 16,
-        maxHp: 24,
-        hitDice: { count: 3, faces: 8 },
-        feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
-            roll: '1d20+WIS+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Ritual Casting',
-            text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity',
-            text: 'Once between rests you may call on your god directly, choosing either Turn Undead or Radiance of the Dawn below. Turn Undead: every undead within 30 feet that can see or hear you makes a Wisdom saving throw, and on a failure it is turned for a minute — it keeps well away from you and can neither attack you nor cast a spell at you until somebody harms it.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Warding Flare',
-            text: 'A reaction, a number of times between rests equal to your Wisdom modifier. When a creature you can see attacks you, answer it with a sudden flare of light and that attack roll has disadvantage. You need not be able to see the attacker, but a creature that cannot be dazzled by light is unaffected. This is your armour: you wear less of it than a Life cleric on purpose.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Radiance of the Dawn',
-            text: 'Your domain\'s use of Channel Divinity. Hold up your holy symbol and sunlight bursts out 30 feet around you, sweeping away any magical darkness it touches. Every creature you are hostile to in that space takes the damage, halved on a successful Constitution saving throw — and add your cleric level to whatever the dice give.',
-            roll: '2d10',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Ability Score Improvement',
-            text: 'This level let you raise an ability score, and Wisdom was the obvious one: 15 becomes 17. Every spell save your enemies make is a point harder, Warding Flare works one more time between rests, and your Insight and Perception each improve by 1.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Sacred Flame',
-            text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
-            roll: '1d8',
-            level: 0,
-            category: 'action',
-            catalogueKey: 'sacred-flame',
-          },
-          {
-            name: 'Guidance',
-            text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
-            roll: '1d4',
-            level: 0,
-            category: 'action',
-            catalogueKey: 'guidance',
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Burning Hands',
-            text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
-            roll: '3d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'burning-hands',
-          },
-          {
-            name: 'Guiding Bolt',
-            text: 'A lance of light against one creature within 120 feet. The next attack made against that creature before your next turn has advantage.',
-            roll: '4d6',
-            level: 1,
-            category: 'weapon',
-            toHit: '1d20+WIS+PROF',
-            catalogueKey: 'guiding-bolt',
-          },
-          {
-            name: 'Healing Word',
-            text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
-            roll: '2d4+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'healing-word',
-          },
-          {
-            name: 'Scorching Ray',
-            text: 'Three rays of fire, aimed at one target or split between several, each rolled separately. The damage listed is for a single ray.',
-            roll: '2d6',
-            level: 2,
-            category: 'weapon',
-            toHit: '1d20+WIS+PROF',
-            catalogueKey: 'scorching-ray',
-          },
-        ],
-        equipment:
-          'Scale mail, a shield painted with your god\'s sunburst, a mace, a light crossbow with twenty bolts, a holy symbol, a bullseye lantern, a tinderbox, a priest\'s pack and a prayer book.',
-        levellingNotes:
-          'An ability score improvement rather than a feat: Wisdom 15 to 17, which lifts every spell save, adds a use of Warding Flare, and improves your Insight and Perception. Channel Divinity gains Radiance of the Dawn, and 2nd-level slots bring Scorching Ray — with Healing Word so you are still a cleric.',
-      },
-
-      4: {
-        level: 4,
-        abilities: { str: 8, dex: 10, con: 14, int: 12, wis: 17, cha: 13 },
-        saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: true,
-          history: false,
-          nature: false,
-          religion: false,
-          animalHandling: false,
-          insight: true,
-          perception: true,
-          medicine: false,
-          survival: false,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: true,
-        },
-        armourClass: 16,
-        maxHp: 31,
-        hitDice: { count: 4, faces: 8 },
-        feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
-            roll: '1d20+WIS+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Ritual Casting',
-            text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity',
-            text: 'Once between rests you may call on your god directly, choosing either Turn Undead or Radiance of the Dawn below. Turn Undead: every undead within 30 feet that can see or hear you makes a Wisdom saving throw, and on a failure it is turned for a minute — it keeps well away from you and can neither attack you nor cast a spell at you until somebody harms it.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Warding Flare',
-            text: 'A reaction, a number of times between rests equal to your Wisdom modifier. When a creature you can see attacks you, answer it with a sudden flare of light and that attack roll has disadvantage. You need not be able to see the attacker, but a creature that cannot be dazzled by light is unaffected. This is your armour: you wear less of it than a Life cleric on purpose.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Radiance of the Dawn',
-            text: 'Your domain\'s use of Channel Divinity. Hold up your holy symbol and sunlight bursts out 30 feet around you, sweeping away any magical darkness it touches. Every creature you are hostile to in that space takes the damage, halved on a successful Constitution saving throw — and add your cleric level to whatever the dice give.',
-            roll: '2d10',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Ability Score Improvement',
-            text: 'This level let you raise an ability score, and Wisdom was the obvious one: 15 becomes 17. Every spell save your enemies make is a point harder, Warding Flare works one more time between rests, and your Insight and Perception each improve by 1.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Sacred Flame',
-            text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
-            roll: '1d8',
-            level: 0,
-            category: 'action',
-            catalogueKey: 'sacred-flame',
-          },
-          {
-            name: 'Guidance',
-            text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
-            roll: '1d4',
-            level: 0,
-            category: 'action',
-            catalogueKey: 'guidance',
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Burning Hands',
-            text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
-            roll: '3d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'burning-hands',
-          },
-          {
-            name: 'Guiding Bolt',
-            text: 'A lance of light against one creature within 120 feet. The next attack made against that creature before your next turn has advantage.',
-            roll: '4d6',
-            level: 1,
-            category: 'weapon',
-            toHit: '1d20+WIS+PROF',
-            catalogueKey: 'guiding-bolt',
-          },
-          {
-            name: 'Healing Word',
-            text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
-            roll: '2d4+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'healing-word',
-          },
-          {
-            name: 'Scorching Ray',
-            text: 'Three rays of fire, aimed at one target or split between several, each rolled separately. The damage listed is for a single ray.',
-            roll: '2d6',
-            level: 2,
-            category: 'weapon',
-            toHit: '1d20+WIS+PROF',
-            catalogueKey: 'scorching-ray',
-          },
-          {
-            name: 'Fireball',
-            text: 'A roaring sphere of flame fills a 20-foot radius around a point within 150 feet, going round corners to do it. Each creature there takes the damage, halved on a successful Dexterity saving throw. Another 1d6 per slot level above 3rd.',
-            roll: '8d6',
-            level: 3,
-            category: 'action',
-            catalogueKey: 'fireball',
-          },
-          {
-            name: 'Dispel Magic',
-            text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: 'dispel-magic',
-          },
-        ],
-        equipment:
-          'Scale mail, a shield painted with your god\'s sunburst, a mace, a light crossbow with twenty bolts, a holy symbol, a bullseye lantern, a tinderbox, a priest\'s pack and a prayer book.',
-        levellingNotes:
-          'The power spike: 3rd-level spells. Fireball is the biggest thing you will cast for a long while and the domain hands it to you rather than to any other cleric, and Dispel Magic ends an enemy\'s spell outright. Nothing else changed, because those two are quite enough for one level.',
-      },
-
-      5: {
-        level: 5,
-        abilities: { str: 8, dex: 10, con: 14, int: 12, wis: 17, cha: 13 },
-        saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: true,
-          history: false,
-          nature: false,
-          religion: false,
-          animalHandling: false,
-          insight: true,
-          perception: true,
-          medicine: false,
-          survival: false,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: true,
-        },
-        armourClass: 16,
-        maxHp: 38,
-        hitDice: { count: 5, faces: 8 },
-        feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Wisdom is your spellcasting ability. Your spell save DC is 8 + your proficiency bonus + your Wisdom modifier, and the roll here is the attack for any prayer that needs one. You settle on your prayers each morning; the list on this sheet is what you have ready today.',
-            roll: '1d20+WIS+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Ritual Casting',
-            text: 'Some prayers can be cast as rituals: ten unhurried minutes of work in place of a spell slot. Nothing is spent but time, so away from a fight you may cast a ritual as often as you like — which is what makes a cleric so useful while the party is poking about.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity',
-            text: 'Twice between rests now, rather than once, and you choose Turn Undead or Radiance of the Dawn each time. Turn Undead: every undead within 30 feet that can see or hear you makes a Wisdom saving throw, and on a failure it is turned for a minute — it keeps well away from you and can neither attack you nor cast a spell at you until somebody harms it.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Warding Flare',
-            text: 'A reaction, a number of times between rests equal to your Wisdom modifier. When a creature you can see attacks you, answer it with a sudden flare of light and that attack roll has disadvantage. You need not be able to see the attacker, but a creature that cannot be dazzled by light is unaffected. This is your armour: you wear less of it than a Life cleric on purpose.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Improved Warding Flare',
-            text: 'Your flare now guards the people beside you. When a creature you can see attacks an ally within 30 feet of you, you may spend the same reaction to give that attack roll disadvantage instead. Same uses between rests — you simply choose each time whether to save yourself or somebody else.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Radiance of the Dawn',
-            text: 'Your domain\'s use of Channel Divinity. Hold up your holy symbol and sunlight bursts out 30 feet around you, sweeping away any magical darkness it touches. Every creature you are hostile to in that space takes the damage, halved on a successful Constitution saving throw — and add your cleric level to whatever the dice give.',
-            roll: '2d10',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Ability Score Improvement',
-            text: 'This level let you raise an ability score, and Wisdom was the obvious one: 15 becomes 17. Every spell save your enemies make is a point harder, Warding Flare works one more time between rests, and your Insight and Perception each improve by 1.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Sacred Flame',
-            text: 'Radiance falls on one creature within 60 feet, which takes the damage unless it succeeds on a Dexterity saving throw. Cover does not help it.',
-            roll: '1d8',
-            level: 0,
-            category: 'action',
-            catalogueKey: 'sacred-flame',
-          },
-          {
-            name: 'Guidance',
-            text: 'Touch a willing creature. Once within the next minute it adds the die to an ability check of its choice.',
-            roll: '1d4',
-            level: 0,
-            category: 'action',
-            catalogueKey: 'guidance',
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Burning Hands',
-            text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
-            roll: '3d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'burning-hands',
-          },
-          {
-            name: 'Guiding Bolt',
-            text: 'A lance of light against one creature within 120 feet. The next attack made against that creature before your next turn has advantage.',
-            roll: '4d6',
-            level: 1,
-            category: 'weapon',
-            toHit: '1d20+WIS+PROF',
-            catalogueKey: 'guiding-bolt',
-          },
-          {
-            name: 'Healing Word',
-            text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
-            roll: '2d4+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'healing-word',
-          },
-          {
-            name: 'Detect Magic',
-            text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'detect-magic',
-          },
-          {
-            name: 'Scorching Ray',
-            text: 'Three rays of fire, aimed at one target or split between several, each rolled separately. The damage listed is for a single ray.',
-            roll: '2d6',
-            level: 2,
-            category: 'weapon',
-            toHit: '1d20+WIS+PROF',
-            catalogueKey: 'scorching-ray',
-          },
-          {
-            name: 'Fireball',
-            text: 'A roaring sphere of flame fills a 20-foot radius around a point within 150 feet, going round corners to do it. Each creature there takes the damage, halved on a successful Dexterity saving throw. Another 1d6 per slot level above 3rd.',
-            roll: '8d6',
-            level: 3,
-            category: 'action',
-            catalogueKey: 'fireball',
-          },
-          {
-            name: 'Dispel Magic',
-            text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: 'dispel-magic',
-          },
-          {
-            name: 'Daylight',
-            text: 'A 60-foot sphere of true daylight blazes out from a point you choose or from an object you touch, with dim light for 60 feet beyond that. Any darkness made by a spell of 3rd level or lower in the sphere is swept away. It lasts an hour, and if you put it on something carryable the light goes wherever the party does.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        equipment:
-          'Scale mail, a shield painted with your god\'s sunburst, a mace, a light crossbow with twenty bolts, a holy symbol, a bullseye lantern, a tinderbox, a priest\'s pack and a prayer book.',
-        levellingNotes:
-          'Improved Warding Flare lets you spend the same reaction on an ally instead of yourself, and Channel Divinity now works twice between rests. Daylight and Detect Magic are two prayers for exploring rather than fighting, now that Fireball handles the fighting.',
+          'Level 3 spells: Mass Healing Word picks the whole party up off a bonus action, and Revivify brings back somebody who died a minute ago. Sear Undead makes Turn Undead burn, and Sacred Flame doubles its dice.',
       },
     },
   },
