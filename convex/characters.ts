@@ -19,6 +19,7 @@ import {
   deleteCharacter,
   longRest as takeLongRest,
   shortRest as takeShortRest,
+  setSlotsSpent,
   setUsesSpent,
   getCharacterInGame,
   insertCharacter,
@@ -65,7 +66,8 @@ import {
 import { SUBCLASS_LEVEL } from './lib/classes'
 import { perRestAbilities, speciesKeyOf } from './lib/species'
 import { MAX_RESOURCE_USES } from './lib/rest'
-import { bestiaryOf, kindOf, presetOf, resolveSheet } from './lib/resolve'
+import { MAX_SLOT_LEVEL, MIN_SLOT_LEVEL, maxSlotsAt } from './lib/slots'
+import { bestiaryOf, kindOf, presetOf, resolveSheet, spellSlotsOf } from './lib/resolve'
 import type { BestiarySheet, PresetSheet, SheetProblem, StoredSheet } from './lib/sheet'
 import {
   MAX_MAX_HP,
@@ -1013,6 +1015,101 @@ export const setUses = mutation({
     }
 
     return { spentUses: await setUsesSpent(ctx, character, args.key, args.spent) }
+  },
+})
+
+/**
+ * Spend spell slots of one level, or hand some back if they were ticked by mistake.
+ *
+ * `setUses`' sibling, written on its rule exactly: the same `resolveDmAccess` →
+ * `requireEditableCharacter(…, { allowControl: true })` opening, the same argument shape with
+ * a count rather than a boolean, and the same asymmetry between spending and handing back.
+ * The difference is what the count is keyed on — a **spell level**, because a slot belongs to
+ * the character and two different spells spend from the same row, where a limited use belongs
+ * to one entry on one sheet.
+ *
+ * ⚠️ **THIS IS THE ONLY THING IN THE APPLICATION THAT SPENDS A SLOT, AND IT IS SOMEBODY
+ * PRESSING A PIP.** Casting a levelled spell through `feed.roll` spends nothing and is
+ * refused for nothing: that mutation does not call this one, does not import lib/slots.ts and
+ * must not. CLAUDE.md's *Rules scope* gives slot counting its whole licence in one sentence —
+ * *counting a slot compares nothing, refuses nothing, and changes no die of damage* — and
+ * automatic spending is how that gets exceeded, silently, in a way that reads as a
+ * convenience. ⚠️ ADR 0011's superseding table says *"a roll spends one"*; **the counting half
+ * was instructed and is what exists, and the spending half has had no decision of its own.**
+ * Whoever wants it writes the ADR.
+ *
+ * **Three refusals, in this order, and the order is the permission model rather than taste:**
+ *
+ * 1. The **arguments** are checked first, so a nonsense level or a non-finite count is one
+ *    answer regardless of who asked. `setUses` opens the same way.
+ * 2. The **caller** is checked second, so a stranger poking a monster gets
+ *    `CharacterNotFound` rather than being told the monster has no slots — an NPC's existence
+ *    is the spoiler, and a refusal that leaked the shape of its sheet would be the error
+ *    channel undoing what the payload channel withheld.
+ * 3. **What the character has** is checked last, and only when spending. Handing back is
+ *    always allowed, which is what lets a DM who has dropped somebody's level clear counts the
+ *    character can no longer justify — refusing to undo a state the application was happy to
+ *    create is the trap `setUses`' own comment describes.
+ */
+export const setSlots = mutation({
+  args: {
+    code: v.string(),
+    characterId: v.id('characters'),
+    /** The **spell** level, 1–3. Not the character's level, which nothing here takes. */
+    level: v.number(),
+    spent: v.number(),
+    playerId: v.optional(v.id('players')),
+    dmCode: v.optional(v.string()),
+  },
+  returns: v.object({
+    spentSlots: v.array(v.object({ level: v.number(), spent: v.number() })),
+  }),
+  handler: async (ctx, args) => {
+    // Written for a person rather than as a validation code, on this file's convention: the
+    // DM reads this sentence and it has to say what to do next. The bound is explained rather
+    // than stated, because "1 to 3" with no reason reads as an arbitrary limit in an
+    // application whose spell list contains 4th-level spells.
+    if (
+      !Number.isFinite(args.level) ||
+      !Number.isInteger(args.level) ||
+      args.level < MIN_SLOT_LEVEL ||
+      args.level > MAX_SLOT_LEVEL
+    ) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message: `Spell slots run from level ${MIN_SLOT_LEVEL} to level ${MAX_SLOT_LEVEL}, because this game stops at character level 5.`,
+      })
+    }
+    if (!Number.isFinite(args.spent) || args.spent < 0) {
+      throw new ConvexError({ kind: 'BadInput', message: 'That is not a number of spell slots.' })
+    }
+
+    const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
+    const character = await requireEditableCharacter(
+      ctx,
+      game,
+      args.characterId,
+      isDm,
+      args.playerId,
+      { allowControl: true },
+    )
+
+    // One lookup, used for the refusal and then handed to the writer as the ceiling — so the
+    // number this mutation refuses against and the number it clamps to cannot be two answers.
+    const slots = spellSlotsOf(character)
+    if (args.spent > 0 && maxSlotsAt(slots, args.level) === 0) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        // Deliberately one sentence for two situations — a character with no slots at all and
+        // one whose slots do not reach this level — because the DM's next move is the same in
+        // both and a Fighter being told which levels it lacks would be a worse message.
+        message: 'That character has no spell slots of that level.',
+      })
+    }
+
+    return {
+      spentSlots: await setSlotsSpent(ctx, character, slots, args.level, args.spent),
+    }
   },
 })
 

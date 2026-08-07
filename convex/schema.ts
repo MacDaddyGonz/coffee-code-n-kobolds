@@ -237,6 +237,31 @@ export default defineSchema({
     // live at once on purpose: a schema push is not atomic, and a row written by an older
     // deployment must keep meaning what it meant.
     spentUses: v.optional(v.array(v.object({ key: v.string(), spent: v.number() }))),
+    // SPELL SLOTS SPENT, PER SPELL LEVEL — `spentUses`' sibling, and shaped like it on
+    // purpose rather than by habit.
+    //
+    // Both are *counts against a maximum somebody else declares*, so both are an array of
+    // pairs where **absence from the array is nought** and the maximum lives nowhere on this
+    // row. That last part is the important half: the maximum is `spellSlotsFor` in
+    // lib/slots.ts, a pure function of a class key and a level, so a character who levels up
+    // gains slots without this table being rewritten — exactly as a preset sheet's stats come
+    // out of the library rather than being copied onto the document. A stored `max` here
+    // would be a copy to keep in step with a level, which is `passivePerception`'s argument
+    // reaching a third pair of numbers.
+    //
+    // Keyed on the **spell level** rather than on an entry id, which is the one place the two
+    // fields genuinely differ. A limited-use thing belongs to one entry on one sheet; a slot
+    // belongs to the character, and two different spells spend from the same row. There is
+    // deliberately no key for the *track* — a character has one or the other, never both, and
+    // a Warlock's level 1 slot and a Wizard's are the same row in the same shape.
+    //
+    // ⚠️ **Nothing spends one automatically.** No mutation debits this field as a side effect
+    // of a roll, and `feed.roll` neither reads nor writes it — see the header of lib/slots.ts,
+    // where that line is argued rather than merely stated.
+    //
+    // Optional for this table's stated reason, and read through `spentSlotsOf` in
+    // lib/characters.ts and nowhere else.
+    spentSlots: v.optional(v.array(v.object({ level: v.number(), spent: v.number() }))),
   })
     .index('by_gameId', ['gameId'])
     .index('by_characterId', ['characterId']),

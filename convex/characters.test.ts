@@ -3935,6 +3935,18 @@ describe('the permission matrix for sheets and vitals', () => {
             ...who,
           }),
       },
+      {
+        name: 'setSlots',
+        // ⚠️ **`spent: 0` — the hand-back — because this table is about *who may call*, and a
+        // spend would answer a second question badly.** None of these three fixtures is a
+        // caster, so `spent: 1` would be refused with `BadInput` for the DM and for the
+        // claiming seat too — turning the two affirmative rows into assertions that the
+        // mutation throws. The hand-back is the branch that is always permitted once the
+        // caller is, so it isolates the permission exactly. What a spend does to a character
+        // with no slots is asserted in *spell slots* below, where it belongs.
+        call: (t, who) =>
+          t.mutation(api.characters.setSlots, { code, characterId, level: 1, spent: 0, ...who }),
+      },
     ]
   }
 
@@ -8126,5 +8138,279 @@ describe('characters.sheet keeps refusing another seat’s hero', () => {
     // their own, and the DM reads either.
     expect((await readSheet(t, code, claimed, { playerId: ana }))?.name).toBe('Thorin')
     expect((await readSheet(t, code, unclaimed, { dmCode }))?.name).toBe('Nobody’s Yet')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Spell slots
+// ---------------------------------------------------------------------------
+
+/**
+ * SPELL SLOTS: COUNTED, SPENT BY A PERSON, AND RETURNED BY THE RIGHT REST.
+ *
+ * ⚠️ **The line this whole feature sits on, stated once here so that the assertions below
+ * read as what they are.** CLAUDE.md's *Rules scope* gives slot counting its entire licence in
+ * one sentence — *counting a slot compares nothing, refuses nothing, and changes no die of
+ * damage* — and every test in this block is about a number a **person** moved. There is
+ * deliberately no test that casting a spell spends a slot, because casting a spell does not
+ * spend a slot: `feed.roll` neither reads nor writes `spentSlots`, and a test asserting
+ * otherwise would be specifying a rule this project has not decided to have.
+ *
+ * The derivation itself — which class has what at which level, against SRD 5.2.1 — is
+ * `lib/slots.test.ts`. What is under test here is the write path, its refusals, and the two
+ * rests.
+ */
+describe('spell slots', () => {
+  const WIZARD_5 = presetSheet({ classKey: 'wizard', subclassKey: 'evocation', level: 5 })
+  const WARLOCK_5 = presetSheet({ classKey: 'warlock', subclassKey: 'fiend', level: 5 })
+  const WIZARD_1 = presetSheet({ classKey: 'wizard', subclassKey: null, level: 1 })
+
+  async function caster(sheet: PresetSheet, name = 'Mireth') {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const characterId = await makePreset(t, code, name, sheet)
+    return { t, code, dmCode, characterId }
+  }
+
+  const spend = (
+    t: Harness,
+    code: string,
+    characterId: Id<'characters'>,
+    level: number,
+    spent: number,
+    who: Actor,
+  ) => t.mutation(api.characters.setSlots, { code, characterId, level, spent, ...who })
+
+  test('a level 5 wizard spends slots and the row records them, ascending by level', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_5)
+
+    // Written out of order deliberately: the stored array is kept canonical by level so a
+    // browser's optimistic value and the server's are the same bytes.
+    await spend(t, code, characterId, 3, 1, { dmCode })
+    await spend(t, code, characterId, 1, 2, { dmCode })
+
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([
+      { level: 1, spent: 2 },
+      { level: 3, spent: 1 },
+    ])
+  })
+
+  test('the count is published on the exact vitals row', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_5)
+    await spend(t, code, characterId, 2, 3, { dmCode })
+
+    const rows = await t.query(api.characters.vitals, { code, dmCode })
+    expect(rows.find((row) => row.characterId === characterId)).toMatchObject({
+      kind: 'exact',
+      spentSlots: [{ level: 2, spent: 3 }],
+    })
+  })
+
+  test('a spend above the maximum is clamped to it rather than refused', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_5)
+
+    // A level 5 wizard has three 2nd-level slots. Asking for nine stores three — the same
+    // stance every other counter on this row takes: the server clamps and answers with what
+    // it actually stored, so a client cannot put a row above its own ceiling.
+    const result = await spend(t, code, characterId, 2, 9, { dmCode })
+    expect(result).toEqual({ spentSlots: [{ level: 2, spent: 3 }] })
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([{ level: 2, spent: 3 }])
+  })
+
+  test('handing every slot back removes the row rather than storing a zero', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_5)
+    await spend(t, code, characterId, 1, 4, { dmCode })
+
+    await spend(t, code, characterId, 1, 0, { dmCode })
+    // Absence is the one spelling of none — two spellings is what every field-by-field
+    // comparison then has to agree about, and `board-smoke.mjs` reports the difference as an
+    // extra element rather than as equality.
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([])
+  })
+
+  test('a spell level outside 1–3 is refused, whatever shape the nonsense takes', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_5)
+
+    for (const level of [0, -1, 4, 9, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expectKind(spend(t, code, characterId, level, 1, { dmCode }), 'BadInput')
+    }
+    expect((await rawVitals(t, characterId))?.spentSlots).toBeUndefined()
+  })
+
+  test('a count that is not a number of slots is refused', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_5)
+
+    for (const spent of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expectKind(spend(t, code, characterId, 1, spent, { dmCode }), 'BadInput')
+    }
+    expect((await rawVitals(t, characterId))?.spentSlots).toBeUndefined()
+  })
+
+  test('a spend is refused at a level the character has none at, and at every level for a non-caster', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_1)
+    const fighter = await makePreset(t, code, 'Bruenor', presetSheet({ level: 5, subclassKey: 'champion' }))
+
+    // A level 1 wizard has 1st-level slots and nothing else.
+    await expectKind(spend(t, code, characterId, 2, 1, { dmCode }), 'BadInput')
+    for (const level of [1, 2, 3]) {
+      await expectKind(spend(t, code, fighter, level, 1, { dmCode }), 'BadInput')
+    }
+
+    // The positive control: without it every refusal above passes on a mutation that refuses
+    // everything.
+    await spend(t, code, characterId, 1, 1, { dmCode })
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([{ level: 1, spent: 1 }])
+  })
+
+  /**
+   * ⚠️ **The asymmetry, and it is `setUses`' asymmetry reached by a different route.** There
+   * the danger was a stale key becoming permanent when a DM changed somebody's species; here
+   * it is a DM dropping a level with slots already spent, which leaves counts the character
+   * can no longer justify. Refusing to undo a state the application was happy to create is the
+   * trap in both cases.
+   */
+  test('handing back is always allowed, even for a level the character has lost', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_5)
+    await spend(t, code, characterId, 3, 2, { dmCode })
+
+    await t.mutation(api.characters.setLevel, { code, dmCode, characterId, level: 1 })
+    // The row survives the level change untouched — read is clamped, storage is not — which is
+    // exactly the state that has to be clearable.
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([{ level: 3, spent: 2 }])
+    // And it no longer draws, because the payload is built from the derivation.
+    const rows = await t.query(api.characters.vitals, { code, dmCode })
+    expect(rows.find((row) => row.characterId === characterId)).toMatchObject({ spentSlots: [] })
+
+    await spend(t, code, characterId, 3, 0, { dmCode })
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([])
+  })
+
+  /**
+   * ⚠️ **THE ORACLE, and the reason the caller is checked before what the character has.** A
+   * stranger poking a monster must be told the same thing a fabricated id gets — an NPC's
+   * existence is itself the spoiler. A refusal reading *"that character has no spell slots"*
+   * would confirm a creature sits behind the id and would leak the shape of its sheet through
+   * the error channel, undoing in one sentence what the payload channel withholds.
+   */
+  test('a monster refuses a spend with the same answer a character that never existed gives', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const ana = await makeSeat(t, code, 'Ana')
+    const goblin = await makeNpc(t, code, dmCode, 'Goblin', npcSheet({ maxHp: 7 }))
+    const doomed = await makeCharacter(t, code, 'Doomed')
+    await t.mutation(api.characters.remove, { code, dmCode, characterId: doomed })
+
+    const forMonster = await refusalOf(spend(t, code, goblin, 1, 1, { playerId: ana }))
+    const forGone = await refusalOf(spend(t, code, doomed, 1, 1, { playerId: ana }))
+    expect(forMonster.kind).toBe('CharacterNotFound')
+    expect(forMonster).toEqual(forGone)
+  })
+
+  /**
+   * ⚠️ **THE ACCEPTANCE CRITERION, AS ONE POSITIVE AND ONE NEGATIVE.** A Warlock takes a
+   * short rest and gets both Pact Magic slots back while the Wizard beside them gets none.
+   * The negative is the load-bearing half: **a short rest that restored the Wizard's slots
+   * would be the application inventing a rule**, and it is the one failure this feature can
+   * have that nobody at the table would report as a bug, because it looks like generosity.
+   *
+   * Both are in one test on one table, deliberately — two tests would each pass against a
+   * short rest that did the same thing to everybody, in opposite directions.
+   */
+  test('a short rest returns a warlock’s pact slots and none of a wizard’s', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const warlock = await makePreset(t, code, 'Vaskir', WARLOCK_5)
+    const wizard = await makePreset(t, code, 'Mireth', WIZARD_5)
+
+    // A level 5 Warlock has two 3rd-level slots and spends both; the wizard spends two of its
+    // four 1st-level ones.
+    await spend(t, code, warlock, 3, 2, { dmCode })
+    await spend(t, code, wizard, 1, 2, { dmCode })
+
+    await t.mutation(api.characters.shortRest, { code, characterId: warlock, dmCode })
+    await t.mutation(api.characters.shortRest, { code, characterId: wizard, dmCode })
+
+    expect((await rawVitals(t, warlock))?.spentSlots, 'the warlock got nothing back').toEqual([])
+    expect(
+      (await rawVitals(t, wizard))?.spentSlots,
+      'the short rest restored a wizard’s slots — the app inventing a rule',
+    ).toEqual([{ level: 1, spent: 2 }])
+  })
+
+  test('a long rest returns both, because it is the longest rest there is', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const warlock = await makePreset(t, code, 'Vaskir', WARLOCK_5)
+    const wizard = await makePreset(t, code, 'Mireth', WIZARD_5)
+
+    await spend(t, code, warlock, 3, 2, { dmCode })
+    await spend(t, code, wizard, 1, 4, { dmCode })
+
+    await t.mutation(api.characters.longRest, { code, characterId: warlock, dmCode })
+    await t.mutation(api.characters.longRest, { code, characterId: wizard, dmCode })
+
+    expect((await rawVitals(t, warlock))?.spentSlots).toEqual([])
+    expect((await rawVitals(t, wizard))?.spentSlots).toEqual([])
+  })
+
+  /**
+   * ⚠️ **The early return in `shortRest` tests both arrays, and this is what the version that
+   * tested only the counted uses got wrong.** A Warlock who has spent slots and nothing else —
+   * which is most Warlocks — would have been returned from before the slot branch was reached,
+   * silently, and the symptom would have been *sometimes it works*.
+   */
+  test('a warlock who has spent nothing but slots still gets them back', async () => {
+    const { t, code, dmCode, characterId } = await caster(WARLOCK_5, 'Vaskir')
+    await spend(t, code, characterId, 3, 2, { dmCode })
+    expect((await rawVitals(t, characterId))?.spentUses).toBeUndefined()
+
+    await t.mutation(api.characters.shortRest, { code, characterId, dmCode })
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([])
+  })
+
+  test('a wizard’s short rest with only slots spent writes nothing at all', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_5)
+    await spend(t, code, characterId, 1, 2, { dmCode })
+
+    const before = await rawVitals(t, characterId)
+    await t.mutation(api.characters.shortRest, { code, characterId, dmCode })
+
+    // Asserted on the whole document rather than on the one field: patching an unchanged value
+    // would invalidate the health-bar subscription for every client at the table every time
+    // somebody pressed a button that changed nothing.
+    expect(await rawVitals(t, characterId)).toEqual(before)
+  })
+
+  test('the claiming seat may spend, and another seat may not', async () => {
+    const t = convexTest(schema, modules)
+    const { code } = await makeGame(t)
+    const ana = await makeSeat(t, code, 'Ana')
+    const ben = await makeSeat(t, code, 'Ben')
+    const characterId = await makePreset(t, code, 'Mireth', WIZARD_5)
+    await t.mutation(api.characters.claim, { code, playerId: ana, characterId })
+
+    await spend(t, code, characterId, 1, 1, { playerId: ana })
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([{ level: 1, spent: 1 }])
+
+    await expectKind(spend(t, code, characterId, 1, 4, { playerId: ben }), 'CharacterNotYours')
+    await expectKind(spend(t, code, characterId, 1, 4, {}), 'CharacterNotYours')
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([{ level: 1, spent: 1 }])
+  })
+
+  /**
+   * A hand-built `pc` sheet stores a class *name* and no class key, so there is nothing to
+   * count against. Asserted rather than left to be discovered, because it is a real gap named
+   * in `spellSlotsOf` rather than an accident — and a reader finding a hand-typed Wizard with
+   * no slots should land on this test and its docblock rather than conclude the feature is
+   * broken.
+   */
+  test('a hand-built character gets no slots, because a class name is not a class key', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const handBuilt = await makePc(t, code, 'Mireth', pcSheet({ className: 'Wizard', level: 5 }))
+
+    await expectKind(spend(t, code, handBuilt, 1, 1, { dmCode }), 'BadInput')
+    const rows = await t.query(api.characters.vitals, { code, dmCode })
+    expect(rows.find((row) => row.characterId === handBuilt)).toMatchObject({ spentSlots: [] })
   })
 })

@@ -82,6 +82,13 @@ const NPC_CURRENT_HP = 137
  * Five new numbers arriving at once is exactly the pressure the union exists against — see
  * the two assertions in *the vitals union is doing real work*, which pin the band variant's
  * whole key set and its lack of any bare `float64`.
+ *
+ * ⚠️ **`spentSlots` is the sixth, and it arrived as the prediction above coming true.** The
+ * paragraph said the cost of a sixth state field is five expectations and that the point of
+ * collecting them here is that it touches them *all* — it did, and the five failures were the
+ * whole of the damage. It is also the member this collection protects hardest: an array is not
+ * a bare `float64`, so the numeric assertion in *the vitals union is doing real work* would
+ * **not** catch it being pasted onto the band variant, and `NO_2024_STATE_KEYS` is what does.
  */
 const NO_2024_STATE = {
   temporaryHp: 0,
@@ -89,9 +96,10 @@ const NO_2024_STATE = {
   deathSaveFailures: 0,
   heroicInspiration: false,
   spentUses: [],
+  spentSlots: [],
 }
 
-/** The same five as key names, for the key-set assertions that list them one per line. */
+/** The same six as key names, for the key-set assertions that list them one per line. */
 const NO_2024_STATE_KEYS = Object.keys(NO_2024_STATE)
 
 /**
