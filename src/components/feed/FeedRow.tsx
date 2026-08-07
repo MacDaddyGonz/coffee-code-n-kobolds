@@ -6,6 +6,7 @@ import { ProfileIcon } from '@/components/ProfileIcon'
 import { Badge } from '@/components/ui/badge'
 import type { PublicFeedRow } from '@/hooks/useFeed'
 import { CRIT_LABEL, critColour } from '@/lib/crit'
+import { entryCaptions } from '@/lib/rollDetail'
 import { cn } from '@/lib/utils'
 import { clockTime } from '@/lib/when'
 import type { RollResult } from '@convex/lib/roll'
@@ -82,7 +83,30 @@ function RollResultBlock({ result }: { result: RollResult }): ReactElement {
         >
           {result.total}
         </span>
-        <span className="text-muted-foreground text-xs tabular-nums">{rollWorking(result)}</span>
+        {/*
+          The working, spelled out beside the total: the number somebody shouts across the
+          table is the total, and this is the one they check when it looks wrong. The `=`
+          is added here rather than inside `rollWorking` because that function has a second
+          reader with no total beside it to point at.
+
+          ⚠️⚠️ **NOTHING IN THIS BLOCK COMPARES THE TOTAL TO ANYTHING, AND THIS IS THE LINE
+          WHERE A READER WILL WANT TO.** The obvious next edit is an armour class or a save
+          DC printed here with a ✓ or a ✗ against it — and that is the one thing this
+          application does not do. ADR 0011 decided it and CLAUDE.md's *Rules scope* keeps
+          it: this application **announces and counts**, and the table **adjudicates**. So a
+          DC, when a row ever carries one, is printed **beside** the result as a second
+          number and never as a verdict — no colour, no tick, no *hit*, no *saved*.
+
+          ⚠️ **A feed row carries no DC today.** `feedSubjectValidator` in
+          `convex/lib/roll.ts` has six members and none of them has a field for one, so
+          there is nothing to print and this comment is the whole of what stands here. That
+          module is browser-shared and is not this component's to change: adding a `dc` is a
+          server decision, made where the roll is decided, in the same transaction that read
+          the sheet the DC came off.
+        */}
+        <span className="text-muted-foreground text-xs tabular-nums">
+          = {rollWorking(result)}
+        </span>
         {note ? <span className="text-muted-foreground text-xs italic">{note}</span> : null}
         {result.crit !== null ? (
           <span className="text-xs font-semibold" style={{ color: colour ?? undefined }}>
@@ -94,7 +118,14 @@ function RollResultBlock({ result }: { result: RollResult }): ReactElement {
       {/* The individual dice, which the total does not carry and the 3D tray is showing.
           Indexed keys because a result is immutable once written — the array never reorders,
           and two d6 that both came up 4 are genuinely indistinguishable. */}
-      <div className="flex flex-wrap items-center gap-1">
+      <div
+        className="flex flex-wrap items-center gap-1"
+        // ⚠️ **`dropped` and not `mode`**, which is the distinction `rollModeNote` exists to
+        // make: the group is only announced as a pair when a die was genuinely discarded, so
+        // a `2d6` rolled with a sticky advantage toggle on is not described as two d20s.
+        role={dropped === null ? undefined : 'group'}
+        aria-label={dropped === null ? undefined : `Rolled two d20 ${note ?? ''}`.trim()}
+      >
         {result.dice.map((die, index) => (
           <DieChip key={`${index}-${die.faces}`} faces={die.faces} value={die.value} />
         ))}
@@ -102,9 +133,20 @@ function RollResultBlock({ result }: { result: RollResult }): ReactElement {
             is 20 by construction — advantage only ever applies to a single d20, which
             `TO_HIT_PREFIX` and `RollMode` between them guarantee — and `droppedDie` is where
             that construction fact is stated, so this file and the 3D tray cannot disagree
-            about what landed. */}
+            about what landed.
+
+            ⚠️ **Struck through and *kept*, never omitted, and now with a word beside it.**
+            The whole visible point of advantage is that two dice landed and one was
+            discarded — that is what the 3D tray shows over the map, and a feed row that
+            printed one die would be describing a different event from the one the table just
+            watched. The chip is what says which of the two survived. */}
         {dropped === null ? null : (
-          <DieChip faces={dropped.faces} value={dropped.value} dropped />
+          <>
+            <span aria-hidden className="text-muted-foreground/60 text-[0.6875rem]">
+              ·
+            </span>
+            <DieChip faces={dropped.faces} value={dropped.value} dropped />
+          </>
         )}
       </div>
     </div>
@@ -147,6 +189,16 @@ function RollResultBlock({ result }: { result: RollResult }): ReactElement {
  * - A `null` roll with nothing else: a passive being declared, which rolls no dice on purpose
  *   because the point of pressing it is that the table is told. **No result block at all** —
  *   not a `0`, not an empty tray. A zero here would be a number nobody rolled.
+ *
+ * ⚠️ **The caption between the sentence and the result is a fourth thing and not a fourth
+ * shape.** It qualifies every one of the three above when the subject is a sheet entry, and
+ * it is empty for the five subjects that are not — see `entryCaptions`.
+ *
+ * ⚠️⚠️ **NOTHING IN THIS FILE COMPARES A ROLL TO ANYTHING**, and `RollResultBlock` carries
+ * that warning at the exact line where somebody would add the comparison. A difficulty class
+ * beside a total is a second number; a difficulty class with a tick against it is this
+ * application adjudicating, which ADR 0011 declined and CLAUDE.md's *Rules scope* keeps
+ * declined.
  */
 export const FeedRow = memo(function FeedRow({ row }: { row: PublicFeedRow }): ReactElement {
   const { roll, subject } = row
@@ -160,6 +212,22 @@ export const FeedRow = memo(function FeedRow({ row }: { row: PublicFeedRow }): R
   // subject keeps rather than a validator — so this reads the discriminator rather than
   // testing the field for emptiness.
   const description = subject.kind === 'entry' && subject.part === 'text' ? subject.text : null
+
+  /**
+   * WHERE THE ROLL CAME FROM: `Level 2 spell · Action`, or nothing at all.
+   *
+   * ⚠️ **The row already carried both facts and neither reached the screen**, which is what
+   * the 2024 conversion made worth fixing: a feed full of `casts Cure Wounds` says nothing
+   * about which slot went, and the conversion turned a spell's level from a label into a
+   * counted resource. `entryCaptions` is where the wording lives and where the `Record` over
+   * the category union sits, so a fourth category fails to compile rather than printing an
+   * empty chip on every row that carries it.
+   *
+   * ⚠️ **It is a caption and not an accounting.** Printing *Level 2 spell* consults no slot
+   * and spends none; the slot is the mutation's business, server-side, in the transaction
+   * that rolled. A feed row is what happened.
+   */
+  const captions = entryCaptions(subject)
 
   return (
     <li className="flex gap-2 px-2 py-1.5">
@@ -195,6 +263,18 @@ export const FeedRow = memo(function FeedRow({ row }: { row: PublicFeedRow }): R
             {clockTime(row.createdAt)}
           </time>
         </div>
+
+        {/*
+          Under the sentence and above the result, because it qualifies the sentence: it
+          says what *Cure Wounds* was, not what it came out as. Joined with a middot rather
+          than drawn as badges — a busy feed is a column of these, and two pill outlines per
+          row would out-shout the total they sit above.
+        */}
+        {captions.length === 0 ? null : (
+          <p className="text-muted-foreground text-[0.6875rem] leading-none">
+            {captions.join(' · ')}
+          </p>
+        )}
 
         {roll !== null ? <RollResultBlock result={roll} /> : null}
 

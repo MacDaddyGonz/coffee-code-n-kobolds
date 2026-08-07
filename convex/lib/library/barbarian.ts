@@ -1,929 +1,324 @@
-// The Barbarian: nine premade sheets, level 1 to 5, Berserker and Wild Heart.
+// The Barbarian: five premade sheets, level 1 to 5, Path of the Berserker.
 //
-// Content only — the shape is in ./types.ts. Every sheet is written out in full
-// rather than spread from the one below it, because a sheet that inherits is a
-// sheet nobody can read top to bottom, and these exist to be read by whoever is
-// checking whether level 4 really is the level it promises to be.
+// Content only — the shape is in ./types.ts and the words are paraphrased from the
+// 5e (2024) SRD for somebody reading them at the table, never lifted from it.
 //
-// Two things about this class in particular are worth knowing before editing it.
+// **The build: Soldier.** The standard array goes 15 Strength, 14 Dexterity, 13
+// Constitution, 12 Wisdom, 10 Charisma, 8 Intelligence, and the Soldier background's
+// **+2 Strength and +1 Constitution** are already in the numbers below — see the note on
+// `LibrarySheet.abilities` in ./types.ts before concluding that backgrounds were lifted.
+// Athletics and Intimidation are the Soldier's two skills; Perception and Survival are
+// the class's own.
 //
-// **Fast Movement is not here, and its absence is deliberate.** The 5e barbarian
-// gains ten feet at level 5, and requirements.md fixes every character at 35 —
-// `SPEED_FEET` is a constant with no field behind it. So level 5 gains Brutal
-// Strike instead: a d10 the player actually rolls, which is a better spike for a
-// beginner than a number the board would ignore. The same reasoning is written on
-// the `mobile` feat in lib/rules.ts.
+// ⚠️ **Fast Movement is deliberately absent, and it is the one level 1–5 feature this
+// class does not get.** It raises the character's Speed, and `speed` on a resolved sheet
+// is set by the species and lineage layers in lib/resolve.ts and by nothing else — so a
+// class entry that also moved it would be a second authority for one number, and the two
+// would disagree the moment either changed. That is the rule the Fighter's file has
+// stated since Milestone 4; this is the first class for which it costs a named SRD
+// feature rather than a turn of phrase. `library.test.ts` sweeps every sheet for the word.
 //
-// **Nothing here names a movement-impairing condition.** That rules out the 2024
-// weapon masteries this class would normally take, the Wolf aspect's knocking a
-// creature over, and every grapple-flavoured trait — so the Wolf borrows the pack's
-// advantage instead, which is the half of it D&D Lite can honour. Frightened is
-// fine and both archetypes use it.
+// Rage's *duration* rules are summarised rather than reproduced: nothing here counts a
+// round, and the ten-minute cap is the table's to keep.
 
-import type { ClassLibrary } from './types'
+import { noSkills } from '../sheet'
+import type { ClassLibrary, LibraryEntry } from './types'
 
 /**
- * The standard array with Strength first and Constitution second, allocated
- * without considering race — the resolver applies that on top (see ../resolve.ts).
+ * The four this build is trained in, at levels 1 and 2.
  *
- * Dexterity takes the 13 because Unarmoured Defence spends it twice over: armour
- * class is 10 + DEX + CON, which is 13 and stays 13, since the level 3 improvement
- * goes into Strength where it moves both the attack and the damage.
+ * Spread over `noSkills()` rather than eighteen literals per sheet, which is a change of
+ * house style worth one paragraph. The old corpus wrote all thirteen flags out on all
+ * seventy-two sheets; five skills arrived with the 2024 conversion, and eighteen booleans
+ * × sixty sheets is a thousand lines in which the interesting fact — *which four* — is
+ * invisible. Every sheet still carries all eighteen flags, because the spread produces
+ * them; what has gone is the repetition, and with it the failure mode where a correction
+ * is made on four sheets out of five.
  */
+const SKILLS = {
+  ...noSkills(),
+  athletics: true,
+  intimidation: true,
+  perception: true,
+  survival: true,
+}
+
+/** Primal Knowledge at level 3 adds one more from the class's own list. */
+const SKILLS_AT_3 = { ...SKILLS, nature: true }
+
+// ---------------------------------------------------------------------------
+// The entries, named once and listed by every level that has them.
+//
+// ⚠️ **This is the one place this corpus stopped writing every level out in full, and
+// the reason is the opposite of brevity.** The old files repeated an entry's whole
+// literal at every level that carried it — the Fighter's Longsword nine times, word for
+// word — so a correction to one description was a correction in nine places, and the
+// nine were only ever as consistent as the last person to edit them. Naming the entry
+// and listing it makes the *difference* between two levels the thing a reader sees,
+// which is what "somebody comparing level 3 to level 4" actually wanted. A level whose
+// numbers genuinely change gets its own constant beside the first, as `FRENZY` and the
+// two Rage counts do below.
+// ---------------------------------------------------------------------------
+
+const GREATAXE: LibraryEntry = {
+  name: 'Greataxe',
+  text: 'Two hands on the haft and a swing that comes down through the shoulder. Reach 5 feet. While your Rage is up, add 2 more damage on top.',
+  roll: '1d12+STR',
+  level: null,
+  catalogueKey: null,
+  category: 'weapon',
+  toHit: '1d20+STR+PROF',
+  mastery: 'cleave',
+}
+
+const HANDAXE: LibraryEntry = {
+  name: 'Handaxe',
+  text: 'Light enough to throw — 20 feet comfortably, 60 at a stretch — and you carry four. The Rage bonus applies to these as well.',
+  roll: '1d6+STR',
+  level: null,
+  catalogueKey: null,
+  category: 'weapon',
+  toHit: '1d20+STR+PROF',
+  mastery: 'vex',
+}
+
+const UNARMOURED_DEFENCE: LibraryEntry = {
+  name: 'Unarmored Defense',
+  text: 'You wear no armour and do not need any: your Armour Class is 10 plus your Dexterity and your Constitution, which is the 14 on this sheet. A shield would still work if you picked one up.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const WEAPON_MASTERY: LibraryEntry = {
+  name: 'Weapon Mastery',
+  text: 'You use the mastery property of two kinds of weapon — the Greataxe and the Handaxe here, so Cleave and Vex. After a long rest you can swap one of the two for another weapon you are proficient with.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+/** Level 4 widens it to three kinds. The SRD's Weapon Mastery column, per level. */
+const WEAPON_MASTERY_AT_4: LibraryEntry = {
+  ...WEAPON_MASTERY,
+  text: 'You use the mastery property of three kinds of weapon now rather than two. After a long rest you can swap one of them for another weapon you are proficient with.',
+}
+
+/**
+ * Rage, with the SRD's own recharge: one use back on a short rest and all of them on a
+ * long one. That shape is `resourceValidator`'s `regainOnShortRest` and is the absorbed
+ * character-resources milestone's decision reversed — see lib/rest.ts, which argues it.
+ */
+const RAGE: LibraryEntry = {
+  name: 'Rage',
+  text: 'A bonus action, out of heavy armour. While it lasts you resist bludgeoning, piercing and slashing damage, you roll Strength checks and Strength saves with advantage, and every Strength attack that lands deals 2 more damage. You cannot cast or concentrate on a spell. It runs to the end of your next turn and keeps going as long as you keep swinging.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+  uses: { max: 2, recharge: 'long', regainOnShortRest: 1 },
+}
+
+const RAGE_AT_3: LibraryEntry = { ...RAGE, uses: { max: 3, recharge: 'long', regainOnShortRest: 1 } }
+
+const SAVAGE_ATTACKER: LibraryEntry = {
+  name: 'Savage Attacker',
+  text: 'Origin feat. Once a turn, when you hit with a weapon, reroll the damage dice and keep whichever total you prefer.',
+  roll: null,
+  level: null,
+  catalogueKey: 'savage-attacker',
+  category: 'passive',
+}
+
+const DANGER_SENSE: LibraryEntry = {
+  name: 'Danger Sense',
+  text: 'You feel trouble coming a moment before it arrives: every Dexterity saving throw is rolled with advantage unless something has already incapacitated you.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const RECKLESS_ATTACK: LibraryEntry = {
+  name: 'Reckless Attack',
+  text: 'Say so on your first attack roll of the turn and you throw defence away: every Strength attack you make until your next turn is rolled with advantage, and everything attacking you has advantage back.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const PRIMAL_KNOWLEDGE: LibraryEntry = {
+  name: 'Primal Knowledge',
+  text: 'One more trained skill — Nature, on this sheet. And while your Rage is up you may make an Acrobatics, Intimidation, Perception, Stealth or Survival check as a Strength check instead, because the power going through you is doing the work.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const FRENZY: LibraryEntry = {
+  name: 'Frenzy',
+  text: 'Attack recklessly while raging and the first target you hit with a Strength attack that turn takes extra damage — a number of d6s equal to your Rage damage bonus, which is 2. Same damage type as the weapon.',
+  roll: '2d6',
+  level: null,
+  catalogueKey: null,
+  category: 'action',
+}
+
+const ABILITY_SCORE_IMPROVEMENT: LibraryEntry = {
+  name: 'Ability Score Improvement',
+  text: 'General feat, from level 4. Raise one ability score by 2, or two of them by 1 each, to a maximum of 20. It can be taken again every time you are offered a feat. Taken here as +2 Strength.',
+  roll: null,
+  level: null,
+  catalogueKey: 'ability-score-improvement',
+  category: 'passive',
+}
+
+const EXTRA_ATTACK: LibraryEntry = {
+  name: 'Extra Attack',
+  text: 'When you take the Attack action you attack twice instead of once. Roll each swing separately.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const EQUIPMENT =
+  'A greataxe, four handaxes and an explorer\'s pack, plus a soldier\'s kit: a spear, a shortbow with twenty arrows and a quiver, a healer\'s kit, a gaming set and travelling clothes.'
+
+const HIT_DIE = 12
+const ARMOUR_CLASS = 14
+
 export const BARBARIAN: ClassLibrary = {
   classKey: 'barbarian',
-
   base: {
-    level: 1,
-    abilities: { str: 15, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
-    saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-    skillProficiencies: {
-      athletics: true,
-      acrobatics: false,
-      sleightOfHand: false,
-      stealth: false,
-      arcana: false,
-      investigation: false,
-      animalHandling: false,
-      insight: false,
-      perception: true,
-      deception: false,
-      intimidation: false,
-      performance: false,
-      persuasion: false,
+    1: {
+      level: 1,
+      // Strength first and Constitution second: the barbarian hits things and then gets
+      // hit back, and both halves of Unarmored Defense come off the second one.
+      // Intelligence is the score nothing on this sheet consults.
+      abilities: { str: 17, dex: 14, con: 14, int: 8, wis: 12, cha: 10 },
+      saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
+      skillProficiencies: SKILLS,
+      armourClass: ARMOUR_CLASS,
+      maxHp: 14,
+      hitDice: { count: 1, faces: HIT_DIE },
+      feats: [GREATAXE, HANDAXE, RAGE, UNARMOURED_DEFENCE, WEAPON_MASTERY, SAVAGE_ATTACKER],
+      spells: [],
+      equipment: EQUIPMENT,
+      levellingNotes:
+        'Where you start: the biggest die of hit points in the game, no armour and no need for any, and two Rages between rests that make you hard to hurt and hard to stop.',
     },
-    armourClass: 13,
-    maxHp: 14,
-    hitDice: { count: 1, faces: 12 },
-    feats: [
-      {
-        name: 'Rage',
-        text: 'A bonus action to rage for a minute: advantage on Strength checks and saving throws, extra damage on Strength weapon attacks, and resistance to bludgeoning, piercing and slashing damage. It ends early if a turn goes by in which you neither attack nor take damage. Two rages between long rests, and the extra damage is +2.',
-        roll: null,
-        level: null,
-        catalogueKey: 'rage',
-        category: 'passive',
-      },
-      {
-        name: 'Unarmoured Defence',
-        text: 'You wear no armour and want none. Your Armour Class is 10 plus your Dexterity modifier plus your Constitution modifier, which comes to 13 — and every point of Constitution you ever gain raises it again.',
-        roll: null,
-        level: null,
-        catalogueKey: null,
-        category: 'passive',
-      },
-      {
-        name: 'Greataxe',
-        text: 'Your two-handed swing, and the thing you will roll most often. On a hit it deals the damage below in slashing, plus 2 more while you are raging.',
-        roll: '1d12+STR',
-        level: null,
-        catalogueKey: null,
-        category: 'weapon',
-        toHit: '1d20+STR+PROF',
-      },
-      {
-        name: 'Handaxe',
-        text: 'A hatchet light enough to throw twenty feet, for the turn when whatever you want to reach is on the far side of the room. Thrown or in hand, it works the same.',
-        roll: '1d6+STR',
-        level: null,
-        catalogueKey: null,
-        category: 'weapon',
-        toHit: '1d20+STR+PROF',
-      },
-    ],
-    spells: [],
-    equipment:
-      'A greataxe, two handaxes, a bedroll, a coil of rope, a tinderbox and a waterskin. No armour — you fight in furs and trust your own hide.',
-    levellingNotes:
-      'Where you start: Rage, an armour class of 13 with nothing worn to earn it, and an axe in each hand. At level 2 you choose an archetype, and it is the only choice on this sheet you cannot take back.',
+    2: {
+      level: 2,
+      abilities: { str: 17, dex: 14, con: 14, int: 8, wis: 12, cha: 10 },
+      saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
+      skillProficiencies: SKILLS,
+      armourClass: ARMOUR_CLASS,
+      maxHp: 23,
+      hitDice: { count: 2, faces: HIT_DIE },
+      feats: [
+        GREATAXE,
+        HANDAXE,
+        RAGE,
+        UNARMOURED_DEFENCE,
+        WEAPON_MASTERY,
+        DANGER_SENSE,
+        RECKLESS_ATTACK,
+        SAVAGE_ATTACKER,
+      ],
+      spells: [],
+      equipment: EQUIPMENT,
+      levellingNotes:
+        'Reckless Attack is the button you will press every round: advantage on everything you swing, at the cost of everything swinging back at you with advantage. Danger Sense quietly makes every Dexterity save better.',
+    },
   },
-
   paths: {
     berserker: {
-      2: {
-        level: 2,
-        abilities: { str: 15, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
-        saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: true,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 13,
-        maxHp: 23,
-        hitDice: { count: 2, faces: 12 },
-        feats: [
-          {
-            name: 'Rage',
-            text: 'A bonus action to rage for a minute: advantage on Strength checks and saving throws, extra damage on Strength weapon attacks, and resistance to bludgeoning, piercing and slashing damage. It ends early if a turn goes by in which you neither attack nor take damage. Two rages between long rests, +2 damage — and every one of them now carries your Frenzy.',
-            roll: null,
-            level: null,
-            catalogueKey: 'rage',
-            category: 'passive',
-          },
-          {
-            name: 'Frenzy',
-            text: 'The Berserker does not rage carefully. The first time you hit a creature on your turn while raging, the blow lands with real spite and deals the extra damage below on top of everything else.',
-            roll: '1d6',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Reckless Attack',
-            text: 'Decide before your first attack of the turn to throw caution away. Every melee attack you make with Strength this turn has advantage, and every attack made against you has advantage until your next turn.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Danger Sense',
-            text: 'You feel a thing coming half a heartbeat before it arrives: advantage on Dexterity saving throws against anything you can see, from a dart out of a wall to a gout of dragonfire.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Unarmoured Defence',
-            text: 'You wear no armour and want none. Your Armour Class is 10 plus your Dexterity modifier plus your Constitution modifier, which comes to 13 — and every point of Constitution you ever gain raises it again.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Greataxe',
-            text: 'Your two-handed swing, and the thing you will roll most often. On a hit it deals the damage below in slashing, plus 2 more while you are raging.',
-            roll: '1d12+STR',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-          {
-            name: 'Handaxe',
-            text: 'A hatchet light enough to throw twenty feet, for the turn when whatever you want to reach is on the far side of the room. Thrown or in hand, it works the same.',
-            roll: '1d6+STR',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-        ],
-        spells: [],
-        equipment:
-          'A greataxe, two handaxes, a bedroll, a coil of rope, a tinderbox and a waterskin, plus a dented helm you keep as a trophy. No armour — you fight in furs and trust your own hide.',
-        levellingNotes:
-          'You chose the Berserker, so Frenzy adds 1d6 to one hit each turn you rage. You also gained Reckless Attack and Danger Sense, and shouting people down is now a trained skill.',
-      },
-
       3: {
         level: 3,
-        abilities: { str: 17, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
+        abilities: { str: 17, dex: 14, con: 14, int: 8, wis: 12, cha: 10 },
         saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: true,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 13,
+        skillProficiencies: SKILLS_AT_3,
+        armourClass: ARMOUR_CLASS,
         maxHp: 32,
-        hitDice: { count: 3, faces: 12 },
+        hitDice: { count: 3, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Rage',
-            text: 'A bonus action to rage for a minute: advantage on Strength checks and saving throws, extra damage on Strength weapon attacks, and resistance to bludgeoning, piercing and slashing damage. It ends early if a turn goes by in which you neither attack nor take damage. Three rages between long rests now, still +2 damage.',
-            roll: null,
-            level: null,
-            catalogueKey: 'rage',
-            category: 'passive',
-          },
-          {
-            name: 'Mindless Rage',
-            text: 'While the rage lasts nothing can frighten you and nothing can charm you. Anything that was working on you waits, quietly and uselessly, until you calm down.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Frenzy',
-            text: 'The Berserker does not rage carefully. The first time you hit a creature on your turn while raging, the blow lands with real spite and deals the extra damage below on top of everything else.',
-            roll: '1d6',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Reckless Attack',
-            text: 'Decide before your first attack of the turn to throw caution away. Every melee attack you make with Strength this turn has advantage, and every attack made against you has advantage until your next turn.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Danger Sense',
-            text: 'You feel a thing coming half a heartbeat before it arrives: advantage on Dexterity saving throws against anything you can see, from a dart out of a wall to a gout of dragonfire.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Unarmoured Defence',
-            text: 'You wear no armour and want none. Your Armour Class is 10 plus your Dexterity modifier plus your Constitution modifier, which comes to 13 — and every point of Constitution you ever gain raises it again.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Greataxe',
-            text: 'Your two-handed swing, and the thing you will roll most often. On a hit it deals the damage below in slashing, plus 2 more while you are raging.',
-            roll: '1d12+STR',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-          {
-            name: 'Handaxe',
-            text: 'A hatchet light enough to throw twenty feet, for the turn when whatever you want to reach is on the far side of the room. Thrown or in hand, it works the same.',
-            roll: '1d6+STR',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
+          GREATAXE,
+          HANDAXE,
+          RAGE_AT_3,
+          UNARMOURED_DEFENCE,
+          WEAPON_MASTERY,
+          DANGER_SENSE,
+          RECKLESS_ATTACK,
+          PRIMAL_KNOWLEDGE,
+          FRENZY,
+          SAVAGE_ATTACKER,
         ],
         spells: [],
-        equipment:
-          'A greataxe, two handaxes, a bedroll, a coil of rope, a tinderbox and a waterskin, plus a dented helm you keep as a trophy. No armour — you fight in furs and trust your own hide.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'Your Strength went from 15 to 17, so every axe swing is +1 to hit and +1 damage, and you get a third rage. Mindless Rage means that while you are raging, nothing can frighten or charm you.',
+          'You walk the Path of the Berserker. Frenzy turns Reckless Attack into an extra 2d6 on the first thing you hit each turn, you get a third Rage, and Primal Knowledge trains you in Nature.',
       },
-
       4: {
         level: 4,
-        abilities: { str: 17, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
+        // The level 4 improvement, spent on Strength: 17 → 19, which is +1 to hit and +1
+        // damage on every swing. Constitution was the alternative and lost on arithmetic
+        // — 14 → 16 buys one point of Armour Class and one hit point a level, where the
+        // Strength buys something on every attack roll of the game.
+        abilities: { str: 19, dex: 14, con: 14, int: 8, wis: 12, cha: 10 },
         saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: true,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 13,
+        skillProficiencies: SKILLS_AT_3,
+        armourClass: ARMOUR_CLASS,
         maxHp: 41,
-        hitDice: { count: 4, faces: 12 },
+        hitDice: { count: 4, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Extra Attack',
-            text: 'The level everything changes. When you take the Attack action you attack twice rather than once, and the rage bonus, your Strength and a critical hit all count on each of them separately.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Rage',
-            text: 'A bonus action to rage for a minute: advantage on Strength checks and saving throws, extra damage on Strength weapon attacks, and resistance to bludgeoning, piercing and slashing damage. It ends early if a turn goes by in which you neither attack nor take damage. Three rages between long rests, +2 damage, and the bonus now lands on both of your attacks.',
-            roll: null,
-            level: null,
-            catalogueKey: 'rage',
-            category: 'passive',
-          },
-          {
-            name: 'Mindless Rage',
-            text: 'While the rage lasts nothing can frighten you and nothing can charm you. Anything that was working on you waits, quietly and uselessly, until you calm down.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Frenzy',
-            text: 'The Berserker does not rage carefully. The first time you hit a creature on your turn while raging, the blow lands with real spite and deals the extra damage below on top of everything else. Once a turn, however many times you swing.',
-            roll: '1d6',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Reckless Attack',
-            text: 'Decide before your first attack of the turn to throw caution away. Every melee attack you make with Strength this turn has advantage, and every attack made against you has advantage until your next turn.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Danger Sense',
-            text: 'You feel a thing coming half a heartbeat before it arrives: advantage on Dexterity saving throws against anything you can see, from a dart out of a wall to a gout of dragonfire.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Unarmoured Defence',
-            text: 'You wear no armour and want none. Your Armour Class is 10 plus your Dexterity modifier plus your Constitution modifier, which comes to 13 — and every point of Constitution you ever gain raises it again.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Greataxe',
-            text: 'Your two-handed swing, and the thing you will roll most often. On a hit it deals the damage below in slashing, plus 2 more while you are raging. Roll it twice a turn now.',
-            roll: '1d12+STR',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-          {
-            name: 'Handaxe',
-            text: 'A hatchet light enough to throw twenty feet, for the turn when whatever you want to reach is on the far side of the room. Thrown or in hand, it works the same.',
-            roll: '1d6+STR',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
+          GREATAXE,
+          HANDAXE,
+          RAGE_AT_3,
+          UNARMOURED_DEFENCE,
+          WEAPON_MASTERY_AT_4,
+          DANGER_SENSE,
+          RECKLESS_ATTACK,
+          PRIMAL_KNOWLEDGE,
+          FRENZY,
+          ABILITY_SCORE_IMPROVEMENT,
+          SAVAGE_ATTACKER,
         ],
         spells: [],
-        equipment:
-          'A greataxe, two handaxes, a bedroll, a coil of rope, a tinderbox and a waterskin, plus a dented helm you keep as a trophy. No armour — you fight in furs and trust your own hide.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'The power spike: Extra Attack. You swing twice every turn instead of once, and each swing gets your Strength, your rage bonus and its own chance at a critical hit — roughly double the damage of level 3.',
+          'Strength goes from 17 to 19 — +1 to hit and +1 damage on everything you throw or swing — and you take the mastery property of a third kind of weapon.',
       },
-
       5: {
         level: 5,
-        abilities: { str: 17, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
+        abilities: { str: 19, dex: 14, con: 14, int: 8, wis: 12, cha: 10 },
         saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: true,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 13,
+        skillProficiencies: SKILLS_AT_3,
+        armourClass: ARMOUR_CLASS,
         maxHp: 50,
-        hitDice: { count: 5, faces: 12 },
+        hitDice: { count: 5, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Brutal Strike',
-            text: 'Once on each of your turns while raging you may give up the advantage Reckless Attack would have given you on one attack, and swing with everything instead. If it hits, it deals the extra damage below.',
-            roll: '1d10',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Intimidating Presence',
-            text: 'Spend your action to round on one creature within 30 feet that can see you. It makes a Wisdom saving throw against a DC of 8 plus your Strength modifier plus your proficiency bonus, and on a failure it is frightened of you until the end of your next turn.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Extra Attack',
-            text: 'When you take the Attack action you attack twice rather than once, and the rage bonus, your Strength and a critical hit all count on each of them separately.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Rage',
-            text: 'A bonus action to rage for a minute: advantage on Strength checks and saving throws, extra damage on Strength weapon attacks, and resistance to bludgeoning, piercing and slashing damage. It ends early if a turn goes by in which you neither attack nor take damage. Three rages between long rests, +2 damage, and one of them will usually see out a whole fight.',
-            roll: null,
-            level: null,
-            catalogueKey: 'rage',
-            category: 'passive',
-          },
-          {
-            name: 'Mindless Rage',
-            text: 'While the rage lasts nothing can frighten you and nothing can charm you. Anything that was working on you waits, quietly and uselessly, until you calm down.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Frenzy',
-            text: 'The Berserker does not rage carefully. The first time you hit a creature on your turn while raging, the blow lands with real spite and deals the extra damage below on top of everything else. Once a turn, however many times you swing.',
-            roll: '1d6',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Reckless Attack',
-            text: 'Decide before your first attack of the turn to throw caution away. Every melee attack you make with Strength this turn has advantage, and every attack made against you has advantage until your next turn.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Danger Sense',
-            text: 'You feel a thing coming half a heartbeat before it arrives: advantage on Dexterity saving throws against anything you can see, from a dart out of a wall to a gout of dragonfire.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Unarmoured Defence',
-            text: 'You wear no armour and want none. Your Armour Class is 10 plus your Dexterity modifier plus your Constitution modifier, which comes to 13 — and every point of Constitution you ever gain raises it again.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Greataxe',
-            text: 'Your two-handed swing, and the thing you will roll most often. On a hit it deals the damage below in slashing, plus 2 more while you are raging. Roll it twice a turn now.',
-            roll: '1d12+STR',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-          {
-            name: 'Handaxe',
-            text: 'A hatchet light enough to throw twenty feet, for the turn when whatever you want to reach is on the far side of the room. Thrown or in hand, it works the same.',
-            roll: '1d6+STR',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
+          GREATAXE,
+          HANDAXE,
+          RAGE_AT_3,
+          UNARMOURED_DEFENCE,
+          WEAPON_MASTERY_AT_4,
+          DANGER_SENSE,
+          RECKLESS_ATTACK,
+          PRIMAL_KNOWLEDGE,
+          FRENZY,
+          EXTRA_ATTACK,
+          ABILITY_SCORE_IMPROVEMENT,
+          SAVAGE_ATTACKER,
         ],
         spells: [],
-        equipment:
-          'A greataxe, two handaxes, a bedroll, a coil of rope, a tinderbox and a waterskin, plus a dented helm you keep as a trophy. No armour — you fight in furs and trust your own hide.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'Brutal Strike lets you trade Reckless Attack\'s advantage on one swing a turn for an extra 1d10, and Intimidating Presence frightens a foe with nothing but your action and a hard stare. Fifty hit points is more than most things at this level can chew through.',
-      },
-    },
-
-    'wild-heart': {
-      2: {
-        level: 2,
-        abilities: { str: 15, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
-        saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: true,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 13,
-        maxHp: 23,
-        hitDice: { count: 2, faces: 12 },
-        feats: [
-          {
-            name: 'Rage',
-            text: 'A bonus action to rage for a minute: advantage on Strength checks and saving throws, extra damage on Strength weapon attacks, and resistance to bludgeoning, piercing and slashing damage. It ends early if a turn goes by in which you neither attack nor take damage. Two rages between long rests, +2 damage — and every one of them now borrows a beast.',
-            roll: null,
-            level: null,
-            catalogueKey: 'rage',
-            category: 'passive',
-          },
-          {
-            name: 'Rage of the Wilds',
-            text: 'Name the animal whose strength you are borrowing each time you rage. Bear: while it lasts, damage of every kind except psychic rolls off you rather than landing in full. Wolf: while it lasts, your allies have advantage on attacks against any creature within five feet of you, because you fight like a pack and they are the pack.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Reckless Attack',
-            text: 'Decide before your first attack of the turn to throw caution away. Every melee attack you make with Strength this turn has advantage, and every attack made against you has advantage until your next turn.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Danger Sense',
-            text: 'You feel a thing coming half a heartbeat before it arrives: advantage on Dexterity saving throws against anything you can see, from a dart out of a wall to a gout of dragonfire.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Unarmoured Defence',
-            text: 'You wear no armour and want none. Your Armour Class is 10 plus your Dexterity modifier plus your Constitution modifier, which comes to 13 — and every point of Constitution you ever gain raises it again.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Greataxe',
-            text: 'Your two-handed swing, and the thing you will roll most often. On a hit it deals the damage below in slashing, plus 2 more while you are raging.',
-            roll: '1d12+STR',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-          {
-            name: 'Handaxe',
-            text: 'A hatchet light enough to throw twenty feet, for the turn when whatever you want to reach is on the far side of the room. Thrown or in hand, it works the same.',
-            roll: '1d6+STR',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-        ],
-        spells: [],
-        equipment:
-          'A greataxe, two handaxes, a bedroll, a coil of rope, a tinderbox and a waterskin, plus a wolf-pelt cloak and a string of carved bone charms. No armour — you fight in furs and trust your own hide.',
-        levellingNotes:
-          'You chose the Wild Heart, so each rage now borrows a bear\'s hide or a wolf\'s pack sense. You also gained Reckless Attack and Danger Sense, and animals have started taking you seriously.',
-      },
-
-      3: {
-        level: 3,
-        abilities: { str: 17, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
-        saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: true,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 13,
-        maxHp: 32,
-        hitDice: { count: 3, faces: 12 },
-        feats: [
-          {
-            name: 'Rage',
-            text: 'A bonus action to rage for a minute: advantage on Strength checks and saving throws, extra damage on Strength weapon attacks, and resistance to bludgeoning, piercing and slashing damage. It ends early if a turn goes by in which you neither attack nor take damage. Three rages between long rests now, still +2 damage, and the beast is chosen fresh each time.',
-            roll: null,
-            level: null,
-            catalogueKey: 'rage',
-            category: 'passive',
-          },
-          {
-            name: 'Nature Speaker',
-            text: 'Beasts understand you and you understand them — a wolf\'s warning, a horse\'s fear, a raven\'s gossip about who came down the road this morning. Most of them will talk to you if they are not being hunted, though few have much to say.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Rage of the Wilds',
-            text: 'Name the animal whose strength you are borrowing each time you rage. Bear: while it lasts, damage of every kind except psychic rolls off you rather than landing in full. Wolf: while it lasts, your allies have advantage on attacks against any creature within five feet of you, because you fight like a pack and they are the pack.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Reckless Attack',
-            text: 'Decide before your first attack of the turn to throw caution away. Every melee attack you make with Strength this turn has advantage, and every attack made against you has advantage until your next turn.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Danger Sense',
-            text: 'You feel a thing coming half a heartbeat before it arrives: advantage on Dexterity saving throws against anything you can see, from a dart out of a wall to a gout of dragonfire.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Unarmoured Defence',
-            text: 'You wear no armour and want none. Your Armour Class is 10 plus your Dexterity modifier plus your Constitution modifier, which comes to 13 — and every point of Constitution you ever gain raises it again.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Greataxe',
-            text: 'Your two-handed swing, and the thing you will roll most often. On a hit it deals the damage below in slashing, plus 2 more while you are raging.',
-            roll: '1d12+STR',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-          {
-            name: 'Handaxe',
-            text: 'A hatchet light enough to throw twenty feet, for the turn when whatever you want to reach is on the far side of the room. Thrown or in hand, it works the same.',
-            roll: '1d6+STR',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-        ],
-        spells: [],
-        equipment:
-          'A greataxe, two handaxes, a bedroll, a coil of rope, a tinderbox and a waterskin, plus a wolf-pelt cloak and a string of carved bone charms. No armour — you fight in furs and trust your own hide.',
-        levellingNotes:
-          'Your Strength went from 15 to 17, so every axe swing is +1 to hit and +1 damage, and you get a third rage. Nature Speaker lets you hold a conversation with any beast, which is worth more between fights than in them.',
-      },
-
-      4: {
-        level: 4,
-        abilities: { str: 17, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
-        saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: true,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 13,
-        maxHp: 41,
-        hitDice: { count: 4, faces: 12 },
-        feats: [
-          {
-            name: 'Extra Attack',
-            text: 'The level everything changes. When you take the Attack action you attack twice rather than once, and the rage bonus, your Strength and a critical hit all count on each of them separately.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Rage',
-            text: 'A bonus action to rage for a minute: advantage on Strength checks and saving throws, extra damage on Strength weapon attacks, and resistance to bludgeoning, piercing and slashing damage. It ends early if a turn goes by in which you neither attack nor take damage. Three rages between long rests, +2 damage, applied to each of the two attacks you now make.',
-            roll: null,
-            level: null,
-            catalogueKey: 'rage',
-            category: 'passive',
-          },
-          {
-            name: 'Nature Speaker',
-            text: 'Beasts understand you and you understand them — a wolf\'s warning, a horse\'s fear, a raven\'s gossip about who came down the road this morning. Most of them will talk to you if they are not being hunted, though few have much to say.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Rage of the Wilds',
-            text: 'Name the animal whose strength you are borrowing each time you rage. Bear: while it lasts, damage of every kind except psychic rolls off you rather than landing in full. Wolf: while it lasts, your allies have advantage on attacks against any creature within five feet of you, because you fight like a pack and they are the pack.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Reckless Attack',
-            text: 'Decide before your first attack of the turn to throw caution away. Every melee attack you make with Strength this turn has advantage, and every attack made against you has advantage until your next turn.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Danger Sense',
-            text: 'You feel a thing coming half a heartbeat before it arrives: advantage on Dexterity saving throws against anything you can see, from a dart out of a wall to a gout of dragonfire.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Unarmoured Defence',
-            text: 'You wear no armour and want none. Your Armour Class is 10 plus your Dexterity modifier plus your Constitution modifier, which comes to 13 — and every point of Constitution you ever gain raises it again.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Greataxe',
-            text: 'Your two-handed swing, and the thing you will roll most often. On a hit it deals the damage below in slashing, plus 2 more while you are raging. Roll it twice a turn now.',
-            roll: '1d12+STR',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-          {
-            name: 'Handaxe',
-            text: 'A hatchet light enough to throw twenty feet, for the turn when whatever you want to reach is on the far side of the room. Thrown or in hand, it works the same.',
-            roll: '1d6+STR',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-        ],
-        spells: [],
-        equipment:
-          'A greataxe, two handaxes, a bedroll, a coil of rope, a tinderbox and a waterskin, plus a wolf-pelt cloak and a string of carved bone charms. No armour — you fight in furs and trust your own hide.',
-        levellingNotes:
-          'The power spike: Extra Attack. You swing twice every turn instead of once, and each swing gets your Strength, your rage bonus and its own chance at a critical hit — roughly double the damage of level 3.',
-      },
-
-      5: {
-        level: 5,
-        abilities: { str: 17, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
-        saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: true,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 13,
-        maxHp: 50,
-        hitDice: { count: 5, faces: 12 },
-        feats: [
-          {
-            name: 'Brutal Strike',
-            text: 'Once on each of your turns while raging you may give up the advantage Reckless Attack would have given you on one attack, and swing with everything instead. If it hits, it deals the extra damage below.',
-            roll: '1d10',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Aspect of the Eagle',
-            text: 'The eagle\'s eyes are yours for good, rage or no rage. You have advantage on Wisdom (Perception) checks that rely on sight, and you can pick out fine detail — a face, a banner, a glint of metal — at a distance that leaves everyone else squinting.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Extra Attack',
-            text: 'When you take the Attack action you attack twice rather than once, and the rage bonus, your Strength and a critical hit all count on each of them separately.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Rage',
-            text: 'A bonus action to rage for a minute: advantage on Strength checks and saving throws, extra damage on Strength weapon attacks, and resistance to bludgeoning, piercing and slashing damage. It ends early if a turn goes by in which you neither attack nor take damage. Three rages between long rests, +2 damage, and you rarely need the second before the fight is over.',
-            roll: null,
-            level: null,
-            catalogueKey: 'rage',
-            category: 'passive',
-          },
-          {
-            name: 'Nature Speaker',
-            text: 'Beasts understand you and you understand them — a wolf\'s warning, a horse\'s fear, a raven\'s gossip about who came down the road this morning. Most of them will talk to you if they are not being hunted, though few have much to say.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Rage of the Wilds',
-            text: 'Name the animal whose strength you are borrowing each time you rage. Bear: while it lasts, damage of every kind except psychic rolls off you rather than landing in full. Wolf: while it lasts, your allies have advantage on attacks against any creature within five feet of you, because you fight like a pack and they are the pack.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Reckless Attack',
-            text: 'Decide before your first attack of the turn to throw caution away. Every melee attack you make with Strength this turn has advantage, and every attack made against you has advantage until your next turn.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Danger Sense',
-            text: 'You feel a thing coming half a heartbeat before it arrives: advantage on Dexterity saving throws against anything you can see, from a dart out of a wall to a gout of dragonfire.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Unarmoured Defence',
-            text: 'You wear no armour and want none. Your Armour Class is 10 plus your Dexterity modifier plus your Constitution modifier, which comes to 13 — and every point of Constitution you ever gain raises it again.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Greataxe',
-            text: 'Your two-handed swing, and the thing you will roll most often. On a hit it deals the damage below in slashing, plus 2 more while you are raging. Roll it twice a turn now.',
-            roll: '1d12+STR',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-          {
-            name: 'Handaxe',
-            text: 'A hatchet light enough to throw twenty feet, for the turn when whatever you want to reach is on the far side of the room. Thrown or in hand, it works the same.',
-            roll: '1d6+STR',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-        ],
-        spells: [],
-        equipment:
-          'A greataxe, two handaxes, a bedroll, a coil of rope, a tinderbox and a waterskin, plus a wolf-pelt cloak and a string of carved bone charms. No armour — you fight in furs and trust your own hide.',
-        levellingNotes:
-          'Brutal Strike lets you trade Reckless Attack\'s advantage on one swing a turn for an extra 1d10, and Aspect of the Eagle gives you a hunting bird\'s eyesight for good. Fifty hit points is more than most things at this level can chew through.',
+          'Extra Attack: every Attack action is two swings rather than one, and Frenzy still fires on the first of them that lands. It is the biggest single jump a barbarian gets.',
       },
     },
   },

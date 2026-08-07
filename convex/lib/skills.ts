@@ -1,4 +1,4 @@
-// The thirteen D&D Lite skills and the arithmetic behind them.
+// The eighteen skills of SRD 5.2.1 and the arithmetic behind them.
 //
 // Shared by the Convex functions and the browser through the `@convex/…` alias,
 // like lib/grid.ts and lib/sheet.ts, so a bonus the form prints and a bonus the
@@ -33,9 +33,14 @@ export const SKILL_KEYS = [
   'stealth',
   'arcana',
   'investigation',
+  'history',
+  'nature',
+  'religion',
   'animalHandling',
   'insight',
   'perception',
+  'medicine',
+  'survival',
   'deception',
   'intimidation',
   'performance',
@@ -46,7 +51,7 @@ export type SkillKey = (typeof SKILL_KEYS)[number]
 /**
  * Ordered by ability rather than alphabetically, because that is how the sheet
  * groups them and how a player looks one up — "what do I roll for sneaking" is
- * answered by finding the Dexterity block, not by scanning thirteen names.
+ * answered by finding the Dexterity block, not by scanning eighteen names.
  */
 export const SKILLS: readonly Skill[] = [
   { key: 'athletics', name: 'Athletics', ability: 'str' },
@@ -55,9 +60,14 @@ export const SKILLS: readonly Skill[] = [
   { key: 'stealth', name: 'Stealth', ability: 'dex' },
   { key: 'arcana', name: 'Arcana', ability: 'int' },
   { key: 'investigation', name: 'Investigation', ability: 'int' },
+  { key: 'history', name: 'History', ability: 'int' },
+  { key: 'nature', name: 'Nature', ability: 'int' },
+  { key: 'religion', name: 'Religion', ability: 'int' },
   { key: 'animalHandling', name: 'Animal Handling', ability: 'wis' },
   { key: 'insight', name: 'Insight', ability: 'wis' },
   { key: 'perception', name: 'Perception', ability: 'wis' },
+  { key: 'medicine', name: 'Medicine', ability: 'wis' },
+  { key: 'survival', name: 'Survival', ability: 'wis' },
   { key: 'deception', name: 'Deception', ability: 'cha' },
   { key: 'intimidation', name: 'Intimidation', ability: 'cha' },
   { key: 'performance', name: 'Performance', ability: 'cha' },
@@ -72,13 +82,13 @@ export function skill(key: SkillKey): Skill {
   return SKILL_BY_KEY.get(key)!
 }
 
-/** Every skill keyed to whether the character is proficient. All thirteen, always. */
+/** Every skill keyed to whether the character is proficient. All eighteen, always. */
 export type SkillProficiencies = Record<SkillKey, boolean>
 
 // There is deliberately no `noSkillProficiencies` here. `noSkills` in lib/sheet.ts
 // is the one that everything uses, and it cannot be replaced by a version living
 // here: `sheet.ts` may import only *types* from this module, because this one imports
-// values from it. A second function for "thirteen falses" was written, went
+// values from it. A second function for "eighteen falses" was written, went
 // uncalled, and has been removed rather than left as a choice nobody should have to
 // make.
 
@@ -111,7 +121,64 @@ export function passivePerception(
   level: number,
   proficiencies: SkillProficiencies,
 ): number {
-  return 10 + skillBonus(scores, level, proficiencies, 'perception')
+  return passiveScore(scores, level, proficiencies, 'perception')
+}
+
+/**
+ * The other two passive scores a 2024 sheet prints — **derived, storing nothing.**
+ *
+ * ⚠️ **They exist because change 4 gave the application the skills behind them and for no
+ * other reason.** Insight has been in `SKILL_KEYS` since Milestone 4 and Investigation
+ * arrived with the five 2024 skills, so both of these are `10 + skillBonus(...)` over a flag
+ * the sheet already carries. That is the whole of what a passive score is, which is why
+ * there is no field for either one anywhere in the schema and why adding one would be adding
+ * a copy to keep in step with the Wisdom score it comes from.
+ *
+ * ⚠️ **Nothing notices anybody with them.** No stealth roll is compared to a passive
+ * perception, no lie is checked against a passive insight, and nothing in `convex/` reads
+ * either return value to decide anything — they are printed on a sheet so the person running
+ * the game can say the number out loud. That is the same line ADR 0011 drew and the same one
+ * `spellSaveDcOf` is admitted under: the application announces, and the table adjudicates.
+ *
+ * ⚠️ **Neither has `passivePerceptionFor`'s two-halves problem, and that is why neither has a
+ * `…For` sibling.** A creature's passive perception is *stored* — the reduced sheet has no
+ * Wisdom to derive one from — so a function answering the question for a `CharacterSheet`
+ * had to reconcile a stored half with a derived one. The bestiary stores no passive insight
+ * and no passive investigation, so there is no second half to reconcile and no reason to
+ * offer a `CharacterSheet` signature that would answer `null` for every creature in the game.
+ * A caller holding a hero has the three arguments already.
+ */
+export function passiveInsight(
+  scores: AbilityScores,
+  level: number,
+  proficiencies: SkillProficiencies,
+): number {
+  return passiveScore(scores, level, proficiencies, 'insight')
+}
+
+export function passiveInvestigation(
+  scores: AbilityScores,
+  level: number,
+  proficiencies: SkillProficiencies,
+): number {
+  return passiveScore(scores, level, proficiencies, 'investigation')
+}
+
+/**
+ * Ten plus the skill's bonus, which is the definition of every passive score there is.
+ *
+ * Private, and shared by the three above rather than each spelling `10 + skillBonus(...)`:
+ * three copies of one line is three places for the floor of 10 to be edited in two of them,
+ * which is `clampHitDice`'s history exactly — arithmetic written out four times where the
+ * fourth had already drifted.
+ */
+function passiveScore(
+  scores: AbilityScores,
+  level: number,
+  proficiencies: SkillProficiencies,
+  key: SkillKey,
+): number {
+  return 10 + skillBonus(scores, level, proficiencies, key)
 }
 
 /**

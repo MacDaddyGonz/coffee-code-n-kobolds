@@ -198,10 +198,75 @@ export default defineSchema({
     // reason hit points do: it is what changes during play, not what the character
     // is. A rest clears it; an edit does not touch it.
     //
-    // The app never enforces the effect, only remembers whether it has been used,
-    // which is the part a table forgets. Optional because most races have nothing to
-    // spend and a row for one of them should not carry an empty array.
+    // ⚠️ **NOTHING WRITES IT ANY MORE, AND NOTHING MAY.** `setPerRestSpent` is gone,
+    // `setUsesSpent` never touched it, and `longRest` stopped clearing it in the sweep
+    // commit — because a long rest taken between the sweep and the narrowing push would
+    // otherwise put back the exact field that push refuses. So this can now only shrink,
+    // which is what makes the narrowing a **deletion** rather than a migration of its own:
+    // `planVitalsMigration` in lib/characters.ts folds it into `spentUses` below and
+    // removes it, and the narrowing commit takes the field out.
     spentPerRest: v.optional(v.array(v.string())),
+    // ⚠️ ALL FIVE OPTIONAL BECAUSE THIS TABLE HAS HELD ROWS SINCE MILESTONE 3, AND ADDING
+    // A REQUIRED FIELD TO A POPULATED TABLE FAILS THE SCHEMA PUSH.
+    //
+    // The same trap `games.status`, `speed` and `skillProficiencies` each hit in turn, on
+    // the one table where the pressure is highest — every character in every game has a row
+    // here. Widen → migrate → narrow: each is read through exactly one accessor in
+    // lib/characters.ts, so the default for a row written before the 2024 conversion lives
+    // in one place per field and the narrowing commit has one call site to simplify.
+    //
+    // Everything here is **state** rather than build, which is the line this table has drawn
+    // since ADR 0005: a rest changes it and an edit does not. That is why temporary hit
+    // points sit here beside `currentHp` and not on the sheet beside `maxHp`.
+
+    // ⚠️ **NOT part of `maxHp` and NOT healing.** Damage comes off these first, they never
+    // rise when somebody is healed, and full health with fifteen of them is an ordinary
+    // state. `clampTemporaryHp` in lib/sheet.ts is deliberately the one clamp on this
+    // schema that takes no ceiling off the sheet.
+    temporaryHp: v.optional(v.number()),
+    // ⚠️ **A COUNTER, NOT AN ADJUDICATION.** Three boxes and three boxes; nothing in
+    // `convex/` decides that the character dies, stabilises, or is refused a heal. This
+    // reverses a stated *never* — the milestone this one replaced put death saving throws
+    // out of scope in those words — so it is recorded in ADR 0016 rather than slipped in,
+    // and `deathSavesOf` in lib/characters.ts carries the argument.
+    deathSaveSuccesses: v.optional(v.number()),
+    deathSaveFailures: v.optional(v.number()),
+    // A boolean, and the whole of the feature. The 2024 Human regains it on every long
+    // rest, which is the one place it touches anything else in this schema.
+    heroicInspiration: v.optional(v.boolean()),
+    // ⚠️ **The successor to `spentPerRest` above, which is KEPT until the narrowing.** That
+    // field counts nothing — a key is present or it is not, which is *one* use spent — and
+    // 2024 is full of features with two, three or a proficiency-bonus-many. So this counts,
+    // and `spentUsesOf` folds the legacy array in as *every key is one spent use*. Both are
+    // live at once on purpose: a schema push is not atomic, and a row written by an older
+    // deployment must keep meaning what it meant. The fold outlives the field, and goes with
+    // lib/migrate.ts rather than with the schema.
+    spentUses: v.optional(v.array(v.object({ key: v.string(), spent: v.number() }))),
+    // SPELL SLOTS SPENT, PER SPELL LEVEL — `spentUses`' sibling, and shaped like it on
+    // purpose rather than by habit.
+    //
+    // Both are *counts against a maximum somebody else declares*, so both are an array of
+    // pairs where **absence from the array is nought** and the maximum lives nowhere on this
+    // row. That last part is the important half: the maximum is `spellSlotsFor` in
+    // lib/slots.ts, a pure function of a class key and a level, so a character who levels up
+    // gains slots without this table being rewritten — exactly as a preset sheet's stats come
+    // out of the library rather than being copied onto the document. A stored `max` here
+    // would be a copy to keep in step with a level, which is `passivePerception`'s argument
+    // reaching a third pair of numbers.
+    //
+    // Keyed on the **spell level** rather than on an entry id, which is the one place the two
+    // fields genuinely differ. A limited-use thing belongs to one entry on one sheet; a slot
+    // belongs to the character, and two different spells spend from the same row. There is
+    // deliberately no key for the *track* — a character has one or the other, never both, and
+    // a Warlock's level 1 slot and a Wizard's are the same row in the same shape.
+    //
+    // ⚠️ **Nothing spends one automatically.** No mutation debits this field as a side effect
+    // of a roll, and `feed.roll` neither reads nor writes it — see the header of lib/slots.ts,
+    // where that line is argued rather than merely stated.
+    //
+    // Optional for this table's stated reason, and read through `spentSlotsOf` in
+    // lib/characters.ts and nowhere else.
+    spentSlots: v.optional(v.array(v.object({ level: v.number(), spent: v.number() }))),
   })
     .index('by_gameId', ['gameId'])
     .index('by_characterId', ['characterId']),

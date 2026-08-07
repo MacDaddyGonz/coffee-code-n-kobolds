@@ -22,7 +22,16 @@ import { collapseWhitespace, hasLoneSurrogate } from './codes'
 // here without dragging the bestiary corpus behind it — the same relationship
 // lib/classes.ts has to lib/library/.
 import { crIndex, crValidator } from './creatures'
-import { raceKeyValidator } from './races'
+
+// ⚠️ **This module is the ONLY one in `convex/` allowed to name a mastery**, and
+// `convex/masteryGuard.test.ts` fails the build on any other quoted specifier for it. What
+// this file does with it is store one and refuse one on the wrong category — no roll, no
+// speed, no condition. See the header of lib/mastery.ts.
+import { WEAPON_MASTERIES, weaponMasteryValidator } from './mastery'
+import type { WeaponMastery } from './mastery'
+import { MAX_RESOURCE_USES, resourceValidator, restores } from './rest'
+import type { Resource } from './rest'
+import { species, speciesKeyOf, speciesLabel, storedSpeciesKeyValidator } from './species'
 // Type-only, and it has to stay that way: skills.ts imports `abilityModifier` and
 // `proficiencyBonus` from this module at runtime, so a value import back would close
 // a cycle. See the note on `skillProficienciesValidator`.
@@ -43,6 +52,40 @@ export const MAX_ARMOUR_CLASS = 40
 
 export const MIN_MAX_HP = 1
 export const MAX_MAX_HP = 999
+
+/**
+ * The ceiling on **temporary** hit points, and it is its own number rather than
+ * `MAX_MAX_HP` reused.
+ *
+ * ⚠️ **Temporary hit points are not part of the maximum and are not healing**, which is the
+ * one sentence about them worth knowing before touching either clamp. They sit *beside*
+ * current hit points: damage comes off them first, they never rise above what granted them,
+ * they do not go up when somebody is healed, and full health with fifteen temporary hit
+ * points is a real state that `clampHp` must never see. So they get `clampTemporaryHp` of
+ * their own rather than sharing one — a clamp that took `sheet.maxHp` as its ceiling would
+ * be quietly asserting the thing this paragraph denies.
+ *
+ * The same number as `MAX_MAX_HP` by coincidence and not by derivation. Writing
+ * `MAX_TEMPORARY_HP = MAX_MAX_HP` would read as *"the cap is the character's maximum"*,
+ * which is the misreading, and it would tie two bounds that have no reason to move together.
+ */
+export const MAX_TEMPORARY_HP = 999
+
+/**
+ * Three successes and three failures, and **a counter is all this is.**
+ *
+ * ⚠️ **Nothing decides whether the character dies.** No mutation refuses a heal at three
+ * failures, no band is recomputed, no marker is set, nothing announces anything, and the
+ * third success does not stabilise anybody — the table adjudicates a death saving throw
+ * exactly as it would if somebody were keeping the tally on paper, which is what this is.
+ * It is the same register as a condition pip in lib/markers.ts and a creature's loot being a
+ * line of text. See the note on `deathSavesOf` in lib/characters.ts, which is where the
+ * reversal of a stated *never* is argued out.
+ *
+ * Three is therefore a **bound rather than a rule**: it is what stops a client storing 2^53
+ * successes, and it is the number on the row of boxes a person is ticking.
+ */
+export const MAX_DEATH_SAVES = 3
 
 export const MAX_HIT_DICE_COUNT = 20
 export const HIT_DIE_FACES = [6, 8, 10, 12] as const
@@ -98,9 +141,32 @@ export const MAX_SPELL_LEVEL = 9
  * lifted that exclusion for one race: the Goliath is Large and moves 45. So `speed`
  * is a field on the PC sheet, optional because the table already held sheets without
  * it, and read through `speedOf` — which returns this whenever nothing has said
- * otherwise, which is seven races out of eight. See ADR 0006.
+ * otherwise. See ADR 0006.
+ *
+ * ⚠️⚠️ **IT WAS 35 AND IT IS 30, AND MOVING IT WAS A STORED-VALUE CHANGE WEARING A
+ * CONSTANT'S CLOTHES.** SRD 5.2.1 prints 30 for eight of the nine species and 35 for the
+ * Goliath, so 35 was never the SRD's number — but `speedOf` answers this constant for
+ * every sheet whose `speed` is absent, and **every sheet stored before the conversion has
+ * it absent**. Editing the literal alone would therefore have slowed every hand-typed
+ * goblin in every game by five feet, silently, with nothing on any screen to say so.
+ *
+ * **So the sweep ran first and this moved after it**, in that order, in one commit:
+ * `PRE_2024_SPEED_FEET` in lib/migrate.ts pins every hand-built `pc` and `npc` sheet to
+ * the 35 it already meant, and a `preset` is deliberately left alone because it stores no
+ * speed and re-resolves correctly — Goliaths and Wood Elves included, since a 2024 species
+ * carries an absolute `baseSpeed`. Getting that order backwards writes 30 into the pin and
+ * makes the change invisible and permanent.
+ *
+ * ⚠️ **This docblock is the checklist, on `MAX_ROLL_DICE`'s precedent, and it was used as
+ * one.** Moving this number moves: this constant; `PRE_2024_SPEED_FEET` and its pin;
+ * `speedHint` in `src/components/sheet/SheetFields.tsx`, the one client surface that
+ * compares against it and which mis-captioned almost every character while the two
+ * disagreed; `GOLIATH_SPEED` in `scripts/board-smoke.mjs`; and the four suites that name
+ * a number here rather than importing one. `lib/species.ts` is deliberately **not** on
+ * that list — its nine `baseSpeed` values are absolutes read off the SRD and depend on
+ * nothing in this file, which is why the Goliath survived the move untouched.
  */
-export const SPEED_FEET = 35
+export const SPEED_FEET = 30
 
 /**
  * Feats, spells and NPC actions are bounded arrays on the character document
@@ -126,6 +192,33 @@ export const MAX_ENTRY_NAME_LENGTH = 60
 export const MAX_ENTRY_TEXT_LENGTH = 600
 export const MAX_CLASS_NAME_LENGTH = 40
 export const MAX_NPC_NOTES_LENGTH = 1000
+
+/**
+ * Bounds on the three damage-trait lists and on the senses line — **all four of which are
+ * labels, and none of which anything computes with.**
+ *
+ * ⚠️ **Nothing computes damage in this application, so nothing applies a resistance.** A
+ * roll is announced and never adjudicated (invariant 10 and ADR 0011): no total is compared
+ * to an armour class, no damage is subtracted from anybody, and therefore there is no
+ * arithmetic for *"halve it"* to attach itself to. `resistances`, `immunities` and
+ * `vulnerabilities` are three lists of words a sheet prints, in the same register as a
+ * creature's loot and a spell's casting time, and `senses` is one line of prose that usually
+ * reads `Darkvision 60 ft.` and is never parsed for the 60.
+ *
+ * They are `v.array(v.string())` rather than a vocabulary union for exactly that reason. A
+ * hand-spelled union of the SRD's thirteen damage types would be a compile-time refusal
+ * guarding nothing — the guard-that-cannot-fail lib/markers.ts declines to write and ADR 0012
+ * argued out of `fogRects`' leak-guard entry — and it would refuse a DM writing
+ * *"bludgeoning from nonmagical attacks"*, which is what half the SRD's stat blocks actually
+ * say. What is bounded is the size, because an unbounded array on a stored document is an
+ * unbounded document.
+ *
+ * Twelve is past the longest list in the SRD's CR 0–6 range with room to spare, and forty
+ * characters is the longest of those phrases plus its qualifier.
+ */
+export const MAX_DAMAGE_LABELS = 12
+export const MAX_DAMAGE_LABEL_LENGTH = 40
+export const MAX_SENSES_LENGTH = 200
 
 // ---------------------------------------------------------------------------
 // The roll grammar
@@ -274,6 +367,32 @@ export const ABILITY_KEYS = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const
 export type AbilityKey = (typeof ABILITY_KEYS)[number]
 
 /**
+ * The same six as a Convex validator, for the fields that store **which** ability rather
+ * than a score for each.
+ *
+ * There was no such validator until a caster's spellcasting ability had to be stored, because
+ * every previous use of these keys was a `Record` over all six — `abilityScoresValidator` and
+ * `saveProficienciesValidator` are objects with six fields, not unions of six literals, and
+ * that is a genuinely different shape. This is the first field that holds *one* of them.
+ *
+ * **Hand-spelled rather than derived from the array above**, on the convention
+ * `sheetEntryCategoryValidator`, `tokenLayerValidator` and `tokenMarkerValidator` all state:
+ * a generated `v.union(...ABILITY_KEYS.map(v.literal))` would make the two agree by
+ * construction and delete the only check that can fail, which is a literal added to the
+ * *validator* alone — a value the schema would store and that `ABILITY_NAMES`,
+ * `abilityAbbreviation` and `ROLL_MODIFIER_TOKENS` could none of them name, label or parse.
+ * `sheet.test.ts` pins the two against each other for membership and order.
+ */
+export const abilityKeyValidator = v.union(
+  v.literal('str'),
+  v.literal('dex'),
+  v.literal('con'),
+  v.literal('int'),
+  v.literal('wis'),
+  v.literal('cha'),
+)
+
+/**
  * `str` → `STR`, and **the abbreviation is load-bearing rather than cosmetic.**
  *
  * It has to equal the token spellings in `ROLL_MODIFIER_TOKENS` below, because a skill row
@@ -318,7 +437,7 @@ export const saveProficienciesValidator = v.object({
 export type SaveProficiencies = Infer<typeof saveProficienciesValidator>
 
 /**
- * The thirteen skills, as a flag each.
+ * The eighteen skills, as a flag each.
  *
  * The names, the ability behind each one and the arithmetic all live in
  * lib/skills.ts; only the validator is here, and the split is about import
@@ -326,7 +445,7 @@ export type SaveProficiencies = Infer<typeof saveProficienciesValidator>
  * `proficiencyBonus` from this module, so skills.ts imports values from sheet.ts —
  * and a validator here that imported values back would close a runtime cycle at
  * module scope, where both sides are evaluated eagerly and one of them would see an
- * empty object. `SKILL_KEYS` and these thirteen fields are asserted to agree by a
+ * empty object. `SKILL_KEYS` and these eighteen fields are asserted to agree by a
  * test, so the one thing the split costs is checked by machine rather than by
  * memory.
  */
@@ -337,9 +456,25 @@ export const skillProficienciesValidator = v.object({
   stealth: v.boolean(),
   arcana: v.boolean(),
   investigation: v.boolean(),
+  // ⚠️ **The five 2024 skills, OPTIONAL where the thirteen above are required, and the
+  // difference is this table's age rather than the skills' importance.** `characters` has
+  // held `pc` sheets since Milestone 3 and every one of them carries thirteen booleans, so
+  // making these required fails the schema push — the trap `games.status`, `speed` and
+  // `skillProficiencies` itself each hit in turn. They are read through
+  // `skillProficienciesOf`, which fills them in.
+  //
+  // `planSheetMigration` in lib/migrate.ts back-fills `false` on every stored `pc` sheet
+  // **and inside every `preset.overrides.skillProficiencies`** — the second place they live
+  // and the one a sweep forgets, since it is this same validator. They become required in
+  // the narrowing commit, which cannot be pushed until that sweep has run everywhere.
+  history: v.optional(v.boolean()),
+  nature: v.optional(v.boolean()),
+  religion: v.optional(v.boolean()),
   animalHandling: v.boolean(),
   insight: v.boolean(),
   perception: v.boolean(),
+  medicine: v.optional(v.boolean()),
+  survival: v.optional(v.boolean()),
   deception: v.boolean(),
   intimidation: v.boolean(),
   performance: v.boolean(),
@@ -349,23 +484,23 @@ export const skillProficienciesValidator = v.object({
 /**
  * A creature's skills: **skill → pre-calculated bonus**, sparse.
  *
- * Not the thirteen booleans a hero carries, and the two are not interchangeable. A
+ * Not the eighteen booleans a hero carries, and the two are not interchangeable. A
  * monster has no Dexterity, no Wisdom and no level, so `skillBonus` in lib/skills.ts
  * has nothing to work from — the bonus is stored ready-made, which is the same trade
  * `initiativeBonus` made when the reduced sheet was designed and the same reasoning.
  * Sparse because a creature is listed with the two or three things it is *good at*;
- * thirteen entries mostly reading +0 would be noise on a sheet meant to fit one screen.
+ * eighteen entries mostly reading +0 would be noise on a sheet meant to fit one screen.
  *
  * **Spelled out by hand rather than built from `SKILL_KEYS`**, for the import-direction
  * reason given on `skillProficienciesValidator` above: lib/skills.ts imports values
  * from this module, so a value import back would close a runtime cycle at module scope.
- * The same test that pins those thirteen fields against `SKILL_KEYS` pins these.
+ * The same test that pins those eighteen fields against `SKILL_KEYS` pins these.
  *
  * **And not `v.record(v.string(), v.number())`**, which is the shorter thing to write
  * and gives away the only guarantee that matters here. A record accepts a fourteenth
  * skill, a misspelled `steath`, and any key string a client cares to invent — and "only
- * the thirteen D&D Lite skills, no monster-only fourteenth" is a spec rule that has
- * nowhere else it can be enforced mechanically. Here it is thirteen named fields and
+ * the eighteen SRD skills, no monster-only nineteenth" is a spec rule that has
+ * nowhere else it can be enforced mechanically. Here it is eighteen named fields and
  * Convex refuses the rest at the function boundary.
  */
 export const creatureSkillsValidator = v.object({
@@ -375,9 +510,14 @@ export const creatureSkillsValidator = v.object({
   stealth: v.optional(v.number()),
   arcana: v.optional(v.number()),
   investigation: v.optional(v.number()),
+  history: v.optional(v.number()),
+  nature: v.optional(v.number()),
+  religion: v.optional(v.number()),
   animalHandling: v.optional(v.number()),
   insight: v.optional(v.number()),
   perception: v.optional(v.number()),
+  medicine: v.optional(v.number()),
+  survival: v.optional(v.number()),
   deception: v.optional(v.number()),
   intimidation: v.optional(v.number()),
   performance: v.optional(v.number()),
@@ -386,10 +526,10 @@ export const creatureSkillsValidator = v.object({
 export type CreatureSkills = Infer<typeof creatureSkillsValidator>
 
 /**
- * The thirteen keys, read off the validator rather than listed a second time.
+ * The eighteen keys, read off the validator rather than listed a second time.
  *
  * `SKILL_KEYS` is the list everything else uses and this module may not import it as a
- * value, so the choice was between a third hand-written copy of the thirteen names and
+ * value, so the choice was between a third hand-written copy of the eighteen names and
  * deriving them from the one copy that is already here. Derived cannot drift.
  */
 const CREATURE_SKILL_KEYS = Object.keys(
@@ -492,6 +632,39 @@ export const sheetEntryValidator = v.object({
    * closed against one written by a deployment this one has not heard of.
    */
   toHit: v.optional(v.string()),
+  // ⚠️ BOTH OPTIONAL FOR THE REASON `category` AND `toHit` ABOVE ARE: THE TABLE ALREADY
+  // HOLDS ENTRIES WITHOUT THEM, AND A REQUIRED FIELD ON A POPULATED TABLE FAILS THE PUSH.
+  //
+  // **Absent, never null**, on the convention this file already states above — an optional
+  // field has a spelling for none and a second would be two states for one meaning, which
+  // `firstDifference` in scripts/board-smoke.mjs reports as `present on one side only`.
+  /**
+   * The 2024 mastery property, on a weapon and on nothing else.
+   *
+   * ⚠️ **It is a word and it does nothing.** Push does not shove, Slow does not halve a
+   * speed, Topple does not set Prone, and `convex/lib/dice.ts` never learns the vocabulary
+   * — see the header of lib/mastery.ts, and `convex/masteryGuard.test.ts`, which is what
+   * makes that a promise rather than an intention.
+   *
+   * **Only a weapon has one**, and `entriesProblem` refuses it on anything else, exactly as
+   * it refuses a to-hit — a mastery on a passive is a value nothing will ever print beside
+   * a weapon name, and a category lying about its shape.
+   */
+  mastery: v.optional(weaponMasteryValidator),
+  /**
+   * How many times this can be used, and what brings the uses back.
+   *
+   * Absent on almost everything: most entries are not limited. See `resourceValidator` in
+   * lib/rest.ts for why a partial hand-back on a short rest is a field rather than a
+   * rounding-down to long-rest-only, which is the absorbed milestone's decision reversed on
+   * the record.
+   *
+   * ⚠️ **Nothing spends this and nothing refuses a cast because of it.** The count lives on
+   * the entry; how many have gone lives in `characterVitals.spentUses`, because one is what
+   * the character *is* and the other is what changes during play (ADR 0005). A roll never
+   * consults either.
+   */
+  uses: v.optional(resourceValidator),
 })
 export type SheetEntry = Infer<typeof sheetEntryValidator>
 
@@ -513,7 +686,7 @@ export type SheetEntry = Infer<typeof sheetEntryValidator>
  * literal is a habit this codebase does not want. That a weapon has one is enforced
  * by `entriesProblem`, which every entry in all three corpora already goes through.
  *
- * Declared here rather than in `library/types.ts` so that `lib/races.ts` can take it
+ * Declared here rather than in `library/types.ts` so that `lib/species.ts` can take it
  * too: that module is imported by the browser for its dropdown, and `bundleGuard`
  * and `corpusGuard` both refuse a specifier naming a corpus directory.
  */
@@ -553,6 +726,41 @@ export const pcSheetValidator = v.object({
   // Feet. Absent means the D&D Lite default of 35, which was a constant with no
   // field behind it until the Goliath needed to be 10 feet faster.
   speed: v.optional(v.number()),
+  // ⚠️ ALL FIVE OPTIONAL FOR THE REASON THE TWO ABOVE ARE: THE TABLE ALREADY HOLDS
+  // `kind: 'pc'` SHEETS WITHOUT THEM, AND A REQUIRED FIELD ADDED TO A POPULATED TABLE
+  // FAILS THE SCHEMA PUSH.
+  //
+  // **The fifth occasion**, and the count is kept because it is the trap that costs the
+  // most to rediscover: `games.status`, then `skillProficiencies` and `speed` here, then
+  // the five on the NPC sheet, then `category` and `toHit` on an entry, now these. Widen
+  // → migrate → narrow, as always. Each is read through exactly one accessor —
+  // `spellcastingAbilityOf`, `damageTraitsOf`, `sensesOf` — so the default for a sheet
+  // written before the 2024 conversion lives in one place per field.
+  /**
+   * WHICH ABILITY THIS CHARACTER CASTS WITH — Wisdom for a Cleric, Intelligence for a
+   * Wizard, Charisma for a Sorcerer. Absent on everyone who casts nothing.
+   *
+   * ⚠️ **This is the ONLY thing stored, and the two numbers a 2024 sheet prints beside it
+   * are derived.** `spellSaveDcOf` and `spellAttackBonusOf` below are pure functions of
+   * this field, the ability score and the level; nothing writes either of them anywhere,
+   * and the acceptance criterion for the conversion is that a level 5 Cleric's sheet
+   * prints both while **neither appears on any of the sixty library sheets**. A stored
+   * copy is a copy to keep in step with the score it comes from, which is
+   * `passivePerception`'s argument in lib/skills.ts reaching a second pair of numbers.
+   *
+   * ADR 0011's decision 2 declined a hero's spell save DC outright; every 2024 caster has
+   * one, so that decision is reversed by ADR 0016 rather than worked around here.
+   */
+  spellcastingAbility: v.optional(abilityKeyValidator),
+  /**
+   * Three lists of words, printed and never applied. See `MAX_DAMAGE_LABELS` — **nothing
+   * computes damage in this application, so nothing halves any of it.**
+   */
+  resistances: v.optional(v.array(v.string())),
+  immunities: v.optional(v.array(v.string())),
+  vulnerabilities: v.optional(v.array(v.string())),
+  /** One line of prose. `Darkvision 60 ft.` — never parsed, and the 60 is never read. */
+  senses: v.optional(v.string()),
 })
 export type PcSheet = Infer<typeof pcSheetValidator>
 
@@ -676,6 +884,45 @@ export const npcSheetValidator = v.object({
   // lib/resolve.ts is that accessor's one backend caller and answers the wider question
   // — which of the DM's *three* headings a character of any kind sits under.
   group: v.optional(creatureGroupValidator),
+  /**
+   * The six scores a 2024 stat block prints, and the six save columns beside them.
+   *
+   * ⚠️ **THIS IS AN ADDITION AND NOT THE SIMPLIFICATION THE ROADMAP CALLS IT. Read this
+   * before deleting anything.** The 2024 conversion's change 6 describes scores arriving
+   * on a creature as *"the only simplification in the milestone"*, on the reasoning that
+   * `attackBonus`, `initiativeBonus`, `passivePerception` and `saveDc` exist **because
+   * there were no scores to derive them from** — so with scores present, all four become
+   * derivable and can go. That reasoning is half right and the half it gets wrong is the
+   * expensive half.
+   *
+   * **The rule is: derive what the SRD derives, and store what the SRD prints.** A 2024
+   * stat block *prints* an armour class, an initiative modifier, a save column per
+   * proficient ability, an explicit bonus per listed skill, and a passive perception — as
+   * numbers on the page, not as a promise that Dexterity implies them. The SRD says an
+   * initiative modifier is *"typically equal to its Dexterity modifier"* and explicitly
+   * permits it to differ, which is a sentence that only means anything if the printed
+   * number is what is stored. Deriving them would silently overwrite every creature the
+   * SRD prints an exception for, and the exceptions are the interesting creatures.
+   *
+   * ⚠️ **And `scaleCombat` operates on exactly those pre-calculated fields.** CR scaling
+   * preserves a creature's *offset* from its own benchmark row, so the benchmark deltas
+   * are the scaler — a stored `attackBonus` is what an offset is measured against, and a
+   * derived one would have nothing to be offset from. Deleting the four fields would not
+   * simplify the scaler; it would delete it.
+   *
+   * So these two arrive **beside** the four rather than in place of them, and nothing
+   * about the reduced sheet's existing numbers changes. What they buy is a creature whose
+   * ability checks and saves a DM can read off the sheet, and a `1d6+STR` in the same
+   * grammar a hero's greatsword already uses.
+   *
+   * Optional for this validator's usual reason — the table has held `kind: 'npc'` sheets
+   * since sheets existed — and read through `abilitiesOf` and `creatureSaveProficienciesOf`,
+   * which answer `null` rather than inventing a 10 in every column. Absent means *the DM
+   * never gave one*, which is `passivePerceptionOf`'s stance and the same argument: a
+   * printed 10 is a statistic the table would act on that nobody wrote.
+   */
+  abilities: v.optional(abilityScoresValidator),
+  saveProficiencies: v.optional(saveProficienciesValidator),
 })
 export type NpcSheet = Infer<typeof npcSheetValidator>
 
@@ -806,7 +1053,73 @@ export type PresetOverrides = Infer<typeof presetOverridesValidator>
  */
 export const presetSheetValidator = v.object({
   kind: v.literal('preset'),
-  race: raceKeyValidator,
+  /**
+   * ⚠️ **THE OLD NAME, AND IT IS OPTIONAL NOW WHERE IT USED TO BE REQUIRED — WHICH IS THE
+   * ONE SCHEMA CHANGE THE SWEEP ITSELF DEPENDS ON.** Read this before "tidying" it back.
+   *
+   * Renaming a stored field in Convex is not an edit: it is a second field, a backfill of
+   * every row in every game, a window in which both are live, and then a narrowing. This
+   * is the middle of that, and the middle has a requirement of its own — **the sweep
+   * writes rows that have `species` and no `race`.** A validator that still *required*
+   * `race` would reject the migration's own writes, so widening it is not a courtesy to
+   * legacy rows, it is what makes `admin.migrateGame` able to write at all.
+   *
+   * Both optional therefore admits exactly three shapes, and all three are real:
+   * `race` alone (every row written before the conversion), `species` alone (every row the
+   * sweep has reached, and every character built from this commit onward), and both (a run
+   * that stopped half way). `speciesKeyOf` in lib/species.ts is the one place any of them
+   * is read, and it prefers `species`, which is what makes the backfill idempotent and
+   * interruptible.
+   *
+   * **Neither field is optional because absence is meaningful**, and the fourth shape —
+   * neither present — is refused on write by `storedSheetProblem` below rather than being
+   * a state anything has to handle. `species` becomes **required** and `race` disappears in
+   * the narrowing commit, which cannot be pushed until the sweep has run everywhere.
+   */
+  race: v.optional(storedSpeciesKeyValidator),
+  /**
+   * The new name for the same fact, on the union that admits a retired key.
+   *
+   * ⚠️⚠️ **IT TAKES THE WIDE UNION AND NOT THE NARROW ONE, AND THAT SURVIVES THE
+   * NARROWING.** `storedSpeciesKeyValidator` is ten literals for nine species,
+   * deliberately: a Half-Orc created before this milestone must still be **storable**, or
+   * `npx convex deploy` is refused over a character created months ago — which is how this
+   * was found the first time rather than how it was designed. Narrowing it to
+   * `speciesKeyValidator` is the one narrowing this milestone declined, and lib/species.ts
+   * argues it where the union is spelled.
+   *
+   * ⚠️ **Wide here means wide on the WRITE path too, which is handled elsewhere.**
+   * `storedSheetValidator` is not only the schema's spelling of this document; it is also
+   * `characters.create`'s and `characters.updateSheet`'s **argument** validator, so a
+   * brand-new Half-Orc would be creatable if nothing else refused it —
+   * `characters.test.ts`'s argument-boundary probe caught exactly that. The write-side
+   * refusal lives in `storedSheetProblem` below, on the path every write already takes.
+   * The rejected alternative was a second sheet union for arguments: four validators
+   * instead of two, and two more places for a field to be added to one and not the other.
+   * (`storedTokenLayerValidator` in lib/layers.ts has no such problem, because a token's
+   * layer arrives through an argument validator of its own.)
+   */
+  species: v.optional(storedSpeciesKeyValidator),
+  /**
+   * The **sixth pick**: a Wood Elf's lineage, a Rock Gnome's, a Tiefling's fiendish legacy,
+   * a Dragonborn's draconic ancestry, a Goliath's giant ancestry. `null` for the species
+   * that have nothing further to choose, absent on every character built before 2024.
+   *
+   * ⚠️ **Two spellings of "none" on one field, and that is not the convention slipping.**
+   * CLAUDE.md invariant 9's rule is that a *required* field spells none as `null` and an
+   * *optional* one spells it as absence — and this field is both, transitionally: absent
+   * means *nobody was ever asked*, `null` means *asked, and this species has no lineage to
+   * pick*. They are different facts while the schema is wide, and they collapse into one
+   * when this becomes required in the narrowing commit, at which point `null` is the only
+   * spelling left. `v.union(v.string(), v.null())` inside the `v.optional` is what says so.
+   *
+   * A bare `v.string()` and not a union of the lineage keys, deliberately: the keys are
+   * species content this branch does not own, and a hand-spelled union here would have to
+   * be edited in lockstep with a file in another branch's diff. The check that a lineage
+   * belongs to the chosen species is the resolver's, exactly as `subclassOf` checks an
+   * archetype against a class rather than the validator doing it.
+   */
+  lineageKey: v.optional(v.union(v.string(), v.null())),
   classKey: classKeyValidator,
   /** Null below level 2, when no archetype has been chosen yet. */
   subclassKey: v.union(v.string(), v.null()),
@@ -1124,6 +1437,50 @@ export function toHitOf(entry: SheetEntry): string | null {
 }
 
 /**
+ * The only place the optional `mastery` is read. **Null on anything that is not a weapon**,
+ * whatever is stored on it.
+ *
+ * `toHitOf`'s shape exactly, and asked the same way: *does this category carry one* rather
+ * than *is it the weapon*, because those are the same question today and the second stops
+ * being right the moment a fourth category is added. `rollShapeOf` is the place the compiler
+ * makes somebody answer that.
+ *
+ * ⚠️ **Reading it does not make anything happen, and this accessor is where somebody will
+ * first be tempted.** It returns a word. Nothing in `convex/` may call it except this module
+ * — `convex/masteryGuard.test.ts` sweeps for exactly that — because the plausible next commit
+ * is `lib/dice.ts` asking whether the weapon has Vex. The renderer calls it, prints the word,
+ * and stops.
+ *
+ * Fail-closed against a value the vocabulary has never heard of, for `normaliseMarkers`'
+ * reason: a schema push is not atomic, so a row written by a newer deployment can be read by
+ * an older one, and an unrecognised mastery must be absent rather than printed raw.
+ */
+export function masteryOf(entry: SheetEntry): WeaponMastery | null {
+  if (!rollShapeOf(categoryOf(entry)).toHit) return null
+  const stored = entry.mastery
+  if (stored === undefined) return null
+  return (WEAPON_MASTERIES as readonly string[]).includes(stored) ? stored : null
+}
+
+/**
+ * The only place the optional `uses` block is read. **Null on an entry with nothing to
+ * count**, which is almost all of them.
+ *
+ * **Absent, never a zero-max object** — see `resourceValidator` in lib/rest.ts, where *absent,
+ * never zero* is the absorbed milestone's rule kept verbatim, and `entriesProblem` below,
+ * which refuses the pairing that would break it. A caller therefore never has to decide
+ * whether `max: 0` means *unlimited* or *unusable*.
+ *
+ * Kind-agnostic and category-agnostic, unlike `toHitOf` and `masteryOf` above: a limited-use
+ * thing is as likely to be a passive (Rage, Second Wind) as an action, and a creature's
+ * recharge abilities are the same shape. There is no arity rule to enforce here because there
+ * is no category for which a use count would be meaningless.
+ */
+export function usesOf(entry: SheetEntry): Resource | null {
+  return entry.uses ?? null
+}
+
+/**
  * A to-hit built from a flat bonus. `1d20+4`, `1d20-2`, and a bare `1d20` at zero.
  *
  * For a creature, whose reduced sheet carries one `attackBonus` for the whole thing
@@ -1149,7 +1506,7 @@ export function toHitFromBonus(bonus: number): string {
   return isValidRoll(out) ? out : TO_HIT_PREFIX
 }
 
-/** All thirteen false. A fresh object each call — see the note on `defaultPcSheet`. */
+/** All eighteen false. A fresh object each call — see the note on `defaultPcSheet`. */
 export function noSkills(): SkillProficiencies {
   return {
     athletics: false,
@@ -1158,9 +1515,14 @@ export function noSkills(): SkillProficiencies {
     stealth: false,
     arcana: false,
     investigation: false,
+    history: false,
+    nature: false,
+    religion: false,
     animalHandling: false,
     insight: false,
     perception: false,
+    medicine: false,
+    survival: false,
     deception: false,
     intimidation: false,
     performance: false,
@@ -1168,9 +1530,30 @@ export function noSkills(): SkillProficiencies {
   }
 }
 
-/** The only place the optional `skillProficiencies` is read. */
+/**
+ * The only place the optional `skillProficiencies` is read.
+ *
+ * ⚠️ **It normalises rather than passing the stored object through, and that is the whole of
+ * the widen half of the skills migration.** `SkillProficiencies` is a `Record<SkillKey,
+ * boolean>` over eighteen keys; a sheet stored before the five 2024 skills existed carries
+ * thirteen. Handing that back unchanged would be a type that lies — every caller believes it
+ * holds eighteen booleans and five of them are `undefined`, which reads as `false` at a
+ * comparison and as *missing* to `Object.keys`, `board-smoke.mjs`' key-set walk and the
+ * renderer's `SKILLS.map`.
+ *
+ * Spread over `noSkills()` rather than `??`-ed field by field, so a nineteenth skill needs no
+ * edit here.
+ *
+ * ⚠️ **It does NOT collapse back to a pass-through when the five become required**, which is
+ * the obvious tidy-up and the wrong one. A schema push is not atomic, so a row written by an
+ * older deployment can be read by a newer one, and in that window handing back a thirteen-key
+ * object typed as eighteen is a type that lies — which is the whole failure this function
+ * exists to prevent. `normaliseMarkers` keeps its fail-soft intersection past its own
+ * narrowing for the same reason. One object per read is not a price worth arguing about.
+ */
 export function skillProficienciesOf(sheet: CharacterSheet): SkillProficiencies {
-  return sheet.kind === 'pc' ? sheet.skillProficiencies ?? noSkills() : noSkills()
+  if (sheet.kind !== 'pc' || sheet.skillProficiencies === undefined) return noSkills()
+  return { ...noSkills(), ...sheet.skillProficiencies }
 }
 
 /**
@@ -1292,6 +1675,155 @@ export function creatureGroupOf(sheet: NpcSheet): CreatureGroup {
     return stored
   }
   return 'npc'
+}
+
+/**
+ * The only place the optional `spellcastingAbility` is read. **Null on everyone who casts
+ * nothing**, which is most of the martial classes and every creature.
+ *
+ * A stored value outside the six reads as null too, the stance `creatureGroupOf`,
+ * `categoryOf` and `speedOf` all take and for the same reason: a schema push is not atomic,
+ * so a document written by a newer deployment can be read by an older one, and in that
+ * window an unrecognised ability must not become an index into `AbilityScores` that answers
+ * `undefined`.
+ */
+export function spellcastingAbilityOf(sheet: CharacterSheet): AbilityKey | null {
+  if (sheet.kind !== 'pc') return null
+  const stored = sheet.spellcastingAbility
+  if (stored === undefined) return null
+  return (ABILITY_KEYS as readonly string[]).includes(stored) ? stored : null
+}
+
+/**
+ * A caster's spell save DC — `8 + proficiency bonus + the spellcasting ability's modifier`.
+ *
+ * ⚠️ **NOTHING IS STORED. This is a pure function of three fields the sheet already has**,
+ * and that is the acceptance criterion rather than an implementation preference: a level 5
+ * Cleric's sheet prints this number and **it appears on none of the sixty library sheets**.
+ * A stored copy is a copy to keep in step with the Wisdom score it comes from, which is the
+ * argument `passivePerception` in lib/skills.ts already makes about a hero's passive score.
+ *
+ * ⚠️ **Nothing is adjudicated with it either, and the distinction is the whole of why this
+ * is allowed at all.** No roll is compared to this number, nothing decides whether a save
+ * succeeded, and no effect is applied — it is printed on a sheet so the person at the table
+ * can say *"DC 15"* out loud, which is exactly what ADR 0011 means by announcing rather than
+ * adjudicating. Reversing ADR 0011's decision 2 is a decision with an author (ADR 0016);
+ * comparing a d20 to what it returns would be a rules engine and needs its own.
+ *
+ * **`null` when the ability is absent**, never 8 or 10. `passivePerceptionFor`'s argument
+ * transfers word for word: printing a number nobody gave is inventing a statistic, and a
+ * Fighter's sheet showing *Spell save DC 10* is a statistic that is not merely absent but
+ * wrong.
+ */
+export function spellSaveDcOf(sheet: CharacterSheet): number | null {
+  const ability = spellcastingAbilityOf(sheet)
+  if (ability === null || sheet.kind !== 'pc') return null
+  return 8 + proficiencyBonus(sheet.level) + abilityModifier(sheet.abilities[ability])
+}
+
+/**
+ * The other half of the same pair — `proficiency bonus + the spellcasting ability's
+ * modifier`, the bonus a caster adds to a spell attack roll.
+ *
+ * Derived here rather than beside it in lib/skills.ts, unlike `passivePerceptionFor`,
+ * because both inputs are already on this module's own type: there is no stored half to
+ * reconcile with a derived half, so there is no import-direction problem to solve. Null for
+ * the same reason and by the same route as `spellSaveDcOf` — one accessor answers *which
+ * ability*, and both numbers fall out of it, so the two can never disagree about whether a
+ * character casts at all.
+ */
+export function spellAttackBonusOf(sheet: CharacterSheet): number | null {
+  const ability = spellcastingAbilityOf(sheet)
+  if (ability === null || sheet.kind !== 'pc') return null
+  return proficiencyBonus(sheet.level) + abilityModifier(sheet.abilities[ability])
+}
+
+/** Nothing, shared, so the empty answer is not three fresh arrays per sheet per render. */
+const NO_DAMAGE_TRAITS: DamageTraits = Object.freeze({
+  resistances: Object.freeze([]) as readonly string[],
+  immunities: Object.freeze([]) as readonly string[],
+  vulnerabilities: Object.freeze([]) as readonly string[],
+})
+
+export type DamageTraits = {
+  readonly resistances: readonly string[]
+  readonly immunities: readonly string[]
+  readonly vulnerabilities: readonly string[]
+}
+
+/**
+ * The only place the three damage-trait lists are read. **All three at once**, on
+ * `coinStatsOf`'s reasoning in lib/skills.ts: they are printed together in one block on the
+ * sheet, and three accessors that each decide separately what *absent* means is three places
+ * for that answer to drift.
+ *
+ * ⚠️ **They are labels. Nothing computes damage, so nothing applies one** — see the note on
+ * `MAX_DAMAGE_LABELS`. This accessor exists to give an absent field one spelling, not to
+ * make a resistance mean anything.
+ *
+ * `readonly` arrays, and the empty case is one frozen shared value: `SPECIES` in
+ * lib/species.ts copies before handing anything out for the reason stated there — a Convex
+ * isolate outlives the request that warmed it, so a caller that sorted or pushed to module
+ * state would corrupt it for every later query. Freezing is the cheaper half of that same
+ * rule for a value that genuinely never changes.
+ */
+export function damageTraitsOf(sheet: CharacterSheet): DamageTraits {
+  if (sheet.kind !== 'pc') return NO_DAMAGE_TRAITS
+  const { resistances, immunities, vulnerabilities } = sheet
+  if (resistances === undefined && immunities === undefined && vulnerabilities === undefined) {
+    return NO_DAMAGE_TRAITS
+  }
+  return {
+    resistances: resistances ?? [],
+    immunities: immunities ?? [],
+    vulnerabilities: vulnerabilities ?? [],
+  }
+}
+
+/**
+ * The only place the optional `senses` line is read. **The empty string when absent**, not a
+ * hand-written `'Darkvision 60 ft.'`.
+ *
+ * Empty rather than null, which is the one place this file's accessors differ from each
+ * other on purpose: the four numeric ones answer `null` because *absent* and *zero* are
+ * different facts about a statistic, and a renderer has to be able to print nothing rather
+ * than a wrong number. This is a line of prose whose only two states are *there is a line*
+ * and *there is not*, and `''` is how a string says the second.
+ */
+export function sensesOf(sheet: CharacterSheet): string {
+  return (sheet.kind === 'pc' ? sheet.senses : undefined) ?? ''
+}
+
+/**
+ * The only place a creature's optional `abilities` block is read. **Null when absent**, and
+ * never six tens.
+ *
+ * `passivePerceptionOf`'s stance, applied to six numbers instead of one: a creature typed in
+ * before the 2024 conversion has no recorded scores, and printing 10 in every column would
+ * be inventing six statistics and presenting them as the creature's. A sheet shows nothing
+ * there instead, which is the truth, and every ability check it might have wanted to derive
+ * is a number the DM can still read off the actions list.
+ *
+ * ⚠️ **This does not replace `attackBonusOf`, `saveDcOf`, `passivePerceptionOf` or the
+ * stored `initiativeBonus`** — see the ⚠️ on `npcSheetValidator`. Derive what the SRD
+ * derives, store what the SRD prints; these scores are printed, and so are those four.
+ */
+export function abilitiesOf(sheet: CharacterSheet): AbilityScores | null {
+  return (sheet.kind === 'npc' ? sheet.abilities : undefined) ?? null
+}
+
+/**
+ * The same for a creature's save column. Null when absent, and **deliberately not
+ * `savingThrowBonus`'s input** — that function takes a `PcSheet` because a hero's save is
+ * derived from a score and a level, and a creature has no level to derive one from.
+ *
+ * Named `creatureSaveProficienciesOf` rather than `saveProficienciesOf` because
+ * `pcSheetValidator` has a **required** field of that name, and an accessor whose name
+ * implies it works on both variants while answering `null` for one of them is
+ * `passivePerceptionOf`'s trap said out loud. A caller holding a hero reads the field.
+ */
+export function creatureSaveProficienciesOf(sheet: CharacterSheet): SaveProficiencies | null {
+  return (sheet.kind === 'npc' ? sheet.saveProficiencies : undefined) ?? null
 }
 
 /**
@@ -1551,6 +2083,49 @@ export function clampHitDice(remaining: number, count: number): number {
 }
 
 /**
+ * Temporary hit points, normalised — **and note what it does NOT take.**
+ *
+ * ⚠️ **It has no `max` parameter, and that absence is the entire design.** `clampHp` and
+ * `clampHitDice` above each take a ceiling off the sheet, because current hit points cannot
+ * exceed the maximum and spent hit dice cannot exceed the complement. Temporary hit points
+ * are neither: they are **not part of `maxHp` and are not healing**, so a character at full
+ * health with fifteen of them is an ordinary state and a ceiling of `sheet.maxHp` would be a
+ * rule this application does not have. What bounds them is `MAX_TEMPORARY_HP`, which is a
+ * guard against a non-finite float64 reaching a stored document rather than a statement
+ * about the character.
+ *
+ * A signature is where that gets got wrong: the first thing anybody writing this reaches for
+ * is `clampTemporaryHp(value, sheet.maxHp)`, and it compiles, and it silently caps a level 1
+ * Wizard's Heroism at 8. There is nowhere to pass a maximum, so the mistake is unwriteable.
+ *
+ * `NaN` reads as none rather than propagating, exactly as `clampHp` reads it as zero and for
+ * the same reason: an emptied number input is `NaN`, every comparison against it is false,
+ * and a plain clamp lets it straight through into a stored row.
+ */
+export function clampTemporaryHp(temporary: number): number {
+  if (!Number.isFinite(temporary)) return 0
+  return clamp(Math.round(temporary), 0, MAX_TEMPORARY_HP)
+}
+
+/**
+ * One column of the death-save tally, normalised to 0–3.
+ *
+ * ⚠️ **A COUNTER, NOT AN ADJUDICATION.** Nothing here or anywhere else decides that the
+ * character dies at three failures or stabilises at three successes — see `MAX_DEATH_SAVES`
+ * and `deathSavesOf` in lib/characters.ts, where the reversal of a stated *never* is argued
+ * rather than assumed. This function exists so that the number of ticked boxes a client can
+ * store is the number of boxes that exist.
+ *
+ * One function for both columns rather than one each, because they are the same clamp with
+ * the same bound and the only thing that would distinguish two copies is which one somebody
+ * forgot to edit.
+ */
+export function clampDeathSaves(count: number): number {
+  if (!Number.isFinite(count)) return 0
+  return clamp(Math.round(count), 0, MAX_DEATH_SAVES)
+}
+
+/**
  * Exported for ./bestiary/scale.ts, which needs it as a *name* — its `Bound` strategy swaps
  * this against a no-op so the clamped and unclamped scalers cannot be two copies of the
  * arithmetic. Needing the name is not a reason to keep a second copy of the body, which is
@@ -1726,6 +2301,20 @@ export function normaliseSheet(sheet: CharacterSheet): CharacterSheet {
       // above, for the same reason: absent has to stay absent, because `groupOf`'s
       // default is what files every creature typed in before this field existed.
       ...(sheet.group === undefined ? {} : { group: sheet.group }),
+      // **Seventh and eighth, and the trap's sixth outing** — the largest surface it has
+      // had, because the 2024 conversion rebuilds both corpora through this function and
+      // through `normaliseEntry` below. A creature's ability scores dropped here would
+      // leave a 2024 stat block that says nothing about Strength while the DM's form
+      // showed all six, and only `npm run test:smoke` would notice.
+      //
+      // Rounded through `mapAbilities`, because these arrive from a stat-block
+      // transcription and from the CR scaler, either of which can produce a fraction.
+      // Save proficiencies are six booleans and have nothing to round, so they are copied
+      // rather than mapped — a fresh object, never the stored one, for `noSkills`' reason.
+      ...(sheet.abilities === undefined ? {} : { abilities: mapAbilities(sheet.abilities, Math.round) }),
+      ...(sheet.saveProficiencies === undefined
+        ? {}
+        : { saveProficiencies: { ...sheet.saveProficiencies } }),
     }
   }
 
@@ -1762,7 +2351,55 @@ export function normaliseSheet(sheet: CharacterSheet): CharacterSheet {
       ? {}
       : { skillProficiencies: { ...sheet.skillProficiencies } }),
     ...(sheet.speed === undefined ? {} : { speed: Math.round(sheet.speed) }),
+    // **The 2024 five, and the same conditional spread for the same reason.** A field on
+    // `pcSheetValidator` that is not named here is discarded on every write while the form
+    // still shows it — which has happened twice on this branch of this function already.
+    //
+    // The three label lists are normalised through `normaliseLabels`: trimmed, emptied of
+    // blanks, deduplicated, and **dropped entirely when nothing survives**, so "the DM
+    // cleared the box" and "there was never a box" are one stored state rather than two.
+    // `[]` and absent both meaning *no resistances* is precisely the two-spellings-of-none
+    // that CLAUDE.md invariant 9 makes a rule about, and `firstDifference` in
+    // scripts/board-smoke.mjs reports the difference as `present on one side only`.
+    ...(sheet.spellcastingAbility === undefined
+      ? {}
+      : { spellcastingAbility: sheet.spellcastingAbility }),
+    ...spreadLabels('resistances', sheet.resistances),
+    ...spreadLabels('immunities', sheet.immunities),
+    ...spreadLabels('vulnerabilities', sheet.vulnerabilities),
+    // Collapsed rather than merely trimmed, unlike an entry's `text`: a senses line is one
+    // line by construction — `Darkvision 60 ft., Blindsight 10 ft.` — where a description is
+    // a paragraph whose breaks carry meaning. Dropped when it collapses to nothing, for the
+    // label lists' reason.
+    ...(sheet.senses === undefined || collapseWhitespace(sheet.senses) === ''
+      ? {}
+      : { senses: collapseWhitespace(sheet.senses) }),
   }
+}
+
+/**
+ * One label list, tidied — or nothing at all, which is the interesting half.
+ *
+ * Returns a **spreadable object** rather than an array so that the "there is nothing here"
+ * case is expressible as the absence of the key. `undefined` is not a Convex value, so
+ * `resistances: undefined` is a different write from omitting `resistances`, and only the
+ * second is what *this character resists nothing* means.
+ *
+ * Deduplicated by first appearance rather than sorted, because the order is the DM's: a stat
+ * block lists *"bludgeoning, piercing, slashing"* in that order and re-sorting it
+ * alphabetically would be this application editing content it does not own.
+ */
+function spreadLabels(
+  field: 'resistances' | 'immunities' | 'vulnerabilities',
+  raw: string[] | undefined,
+): Partial<Record<typeof field, string[]>> {
+  if (raw === undefined) return {}
+  const out: string[] = []
+  for (const label of raw) {
+    const tidy = collapseWhitespace(label)
+    if (tidy !== '' && !out.includes(tidy)) out.push(tidy)
+  }
+  return out.length === 0 ? {} : { [field]: out }
 }
 
 function normaliseEntry(entry: SheetEntry): SheetEntry {
@@ -1800,6 +2437,28 @@ function normaliseEntry(entry: SheetEntry): SheetEntry {
     // untested code that nobody notices is wrong.
     ...(entry.category === undefined ? {} : { category: entry.category }),
     ...(toHit === undefined || toHit === '' ? {} : { toHit }),
+    // **The fifth and sixth fields on this one function**, and the same note applies: a field
+    // added to `sheetEntryValidator` and not added here is silently discarded on every write.
+    // This entry shape is shared across a hero's feats, a hero's spells, a monster's actions
+    // and both override diffs, so it is six array positions fixed by these two lines.
+    //
+    // A mastery is a literal and has nothing to tidy. `uses` is rebuilt field by field rather
+    // than spread, for this function's own reason — spreading would carry an unknown field
+    // into the database — and its two numbers are rounded because a stepper and a scaler can
+    // both produce a fraction. `regainOnShortRest` stays absent when it is absent: it means
+    // *no partial hand-back*, and a materialised 0 would be a second spelling of that.
+    ...(entry.mastery === undefined ? {} : { mastery: entry.mastery }),
+    ...(entry.uses === undefined
+      ? {}
+      : {
+          uses: {
+            max: Math.round(entry.uses.max),
+            recharge: entry.uses.recharge,
+            ...(entry.uses.regainOnShortRest === undefined
+              ? {}
+              : { regainOnShortRest: Math.round(entry.uses.regainOnShortRest) }),
+          },
+        }),
   }
 }
 
@@ -1914,6 +2573,21 @@ export function sheetProblem(sheet: CharacterSheet): SheetProblem | null {
       creatureSkillsProblem(sheet.skills)
     if (bounds) return bounds
 
+    // The six scores a 2024 stat block prints, bounded exactly as a hero's are below —
+    // one rule for one kind of value, rather than a range that depends on which sheet
+    // variant the number happens to be sitting on. Absent is not a problem, which is what
+    // optional means on every field of this validator.
+    if (sheet.abilities) {
+      for (const ability of ABILITY_KEYS) {
+        if (!isWholeWithin(sheet.abilities[ability], MIN_ABILITY_SCORE, MAX_ABILITY_SCORE)) {
+          return {
+            path: `abilities.${ability}`,
+            message: `${ABILITY_NAMES[ability]} has to be a whole number from ${MIN_ABILITY_SCORE} to ${MAX_ABILITY_SCORE}.`,
+          }
+        }
+      }
+    }
+
     if (sheet.notes.length > MAX_NPC_NOTES_LENGTH) {
       return {
         path: 'notes',
@@ -1968,6 +2642,27 @@ export function sheetProblem(sheet: CharacterSheet): SheetProblem | null {
     return { path: 'hitDice.faces', message: 'A hit die has to be a d6, d8, d10 or d12.' }
   }
 
+  // The 2024 labels. Bounded because an unbounded array on a stored document is an
+  // unbounded document, and text-checked because every free-text field on a sheet is —
+  // see `textProblem`, and Milestone 1's lone surrogate, which is the failure this whole
+  // family of checks exists for.
+  const labels =
+    labelsProblem(sheet.resistances, 'resistances') ??
+    labelsProblem(sheet.immunities, 'immunities') ??
+    labelsProblem(sheet.vulnerabilities, 'vulnerabilities')
+  if (labels) return labels
+
+  if (sheet.senses !== undefined) {
+    if (sheet.senses.length > MAX_SENSES_LENGTH) {
+      return {
+        path: 'senses',
+        message: `Keep the senses line to ${MAX_SENSES_LENGTH} characters or fewer.`,
+      }
+    }
+    const senses = textProblem(sheet.senses, 'senses')
+    if (senses) return senses
+  }
+
   // One `seen` set across both lists, not one per list. `sheetEntriesOf` merges
   // feats and spells into a single array — which is a React key set, and is what
   // Milestone 6 will aim a roll at — so an id checked only within its own list is
@@ -2002,6 +2697,36 @@ function boundProblem(
 }
 
 /**
+ * One list of damage labels, bounded and text-checked, or null.
+ *
+ * Written once for three fields rather than three times, on `boundProblem`'s stated reason:
+ * a rule written out three times is three places for the fourth field to be added to two of
+ * them. The path names the field, so the sentence a form prints still says which box.
+ *
+ * ⚠️ **It checks size and spelling and nothing else.** There is deliberately no vocabulary to
+ * check against — see `MAX_DAMAGE_LABELS`. A DM writing *"bludgeoning from nonmagical
+ * attacks"* is writing what the SRD's own stat blocks say, and a union that refused it would
+ * be a guard against the content rather than against a client bug.
+ */
+function labelsProblem(labels: string[] | undefined, path: string): SheetProblem | null {
+  if (labels === undefined) return null
+  if (labels.length > MAX_DAMAGE_LABELS) {
+    return { path, message: `Keep that to ${MAX_DAMAGE_LABELS} entries or fewer.` }
+  }
+  for (const [index, label] of labels.entries()) {
+    if (label.length > MAX_DAMAGE_LABEL_LENGTH) {
+      return {
+        path: `${path}[${index}]`,
+        message: `Keep each one to ${MAX_DAMAGE_LABEL_LENGTH} characters or fewer.`,
+      }
+    }
+    const text = textProblem(label, `${path}[${index}]`)
+    if (text) return text
+  }
+  return null
+}
+
+/**
  * The first out-of-range skill bonus on a creature, or null.
  *
  * Driven by `CREATURE_SKILL_KEYS` rather than by the object's own keys, so the check cannot
@@ -2018,6 +2743,47 @@ function creatureSkillsProblem(skills: CreatureSkills | undefined): SheetProblem
       `A skill bonus has to be a whole number from −${MAX_SKILL_BONUS} to ${MAX_SKILL_BONUS}.`,
     )
     if (problem) return problem
+  }
+  return null
+}
+
+/**
+ * The first thing wrong with an entry's use count, or null.
+ *
+ * ⚠️ **`max` is bounded from ONE rather than from zero, which is *absent, never zero* enforced
+ * rather than merely written down.** A `uses` object with a `max` of 0 is a thing that exists
+ * and can never be used — a state no sheet wants, and one that would make every reader decide
+ * for itself whether 0 meant *unlimited* or *unusable*. An entry with nothing to count has no
+ * `uses` at all, which is what `usesOf` returning null means.
+ *
+ * ⚠️ **A partial hand-back on a SHORT-rest resource is refused, and it is a contradiction
+ * rather than a cap.** A short-rest resource already comes back in full on a short rest, so
+ * `regainOnShortRest` beside it is two rules about the same rest that disagree — the same
+ * shape as a to-hit on a passive, and refused in the same place for the same reason. Written
+ * as `restores(recharge, 'short')` rather than `recharge === 'short'` so that a third rest
+ * period is answered by the one function that has a `never` arm.
+ */
+function usesProblem(uses: Resource | undefined, path: string): SheetProblem | null {
+  if (uses === undefined) return null
+  if (!isWholeWithin(uses.max, 1, MAX_RESOURCE_USES)) {
+    return {
+      path: `${path}.max`,
+      message: `A use count has to be a whole number from 1 to ${MAX_RESOURCE_USES}. Leave it off entirely if it is not limited.`,
+    }
+  }
+  const regain = uses.regainOnShortRest
+  if (regain === undefined) return null
+  if (restores(uses.recharge, 'short')) {
+    return {
+      path: `${path}.regainOnShortRest`,
+      message: 'That already comes back in full on a short rest, so it has nothing partial to hand back.',
+    }
+  }
+  if (!isWholeWithin(regain, 1, uses.max)) {
+    return {
+      path: `${path}.regainOnShortRest`,
+      message: `A short rest hands back a whole number from 1 to ${uses.max}. Leave it off if it hands back nothing.`,
+    }
   }
   return null
 }
@@ -2121,6 +2887,24 @@ function entriesProblem(
         message: 'Only a weapon rolls to hit. Make it a weapon, or clear the to-hit roll.',
       }
     }
+    // ⚠️ **The arity rule reaching a second field, and the same reason as the to-hit half:**
+    // a mastery on a passive is a value nothing will ever print beside a weapon name, and a
+    // category lying about its shape. Refused on the way in rather than ignored on the way
+    // out, so a stored mastery that nothing will read cannot exist — which is also what keeps
+    // `masteryOf`'s null branch about a *stale deployment* rather than about ordinary data.
+    //
+    // Asked as `shape.toHit` rather than `category === 'weapon'` for `toHitOf`'s stated
+    // reason: those are the same question today and only the first stays right when a fourth
+    // category arrives. **There is no rule the other way** — a weapon without a mastery is
+    // every weapon in the SRD that has no mastery property, and most sheets built by hand.
+    if (!shape.toHit && entry.mastery !== undefined) {
+      return {
+        path: `${path}.mastery`,
+        message: 'Only a weapon carries a mastery property. Make it a weapon, or clear it.',
+      }
+    }
+    const uses = usesProblem(entry.uses, `${path}.uses`)
+    if (uses) return uses
     if (shape.roll && entry.roll === null) {
       return {
         path: `${path}.roll`,
@@ -2191,7 +2975,17 @@ export function normaliseStoredSheet(sheet: StoredSheet): StoredSheet {
 
   return {
     kind: 'preset',
-    race: sheet.race,
+    // **The trap's sixth outing again, on the third of the four stored shapes.** Absent has
+    // to stay absent for all three: materialising a `species` here would make every
+    // character look migrated before the sweep ran, materialising a `race` would put back
+    // the field the sweep exists to remove, and `lineageKey` distinguishes *nobody was
+    // asked* (absent) from *asked, and this species has none* (`null`), which a rebuild
+    // that filled one in would collapse.
+    ...(sheet.race === undefined ? {} : { race: sheet.race }),
+    ...(sheet.species === undefined ? {} : { species: sheet.species }),
+    ...(sheet.lineageKey === undefined
+      ? {}
+      : { lineageKey: sheet.lineageKey === null ? null : sheet.lineageKey.trim() || null }),
     classKey: sheet.classKey,
     subclassKey: sheet.subclassKey,
     level: Math.round(sheet.level),
@@ -2434,12 +3228,63 @@ export function storedSheetProblem(sheet: StoredSheet): SheetProblem | null {
     return null
   }
 
+  // ⚠️⚠️ **THE WRITE-SIDE REFUSAL FOR A RETIRED SPECIES, AND IT HAS TO BE HERE RATHER THAN IN
+  // A VALIDATOR — WHICH IS NOT WHERE IT STARTED.**
+  //
+  // The layer rename kept two unions and got this for free: `storedTokenLayerValidator` on the
+  // schema, `tokenLayerValidator` on `board.addToken`'s argument, and a legacy value could be
+  // stored but not created. **A sheet has no such split.** `characters.create` and
+  // `characters.updateSheet` take `storedSheetValidator` — the *same* union the schema takes —
+  // so the wide union that keeps a Half-Orc *storable* also makes a brand-new one creatable.
+  //
+  // Found by `characters.test.ts`'s argument-boundary test, which had been updated to probe
+  // `half-orc` and started getting a `NotDm` — the handler running — where it expected a bare
+  // `Error` from the validator. The alternative fix was a second sheet union for arguments,
+  // which is four validators and two more places for a field to be added to one and not the
+  // other; this is one predicate on the path every write already takes.
+  //
+  // So: **tolerated on read, refused here on write** — the asymmetry `subclassOf`,
+  // `catalogueEntry` and `librarySheet` all keep, now spelled out for a species too. A
+  // character holding one opens, keeps its name, its class and its hit points, and cannot be
+  // saved again until somebody picks one of the nine.
+  //
+  // ⚠️ **Through `speciesKeyOf` and reported at `species`, whichever field the row holds.**
+  // The accessor is what lets one predicate serve all three shapes the validator now admits,
+  // and the path names the field the builder writes rather than the one it may have read —
+  // `messageAtField` matches on it, and a control called `builder-species` cannot be handed
+  // a problem at `race`.
+  //
+  // **It is also what refuses the fourth shape.** A preset carrying neither field makes
+  // `speciesKeyOf` answer the empty string, `species('')` answer null, and this refuse the
+  // write — fail-closed, rather than a state anything downstream has to handle.
+  const speciesKey = speciesKeyOf(sheet)
+  if (species(speciesKey) === null) {
+    return {
+      path: 'species',
+      message: `${speciesLabel(speciesKey)} is not one of the species this game has. Choose again.`,
+    }
+  }
   if (!isWholeWithin(sheet.level, MIN_LEVEL, MAX_LEVEL)) {
     return {
       path: 'level',
       message: `Level has to be a whole number from ${MIN_LEVEL} to ${MAX_LEVEL}.`,
     }
   }
+  // ⚠️ **The key is bounded and spell-checked here and matched to a species nowhere**, which
+  // is the same split `subclassKey` below already makes and the same one `entryKey` makes on
+  // a bestiary sheet: this module may never import species content — every function in it
+  // runs in the browser — so *"is this a lineage that exists, and does it belong to this
+  // species?"* is the resolver's question, asked where the content is. What is checkable here
+  // is that the string is a plausible key rather than a paragraph or a half-finished
+  // character, and that is what is checked.
+  if (sheet.lineageKey !== undefined && sheet.lineageKey !== null) {
+    if (!sheet.lineageKey || sheet.lineageKey.length > MAX_ENTRY_ID_LENGTH) {
+      return { path: 'lineageKey', message: 'That is not a lineage of that species.' }
+    }
+    const lineage = textProblem(sheet.lineageKey, 'lineageKey')
+    if (lineage) return lineage
+  }
+
   if (sheet.subclassKey !== null) {
     if (sheet.level < SUBCLASS_LEVEL) {
       return {

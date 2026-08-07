@@ -12,16 +12,19 @@ import {
   MAX_LIBRARY_LEVEL,
   SUBCLASS_LEVEL,
   findClass,
+  subclassLabel,
   subclassOf,
 } from '@convex/lib/classes'
-import type { RaceKey } from '@convex/lib/races'
-import { RACES, race as raceByKey } from '@convex/lib/races'
+import type { SpeciesKey } from '@convex/lib/species'
+import { SPECIES, lineageOf, species as speciesByKey, speciesKeyOf } from '@convex/lib/species'
 import type { PresetSheet, SheetProblem } from '@convex/lib/sheet'
 import { MAX_LEVEL, MIN_LEVEL, storedSheetProblem } from '@convex/lib/sheet'
 
-/** What the three dropdowns come to. Everything else about a preset is not chosen here. */
+/** What the dropdowns come to. Everything else about a preset is not chosen here. */
 export type BuilderSelections = {
-  race: RaceKey
+  species: SpeciesKey
+  /** Null for the four species with no lineage table, and for one nobody has picked from. */
+  lineageKey: string | null
   classKey: ClassKey
   subclassKey: string | null
 }
@@ -51,14 +54,19 @@ export type CharacterBuilderProps = {
  * Choosing a character, rather than filling one in.
  *
  * This is what a beginner meets first, and every decision below is in service of it
- * being obvious without instructions. Three dropdowns, each carrying the one-line blurb
- * the catalogue was written with, so the choice can be made from the page rather than
- * from knowing D&D; the race's trait spelled out in full the moment it is picked; and
- * one button that commits.
+ * being obvious without instructions. Up to four dropdowns, each carrying the one-line
+ * blurb the catalogue was written with, so the choice can be made from the page rather
+ * than from knowing D&D; every one of the species' traits spelled out in full the moment
+ * it is picked; and one button that commits.
+ *
+ * ⚠️ **Two of the four are conditional, and both are absent rather than disabled.** The
+ * archetype is drawn from level `SUBCLASS_LEVEL` and the lineage only for the five
+ * species that print a table — a greyed-out control reads as a thing the player failed
+ * to fill in, which a Halfling with no lineage has not done.
  *
  * **The selections are local state and only `Confirm` writes them, while the DM's
  * overrides go through the panel's draft and its Save button.** Two paths for two
- * genuinely different actions rather than an inconsistency: picking a race is a
+ * genuinely different actions rather than an inconsistency: picking a species is a
  * decision somebody browses their way to — flicking between Dwarf and Goliath to read
  * what each does is the point of the blurbs — and half of that browsing must not reach
  * the table. An armour class the DM types is an edit, and edits are what Save is for.
@@ -70,9 +78,9 @@ export type CharacterBuilderProps = {
  * rather than identity (ADR 0003), and `characters.updateSheet` re-checks the whole
  * rule server-side regardless of what this component chose to grey out.
  *
- * **The race trait is given a box of its own rather than a line in a list.** It is the
- * first thing that makes a character feel unlike anybody else's at the table, and on a
- * page that is otherwise numbers it is the only part a child will read twice.
+ * **The species traits are given a box of their own rather than a line in a list.** They
+ * are the first thing that makes a character feel unlike anybody else's at the table, and
+ * on a page that is otherwise numbers they are the only part a child will read twice.
  */
 export function CharacterBuilder({
   preset,
@@ -103,10 +111,27 @@ export function CharacterBuilder({
   const readOnly = locked && !isDm
   const disabled = busy || readOnly
 
-  const chosenRace = chosen.race === null ? null : raceByKey(chosen.race)
+  const chosenSpecies = chosen.species === null ? null : speciesByKey(chosen.species)
+  const chosenLineage = lineageOf(chosenSpecies, chosen.lineageKey)
   const chosenClass = chosen.classKey === null ? null : findClass(chosen.classKey)
   const chosenSubclass =
     chosen.classKey === null ? null : subclassOf(chosen.classKey, chosen.subclassKey)
+
+  // ⚠️ **What to call a stored archetype that has gone, which is the other half of "says
+  // plainly which one needs choosing again".** Eight of them were retired by the 2024
+  // conversion, so a character can genuinely hold a key `subclassOf` does not know — and
+  // the dropdown offers only the one that resolves, so the control would otherwise sit
+  // blank beside a hint about picking a path, which reads as a thing the player failed to
+  // fill in rather than as a decision the rules took back. `RETIRED_SUBCLASSES` is what
+  // gives it a name; `subclassLabel` falls through to the raw key for an invented one,
+  // which is still better than nothing at all. The species control makes exactly this
+  // move one field up. Confirm stays dead either way: `storedSheetProblem` refuses an
+  // archetype `subclassOf` does not know, so this is the sentence explaining a button
+  // that was already disabled rather than a second guard.
+  const retiredSubclass =
+    chosen.classKey !== null && chosen.subclassKey !== null && chosenSubclass === null
+      ? subclassLabel(chosen.classKey, chosen.subclassKey)
+      : null
 
   // Built and checked with the same function `characters.updateSheet` throws from, so
   // the button goes dead with the wording the server would have used. It is a courtesy
@@ -127,12 +152,12 @@ export function CharacterBuilder({
       <header className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex min-w-0 flex-col">
           <h3 className="font-heading text-sm font-medium">
-            {preset === null ? 'Build a character' : 'Race and class'}
+            {preset === null ? 'Build a character' : 'Species and class'}
           </h3>
           <p className="text-muted-foreground text-xs">
             {preset === null
-              ? 'Pick a race and a class and everything else — hit points, skills, feats and spells — is filled in for you, and stays right as you level up.'
-              : 'Everything on this sheet is worked out from these three choices and your level.'}
+              ? 'Pick a species and a class and everything else — hit points, skills, feats and spells — is filled in for you, and stays right as you level up.'
+              : 'Everything on this sheet is worked out from these choices and your level.'}
           </p>
         </div>
 
@@ -155,25 +180,33 @@ export function CharacterBuilder({
 
       <div className="grid grid-cols-2 gap-3">
         <SheetField
-          id="builder-race"
-          label="Race"
-          hint={chosenRace?.blurb ?? 'What your character is.'}
+          id="builder-species"
+          label="Species"
+          hint={chosenSpecies?.blurb ?? 'What your character is.'}
         >
           <NativeSelect
-            id="builder-race"
+            id="builder-species"
             className="w-full"
-            value={chosen.race ?? ''}
+            value={chosen.species ?? ''}
             disabled={disabled}
             onChange={(event) =>
-              setChosen({ ...chosen, race: event.target.value as RaceKey })
+              // The lineage goes with the species it belonged to, for the reason the
+              // archetype goes with its class one control down: a Goliath holding an
+              // Elf's `wood` would resolve to nothing at all, and the control that
+              // would have explained it is about to be redrawn with different options.
+              setChosen({
+                ...chosen,
+                species: event.target.value as SpeciesKey,
+                lineageKey: null,
+              })
             }
           >
             <option value="" disabled>
-              Choose a race…
+              Choose a species…
             </option>
-            {RACES.map((race) => (
-              <option key={race.key} value={race.key}>
-                {race.name} — {race.blurb}
+            {SPECIES.map((entry) => (
+              <option key={entry.key} value={entry.key}>
+                {entry.name} — {entry.blurb}
               </option>
             ))}
           </NativeSelect>
@@ -213,17 +246,60 @@ export function CharacterBuilder({
         </SheetField>
       </div>
 
-      {/* Absent below level 2, because below level 2 there is nothing to have chosen.
+      {/* ⚠️ **Absent rather than disabled for the four species with no lineage table**,
+          which is the rule the archetype control below follows and for the same reason: a
+          greyed-out dropdown reads as a thing the player failed to fill in, and a Halfling
+          has not failed to choose a lineage — a Halfling has none. Drawn the moment the
+          species has one, at every level, because a lineage is a level 1 choice unlike an
+          archetype. */}
+      {chosenSpecies !== null && chosenSpecies.lineages !== undefined ? (
+        <SheetField
+          id="builder-lineage"
+          label="Lineage"
+          hint={
+            chosenLineage?.blurb ??
+            `Your ${chosenSpecies.name} picks one of ${chosenSpecies.lineages.length}, and it comes with magic of its own.`
+          }
+        >
+          <NativeSelect
+            id="builder-lineage"
+            className="w-full"
+            value={chosen.lineageKey ?? ''}
+            disabled={disabled}
+            onChange={(event) =>
+              setChosen({ ...chosen, lineageKey: event.target.value || null })
+            }
+          >
+            <option value="">Not chosen yet</option>
+            {chosenSpecies.lineages.map((lineage) => (
+              <option key={lineage.key} value={lineage.key}>
+                {lineage.name} — {lineage.blurb}
+              </option>
+            ))}
+          </NativeSelect>
+        </SheetField>
+      ) : null}
+
+      {/* Absent below `SUBCLASS_LEVEL`, because below it there is nothing to have chosen.
           An archetype already stored is not shown down there either — `characters.
           setLevel` clears one on the way down, so anything drawn here would be a value
-          the server has already discarded. */}
+          the server has already discarded.
+
+          ⚠️ **"One path", not "one of two", and that is a licensing fact rather than a
+          design one.** No SRD, 2014 or 2024, contains more than one subclass per class;
+          the eight second archetypes this application used to offer appeared in no source
+          at all and are retired by name in `RETIRED_SUBCLASSES`. The dropdown still exists
+          because the *choice* still has to be committed — a character sitting at level 3
+          with nothing chosen resolves to its level 1 sheet until somebody picks. */}
       {chosenClass !== null && level >= SUBCLASS_LEVEL ? (
         <SheetField
           id="builder-subclass"
           label="Archetype"
           hint={
-            chosenSubclass?.blurb ??
-            `Your ${chosenClass.name} picks one of two paths at level ${SUBCLASS_LEVEL}.`
+            retiredSubclass !== null
+              ? `${retiredSubclass} is no longer one of this game's archetypes. Choose again.`
+              : (chosenSubclass?.blurb ??
+                `Your ${chosenClass.name} picks one path at level ${SUBCLASS_LEVEL}.`)
           }
         >
           <NativeSelect
@@ -245,13 +321,34 @@ export function CharacterBuilder({
         </SheetField>
       ) : null}
 
-      {chosenRace ? (
-        <div className="bg-muted/40 flex flex-col gap-1 rounded-lg border p-3">
+      {/* ⚠️ **Every trait, not the first one.** A 2024 species has between three and five
+          and the interesting one is rarely first — a Dwarf's Darkvision leads and their
+          Toughness is the number that keeps them alive. Iterated over `traits` rather than
+          three or four lines of JSX for the reason the sheet iterates
+          `SHEET_ENTRY_CATEGORIES`: a species whose fifth trait had no row would be
+          invisible here and on the resolved sheet nowhere, which is a content bug with no
+          symptom. The lineage's own trait joins the same list rather than getting a second
+          box, because a Wood Elf's 35 feet is a species trait as far as the reader is
+          concerned. */}
+      {chosenSpecies ? (
+        <div className="bg-muted/40 flex flex-col gap-2 rounded-lg border p-3">
           <span className="flex flex-wrap items-center gap-2">
-            <span className="font-heading text-sm font-medium">{chosenRace.traitName}</span>
-            <Badge variant="secondary">{chosenRace.name}</Badge>
+            <span className="font-heading text-sm font-medium">What a {chosenSpecies.name} can do</span>
+            <Badge variant="secondary">
+              {chosenSpecies.traits.length + (chosenLineage ? 1 : 0)} traits
+            </Badge>
           </span>
-          <p className="text-muted-foreground text-xs">{chosenRace.traitText}</p>
+          {[
+            ...chosenSpecies.traits,
+            ...(chosenLineage
+              ? [{ name: chosenLineage.traitName, text: chosenLineage.traitText }]
+              : []),
+          ].map((trait) => (
+            <p key={trait.name} className="text-muted-foreground text-xs">
+              <span className="text-foreground font-medium">{trait.name}. </span>
+              {trait.text}
+            </p>
+          ))}
         </div>
       ) : null}
 
@@ -259,7 +356,7 @@ export function CharacterBuilder({
 
       {readOnly ? (
         <p className="text-muted-foreground text-xs">
-          Your race, class and archetype are set. Ask whoever is running the game to unlock
+          Your species, class and archetype are set. Ask whoever is running the game to unlock
           them if you want to change something.
         </p>
       ) : (
@@ -276,7 +373,10 @@ export function CharacterBuilder({
             onClick={() =>
               candidate &&
               onConfirm({
-                race: candidate.race,
+                // Narrow at the boundary rather than in the type: `confirmable` is false unless the
+                // dropdown holds one of the nine, so by here it genuinely is a `SpeciesKey`.
+                species: candidate.species as SpeciesKey,
+                lineageKey: candidate.lineageKey ?? null,
                 classKey: candidate.classKey,
                 subclassKey: candidate.subclassKey,
               })
@@ -359,21 +459,44 @@ function LevelControl({
 }
 
 type PartialSelections = {
-  race: RaceKey | null
+  /**
+   * ⚠️ **A `string`, not a `SpeciesKey`, because a STORED species may have been retired.**
+   * `presetSheetValidator` takes the widened `storedSpeciesKeyValidator` so a character built
+   * before the 2024 conversion still validates on a schema push, and this is the first place
+   * that key is read by a person. Narrowing here would be the compiler agreeing with a
+   * comfortable fiction — the same one `species()` used to rest on.
+   *
+   * `speciesLabel` renders it either way; the dropdown offers only the nine that resolve, so
+   * choosing again is the only thing a retired key can become.
+   */
+  species: string | null
+  lineageKey: string | null
   classKey: ClassKey | null
   subclassKey: string | null
 }
 
 function selectionsOf(preset: PresetSheet | null): PartialSelections {
   return preset === null
-    ? { race: null, classKey: null, subclassKey: null }
-    : { race: preset.race, classKey: preset.classKey, subclassKey: preset.subclassKey }
+    ? { species: null, lineageKey: null, classKey: null, subclassKey: null }
+    : {
+        // Through `speciesKeyOf`, which crosses the two stored fields the rename is
+        // mid-way between and answers `''` for the row that has neither. `|| null` turns
+        // that into the same "nothing chosen" the null branch above produces.
+        species: speciesKeyOf(preset) || null,
+        // Absent and null both mean "nothing chosen" — see `presetSheetValidator` — and
+        // this is where the two are flattened, so nothing above has to know that a
+        // character stored before the field existed is not a character who declined.
+        lineageKey: preset.lineageKey ?? null,
+        classKey: preset.classKey,
+        subclassKey: preset.subclassKey,
+      }
 }
 
 function changed(chosen: PartialSelections, against: PresetSheet | null): boolean {
   const saved = selectionsOf(against)
   return (
-    chosen.race !== saved.race ||
+    chosen.species !== saved.species ||
+    chosen.lineageKey !== saved.lineageKey ||
     chosen.classKey !== saved.classKey ||
     chosen.subclassKey !== saved.subclassKey
   )
@@ -386,12 +509,26 @@ function changed(chosen: PartialSelections, against: PresetSheet | null): boolea
  * The archetype is dropped below `SUBCLASS_LEVEL` rather than merely hidden, because
  * the select above is hidden there and a value the person cannot see is one they cannot
  * be shown an error about.
+ *
+ * **The lineage is dropped for a species with no lineage table, for the same reason.**
+ * It is a weaker case than the archetype's — `lineageOf` is asked with the resolved
+ * species and would answer null for a Halfling holding `wood` anyway, so nothing would
+ * misresolve — but a stored key that resolves to nothing is a value on the document that
+ * no screen in the application will ever show, and this is the one place that can decline
+ * to write it.
  */
 function candidateOf(chosen: PartialSelections, level: number): PresetSheet | null {
-  if (chosen.race === null || chosen.classKey === null) return null
+  // ⚠️ **A RETIRED species is not a candidate, which is the whole of ''says plainly which
+  // species it needs choosing again''.** The character keeps the key it has — nothing here
+  // rewrites it — and simply cannot be confirmed until the player picks one of the nine. That
+  // is the same refusal `storedSheetProblem` would give, reached before anything is sent.
+  if (chosen.species === null || chosen.classKey === null) return null
+  if (speciesByKey(chosen.species) === null) return null
+  const hasLineages = speciesByKey(chosen.species)?.lineages !== undefined
   return {
     kind: 'preset',
-    race: chosen.race,
+    species: chosen.species as SpeciesKey,
+    lineageKey: hasLineages ? chosen.lineageKey : null,
     classKey: chosen.classKey,
     subclassKey: level >= SUBCLASS_LEVEL ? chosen.subclassKey : null,
     level,

@@ -42,8 +42,19 @@ import {
   type TierNumber,
 } from './creatures'
 import { librarySheet } from './library'
-import { race, type Race } from './races'
+// The slot derivation, which is pure and browser-shared. What lives here is the one line that
+// turns a *character document* into an argument for it — see `spellSlotsOf`.
+import { spellSlotsFor, type SpellSlots } from './slots'
+import {
+  lineageOf,
+  species,
+  speciesKeyOf,
+  type Lineage,
+  type Species,
+  type SpeciesTrait,
+} from './species'
 import type {
+  AbilityKey,
   AbilityScores,
   BestiarySheet,
   CharacterGroup,
@@ -54,12 +65,15 @@ import type {
   NpcSheet,
   PcSheet,
   PresetSheet,
+  SaveProficiencies,
   SheetEntry,
   StoredSheet,
 } from './sheet'
 import {
+  ABILITY_KEYS,
   MAX_ENTRY_ID_LENGTH,
   SPEED_FEET,
+  abilityModifier,
   attackBonusOf,
   categoryForRoll,
   creatureGroupOf,
@@ -229,6 +243,38 @@ export function presetExtras(
   return { equipment: found.equipment, levellingNotes: found.levellingNotes }
 }
 
+/**
+ * THE SLOTS THIS CHARACTER HAS, or null for anybody who has none.
+ *
+ * `presetExtras`' sibling: a fact that falls out of the stored *selections* — a class key and
+ * a level — rather than out of the resolved sheet, and one this module is the right home for
+ * because it is where `presetOf` already lives.
+ *
+ * ⚠️ **It has to be the selections, and a resolved sheet genuinely cannot answer.** `PcSheet`
+ * stores `className` as a **display name** — `Wizard (Evoker)` — and there is no route from
+ * that string back to a class key that is not string-matching a label somebody could rename.
+ * ADR 0011's decision 2 declined a hero's spell save DC partly on this exact observation, and
+ * the conversion answered it by storing a `spellcastingAbility`; that field is deliberately no
+ * help here, because *which ability you cast with* says nothing about whether you are a full
+ * caster, a half caster or a Warlock.
+ *
+ * ⚠️ **So a hand-built `pc` sheet gets no slots, and that is a real gap rather than an
+ * oversight.** A DM who types a Wizard in by hand has told the application a class *name* and
+ * nothing it can count with. The honest answers are either a slot track stored on `PcSheet`
+ * — a field the DM has to fill in, on a sheet form that is already the longest in the
+ * application — or building the character out of the library, which is what the library is
+ * for and what every premade hero does. Neither is a small change made on the way past, so
+ * the gap is named here rather than closed by guessing from `className`.
+ *
+ * Nothing about a *creature* is asked: `presetOf` answers null for a `bestiary` sheet, so a
+ * monster with a spell list has no slot bank, which matches the SRD's own stat blocks — they
+ * print *"1/Day"* and a spell list, not a table of slots.
+ */
+export function spellSlotsOf(doc: { sheet?: StoredSheet }): SpellSlots | null {
+  const preset = presetOf(doc)
+  return preset ? spellSlotsFor(preset.classKey, preset.level) : null
+}
+
 /** The stored selections, or null for a character that is not linked to the bestiary. */
 export function bestiaryOf(doc: { sheet?: StoredSheet }): BestiarySheet | null {
   return doc.sheet?.kind === 'bestiary' ? doc.sheet : null
@@ -334,7 +380,7 @@ export type CreatureSocial = {
  * ⚠️ **Every array here is copied, not shared, and this is the function where that
  * matters.** The corpus is module state and a Convex isolate outlives the request that
  * warmed it, so an array handed straight out of an entry is an array a caller could sort in
- * place and change for every later query until the next deploy. `RACES` copies its granted
+ * place and change for every later query until the next deploy. `SPECIES` copies its granted
  * abilities for precisely this reason, and `ROLE_BY_KEY` is a `ReadonlyMap` against the same
  * hazard.
  *
@@ -406,15 +452,27 @@ function copySocial(social: BestiarySocial | undefined): CreatureSocial | null {
 }
 
 /**
- * Library, then race, then the DM. **The order is the design and cannot be
- * rearranged.**
+ * Library, then species, then lineage, then the DM. **The order is the design and
+ * cannot be rearranged**, and the lineage extends it by one rather than reshuffling it.
  *
- * The library is race-agnostic by construction, so race has to come second or an
- * Elf's +2 would be part of a base the next level overwrites. The DM comes last
- * because an override is the final word — that is what makes "the DM can always
- * change a player's sheet" true against a character whose stats are read live, and
- * what makes an override survive a level-up rather than being quietly discarded by
- * the next lookup.
+ * ```
+ * library sheet  →  species  →  lineage  →  the DM's overrides
+ * ```
+ *
+ * The library is species-agnostic by construction, so the species has to come second or
+ * a Dwarf's hit point per level would be part of a base the next level overwrites. **The
+ * lineage comes third because it is a modification of the species and not of the
+ * library**: a Wood Elf's 35 feet is written in the SRD as *"your Speed increases to 35"*
+ * against the Elf's printed 30, so applying it before the species would have `baseSpeed`
+ * overwrite it and produce an Elf who moves 30 — the acceptance criterion for this whole
+ * step, failing silently. The DM comes last because an override is the final word — that
+ * is what makes "the DM can always change a player's sheet" true against a character
+ * whose stats are read live, and what makes an override survive a level-up rather than
+ * being quietly discarded by the next lookup.
+ *
+ * ⚠️ **`lineageOf` is asked with the resolved species rather than with the stored key
+ * alone**, so a stored lineage that belongs to some other species contributes nothing.
+ * A Goliath carrying `wood` is a Goliath, not a Goliath who moves 35.
  */
 function resolvePreset(preset: PresetSheet): PcSheet {
   const definition = findClass(preset.classKey)
@@ -459,46 +517,115 @@ function resolvePreset(preset: PresetSheet): PcSheet {
   // `withOverrides` lives in lib/sheet.ts rather than here, so the override panel in
   // the browser can run the identical merge instead of maintaining a second copy of
   // it. Only the library lookup above is server-only.
-  return withOverrides(applyRace(base, race(preset.race), level), preset.overrides)
+  // Through `speciesKeyOf` rather than off the field, which is what let the
+  // `race` → `species` rename land under this line without it being edited twice.
+  const chosen = species(speciesKeyOf(preset))
+  return withOverrides(
+    applyLineage(applySpecies(base, chosen, level), lineageOf(chosen, preset.lineageKey ?? null)),
+    preset.overrides,
+  )
 }
 
-function applyRace(sheet: PcSheet, chosen: Race, level: number): PcSheet {
-  const abilities: AbilityScores = { ...sheet.abilities }
-  for (const [key, bonus] of Object.entries(chosen.abilityBonus ?? {})) {
-    abilities[key as keyof AbilityScores] += bonus
-  }
-
-  // The trait always appears, whether or not it changes a number — a Halfling's
-  // Lucky is the whole of what makes them a Halfling and would otherwise be invisible
-  // on their own sheet.
-  const trait: SheetEntry = {
-    id: entryId('race', chosen.key),
-    name: chosen.traitName,
-    text: chosen.traitText,
-    roll: null,
-    level: null,
-    catalogueKey: null,
-    // A trait is built from `traitName` and `traitText` and has no roll by
-    // construction, so `passive` is the only coherent answer rather than a choice. A
-    // race whose trait rolls something grants a feat or a spell instead — which is
-    // what the Dragonborn's breath weapon already does.
-    category: 'passive',
-  }
+/**
+ * The species layer. **No arithmetic on an ability score, and that absence is the
+ * milestone.**
+ *
+ * A 2024 species grants no ability score increase at all — those come from a background,
+ * which requirements.md excludes and whose numbers are absorbed into the premade sheet's
+ * stored `abilities`. So the loop that used to add an Elf's +2 is gone rather than
+ * emptied, and the *"allocated without considering race"* note on `LibrarySheet.abilities`
+ * is now true by construction instead of by discipline.
+ *
+ * ⚠️ **Speed is SET, not added.** `baseSpeed` is the number the SRD prints, so a Goliath
+ * reads 35 because the SRD says 35 and not because 30 plus five is. The formulation this
+ * replaces — `sheet.speed + speedBonus` — meant writing the same +5 in two places the
+ * moment the default moved, and invited the next reader to add a lineage's on top of it.
+ */
+function applySpecies(sheet: PcSheet, chosen: Species | null, level: number): PcSheet {
+  // ⚠️ **A retired species contributes nothing rather than throwing, which is the whole point
+  // of `species()` returning null.** The character keeps its level, its name, its hit points and
+  // every number the library gave it, and loses only what the species was adding — the same
+  // degradation `librarySheet` returning null already produces for a retired archetype, reached
+  // by the other route. `CharacterBuilder` is what tells the player to choose again;
+  // `resolveSheet` is not a place to raise an error, because it runs inside the query that
+  // paints the whole party.
+  if (chosen === null) return sheet
 
   return {
     ...sheet,
-    abilities,
     maxHp: sheet.maxHp + (chosen.hpPerLevel ?? 0) * level,
-    speed: (sheet.speed ?? SPEED_FEET) + (chosen.speedBonus ?? 0),
+    speed: chosen.baseSpeed ?? sheet.speed ?? SPEED_FEET,
+    // ⚠️ **The traits and the granted feats share one `race` prefix, deliberately.** A
+    // trait whose name matched a granted feat's used to produce two rows a player could
+    // not tell apart, with only one of them rollable, and `sheetProblem`'s uniqueness
+    // check said nothing because the two ids differed. Under one prefix that collision is
+    // a duplicate *id*, which the same check refuses outright — so the failure the
+    // Dragonborn shipped is now mechanical rather than cosmetic, and `species.test.ts`
+    // catches it before a deployment does.
     feats: [
       ...sheet.feats,
-      trait,
-      ...(chosen.grantedFeats ?? []).map((entry, index) => withId(entry, `race-${chosen.key}`, index)),
+      ...chosen.traits.map((trait, index) => withId(traitEntry(trait), 'race', index)),
+      ...(chosen.grantedFeats ?? []).map((entry, index) => withId(entry, 'race', index)),
     ],
     spells: [
       ...sheet.spells,
-      ...(chosen.grantedSpells ?? []).map((entry, index) => withId(entry, `race-${chosen.key}`, index)),
+      ...(chosen.grantedSpells ?? []).map((entry, index) => withId(entry, 'race', index)),
     ],
+  }
+}
+
+/**
+ * The lineage layer — a Drow, a Rock Gnome, a Red Dragonborn, a Stone Giant's descendant.
+ *
+ * The same three moves `applySpecies` makes, under their own `lineage` prefix so that the
+ * two layers cannot collide with each other however the content is edited, and with the
+ * same null-means-nothing stance: an unchosen lineage, an unknown key and a species with
+ * no lineages at all are one case here, exactly as `subclassOf` returning null is one case
+ * in the class layer.
+ *
+ * **The speed is an absolute again**, and it overwrites the species' because that is what
+ * *"your Speed increases to 35 feet"* means against a printed 30. `?? sheet.speed` rather
+ * than `?? SPEED_FEET`, so a lineage that says nothing about speed leaves the species'
+ * answer standing rather than reaching past it to a constant.
+ */
+function applyLineage(sheet: PcSheet, chosen: Lineage | null): PcSheet {
+  if (chosen === null) return sheet
+
+  return {
+    ...sheet,
+    speed: chosen.speed ?? sheet.speed,
+    feats: [
+      ...sheet.feats,
+      withId(traitEntry({ name: chosen.traitName, text: chosen.traitText }), 'lineage', 0),
+      ...(chosen.grantedFeats ?? []).map((entry, index) => withId(entry, 'lineage', index)),
+    ],
+    spells: [
+      ...sheet.spells,
+      ...(chosen.grantedSpells ?? []).map((entry, index) => withId(entry, 'lineage', index)),
+    ],
+  }
+}
+
+/**
+ * A trait as a line on the sheet. **Always a `passive`, and that is the only coherent
+ * answer rather than a choice.**
+ *
+ * A `SpeciesTrait` is a name and a sentence and has nowhere to put a roll, so
+ * `entriesProblem`'s arity rule would refuse it as anything else. A species whose trait
+ * genuinely rolls something grants a feat or a spell instead — which is what the
+ * Dragonborn's ancestry does with its breath.
+ *
+ * The trait always appears, whether or not it changes a number: a Halfling's Luck is the
+ * whole of what makes them a Halfling and would otherwise be invisible on their own sheet.
+ */
+function traitEntry(trait: SpeciesTrait): ContentEntry {
+  return {
+    name: trait.name,
+    text: trait.text,
+    roll: null,
+    level: null,
+    catalogueKey: null,
+    category: 'passive',
   }
 }
 
@@ -581,6 +708,8 @@ function resolveBestiary(stored: BestiarySheet): NpcSheet {
       attackBonus: scaled.attackBonus,
       saveDc: scaled.saveDc ?? undefined,
       skills: creatureSkillsFrom(scaled.skills),
+      abilities: scaled.abilityScores,
+      saveProficiencies: saveProficienciesFrom(scaled.abilityScores, scaled.saveBonuses),
     }),
     stored.overrides,
   )
@@ -703,6 +832,44 @@ function sentence(text: string): string {
   const trimmed = text.trim()
   if (trimmed === '') return ''
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`
+}
+
+/**
+ * The SAVE column as the six booleans a sheet holds.
+ *
+ * ⚠️ **This is a lossy projection and the loss is deliberate, so read what is dropped before
+ * "fixing" it.** A 2024 stat block prints a *number* in the save column — the Aboleth's is
+ * `DEX −1, save +3` — and `npcSheetValidator.saveProficiencies` is six booleans. There is
+ * nowhere on a sheet to put a printed save bonus, and there should not be: the stat block
+ * renderer prints a **tick** beside the ability's own modifier, which is the summary this
+ * application shows, and a second stored number would be a second thing for `scaleCombat`
+ * to keep in step with no screen reading it.
+ *
+ * **Proficient means the printed save differs from the plain ability modifier**, which is
+ * exactly what the SRD's own arithmetic says: an unproficient save *is* the modifier, and
+ * every deviation from it — proficiency, an unusual bonus, a legendary resistance's cousin
+ * — is a creature that saves better than its raw score. Comparing rather than subtracting a
+ * proficiency bonus is what makes it right for the Aboleth, whose +4 gap is not a
+ * proficiency bonus at any challenge rating in range.
+ *
+ * ⚠️ **`saveBonuses` and `abilityScores` are both untouched by `scaleCombat`** — see the
+ * note on `BestiaryCombat` — so this answer does not move when a DM shifts a creature's
+ * rating, and a tick cannot flicker on and off as the stepper runs. If either ever becomes
+ * scaled, this comparison is the thing that quietly changes meaning.
+ *
+ * Nothing adjudicates a saving throw anywhere in this application. The tick is a label, in
+ * the register of a mastery and a condition pip: no roll is compared to a DC, and the DC
+ * printed beside it is printed and not used.
+ */
+function saveProficienciesFrom(
+  scores: AbilityScores,
+  saves: BestiaryCombat['saveBonuses'],
+): SaveProficiencies {
+  // Built by iterating the vocabulary rather than naming six keys, for invariant 9's
+  // reason: a seventh ability would fail to compile here instead of arriving unanswered.
+  const out = {} as Record<AbilityKey, boolean>
+  for (const key of ABILITY_KEYS) out[key] = saves[key] !== abilityModifier(scores[key])
+  return out
 }
 
 /**

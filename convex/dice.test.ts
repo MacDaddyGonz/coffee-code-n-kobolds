@@ -117,9 +117,11 @@ const LIBRARY_ROLLS: Found = new Map()
 const LIBRARY_TO_HITS: Found = new Map()
 
 for (const [classKey, library] of Object.entries(LIBRARY)) {
-  const placed: { label: string; sheet: LibrarySheet }[] = [
-    { label: `${classKey}/base`, sheet: library.base },
-  ]
+  // `base` is a record of levels 1 and 2 rather than one sheet — an archetype is
+  // chosen at level 3, so both shared levels need a sheet of their own.
+  const placed: { label: string; sheet: LibrarySheet }[] = Object.entries(library.base).map(
+    ([level, sheet]) => ({ label: `${classKey}/base/${level}`, sheet }),
+  )
   for (const [subclassKey, levels] of Object.entries(library.paths)) {
     for (const [level, sheet] of Object.entries(levels)) {
       placed.push({ label: `${classKey}/${subclassKey}/${level}`, sheet })
@@ -210,12 +212,18 @@ describe('the enumeration reaches the whole of all three corpora', () => {
    * within sight of the real figures, so losing a class or a content file trips one.
    */
   test('each source contributes the number of distinct expressions it should', () => {
-    // 32 at the time of writing: the whole premade library's feats and spells.
-    expect(LIBRARY_ROLLS.size).toBeGreaterThanOrEqual(32)
-    // Exactly seven, and pinned exactly rather than as a floor: a to-hit on a premade sheet
+    // 29 at the time of writing: the whole premade library's feats and spells. ⚠️ It was
+    // 32 over seventy-two sheets, and sixty produce *fewer distinct* expressions rather
+    // than more — the 2024 corpus keys most of its spells at the catalogue, so a dozen
+    // sheets repeat the same dice.
+    expect(LIBRARY_ROLLS.size).toBeGreaterThanOrEqual(28)
+    // Exactly six, and pinned exactly rather than as a floor: a to-hit on a premade sheet
     // is `1d20` plus a token combination, and there are only so many of those a hero can
-    // have. A new one is a content decision worth a second look at this line.
-    expect(LIBRARY_TO_HITS.size).toBe(7)
+    // have. A new one is a content decision worth a second look at this line. ⚠️ It was
+    // seven, and the seventh was the Beast Master's Animal Companion attacking on a flat
+    // `1d20+5` — that archetype appears in no SRD and is retired, so every to-hit in the
+    // library is now swung by the character and carries an ability and `PROF`.
+    expect(LIBRARY_TO_HITS.size).toBe(6)
     // 21 and 6. The catalogue and the library overlap heavily — a premade sheet's lines are
     // copies of catalogue entries — which is why the union below is far short of the sum.
     expect(CATALOGUE_ROLLS.size).toBeGreaterThanOrEqual(18)
@@ -284,20 +292,25 @@ describe('every expression in the game evaluates inside its own range', () => {
    */
   test('the awkward shapes the corpora actually contain are all present', () => {
     for (const shape of [
-      // Four terms, and the only expression in the game with that many.
-      '1d20+STR+CHA+PROF',
-      // A token and a flat in the same expression, on a damage roll and on a to-hit.
-      '1d8+STR+2',
+      // ⚠️ **Five of the shapes this list used to name have gone, and they went with
+      // content rather than with a parser change.** `1d20+STR+CHA+PROF` was the old
+      // Paladin's Sacred Weapon, `1d8+STR+2` the old Fighter's Duelling longsword, `2d20`
+      // and `3d20` the School of Divination's Portent, and `1d8+3` the Beast Master's
+      // Animal Companion — an archetype, a fighting style and two subclasses that appear
+      // in no SRD. Every shape below is one the corpora *still* contain, which is the only
+      // thing this test can honestly assert.
+      //
+      // Four terms after the die, and the widest expression in the game: an ability, the
+      // proficiency bonus and a flat, which is Archery's +2 on a Ranger's longbow.
       '1d20+DEX+PROF+2',
-      // Portent. Two and three d20s, which is what makes the single-d20 conditions bite.
-      '2d20',
-      '3d20',
       // A d20 in the damage slot — a check written as an entry's roll rather than a to-hit.
       '1d20+WIS+PROF',
       '1d20+INT+PROF',
-      // Flat only, no token at all: the Ranger's Animal Companion.
-      '1d8+3',
+      // Flat only, no token at all: a monster's to-hit, which has no scores to resolve
+      // against. It survives in `NPC_ACTIONS` rather than in the library.
       '1d20+5',
+      // A flat added to dice with no token beside it: Magic Missile's three darts.
+      '3d4+3',
       // And the majority shape, with no modifier of any kind.
       '2d6',
     ]) {

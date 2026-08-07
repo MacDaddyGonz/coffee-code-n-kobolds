@@ -51,7 +51,7 @@ export type ChallengeRating = (typeof CR_VALUES)[number]
 
 /**
  * Hand-written in parallel with the array above, which is this codebase's established
- * shape for a key union — `raceKeyValidator` and `classKeyValidator` both do it, and a
+ * shape for a key union — `speciesKeyValidator` and `classKeyValidator` both do it, and a
  * test pins the two halves in agreement. Convex has no way to build a literal union
  * validator from a `readonly` tuple without losing the literal types on the way, so
  * the duplication is real and is checked by machine rather than by memory.
@@ -263,7 +263,7 @@ export const CREATURE_ROLES: readonly CreatureRole[] = [
  * Typed as a `ReadonlyMap` rather than a `Map`, and that is not decoration. This is
  * module state, and a Convex isolate outlives the request that warmed it — a caller
  * that reached in and set a key would redefine a role for every later query until the
- * next deploy. `RACES` carries the same warning in prose; here the type says it.
+ * next deploy. `SPECIES` carries the same warning in prose; here the type says it.
  */
 export const ROLE_BY_KEY: ReadonlyMap<RoleKey, CreatureRole> = new Map(
   CREATURE_ROLES.map((role) => [role.key, role]),
@@ -302,6 +302,21 @@ export const TAG_KEYS = [
   'beast',
   'dragon',
   'fiend',
+  // ⚠️ **`celestial` and `fey` arrived with the 2024 SRD and are the only two additions this
+  // list has ever taken.** They are not a widening of the vocabulary for its own sake: the
+  // SRD's fourteen creature types are the thing `TYPE_TAGS` in scripts/srd/vocabulary.mjs
+  // maps onto this list, and without these two, twenty-two transcribed creatures — every
+  // pegasus, unicorn, couatl, dryad, satyr, hag and goblin among them — would have had to be
+  // filed under a type they are not. 2024 in particular moved the goblinoids out of Humanoid
+  // and into Fey, so the gap is not a corner case.
+  //
+  // Safe to add because nothing builds a `Record` over `TagKey`: `BestiaryPicker` iterates
+  // `CREATURE_TAGS` and `bestiary.ts` copies the array, so a new member reaches both by
+  // being in the list. A `Record` would have made this a compile error at every construction
+  // site, which is the treatment `SkillProficiencies` gets and the reason that one is a
+  // `Record` — a missing skill is a wrong bonus, a missing tag is a chip nobody pressed.
+  'celestial',
+  'fey',
   'construct',
   'elemental',
   'aberration',
@@ -329,6 +344,8 @@ export const tagKeyValidator = v.union(
   v.literal('beast'),
   v.literal('dragon'),
   v.literal('fiend'),
+  v.literal('celestial'),
+  v.literal('fey'),
   v.literal('construct'),
   v.literal('elemental'),
   v.literal('aberration'),
@@ -362,6 +379,8 @@ export const CREATURE_TAGS: readonly CreatureTag[] = [
   { key: 'beast', name: 'Beast', blurb: 'Animals, ordinary and enormous' },
   { key: 'dragon', name: 'Dragon', blurb: 'Scales, breath and appalling confidence' },
   { key: 'fiend', name: 'Fiend', blurb: 'Out of somewhere worse than here' },
+  { key: 'celestial', name: 'Celestial', blurb: 'From somewhere better, and not always kinder' },
+  { key: 'fey', name: 'Fey', blurb: 'Bound to rules of its own, and it keeps them' },
   { key: 'construct', name: 'Construct', blurb: 'Built rather than born' },
   { key: 'elemental', name: 'Elemental', blurb: 'Fire, water, earth or air, with intent' },
   { key: 'aberration', name: 'Aberration', blurb: 'Wrong in a way that is hard to name' },

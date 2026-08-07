@@ -1,1156 +1,412 @@
-// The paladin: a holy warrior in heavy armour who heals by touch and burns what he
-// hits. Level 1 to 5, then the two oaths from level 2.
+// The Paladin: five premade sheets, level 1 to 5, Oath of Devotion.
 //
-// The build is Strength-first and Charisma-second, which is the one thing a beginner
-// most often gets wrong about the class — the sword is the paladin's main weapon and
-// the magic is what makes each swing hurt more. Constitution is deliberately left at
-// 13 rather than raised, so the ability score improvement at level 3 can go entirely
-// into Strength and no sheet's hit points have to be recomputed from a moved goalpost.
+// Content only — the shape is in ./types.ts, and see barbarian.ts for why an entry is
+// named once and listed rather than written out at every level that carries it.
 //
-// Both oaths share Divine Smite, Lay on Hands and the Aura of Protection, because
-// those are the class rather than the archetype. What differs is the shape of a turn:
-// Devotion stands in front of the party with a shield, Sacred Weapon and spells that
-// protect somebody else; Vengeance picks one enemy, marks it, and swings a greatsword
-// at it until it falls. See ../rules.ts for the wording of the entries reused from the
-// catalogue — Divine Smite, Lay on Hands, Cure Wounds, Bless, Aid, Hold Person and
-// Misty Step are copies of catalogue entries and carry their keys.
+// **The build: Acolyte.** The standard array goes 15 Strength, 14 Charisma, 13
+// Constitution, 12 Wisdom, 10 Dexterity, 8 Intelligence, and the Acolyte background's
+// **+2 Charisma and +1 Wisdom** are already in the numbers below. Insight and Religion
+// are the Acolyte's two skills; Athletics and Persuasion are the class's own.
+//
+// ⚠️ **Divine Smite is a SPELL in 2024, and the catalogue key resolves.** It used to be a
+// class feature this corpus wrote out by hand and `lib/rules.ts` listed among things it
+// called feats; the 2024 conversion made it a level 1 Paladin spell, so the entry below
+// is keyed at `divine-smite` and matches the picker on name, level and category. Paladin's
+// Smite is the *feature* that keeps it prepared and pays for one cast a day — a different
+// line, with the use count on it.
+//
+// **Sacred Weapon spends a Channel Divinity use** and carries none of its own, for the
+// reason cleric.ts sets out at length: nothing in this application lets a child entry
+// spend a parent's pool, so the uses live on one line and the others say which pool they
+// draw on.
 
-import type { ClassLibrary } from './types'
+import { noSkills } from '../sheet'
+import type { ClassLibrary, LibraryEntry } from './types'
+
+const SKILLS = {
+  ...noSkills(),
+  insight: true,
+  religion: true,
+  athletics: true,
+  persuasion: true,
+}
+
+const LONGSWORD: LibraryEntry = {
+  name: 'Longsword',
+  text: 'One hand on the hilt, the other behind a shield, reach 5 feet. Two-handed it would roll a d10, but the shield is worth more than the die.',
+  roll: '1d8+STR',
+  level: null,
+  catalogueKey: null,
+  category: 'weapon',
+  toHit: '1d20+STR+PROF',
+  mastery: 'sap',
+}
+
+const JAVELIN: LibraryEntry = {
+  name: 'Javelin',
+  text: 'Six of them, thrown 30 feet comfortably and 120 at a stretch. What a paladin in plate does about the thing that will not come closer.',
+  roll: '1d6+STR',
+  level: null,
+  catalogueKey: null,
+  category: 'weapon',
+  toHit: '1d20+STR+PROF',
+  mastery: 'slow',
+}
+
+const LAY_ON_HANDS: LibraryEntry = {
+  name: 'Lay On Hands',
+  text: 'A pool of healing worth five hit points per paladin level, refilled on a long rest. A bonus action and a touch spends any part of it; five points from the pool instead ends the Poisoned condition, healing nothing.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const WEAPON_MASTERY: LibraryEntry = {
+  name: 'Weapon Mastery',
+  text: 'You use the mastery property of two kinds of weapon — the Longsword and the Javelin here, so Sap and Slow. After a long rest you can swap either for another weapon you are proficient with.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const MAGIC_INITIATE: LibraryEntry = {
+  name: 'Magic Initiate',
+  text: 'Origin feat. Two cantrips and one 1st-level spell from the Cleric, Druid or Wizard list, cast with an ability you choose when you take this. The 1st-level spell can be cast once a day without a slot, or with any slot you have. Swap one of the three whenever you gain a level.',
+  roll: null,
+  level: null,
+  catalogueKey: 'magic-initiate',
+  category: 'passive',
+}
+
+const DEFENCE: LibraryEntry = {
+  name: 'Defense',
+  text: 'Fighting Style feat. A +1 bonus to Armour Class while you are wearing light, medium or heavy armour.',
+  roll: null,
+  level: null,
+  catalogueKey: 'defense',
+  category: 'passive',
+}
+
+const PALADINS_SMITE: LibraryEntry = {
+  name: "Paladin's Smite",
+  text: 'Divine Smite is always prepared and never counts against your list — and once between long rests you cast it without spending a slot at all. Everything after that costs a slot like anything else.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+  uses: { max: 1, recharge: 'long' },
+}
+
+const CHANNEL_DIVINITY: LibraryEntry = {
+  name: 'Channel Divinity: Divine Sense',
+  text: 'Twice between rests, and one back on a short one. A bonus action opens your awareness for ten minutes: you know where every celestial, fiend and undead within 60 feet is and what it is, and whether anything nearby has been consecrated or desecrated.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+  uses: { max: 2, recharge: 'long', regainOnShortRest: 1 },
+}
+
+const SACRED_WEAPON: LibraryEntry = {
+  name: 'Sacred Weapon',
+  text: 'A second thing to spend a Channel Divinity use on, taken as you attack. For ten minutes your melee weapon adds your Charisma to its attack rolls, deals radiant damage instead of its own if you like, and lights the room for twenty feet.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const ABILITY_SCORE_IMPROVEMENT: LibraryEntry = {
+  name: 'Ability Score Improvement',
+  text: 'General feat, from level 4. Raise one ability score by 2, or two of them by 1 each, to a maximum of 20. It can be taken again every time you are offered a feat. Taken here as +2 Strength.',
+  roll: null,
+  level: null,
+  catalogueKey: 'ability-score-improvement',
+  category: 'passive',
+}
+
+const EXTRA_ATTACK: LibraryEntry = {
+  name: 'Extra Attack',
+  text: 'When you take the Attack action you attack twice instead of once. Two chances a turn to land the swing you want to smite on.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const FAITHFUL_STEED: LibraryEntry = {
+  name: 'Faithful Steed',
+  text: 'Find Steed is always prepared and never counts against your list, and once between long rests you cast it without spending a slot.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+  uses: { max: 1, recharge: 'long' },
+}
+
+// --- spells ---------------------------------------------------------------
+//
+// A paladin casts off Charisma, and the catalogue's healing entries name Wisdom because
+// that is the commonest caster of them. The roll on a keyed entry is tailorable for
+// exactly this — see lib/rules.ts — so Cure Wounds reads `+CHA` here.
+
+const HEROISM: LibraryEntry = {
+  name: 'Heroism',
+  text: 'A creature you touch cannot be frightened while you concentrate, and gains temporary hit points equal to your Charisma at the start of each of its turns.',
+  roll: null,
+  level: 1,
+  catalogueKey: 'heroism',
+  category: 'passive',
+}
+
+const DIVINE_SMITE: LibraryEntry = {
+  name: 'Divine Smite',
+  text: 'A bonus action taken straight after a melee weapon lands, and the blow flares with radiance for this much extra damage. Fiends and undead take an extra d8 on top.',
+  roll: '2d8',
+  level: 1,
+  catalogueKey: 'divine-smite',
+  category: 'action',
+}
+
+const SEARING_SMITE: LibraryEntry = {
+  name: 'Searing Smite',
+  text: 'A bonus action after a hit: the target takes this in fire damage and keeps burning for the same each turn until it or somebody near it puts the flames out with an action.',
+  roll: '1d6',
+  level: 1,
+  catalogueKey: 'searing-smite',
+  category: 'action',
+}
+
+const CURE_WOUNDS: LibraryEntry = {
+  name: 'Cure Wounds',
+  text: 'A hand laid on somebody within reach, and the wound closes. Slower than Lay on Hands and worth considerably more per slot.',
+  roll: '2d8+CHA',
+  level: 1,
+  catalogueKey: 'cure-wounds',
+  category: 'action',
+}
+
+const PROTECTION_FROM_EVIL_AND_GOOD: LibraryEntry = {
+  name: 'Protection from Evil and Good',
+  text: 'A creature you touch is warded for ten minutes against aberrations, celestials, elementals, fey, fiends and undead: they attack it with disadvantage and cannot charm or frighten it.',
+  roll: null,
+  level: 1,
+  catalogueKey: 'protection-from-evil-and-good',
+  category: 'passive',
+}
+
+const SHIELD_OF_FAITH: LibraryEntry = {
+  name: 'Shield of Faith',
+  text: 'A bonus action and a shimmer around somebody within 60 feet: +2 Armour Class for ten minutes while you concentrate.',
+  roll: null,
+  level: 1,
+  catalogueKey: 'shield-of-faith',
+  category: 'passive',
+}
+
+const BLESS: LibraryEntry = {
+  name: 'Bless',
+  text: 'Three creatures within 30 feet add this to every attack roll and every saving throw they make while you concentrate. Unglamorous, and the best level 1 spell in the game.',
+  roll: '1d4',
+  level: 1,
+  catalogueKey: 'bless',
+  category: 'action',
+}
+
+const SHINING_SMITE: LibraryEntry = {
+  name: 'Shining Smite',
+  text: 'A bonus action after a hit: extra radiant damage, and the target sheds light and cannot hide while you concentrate — so everything attacking it rolls with advantage.',
+  roll: '2d6',
+  level: 2,
+  catalogueKey: 'shining-smite',
+  category: 'action',
+}
+
+const AID: LibraryEntry = {
+  name: 'Aid',
+  text: 'Three creatures within 30 feet gain 5 hit points and 5 more of maximum for eight hours. It is healing that arrives before the fight rather than during it.',
+  roll: null,
+  level: 2,
+  catalogueKey: 'aid',
+  category: 'passive',
+}
+
+const ZONE_OF_TRUTH: LibraryEntry = {
+  name: 'Zone of Truth',
+  text: 'A 15-foot sphere within 60 feet, for ten minutes. Everything inside that fails a Charisma save cannot say anything it knows to be false — though it can still decline to answer.',
+  roll: null,
+  level: 2,
+  catalogueKey: 'zone-of-truth',
+  category: 'passive',
+}
+
+const FIND_STEED: LibraryEntry = {
+  name: 'Find Steed',
+  text: 'A spirit in the shape of a horse, a pony or something stranger, bonded to you and intelligent. It comes when you call, and it goes rather than dies.',
+  roll: null,
+  level: 2,
+  catalogueKey: 'find-steed',
+  category: 'passive',
+}
+
+const EQUIPMENT =
+  'Chain mail, a shield, a longsword, six javelins, a holy symbol and a priest\'s pack, plus the acolyte\'s calligrapher\'s supplies, book of prayers, parchment and robe.'
+
+const HIT_DIE = 10
 
 export const PALADIN: ClassLibrary = {
   classKey: 'paladin',
-
-  // ---------------------------------------------------------------------------
-  // Level 1 — before an oath exists to swear
-  // ---------------------------------------------------------------------------
   base: {
-    level: 1,
-    abilities: { str: 15, dex: 10, con: 13, int: 8, wis: 12, cha: 14 },
-    saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-    skillProficiencies: {
-      athletics: true,
-      acrobatics: false,
-      sleightOfHand: false,
-      stealth: false,
-      arcana: false,
-      investigation: false,
-      animalHandling: false,
-      insight: false,
-      perception: false,
-      deception: false,
-      intimidation: false,
-      performance: false,
-      persuasion: true,
+    1: {
+      level: 1,
+      // Strength and Charisma, in that order, because the first swings the sword and the
+      // second pays for every spell, the save DC, Lay on Hands and Sacred Weapon's bonus.
+      // A paladin is the only class where both halves genuinely have to be paid for.
+      abilities: { str: 15, dex: 10, con: 13, int: 8, wis: 13, cha: 16 },
+      saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
+      skillProficiencies: SKILLS,
+      armourClass: 18,
+      maxHp: 11,
+      hitDice: { count: 1, faces: HIT_DIE },
+      feats: [LONGSWORD, JAVELIN, LAY_ON_HANDS, WEAPON_MASTERY, MAGIC_INITIATE],
+      spells: [HEROISM, DIVINE_SMITE],
+      equipment: EQUIPMENT,
+      levellingNotes:
+        'Where you start: the highest Armour Class of anybody at level 1, a pool of healing you hand out a bonus action at a time, and Divine Smite to spend a slot on the moment a swing lands.',
     },
-    armourClass: 18,
-    maxHp: 11,
-    hitDice: { count: 1, faces: 10 },
-    feats: [
-      {
-        name: 'Longsword',
-        text: 'Your sword arm, and the plainest line on the sheet. A swing at something within five feet of you; this is the damage it takes. Your shield is already counted in your Armour Class.',
-        roll: '1d8+STR',
-        level: null,
-        category: 'weapon',
-        toHit: '1d20+STR+PROF',
-        catalogueKey: null,
-      },
-      {
-        name: 'Lay on Hands',
-        text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
-        roll: null,
-        level: null,
-        category: 'passive',
-        catalogueKey: 'lay-on-hands',
-      },
-      {
-        name: 'Divine Sense',
-        text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
-        roll: null,
-        level: null,
-        category: 'passive',
-        catalogueKey: null,
-      },
-    ],
-    spells: [],
-    equipment:
-      'Chain mail, a longsword, a shield bearing your holy symbol, five javelins, a bedroll, rope and a week of rations.',
-    levellingNotes:
-      'You begin as a knight with a healing touch: heavy armour, a sword and shield, and the Lay on Hands pool. There is no magic yet — spells, Divine Smite and your fighting style all arrive at level 2 when you swear an oath.',
+    2: {
+      level: 2,
+      abilities: { str: 15, dex: 10, con: 13, int: 8, wis: 13, cha: 16 },
+      saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
+      skillProficiencies: SKILLS,
+      armourClass: 19,
+      maxHp: 18,
+      hitDice: { count: 2, faces: HIT_DIE },
+      feats: [
+        LONGSWORD,
+        JAVELIN,
+        LAY_ON_HANDS,
+        WEAPON_MASTERY,
+        DEFENCE,
+        PALADINS_SMITE,
+        MAGIC_INITIATE,
+      ],
+      spells: [HEROISM, DIVINE_SMITE, SEARING_SMITE],
+      equipment: EQUIPMENT,
+      levellingNotes:
+        'The Defense fighting style takes your Armour Class to 19, which is very hard to land a hit on at level 2. Paladin\'s Smite keeps Divine Smite prepared for free and pays for one cast a day.',
+    },
   },
-
   paths: {
-    // -------------------------------------------------------------------------
-    // Oath of Devotion — the shining knight, who stands in front of everyone else
-    // -------------------------------------------------------------------------
     devotion: {
-      2: {
-        level: 2,
-        abilities: { str: 15, dex: 10, con: 13, int: 8, wis: 12, cha: 14 },
-        saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: true,
-          perception: false,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: true,
-        },
-        armourClass: 19,
-        maxHp: 18,
-        hitDice: { count: 2, faces: 10 },
-        feats: [
-          {
-            name: 'Longsword',
-            text: 'A swing at something within five feet of you; this is the damage it takes. On a hit you may spend a spell slot for a Divine Smite.',
-            roll: '1d8+STR',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-            catalogueKey: null,
-          },
-          {
-            name: 'Lay on Hands',
-            text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: 'lay-on-hands',
-          },
-          {
-            name: 'Divine Smite',
-            text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage: 2d8 for a 1st-level slot, another 1d8 per level above that, and 1d8 more again against undead and fiends.',
-            roll: '2d8',
-            level: null,
-            category: 'action',
-            catalogueKey: 'divine-smite',
-          },
-          {
-            name: 'Divine Sense',
-            text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Fighting Style: Defence',
-            text: 'While you are wearing armour your Armour Class is 1 higher. It is already counted in the 19 on this sheet.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity: Sacred Weapon',
-            text: 'Once per rest, an action makes your longsword blaze with light for a minute. It sheds bright light 20 feet around you, and while it burns you add your Charisma modifier to every attack roll made with it — so your to-hit becomes the roll listed here.',
-            roll: '1d20+STR+CHA+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Bless',
-            text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
-            roll: '1d4',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'bless',
-          },
-        ],
-        equipment:
-          'Chain mail, a longsword, a shield painted with the emblem of your oath, five javelins, a holy symbol, rope and a week of rations.',
-        levellingNotes:
-          'You swore the Oath of Devotion, and everything arrives at once: spell slots, Divine Smite, and Sacred Weapon to set your sword alight. The Defence fighting style takes your Armour Class to 19, and Insight joins your trained skills.',
-      },
-
       3: {
         level: 3,
-        abilities: { str: 17, dex: 10, con: 13, int: 8, wis: 12, cha: 14 },
+        abilities: { str: 15, dex: 10, con: 13, int: 8, wis: 13, cha: 16 },
         saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: true,
-          perception: false,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: true,
-        },
+        skillProficiencies: SKILLS,
         armourClass: 19,
         maxHp: 25,
-        hitDice: { count: 3, faces: 10 },
+        hitDice: { count: 3, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Longsword',
-            text: 'A swing at something within five feet of you; this is the damage it takes. On a hit you may spend a spell slot for a Divine Smite.',
-            roll: '1d8+STR',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-            catalogueKey: null,
-          },
-          {
-            name: 'Lay on Hands',
-            text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: 'lay-on-hands',
-          },
-          {
-            name: 'Divine Smite',
-            text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage: 2d8 for a 1st-level slot, another 1d8 per level above that, and 1d8 more again against undead and fiends.',
-            roll: '2d8',
-            level: null,
-            category: 'action',
-            catalogueKey: 'divine-smite',
-          },
-          {
-            name: 'Divine Sense',
-            text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Fighting Style: Defence',
-            text: 'While you are wearing armour your Armour Class is 1 higher. It is already counted in the 19 on this sheet.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity: Sacred Weapon',
-            text: 'Once per rest, an action makes your longsword blaze with light for a minute. It sheds bright light 20 feet around you, and while it burns you add your Charisma modifier to every attack roll made with it — so your to-hit becomes the roll listed here.',
-            roll: '1d20+STR+CHA+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity: Turn the Unholy',
-            text: 'The other use of Channel Divinity. Every undead and fiend within 30 feet that fails a Wisdom saving throw spends the next minute trying to get away from you and will not willingly come near you again until it ends.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          LONGSWORD,
+          JAVELIN,
+          LAY_ON_HANDS,
+          WEAPON_MASTERY,
+          DEFENCE,
+          PALADINS_SMITE,
+          CHANNEL_DIVINITY,
+          SACRED_WEAPON,
+          MAGIC_INITIATE,
         ],
         spells: [
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Bless',
-            text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
-            roll: '1d4',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'bless',
-          },
-          {
-            name: 'Shield of Faith',
-            text: 'A bonus action wraps a shimmering field around a creature within 60 feet. Its Armour Class rises by 2 for the next ten minutes, while you concentrate — usually cast on whoever is being hit hardest.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Heroism',
-            text: 'A willing creature you touch cannot be frightened for the next minute, and gains temporary hit points equal to your Charisma modifier at the start of each of its turns while you concentrate.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          HEROISM,
+          DIVINE_SMITE,
+          SEARING_SMITE,
+          CURE_WOUNDS,
+          PROTECTION_FROM_EVIL_AND_GOOD,
+          SHIELD_OF_FAITH,
         ],
-        equipment:
-          'Chain mail, a longsword, a shield painted with the emblem of your oath, five javelins, a holy symbol, rope and a week of rations.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'Both ability points went into Strength, taking it to 17: every swing is +1 to hit and +1 damage, and Athletics improves with it. Turn the Unholy gives Channel Divinity a second use, and Shield of Faith and Heroism join your spells.',
+          'You swear the Oath of Devotion. Channel Divinity twice between rests, Sacred Weapon to add your Charisma to every attack roll for ten minutes, and two oath spells prepared for nothing.',
       },
-
       4: {
         level: 4,
-        abilities: { str: 17, dex: 10, con: 13, int: 8, wis: 12, cha: 14 },
+        // The improvement goes into Strength: 15 → 17. Charisma was the alternative and
+        // lost by one point of Armour Class: 16 is already an even score, so +2 there buys
+        // the save DC and nothing else, while the Strength buys every attack and every
+        // damage roll on a class that swings twice from next level.
+        abilities: { str: 17, dex: 10, con: 13, int: 8, wis: 13, cha: 16 },
         saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: true,
-          perception: false,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: true,
-        },
+        skillProficiencies: SKILLS,
         armourClass: 19,
         maxHp: 32,
-        hitDice: { count: 4, faces: 10 },
+        hitDice: { count: 4, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Longsword',
-            text: 'A swing at something within five feet of you; this is the damage it takes. You now swing twice on your turn, and either hit can carry a Divine Smite.',
-            roll: '1d8+STR',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-            catalogueKey: null,
-          },
-          {
-            name: 'Extra Attack',
-            text: 'When you take the Attack action you attack twice instead of once. Roll each swing separately — this is the single biggest jump the class ever gets, and it doubles what a smite-heavy turn can do.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Lay on Hands',
-            text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: 'lay-on-hands',
-          },
-          {
-            name: 'Divine Smite',
-            text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage: 2d8 for a 1st-level slot, another 1d8 per level above that, and 1d8 more again against undead and fiends.',
-            roll: '2d8',
-            level: null,
-            category: 'action',
-            catalogueKey: 'divine-smite',
-          },
-          {
-            name: 'Divine Sense',
-            text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Fighting Style: Defence',
-            text: 'While you are wearing armour your Armour Class is 1 higher. It is already counted in the 19 on this sheet.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity: Sacred Weapon',
-            text: 'Once per rest, an action makes your longsword blaze with light for a minute. It sheds bright light 20 feet around you, and while it burns you add your Charisma modifier to every attack roll made with it — so your to-hit becomes the roll listed here.',
-            roll: '1d20+STR+CHA+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity: Turn the Unholy',
-            text: 'The other use of Channel Divinity. Every undead and fiend within 30 feet that fails a Wisdom saving throw spends the next minute trying to get away from you and will not willingly come near you again until it ends.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          LONGSWORD,
+          JAVELIN,
+          LAY_ON_HANDS,
+          WEAPON_MASTERY,
+          DEFENCE,
+          PALADINS_SMITE,
+          CHANNEL_DIVINITY,
+          SACRED_WEAPON,
+          ABILITY_SCORE_IMPROVEMENT,
+          MAGIC_INITIATE,
         ],
         spells: [
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Bless',
-            text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
-            roll: '1d4',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'bless',
-          },
-          {
-            name: 'Shield of Faith',
-            text: 'A bonus action wraps a shimmering field around a creature within 60 feet. Its Armour Class rises by 2 for the next ten minutes, while you concentrate — usually cast on whoever is being hit hardest.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Heroism',
-            text: 'A willing creature you touch cannot be frightened for the next minute, and gains temporary hit points equal to your Charisma modifier at the start of each of its turns while you concentrate.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Protection from Evil and Good',
-            text: 'For ten minutes a creature you touch is warded against aberrations, celestials, elementals, fey, fiends and undead: those creatures attack it at disadvantage, and they cannot charm or frighten it at all.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Divine Favour',
-            text: 'A bonus action makes your weapon glow for a minute while you concentrate. Every hit you land with it deals the extra radiant damage listed here, on top of the weapon\'s own.',
-            roll: '1d4',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
+          HEROISM,
+          DIVINE_SMITE,
+          SEARING_SMITE,
+          CURE_WOUNDS,
+          PROTECTION_FROM_EVIL_AND_GOOD,
+          SHIELD_OF_FAITH,
+          BLESS,
         ],
-        equipment:
-          'Chain mail, a longsword, a shield painted with the emblem of your oath, five javelins, a holy symbol, rope and a week of rations.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'Extra Attack — the power spike, brought forward from level 5 because it is the moment the class changes shape. You swing twice every turn now, and either swing can carry a Divine Smite. Protection from Evil and Good and Divine Favour join your spells.',
+          'Strength goes from 15 to 17 — +1 to hit and +1 damage on every swing — and Bless joins the list, which is the spell you cast before the fight rather than during it.',
       },
-
       5: {
         level: 5,
-        abilities: { str: 17, dex: 10, con: 13, int: 8, wis: 12, cha: 14 },
+        abilities: { str: 17, dex: 10, con: 13, int: 8, wis: 13, cha: 16 },
         saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: true,
-          perception: false,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: true,
-        },
+        skillProficiencies: SKILLS,
         armourClass: 19,
         maxHp: 39,
-        hitDice: { count: 5, faces: 10 },
+        hitDice: { count: 5, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Longsword',
-            text: 'A swing at something within five feet of you; this is the damage it takes. You swing twice on your turn, and either hit can carry a Divine Smite.',
-            roll: '1d8+STR',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-            catalogueKey: null,
-          },
-          {
-            name: 'Extra Attack',
-            text: 'When you take the Attack action you attack twice instead of once. Roll each swing separately — this is the single biggest jump the class ever gets, and it doubles what a smite-heavy turn can do.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Aura of Protection',
-            text: 'While you are conscious, you and every ally within 10 feet of you add your Charisma modifier to every saving throw. It is always on and needs nothing spent — standing near the paladin is the point of the paladin.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Lay on Hands',
-            text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: 'lay-on-hands',
-          },
-          {
-            name: 'Divine Smite',
-            text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage. A 2nd-level slot now deals the 3d8 listed here, and it is 1d8 more again against undead and fiends.',
-            roll: '3d8',
-            level: null,
-            category: 'action',
-            catalogueKey: 'divine-smite',
-          },
-          {
-            name: 'Divine Sense',
-            text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Fighting Style: Defence',
-            text: 'While you are wearing armour your Armour Class is 1 higher. It is already counted in the 19 on this sheet.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity: Sacred Weapon',
-            text: 'Once per rest, an action makes your longsword blaze with light for a minute. It sheds bright light 20 feet around you, and while it burns you add your Charisma modifier to every attack roll made with it — so your to-hit becomes the roll listed here.',
-            roll: '1d20+STR+CHA+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity: Turn the Unholy',
-            text: 'The other use of Channel Divinity. Every undead and fiend within 30 feet that fails a Wisdom saving throw spends the next minute trying to get away from you and will not willingly come near you again until it ends.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          LONGSWORD,
+          JAVELIN,
+          LAY_ON_HANDS,
+          WEAPON_MASTERY,
+          DEFENCE,
+          PALADINS_SMITE,
+          CHANNEL_DIVINITY,
+          SACRED_WEAPON,
+          EXTRA_ATTACK,
+          FAITHFUL_STEED,
+          ABILITY_SCORE_IMPROVEMENT,
+          MAGIC_INITIATE,
         ],
         spells: [
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Bless',
-            text: 'Up to three creatures add the die to every attack roll and every saving throw they make for the next minute, while you concentrate.',
-            roll: '1d4',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'bless',
-          },
-          {
-            name: 'Shield of Faith',
-            text: 'A bonus action wraps a shimmering field around a creature within 60 feet. Its Armour Class rises by 2 for the next ten minutes, while you concentrate — usually cast on whoever is being hit hardest.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Heroism',
-            text: 'A willing creature you touch cannot be frightened for the next minute, and gains temporary hit points equal to your Charisma modifier at the start of each of its turns while you concentrate.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Protection from Evil and Good',
-            text: 'For ten minutes a creature you touch is warded against aberrations, celestials, elementals, fey, fiends and undead: those creatures attack it at disadvantage, and they cannot charm or frighten it at all.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Divine Favour',
-            text: 'A bonus action makes your weapon glow for a minute while you concentrate. Every hit you land with it deals the extra radiant damage listed here, on top of the weapon\'s own.',
-            roll: '1d4',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Aid',
-            text: 'Three creatures gain 5 hit points, to both their current and their maximum, for eight hours. Another 5 for each slot level above 2nd.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: 'aid',
-          },
-          {
-            name: 'Warding Bond',
-            text: 'Bind yourself to a willing creature for an hour. Its Armour Class and its saving throws each improve by 1, and it takes only half of any damage dealt to it — you take the other half yourself, however far away you are.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          HEROISM,
+          DIVINE_SMITE,
+          SEARING_SMITE,
+          CURE_WOUNDS,
+          PROTECTION_FROM_EVIL_AND_GOOD,
+          SHIELD_OF_FAITH,
+          BLESS,
+          SHINING_SMITE,
+          AID,
+          ZONE_OF_TRUTH,
+          FIND_STEED,
         ],
-        equipment:
-          'Chain mail, a longsword, a shield painted with the emblem of your oath, five javelins, a holy symbol, rope and a week of rations.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'Second-level spell slots arrive, so Divine Smite now hits for 3d8 and Aid and Warding Bond join your list. The real prize is Aura of Protection: every ally standing beside you gets better at saving throws, for nothing.',
-      },
-    },
-
-    // -------------------------------------------------------------------------
-    // Oath of Vengeance — pick one enemy, mark it, and do not stop
-    // -------------------------------------------------------------------------
-    vengeance: {
-      2: {
-        level: 2,
-        abilities: { str: 15, dex: 10, con: 13, int: 8, wis: 12, cha: 14 },
-        saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: false,
-          deception: false,
-          intimidation: true,
-          performance: false,
-          persuasion: true,
-        },
-        armourClass: 17,
-        maxHp: 18,
-        hitDice: { count: 2, faces: 10 },
-        feats: [
-          {
-            name: 'Greatsword',
-            text: 'Two hands, no shield. A swing at something within five feet of you; this is the damage it takes. On a hit you may spend a spell slot for a Divine Smite.',
-            roll: '2d6+STR',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-            catalogueKey: null,
-          },
-          {
-            name: 'Lay on Hands',
-            text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: 'lay-on-hands',
-          },
-          {
-            name: 'Divine Smite',
-            text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage: 2d8 for a 1st-level slot, another 1d8 per level above that, and 1d8 more again against undead and fiends.',
-            roll: '2d8',
-            level: null,
-            category: 'action',
-            catalogueKey: 'divine-smite',
-          },
-          {
-            name: 'Divine Sense',
-            text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Fighting Style: Great Weapon Fighting',
-            text: 'When a two-handed weapon rolls a 1 or a 2 for damage, reroll that die and take the new number, even if it is worse. Your greatsword lands closer to its best far more often.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity: Vow of Enmity',
-            text: 'Once per rest, a bonus action swears vengeance on one creature you can see within 10 feet. For the next minute every attack you make against that one enemy is rolled with advantage — the oath in a single line.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Bane',
-            text: 'Up to three creatures within 30 feet subtract the die from every attack roll and saving throw they make for the next minute, while you concentrate. Each one that succeeds on a Charisma saving throw shrugs it off.',
-            roll: '1d4',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-        ],
-        equipment:
-          'Chain mail over a scarred breastplate, a greatsword, five javelins, a holy symbol, a hunting horn, rope and a week of rations.',
-        levellingNotes:
-          'You swore the Oath of Vengeance and put the shield down for a greatsword: 2d6 damage instead of 1d8, and Armour Class 17 instead of 18. Vow of Enmity marks one enemy to hunt, Divine Smite and spell slots arrive with the oath, and Intimidation joins your trained skills.',
-      },
-
-      3: {
-        level: 3,
-        abilities: { str: 17, dex: 10, con: 13, int: 8, wis: 12, cha: 14 },
-        saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: false,
-          deception: false,
-          intimidation: true,
-          performance: false,
-          persuasion: true,
-        },
-        armourClass: 17,
-        maxHp: 25,
-        hitDice: { count: 3, faces: 10 },
-        feats: [
-          {
-            name: 'Greatsword',
-            text: 'Two hands, no shield. A swing at something within five feet of you; this is the damage it takes. On a hit you may spend a spell slot for a Divine Smite.',
-            roll: '2d6+STR',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-            catalogueKey: null,
-          },
-          {
-            name: 'Lay on Hands',
-            text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: 'lay-on-hands',
-          },
-          {
-            name: 'Divine Smite',
-            text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage: 2d8 for a 1st-level slot, another 1d8 per level above that, and 1d8 more again against undead and fiends.',
-            roll: '2d8',
-            level: null,
-            category: 'action',
-            catalogueKey: 'divine-smite',
-          },
-          {
-            name: 'Divine Sense',
-            text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Fighting Style: Great Weapon Fighting',
-            text: 'When a two-handed weapon rolls a 1 or a 2 for damage, reroll that die and take the new number, even if it is worse. Your greatsword lands closer to its best far more often.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity: Vow of Enmity',
-            text: 'Once per rest, a bonus action swears vengeance on one creature you can see within 10 feet. For the next minute every attack you make against that one enemy is rolled with advantage — the oath in a single line.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity: Abjure Enemy',
-            text: 'The other use of Channel Divinity. Name one creature you can see within 60 feet: unless it succeeds on a Wisdom saving throw it is frightened of you for a minute, and attacks at disadvantage for as long as it can see you.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Bane',
-            text: 'Up to three creatures within 30 feet subtract the die from every attack roll and saving throw they make for the next minute, while you concentrate. Each one that succeeds on a Charisma saving throw shrugs it off.',
-            roll: '1d4',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: "Hunter's Mark",
-            text: 'A bonus action marks one creature you can see as your quarry for the next hour, while you concentrate. Every weapon hit you land on it deals the extra damage listed here, and if it dies you may mark something else.',
-            roll: '1d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Wrathful Smite',
-            text: 'A bonus action: your next weapon hit within the minute carries psychic force as well, and the target must succeed on a Wisdom saving throw or be frightened of you while you concentrate.',
-            roll: '1d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-        ],
-        equipment:
-          'Chain mail over a scarred breastplate, a greatsword, five javelins, a holy symbol, a hunting horn, rope and a week of rations.',
-        levellingNotes:
-          'Both ability points went into Strength, taking it to 17: the greatsword is +1 to hit and +1 damage on every swing. Abjure Enemy gives Channel Divinity a second use, and Hunter\'s Mark and Wrathful Smite give you two more ways to punish one chosen foe.',
-      },
-
-      4: {
-        level: 4,
-        abilities: { str: 17, dex: 10, con: 13, int: 8, wis: 12, cha: 14 },
-        saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: false,
-          deception: false,
-          intimidation: true,
-          performance: false,
-          persuasion: true,
-        },
-        armourClass: 17,
-        maxHp: 32,
-        hitDice: { count: 4, faces: 10 },
-        feats: [
-          {
-            name: 'Greatsword',
-            text: 'Two hands, no shield. A swing at something within five feet of you; this is the damage it takes. You now swing twice on your turn, and either hit can carry a Divine Smite.',
-            roll: '2d6+STR',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-            catalogueKey: null,
-          },
-          {
-            name: 'Extra Attack',
-            text: 'When you take the Attack action you attack twice instead of once. Roll each swing separately — and with Vow of Enmity sworn, both of them are rolled with advantage against your quarry.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Lay on Hands',
-            text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: 'lay-on-hands',
-          },
-          {
-            name: 'Divine Smite',
-            text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage: 2d8 for a 1st-level slot, another 1d8 per level above that, and 1d8 more again against undead and fiends.',
-            roll: '2d8',
-            level: null,
-            category: 'action',
-            catalogueKey: 'divine-smite',
-          },
-          {
-            name: 'Divine Sense',
-            text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Fighting Style: Great Weapon Fighting',
-            text: 'When a two-handed weapon rolls a 1 or a 2 for damage, reroll that die and take the new number, even if it is worse. Your greatsword lands closer to its best far more often.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity: Vow of Enmity',
-            text: 'Once per rest, a bonus action swears vengeance on one creature you can see within 10 feet. For the next minute every attack you make against that one enemy is rolled with advantage — the oath in a single line.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity: Abjure Enemy',
-            text: 'The other use of Channel Divinity. Name one creature you can see within 60 feet: unless it succeeds on a Wisdom saving throw it is frightened of you for a minute, and attacks at disadvantage for as long as it can see you.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Bane',
-            text: 'Up to three creatures within 30 feet subtract the die from every attack roll and saving throw they make for the next minute, while you concentrate. Each one that succeeds on a Charisma saving throw shrugs it off.',
-            roll: '1d4',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: "Hunter's Mark",
-            text: 'A bonus action marks one creature you can see as your quarry for the next hour, while you concentrate. Every weapon hit you land on it deals the extra damage listed here, and if it dies you may mark something else.',
-            roll: '1d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Wrathful Smite',
-            text: 'A bonus action: your next weapon hit within the minute carries psychic force as well, and the target must succeed on a Wisdom saving throw or be frightened of you while you concentrate.',
-            roll: '1d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Searing Smite',
-            text: 'A bonus action: your next weapon hit sets the target alight. It takes the damage again at the start of each of its turns until it or somebody beside it beats out the flames with a Constitution saving throw.',
-            roll: '1d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Divine Favour',
-            text: 'A bonus action makes your weapon glow for a minute while you concentrate. Every hit you land with it deals the extra radiant damage listed here, on top of the weapon\'s own.',
-            roll: '1d4',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-        ],
-        equipment:
-          'Chain mail over a scarred breastplate, a greatsword, five javelins, a holy symbol, a hunting horn, rope and a week of rations.',
-        levellingNotes:
-          'Extra Attack — the power spike, brought forward from level 5 because it is the moment the class changes shape. Two greatsword swings a turn, both at advantage once Vow of Enmity is sworn, and either can carry a Divine Smite. Searing Smite and Divine Favour join your spells.',
-      },
-
-      5: {
-        level: 5,
-        abilities: { str: 17, dex: 10, con: 13, int: 8, wis: 12, cha: 14 },
-        saveProficiencies: { str: false, dex: false, con: false, int: false, wis: true, cha: true },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: false,
-          deception: false,
-          intimidation: true,
-          performance: false,
-          persuasion: true,
-        },
-        armourClass: 17,
-        maxHp: 39,
-        hitDice: { count: 5, faces: 10 },
-        feats: [
-          {
-            name: 'Greatsword',
-            text: 'Two hands, no shield. A swing at something within five feet of you; this is the damage it takes. You swing twice on your turn, and either hit can carry a Divine Smite.',
-            roll: '2d6+STR',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-            catalogueKey: null,
-          },
-          {
-            name: 'Extra Attack',
-            text: 'When you take the Attack action you attack twice instead of once. Roll each swing separately — and with Vow of Enmity sworn, both of them are rolled with advantage against your quarry.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Aura of Protection',
-            text: 'While you are conscious, you and every ally within 10 feet of you add your Charisma modifier to every saving throw. It is always on and needs nothing spent — standing near the paladin is the point of the paladin.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Lay on Hands',
-            text: 'A pool of healing worth five hit points per paladin level, spent by touch in any amounts across the day. Five points from the pool can instead end one disease or one poison.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: 'lay-on-hands',
-          },
-          {
-            name: 'Divine Smite',
-            text: 'Spend a spell slot as you hit with a melee weapon to sear the target with radiant damage. A 2nd-level slot now deals the 3d8 listed here, and it is 1d8 more again against undead and fiends.',
-            roll: '3d8',
-            level: null,
-            category: 'action',
-            catalogueKey: 'divine-smite',
-          },
-          {
-            name: 'Divine Sense',
-            text: 'A moment of stillness tells you where every celestial, fiend and undead within 60 feet is standing, and whether the ground you are on has been hallowed or defiled. A few times a day.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Fighting Style: Great Weapon Fighting',
-            text: 'When a two-handed weapon rolls a 1 or a 2 for damage, reroll that die and take the new number, even if it is worse. Your greatsword lands closer to its best far more often.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity: Vow of Enmity',
-            text: 'Once per rest, a bonus action swears vengeance on one creature you can see within 10 feet. For the next minute every attack you make against that one enemy is rolled with advantage — the oath in a single line.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Channel Divinity: Abjure Enemy',
-            text: 'The other use of Channel Divinity. Name one creature you can see within 60 feet: unless it succeeds on a Wisdom saving throw it is frightened of you for a minute, and attacks at disadvantage for as long as it can see you.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Bane',
-            text: 'Up to three creatures within 30 feet subtract the die from every attack roll and saving throw they make for the next minute, while you concentrate. Each one that succeeds on a Charisma saving throw shrugs it off.',
-            roll: '1d4',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: "Hunter's Mark",
-            text: 'A bonus action marks one creature you can see as your quarry for the next hour, while you concentrate. Every weapon hit you land on it deals the extra damage listed here, and if it dies you may mark something else.',
-            roll: '1d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Wrathful Smite',
-            text: 'A bonus action: your next weapon hit within the minute carries psychic force as well, and the target must succeed on a Wisdom saving throw or be frightened of you while you concentrate.',
-            roll: '1d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Searing Smite',
-            text: 'A bonus action: your next weapon hit sets the target alight. It takes the damage again at the start of each of its turns until it or somebody beside it beats out the flames with a Constitution saving throw.',
-            roll: '1d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Divine Favour',
-            text: 'A bonus action makes your weapon glow for a minute while you concentrate. Every hit you land with it deals the extra radiant damage listed here, on top of the weapon\'s own.',
-            roll: '1d4',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Misty Step',
-            text: 'A bonus action: you vanish in a puff of silver mist and reappear in an unoccupied space you can see up to 30 feet away.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: 'misty-step',
-          },
-          {
-            name: 'Hold Person',
-            text: 'One humanoid within 60 feet is held rigid — unable to move, act or speak — while you concentrate, and repeats its Wisdom saving throw at the end of each of its turns. Attacks made against it from within five feet are critical hits.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: 'hold-person',
-          },
-        ],
-        equipment:
-          'Chain mail over a scarred breastplate, a greatsword, five javelins, a holy symbol, a hunting horn, rope and a week of rations.',
-        levellingNotes:
-          'Second-level spell slots arrive, so Divine Smite hits for 3d8, Misty Step puts you beside your quarry and Hold Person takes one humanoid out of the fight. Aura of Protection makes every saving throw better for you and for every ally within ten feet.',
+          'Extra Attack, so there are two chances a turn to land the blow you want to smite on. Level 2 spells arrive with the oath\'s Aid and Zone of Truth, and Faithful Steed calls up a mount that is more of a person than a horse.',
       },
     },
   },

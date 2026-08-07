@@ -1,9 +1,16 @@
 import { describe, expect, test } from 'vitest'
+import {
+  MAX_CREATURE_ABILITIES,
+  MAX_CREATURE_ATTACKS,
+  MAX_CREATURE_SKILLS,
+} from './bestiary/types'
 
 import {
   BESTIARY,
   BESTIARY_FILES,
   BESTIARY_KEY_COUNT,
+  RETIRED_ENTRIES,
+  RETIRED_KEYS,
   bestiaryEntry,
   type BestiaryCategory,
   type BestiaryCombat,
@@ -47,9 +54,11 @@ import type { NpcSheet, SheetEntry, StoredSheet } from './sheet'
 // The corpus, enumerated once.
 //
 // Every loop below walks this list rather than naming a creature, because the
-// failure this file exists to catch is the one stat block out of a hundred and
-// twenty-nine that nobody re-read. A per-creature test would only ever be as
-// good as the creatures somebody remembered to write one for.
+// failure this file exists to catch is the one stat block out of two hundred and
+// eighty-three that nobody re-read. A per-creature test would only ever be as
+// good as the creatures somebody remembered to write one for — and since the 2024
+// conversion two hundred and fifty-three of them arrived in a single generated
+// commit, which is exactly the change nobody re-reads line by line.
 //
 // This is `library.test.ts`'s architecture applied to the bestiary, and the
 // anti-vacuity gate it opens with is load-bearing for the same reason: a corpus
@@ -57,12 +66,65 @@ import type { NpcSheet, SheetEntry, StoredSheet } from './sheet'
 // asserting a fifth less.
 // ---------------------------------------------------------------------------
 
-/** How many creatures the corpus is supposed to hold, and how many files it is spread over. */
-const EXPECTED_ENTRIES = 129
+/**
+ * How many creatures the corpus is supposed to hold, and how many files it is spread over.
+ *
+ * **253 transcribed from the D&D 5e (2024) SRD 5.2.1 plus 30 authored**, which is the split
+ * every count in this file is against: `monstersLow`, `monstersMid`, `monstersHigh` and
+ * `enemies` are generated from the SRD's own stat blocks at CR 0–6, and `social.ts`' thirty
+ * townspeople have no SRD source at all because the SRD has no innkeeper.
+ */
+const EXPECTED_TRANSCRIBED = 253
+const EXPECTED_AUTHORED = 30
+const EXPECTED_ENTRIES = EXPECTED_TRANSCRIBED + EXPECTED_AUTHORED
 const EXPECTED_FILES = 5
 
 /** The ten ratings, as the array every loop steps through. */
 const RATINGS: readonly ChallengeRating[] = CR_VALUES
+
+/**
+ * Every entry key the corpus published before the 2024 conversion — the 129 creatures of
+ * the hand-written bestiary, in the order their five content files declared them.
+ *
+ * ⚠️ **This is a historical record and it must never be edited to make a test pass.** It is
+ * the input to the retirement ledger below: a key here that no longer resolves and is not in
+ * `RETIRED_ENTRIES` is a creature that lost its statline in somebody's live game without
+ * anybody deciding it should. Deleting a line makes the check pass and the loss real.
+ *
+ * It lives in the test rather than in `retired.ts` because nothing in production has any use
+ * for it. `retired.ts` records the keys that *stopped* resolving, which is a list a
+ * maintainer reads; this is the ledger that list is checked against.
+ *
+ * **A future corpus change appends to this**, with the keys it is about to publish, at the
+ * moment it publishes them.
+ */
+const KEYS_PUBLISHED_BEFORE_2024: readonly string[] = [
+  // monstersLow.ts
+  'rat', 'raven', 'crawling-claw', 'kobold', 'stirge', 'giant-rat', 'giant-crab', 'shrieker',
+  'goblin', 'skeleton', 'zombie', 'wolf', 'giant-spider', 'scale-sorcerer', 'orc', 'hobgoblin',
+  'magmin', 'giant-wasp', 'grey-ooze', 'thri-kreen', 'bugbear', 'dire-wolf', 'ghoul', 'harpy',
+  'brown-bear', 'animated-armour', 'imp',
+  // monstersMid.ts
+  'ogre', 'ankheg', 'mimic', 'gelatinous-cube', 'rust-monster', 'grick', 'merrow', 'nothic',
+  'myconid-sovereign', 'peryton', 'gargoyle', 'owlbear', 'minotaur', 'hell-hound', 'manticore',
+  'ankylosaurus', 'basilisk', 'displacer-beast', 'green-hag', 'bearded-devil', 'wight', 'mummy',
+  // monstersHigh.ts
+  'troll', 'ettin', 'ghost', 'banshee', 'fire-elemental', 'water-elemental', 'air-elemental',
+  'earth-elemental', 'flesh-golem', 'black-pudding', 'chuul', 'young-white-dragon',
+  'young-black-dragon', 'young-green-dragon', 'chimera', 'hydra', 'wyvern', 'medusa', 'cyclops',
+  'wraith',
+  // enemies.ts
+  'town-guard', 'bandit', 'cultist', 'thug', 'bandit-archer', 'acolyte', 'scout', 'watch-sergeant',
+  'zealot', 'goblin-boss', 'hedge-witch', 'spy', 'sellsword', 'bandit-captain', 'berserker',
+  'cult-fanatic', 'priest', 'archer', 'knight', 'veteran', 'illusionist', 'orc-warchief', 'druid',
+  'inquisitor', 'swashbuckler', 'gladiator', 'war-priest', 'mage', 'warlord', 'assassin',
+  // social.ts — all thirty survived untouched, being the authored part of the corpus.
+  'innkeeper', 'barmaid', 'farmer', 'shepherd', 'miller', 'blacksmith', 'stablemaster', 'healer',
+  'herbalist', 'hunter', 'gravedigger', 'mayor', 'ferryman', 'harbourmaster', 'fisherman', 'sailor',
+  'shipwright', 'lighthouse-keeper', 'net-mender', 'merchant', 'noble', 'scholar', 'scribe',
+  'toymaker', 'beggar', 'moneylender', 'tax-collector', 'caravan-guard', 'retired-adventurer',
+  'miner',
+]
 
 type Placed = {
   entry: BestiaryEntry
@@ -93,10 +155,17 @@ function rowFor(cr: ChallengeRating): CrBenchmark {
 // d100 and ability tokens, and content rule 8 admits neither. `isValidRoll` is
 // asserted alongside this rather than replaced by it — a copied regex that was
 // the whole check would keep passing after the real grammar tightened.
+//
+// ⚠️ **`d2` was added by the 2024 transcription, and it is the corpus's first
+// use of the face the board-polishing milestone put in the grammar.** Sixteen
+// CR 0 creatures in the SRD deal a printed flat `1` with no dice at all, and two
+// more deal `1d4 − 1`; both average what `1d2` averages. Rounding them up to
+// `1d4` would have inflated the weakest creatures in the corpus by two thirds at
+// the one rating where `hp[0]` and `damage[0]` make every deviation loudest.
 // ---------------------------------------------------------------------------
 
-const CORPUS_ROLL = /^\d{1,2}d(4|6|8|10|12)([+-]\d{1,3})?$/
-const ROLL_PARTS = /^(\d{1,2})d(4|6|8|10|12)([+-]\d{1,3})?$/
+const CORPUS_ROLL = /^\d{1,2}d(2|4|6|8|10|12)([+-]\d{1,3})?$/
+const ROLL_PARTS = /^(\d{1,2})d(2|4|6|8|10|12)([+-]\d{1,3})?$/
 
 type Roll = { count: number; faces: number; modifier: number }
 
@@ -172,7 +241,7 @@ describe('the bestiary is complete', () => {
     expect(BESTIARY_FILES.reduce((sum, file) => sum + file.entries.length, 0)).toBe(
       EXPECTED_ENTRIES,
     )
-    expect(FIGHTERS.length).toBeGreaterThan(90)
+    expect(FIGHTERS.length).toBeGreaterThan(250)
   })
 
   /**
@@ -201,6 +270,18 @@ describe('the bestiary is complete', () => {
     expect(offenders).toEqual([])
   })
 
+  /**
+   * ⚠️ **The proportions the spec asked for were 60–80 monsters, 25–35 enemies and 25–35
+   * social NPCs, and the 2024 conversion superseded the first of those rather than missing
+   * it.** The roadmap's *"roughly 110–150 entries"* described a corpus somebody was going to
+   * hand-write; what shipped instead is the SRD's whole CR 0–6 range transcribed, which is
+   * two hundred and twenty-two monsters. The other two bands are unchanged and still met.
+   *
+   * The bands are kept rather than replaced by exact numbers because they are a statement
+   * about *shape* — a bestiary that is nine-tenths humanoid enemies is the wrong shelf,
+   * whatever its size — and because the transcribed count is already pinned exactly by
+   * `EXPECTED_TRANSCRIBED` above.
+   */
   test('spreads its creatures across the three tabs in the proportions the spec asks for', () => {
     // Grouped from the files, because `BestiaryFile.category` is where a category is
     // declared — a whole file cannot be filed under two categories by a typo in one
@@ -215,12 +296,16 @@ describe('the bestiary is complete', () => {
       ]),
     )
 
-    expect(counts.get('monster')).toBeGreaterThanOrEqual(60)
-    expect(counts.get('monster')).toBeLessThanOrEqual(80)
+    expect(counts.get('monster')).toBeGreaterThanOrEqual(200)
+    expect(counts.get('monster')).toBeLessThanOrEqual(240)
     expect(counts.get('enemy')).toBeGreaterThanOrEqual(25)
     expect(counts.get('enemy')).toBeLessThanOrEqual(35)
-    expect(counts.get('social')).toBeGreaterThanOrEqual(25)
-    expect(counts.get('social')).toBeLessThanOrEqual(35)
+    expect(counts.get('social')).toBe(EXPECTED_AUTHORED)
+
+    // And the two provenances add up. The four transcribed files are the monster and enemy
+    // tabs; the authored thirty are the whole of the social one. A creature that had drifted
+    // between the two would show here before it showed anywhere else.
+    expect((counts.get('monster') ?? 0) + (counts.get('enemy') ?? 0)).toBe(EXPECTED_TRANSCRIBED)
 
     // Every creature is under exactly one tab and none has been dropped — which, grouped
     // from the files, is the same statement as every file naming one of the three.
@@ -245,6 +330,62 @@ describe('the bestiary is complete', () => {
     for (const key of ['', 'nope', '__proto__', 'toString', 'constructor']) {
       expect(bestiaryEntry(key), key).toBeUndefined()
     }
+  })
+
+  /**
+   * ⚠️⚠️ **THE RETIREMENT LEDGER, AND THE MOST CONSEQUENTIAL TEST IN THIS FILE.**
+   *
+   * A `bestiary` stored sheet is a **link and not a copy**: a character holds nothing but
+   * an `entryKey` and a rating, and the hit points, armour class, attacks, abilities and
+   * every label are read back out of the corpus on every query. So a key that stops
+   * resolving does not degrade a creature — `resolveBestiary` takes its first branch and the
+   * creature becomes a blank NPC sheet, mid-session, in every game that ever named it.
+   *
+   * **That loss is silent at the moment it happens.** Nothing throws, nothing logs, the
+   * panel still paints, and the goblin simply has no numbers any more. The 2024 conversion
+   * replaced the whole corpus, which is precisely the change that causes it wholesale.
+   *
+   * So every key the corpus has ever published is enumerated below, and each one must
+   * either **still resolve** or **appear in `RETIRED_ENTRIES` with a reason**. That converts
+   * a silent data loss into a list somebody signed off — and it is checked in both
+   * directions, because a retirement note about a creature that is actually still there is
+   * a lie the next reader will believe.
+   */
+  test('accounts for every key the corpus has ever published', () => {
+    expect(KEYS_PUBLISHED_BEFORE_2024).toHaveLength(129)
+    expect(new Set(KEYS_PUBLISHED_BEFORE_2024).size).toBe(KEYS_PUBLISHED_BEFORE_2024.length)
+
+    const unaccounted: string[] = []
+    let resolving = 0
+    for (const key of KEYS_PUBLISHED_BEFORE_2024) {
+      if (bestiaryEntry(key) !== undefined) {
+        resolving += 1
+        continue
+      }
+      if (!RETIRED_KEYS.has(key)) unaccounted.push(key)
+    }
+    expect(unaccounted).toEqual([])
+    // 75 transcribed creatures kept their key through `KEY_ALIASES`, plus all 30 authored
+    // social NPCs. Stated so that a conversion which quietly retired forty more is a
+    // failure rather than a longer list nobody read.
+    expect(resolving).toBe(105)
+
+    // The other direction: a key on the retirement list that resolves again is a note that
+    // has become false. Deleting the line is the fix, and this is what asks for it.
+    const backFromTheDead = RETIRED_ENTRIES.filter((entry) => bestiaryEntry(entry.key) !== undefined)
+    expect(backFromTheDead.map((entry) => entry.key)).toEqual([])
+    expect(RETIRED_ENTRIES).toHaveLength(24)
+
+    // Every retirement carries a reason a person can act on. An empty note is a line that
+    // records the loss without recording why, which is the state this file exists to avoid.
+    const thin = RETIRED_ENTRIES.filter(
+      (entry) => entry.note.trim().length < 20 || entry.name.trim() === '',
+    )
+    expect(thin.map((entry) => entry.key)).toEqual([])
+    // All three reasons are used, or one of them is a category nobody actually needed.
+    expect(new Set(RETIRED_ENTRIES.map((entry) => entry.reason))).toEqual(
+      new Set(['above-cr-6', 'not-in-srd', 'authored-and-dropped']),
+    )
   })
 
   /** The table and the rating list are one fact written twice. `benchmarks.ts` asks for this. */
@@ -424,18 +565,36 @@ describe('every creature is described in the shared vocabulary', () => {
 // ---------------------------------------------------------------------------
 
 describe('every fighting creature sits a sensible distance from its benchmark row', () => {
-  test('has hit points between 0.40x and 2.60x of the row', () => {
+  /**
+   * ⚠️ **CR 0 IS EXCLUDED FROM THE RATIO BOUNDS AND CHECKED SEPARATELY BELOW, AND THAT IS
+   * THE ONE STRUCTURAL CHANGE THE 2024 TRANSCRIPTION MADE TO THIS SECTION.**
+   *
+   * `hp[0]` and `damage[0]` are **anti-amplification floors** rather than fits — 4 and 2,
+   * where the SRD's own CR 0 creatures would say 3 and 1 — so a ratio measured against them
+   * is not measuring the same thing the other nine rows measure. The SRD's CR 0 range runs
+   * from a 1-hit-point Bat to a 13-hit-point Shrieker Fungus, which is 0.25× to 3.25× of a
+   * row that was deliberately not fitted to them.
+   *
+   * Folding that into one bound would have meant a bound of 0.25–3.30 on every rating, which
+   * is a bound nothing could fail. Two rules, each tight against what it actually governs, is
+   * the trade: **0.50–1.95 for the nine fitted rows**, and an absolute hit-point range for
+   * CR 0.
+   */
+  const RATED = FIGHTERS.filter(({ entry }) => entry.cr > 0)
+
+  test('has hit points between 0.50x and 1.95x of the row', () => {
     const offenders: string[] = []
-    for (const { label, entry, combat } of FIGHTERS) {
+    for (const { label, entry, combat } of RATED) {
       const row = rowFor(entry.cr)
       const ratio = combat.maxHp / row.hp
-      if (ratio < 0.4 || ratio > 2.6) {
+      if (ratio < 0.5 || ratio > 1.95) {
         offenders.push(
-          `${label} (CR ${entry.cr}, ${entry.role}): maxHp ${combat.maxHp} is ${ratio.toFixed(2)}x row ${row.hp}, bound 0.40-2.60`,
+          `${label} (CR ${entry.cr}, ${entry.role}): maxHp ${combat.maxHp} is ${ratio.toFixed(2)}x row ${row.hp}, bound 0.50-1.95`,
         )
       }
     }
     expect(offenders).toEqual([])
+    expect(RATED.length).toBeGreaterThan(200)
   })
 
   /**
@@ -443,10 +602,22 @@ describe('every fighting creature sits a sensible distance from its benchmark ro
    * measured per attack reads three times under budget and every Multiattack
    * brute in the corpus passes; measured as a sum, the figure is what the party
    * actually takes in a round, which is what the row means.
+   *
+   * That is why a Multiattack of *"two Rend attacks"* is stored as `Rend` and `Second
+   * Rend` — see `attackName` in scripts/srd/creatures.mjs — and it is also why the
+   * benchmark table's `damage` column was re-derived on exactly this quantity. The column
+   * and this check are calibrated against one another rather than against two ideas of what
+   * a round is.
+   *
+   * **A creature the SRD gives no attack at all contributes no ratio**, which is two of the
+   * two hundred and fifty-three: the Shrieker Fungus, which shrieks, and the Seahorse, which
+   * does nothing. Measuring zero against the row would fail every bound there is, and the
+   * honest reading is that there is nothing here to measure.
    */
-  test('deals between 0.50x and 2.20x of the row in a round, summed over its attacks', () => {
+  test('deals between 0.40x and 2.00x of the row in a round, summed over its attacks', () => {
     const offenders: string[] = []
-    for (const { label, entry, combat } of FIGHTERS) {
+    let measured = 0
+    for (const { label, entry, combat } of RATED) {
       const row = rowFor(entry.cr)
       let total = 0
       for (const attack of combat.attacks) {
@@ -457,36 +628,63 @@ describe('every fighting creature sits a sensible distance from its benchmark ro
         }
         total += averageOf(roll)
       }
+      if (combat.attacks.length === 0) continue
+      measured += 1
       const ratio = total / row.damage
-      if (ratio < 0.5 || ratio > 2.2) {
+      if (ratio < 0.4 || ratio > 2.0) {
         offenders.push(
-          `${label} (CR ${entry.cr}, ${entry.role}): ${combat.attacks.length} attack(s) average ${total} a round, ${ratio.toFixed(2)}x row ${row.damage}, bound 0.50-2.20`,
+          `${label} (CR ${entry.cr}, ${entry.role}): ${combat.attacks.length} attack(s) average ${total} a round, ${ratio.toFixed(2)}x row ${row.damage}, bound 0.40-2.00`,
         )
       }
     }
     expect(offenders).toEqual([])
+    expect(measured).toBeGreaterThan(200)
   })
 
-  test('has an armour class from the row minus five to the row plus six', () => {
+  /**
+   * ⚠️ **The floor moved from −5 to −8 with the transcription, and one creature is the whole
+   * reason: the Black Pudding, which the SRD gives an armour class of 7 at CR 4.** An ooze
+   * that anything can hit and nothing can hurt is a real design, and a bound that refused it
+   * would be a bound insisting the SRD is wrong. Four other creatures sit between −8 and −5.
+   *
+   * The ceiling did not move, which is the more interesting half: nothing in the SRD's CR 0–6
+   * range is more than six above its row, so the *hard-to-hit* direction is genuinely bounded
+   * and the *easy-to-hit* one is not.
+   */
+  test('has an armour class from the row minus eight to the row plus six', () => {
     const offenders: string[] = []
     for (const { label, entry, combat } of FIGHTERS) {
       const row = rowFor(entry.cr)
       const delta = combat.armourClass - row.armourClass
-      if (delta < -5 || delta > 6) {
+      if (delta < -8 || delta > 6) {
         offenders.push(
-          `${label} (CR ${entry.cr}, ${entry.role}): armourClass ${combat.armourClass} is row ${row.armourClass} ${delta >= 0 ? '+' : ''}${delta}, bound -5..+6`,
+          `${label} (CR ${entry.cr}, ${entry.role}): armourClass ${combat.armourClass} is row ${row.armourClass} ${delta >= 0 ? '+' : ''}${delta}, bound -8..+6`,
         )
       }
     }
     expect(offenders).toEqual([])
   })
 
+  /**
+   * ⚠️ **A creature with no attack contributes no attack bonus**, which is the same
+   * exclusion the damage sweep makes and for the same reason: the Shrieker Fungus and the
+   * Seahorse are the two creatures in range the SRD gives no attack roll at all, so the
+   * number on their block is the generator's fallback — best physical modifier plus
+   * proficiency, which is the SRD's own derivation — rather than anything printed. The
+   * Shrieker is a fungus with Strength 1, and −3 against a row of 3 is the correct answer to
+   * a question nobody will ever ask it.
+   *
+   * Excluded rather than the bound widened, because widening it to −6 would let a real
+   * creature's mistyped bonus through everywhere.
+   */
   test('has an attack bonus and a save DC from the row minus three to the row plus four', () => {
     const offenders: string[] = []
     for (const { label, entry, combat } of FIGHTERS) {
       const row = rowFor(entry.cr)
       const checks: [string, number, number][] = [
-        ['attackBonus', combat.attackBonus, row.attackBonus],
+        ...(combat.attacks.length === 0
+          ? []
+          : ([['attackBonus', combat.attackBonus, row.attackBonus]] as [string, number, number][])),
         ...(combat.saveDc === null
           ? []
           : ([['saveDc', combat.saveDc, row.saveDc]] as [string, number, number][])),
@@ -504,32 +702,74 @@ describe('every fighting creature sits a sensible distance from its benchmark ro
   })
 
   /**
-   * Initiative, every skill bonus and passive perception all move by the same
-   * integer when a creature is scaled — see the note at the foot of
-   * `benchmarks.ts` on why none of the three needs a column of its own. They are
-   * therefore all measured against the one `skillBonus` figure, passive
-   * perception as `10 + skillBonus` because that is what it is.
+   * A printed skill bonus, against the row. Initiative and passive perception used to be
+   * measured here too and no longer are — see the test below for why.
    */
-  test('has initiative, skill bonuses and passive perception within -4 to +8 of the row', () => {
+  test('has skill bonuses within -4 to +8 of the row', () => {
     const offenders: string[] = []
+    let checked = 0
     for (const { label, entry, combat } of FIGHTERS) {
       const row = rowFor(entry.cr)
-      const checks: [string, number][] = [
-        ['initiativeBonus', combat.initiativeBonus - row.skillBonus],
-        ['passivePerception', combat.passivePerception - (10 + row.skillBonus)],
-        ...combat.skills.map(
-          (skill) => [`skill ${skill.key}`, skill.bonus - row.skillBonus] as [string, number],
-        ),
-      ]
-      for (const [field, delta] of checks) {
+      for (const skill of combat.skills) {
+        checked += 1
+        const delta = skill.bonus - row.skillBonus
         if (delta < -4 || delta > 8) {
           offenders.push(
-            `${label} (CR ${entry.cr}, ${entry.role}): ${field} deviates ${delta >= 0 ? '+' : ''}${delta} from row skillBonus ${row.skillBonus}, bound -4..+8`,
+            `${label} (CR ${entry.cr}, ${entry.role}): skill ${skill.key} deviates ${delta >= 0 ? '+' : ''}${delta} from row skillBonus ${row.skillBonus}, bound -4..+8`,
           )
         }
       }
     }
     expect(offenders).toEqual([])
+    expect(checked).toBeGreaterThan(200)
+  })
+
+  /**
+   * 🚫 **INITIATIVE AND PASSIVE PERCEPTION ARE NO LONGER MEASURED AGAINST `row.skillBonus`,
+   * AND THAT IS A FINDING ABOUT THE 2024 SRD RATHER THAN A LOOSENED BOUND.**
+   *
+   * They used to be, on the reasoning that `benchmarks.ts` gives: initiative is additive
+   * against `skillBonus` and passive perception is `10 + skillBonus`, so the three take the
+   * same integer shift when a creature is scaled and none of them needs a column of its own.
+   * **That argument is about how they *change*, it is still true, and the scaler still
+   * relies on it.** What it does not license is treating them as sitting at the same
+   * *level*, and this test used to.
+   *
+   * The SRD is emphatic that they do not. A `Skills` line lists only the skills a creature
+   * is *trained* in, so its median is +4 to +6 across the range; passive perception is ten
+   * plus a raw Wisdom modifier for the two thirds of the corpus with no Perception
+   * proficiency, so its median sits near 12 whatever the rating; and initiative is a raw
+   * Dexterity modifier, so its median sits near +1.5. Measured against `10 + row.skillBonus`
+   * the transcribed corpus produces **forty-five** passive-perception failures and
+   * **thirty-one** initiative failures, on creatures that are exactly what the SRD prints —
+   * the Animated Armor, which is blind, and the Violet Fungus, which is a fungus.
+   *
+   * So both are measured against **their own absolute range across CR 0–6**, read off the
+   * source. That is a weaker claim than a per-row deviation and it is the true one; a bound
+   * of −9 to +8 against the row would have been the same numbers dressed up as a
+   * relationship that does not hold.
+   */
+  test('and an initiative and a passive perception inside the range the SRD gives them', () => {
+    const offenders: string[] = []
+    for (const { label, entry, combat } of FIGHTERS) {
+      if (combat.initiativeBonus < -5 || combat.initiativeBonus > 9) {
+        offenders.push(
+          `${label} (CR ${entry.cr}): initiativeBonus ${combat.initiativeBonus}, bound -5..+9`,
+        )
+      }
+      if (combat.passivePerception < 6 || combat.passivePerception > 18) {
+        offenders.push(
+          `${label} (CR ${entry.cr}): passivePerception ${combat.passivePerception}, bound 6..18`,
+        )
+      }
+    }
+    expect(offenders).toEqual([])
+    // The needle exists: the bounds are tight enough that the extremes really are in the
+    // corpus, so a creature typed one digit wrong lands outside rather than inside.
+    expect(FIGHTERS.some(({ combat }) => combat.initiativeBonus <= -5)).toBe(true)
+    expect(FIGHTERS.some(({ combat }) => combat.initiativeBonus >= 9)).toBe(true)
+    expect(FIGHTERS.some(({ combat }) => combat.passivePerception <= 6)).toBe(true)
+    expect(FIGHTERS.some(({ combat }) => combat.passivePerception >= 18)).toBe(true)
   })
 
   /**
@@ -558,27 +798,45 @@ describe('every fighting creature sits a sensible distance from its benchmark ro
    * divides by `hp: 4` and `damage: 2` — so the content rule for CR 0 is tighter
    * than the general bounds and is checked separately.
    */
-  test('keeps a CR 0 creature to one attack of one small die with no modifier', () => {
+  /**
+   * ⚠️ **Three of the five clauses here loosened with the transcription, and each one
+   * loosened to admit a creature the SRD actually prints rather than to make a failure go
+   * away.** The clause that matters — **one die** — did not move, and it is the one the
+   * amplification argument rests on: a CR 0 creature written with two dice is a creature
+   * whose *shape* doubles all the way up the table.
+   *
+   *   - **Hit points 1–13, not 2–10.** The Bat, the Frog, the Owl, the Rat and four others
+   *     have one hit point; the Shrieker Fungus has thirteen.
+   *   - **d2 as well as d4 and d6.** Sixteen CR 0 creatures deal a printed flat `1` and two
+   *     deal `1d4 − 1`; `1d2` is what both average, and rounding them to `1d4` would have
+   *     inflated the weakest creatures in the corpus by two thirds.
+   *   - **A flat modifier is allowed.** The Eagle's Talons are `1d4 + 2` in the SRD.
+   *     Rewriting that to `1d6` to satisfy a local rule is editing the source, and the rule
+   *     was never about the modifier — it was about the die count.
+   *   - **Zero attacks is allowed**, for the Shrieker Fungus and the Seahorse, neither of
+   *     which the SRD gives one.
+   */
+  test('keeps a CR 0 creature to a single die', () => {
     const zeroes = FIGHTERS.filter(({ entry }) => entry.cr === 0)
-    expect(zeroes.length).toBeGreaterThan(0)
+    expect(zeroes.length).toBeGreaterThan(20)
 
     const offenders: string[] = []
     for (const { label, combat } of zeroes) {
-      if (combat.maxHp < 2 || combat.maxHp > 10) offenders.push(`${label}: maxHp ${combat.maxHp}, bound 2-10`)
-      if (combat.attacks.length !== 1) offenders.push(`${label}: ${combat.attacks.length} attacks, must be 1`)
+      if (combat.maxHp < 1 || combat.maxHp > 13) offenders.push(`${label}: maxHp ${combat.maxHp}, bound 1-13`)
+      if (combat.attacks.length > 1) offenders.push(`${label}: ${combat.attacks.length} attacks, at most 1`)
       for (const attack of combat.attacks) {
         const roll = parseRoll(attack.damage)
         if (!roll) continue
         if (roll.count !== 1) offenders.push(`${label}: ${attack.damage} has ${roll.count} dice, must be 1`)
-        if (roll.faces !== 4 && roll.faces !== 6) {
-          offenders.push(`${label}: ${attack.damage} uses d${roll.faces}, must be d4 or d6`)
-        }
-        if (roll.modifier !== 0) {
-          offenders.push(`${label}: ${attack.damage} carries a flat modifier`)
+        if (roll.faces !== 2 && roll.faces !== 4 && roll.faces !== 6) {
+          offenders.push(`${label}: ${attack.damage} uses d${roll.faces}, must be d2, d4 or d6`)
         }
       }
     }
     expect(offenders).toEqual([])
+    // Not vacuous: the corpus really does contain a one-hit-point creature and a d2.
+    expect(zeroes.some(({ combat }) => combat.maxHp === 1)).toBe(true)
+    expect(zeroes.some(({ combat }) => combat.attacks.some((a) => a.damage.includes('d2')))).toBe(true)
   })
 
   /**
@@ -602,15 +860,36 @@ describe('every fighting creature sits a sensible distance from its benchmark ro
       }
     }
     expect(offenders).toEqual([])
-    expect(seen).toBeGreaterThan(120)
+    expect(seen).toBeGreaterThan(300)
   })
 
-  test('lists at most three attacks, three abilities and four distinct skills', () => {
+  /**
+   * ⚠️ **THE SKILL CAP WENT FROM FOUR TO SIX, AND IT WAS READ OFF THE CORPUS RATHER THAN
+   * CHOSEN.** Six is the largest number of skills any SRD creature at CR 0–6 lists — one
+   * creature reaches it, two reach five, three reach four, and ninety-nine list none at all
+   * — so the cap is exactly tight: it admits everything the source prints and refuses the
+   * first thing it does not. A rounder number, or the eighteen the sheet could physically
+   * hold, would have been a cap that could never fail.
+   *
+   * ⭐ **The attack and ability caps were re-decided the same way and both survived at
+   * three**, which is worth stating because it is the more interesting result. For
+   * **attacks** three is genuinely enough: a creature is stored with the attacks it makes in
+   * a turn, and only four creatures in range imply a longer routine, three of them through
+   * an either/or branch that is a choice at the table rather than a second thing that
+   * happens. For **abilities** three really does discard content — a 2024 stat block can
+   * print seven traits, bonus actions and reactions between them — so that cap is a
+   * *selection*, and `abilitiesOf` in the generator keeps the damaging ones first because
+   * `scalesWithCr` means nothing on an ability with no roll.
+   */
+  test('lists at most three attacks, three abilities and six distinct skills', () => {
     const offenders: string[] = []
     for (const { label, combat } of FIGHTERS) {
-      if (combat.attacks.length > 3) offenders.push(`${label}: ${combat.attacks.length} attacks`)
-      if (combat.abilities.length > 3) offenders.push(`${label}: ${combat.abilities.length} abilities`)
-      if (combat.skills.length > 4) offenders.push(`${label}: ${combat.skills.length} skills`)
+      if (combat.attacks.length > MAX_CREATURE_ATTACKS)
+        offenders.push(`${label}: ${combat.attacks.length} attacks`)
+      if (combat.abilities.length > MAX_CREATURE_ABILITIES)
+        offenders.push(`${label}: ${combat.abilities.length} abilities`)
+      if (combat.skills.length > MAX_CREATURE_SKILLS)
+        offenders.push(`${label}: ${combat.skills.length} skills`)
       for (const skill of combat.skills) {
         if (!(SKILL_KEYS as readonly string[]).includes(skill.key)) {
           offenders.push(`${label}: unknown skill ${skill.key}`)
@@ -623,6 +902,41 @@ describe('every fighting creature sits a sensible distance from its benchmark ro
       if (repeated.length > 0) offenders.push(`${label}: repeats skill ${repeated.join(', ')}`)
     }
     expect(offenders).toEqual([])
+    // Each cap is reached by something, or it is a cap that could never fail. Six skills is
+    // the tightest of the three and the one most likely to be quietly widened.
+    expect(FIGHTERS.some(({ combat }) => combat.skills.length === 6)).toBe(true)
+    expect(FIGHTERS.some(({ combat }) => combat.attacks.length === 3)).toBe(true)
+    expect(FIGHTERS.some(({ combat }) => combat.abilities.length === 3)).toBe(true)
+  })
+
+  /**
+   * ⚠️ **NO TWO ATTACKS ON ONE CREATURE MAY SHARE A NAME, AND THIS IS A HARD CONSTRAINT
+   * RATHER THAN A CONTENT PREFERENCE.**
+   *
+   * `entryId` in lib/resolve.ts mints a sheet entry's id as `atk:` plus a slug of its
+   * *name*, deliberately ignoring the position so that a challenge-rating shift — which
+   * rewrites the damage on every attack — does not renumber the list and make React read it
+   * as wholly replaced. Two attacks called `Rend` therefore both become `atk:rend`, and
+   * `sheetProblem` refuses the whole sheet: the creature does not resolve at any rating at
+   * all.
+   *
+   * It is checked here as well as being caught downstream because the downstream failure is
+   * eight hundred and sixty lines of *"Two entries on this sheet share an id"* across every
+   * rating, which says nothing about where to fix it. This one names the creature and the
+   * word.
+   */
+  test('and never gives one creature two attacks with the same name', () => {
+    const offenders: string[] = []
+    for (const { label, combat } of FIGHTERS) {
+      const names = combat.attacks.map((attack) => attack.name)
+      const repeated = names.filter((name, index) => names.indexOf(name) !== index)
+      if (repeated.length > 0) offenders.push(`${label}: two attacks called ${repeated.join(', ')}`)
+    }
+    expect(offenders).toEqual([])
+    // And the corpus really does contain a repeated routine, spelled the way that avoids it.
+    expect(FIGHTERS.some(({ combat }) => combat.attacks.some((a) => a.name.startsWith('Second ')))).toBe(
+      true,
+    )
   })
 
   test('moves at a whole number of feet the board can draw', () => {
@@ -777,7 +1091,7 @@ describe('the prose says what a creature does, never what it rolls', () => {
    * The same sweep `library.test.ts` runs over the seventy-two premade sheets,
    * over the corpus. Movement-impairing conditions are excluded by design rather
    * than unbuilt — two of the Battle Master's best-known manoeuvres were left out
-   * of the character library over it — and a hundred and twenty-nine
+   * of the character library over it — and two hundred and eighty-three
    * hand-written stat blocks is the likeliest place one creeps back in. Speed is
    * on the list because a creature's is a stored number the sheet already shows;
    * prose promising a change to it promises something the app cannot represent.
@@ -817,12 +1131,12 @@ describe('every creature at every rating resolves to a sheet the database would 
   /**
    * **The most valuable test in the file**, and the reason the corpus is iterated
    * rather than sampled. Everything above checks one number against one bound;
-   * this puts each of the hundred and twenty-nine through the real resolver at
-   * each of the ten ratings and runs the function the mutation runs — 1,290
+   * this puts each of the two hundred and eighty-three through the real resolver at
+   * each of the ten ratings and runs the function the mutation runs — 2,830
    * sheets, which is every creature this milestone can produce with no override
    * on it.
    */
-  test('for all 129 creatures across all 10 ratings', () => {
+  test('for all 283 creatures across all 10 ratings', () => {
     const problems: string[] = []
     let count = 0
     for (const { label, entry } of ENTRIES) {
@@ -1098,7 +1412,7 @@ describe('the labels a creature carries beside its sheet', () => {
       {
         sheet: {
           kind: 'preset',
-          race: 'human',
+          species: 'human',
           classKey: 'fighter',
           subclassKey: null,
           level: 1,
@@ -1177,7 +1491,7 @@ describe('the labels a creature carries beside its sheet', () => {
 // ---------------------------------------------------------------------------
 // 9. The entry taxonomy, which for this corpus is derived rather than authored
 //
-// ⚠️ **None of the 129 stat blocks was edited to add a category or a to-hit.**
+// ⚠️ **No stat block in the corpus was edited to add a category or a to-hit.**
 // `resolve.ts` derives both structurally: an attack is a `weapon` because the
 // corpus already separates `attacks` from `abilities`, an ability is an `action`
 // or a `passive` according to whether it rolls anything, and every attack's

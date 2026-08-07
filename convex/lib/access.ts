@@ -66,15 +66,28 @@ type EditVerdict =
  * ⚠️ **`allowControl` splits the write paths in two, and the split is the decision
  * rather than a knob.** A grant gives a seat **sight and hit points, not authorship**:
  *
- * - `true` for `adjustHp`, `setHp`, `adjustHitDice`, `longRest` and `setPerRest`, for
- *   the `characters.sheet` query, and for `feed.roll`. A granted pet takes damage from the player holding its
- *   lead, which is the entire point of handing it to them; a grant that could not spend a
- *   hit point would be a sheet to look at, and `HpControls` would render no `−`/`+`
- *   beside it. `adjustHitDice` is the odd one of the five and says `true` anyway: a
+ * - `true` for **every write that changes what is true of a creature during play** — its
+ *   hit points, its temporary hit points, its hit dice, its death-save tally, its heroic
+ *   inspiration, what it has spent and what a rest gives back — and for the
+ *   `characters.sheet` query and `feed.roll`. A granted pet takes damage from the player
+ *   holding its lead, which is the entire point of handing it to them; a grant that could
+ *   not spend a hit point would be a sheet to look at, and `HpControls` would render no
+ *   `−`/`+` beside it.
+ *
+ *   ⚠️ **The list of those mutations used to be written out here, and naming them is what
+ *   went wrong.** It said five, one of which (`setPerRest`) has since been renamed and two
+ *   of which (`shortRest`, `setUses`) were never added; the 2024 vitals writes make nine,
+ *   and a tenth is a matter of time. A stale enumeration in the docblock that *defines the
+ *   split* is worse than no enumeration, because it reads as the specification and the code
+ *   as the drift. The rule above is the whole of it, and `characters.test.ts`' permission
+ *   matrix is the place a new mutation is actually made to answer for itself — add it
+ *   there, not here.
+ *
+ *   `adjustHitDice` is the one that looks like an exception and says `true` anyway: a
  *   granted creature has no hit dice at all — `changeHitDiceRemaining` returns zero for
  *   anything that is not a `pc` — so the grant reaches a path with nothing on the other
- *   side of it, and saying so keeps the five hit-point writes one rule rather than four
- *   and an exception.
+ *   side of it, and saying so keeps the play-state writes one rule rather than a rule and
+ *   an exception.
  * - `false` for `updateSheet`. A granted monster is not a stat block a player rewrites.
  *   Nothing about lending somebody a wolf for a fight says they may change what a wolf
  *   is, and the DM's own numbers on it are the DM's.

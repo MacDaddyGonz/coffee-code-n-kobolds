@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:smoke": "node scripts/board-smoke.mjs",
-    "prune-games": "node scripts/prune-games.mjs"
+    "prune-games": "node scripts/prune-games.mjs",
+    "migrate-sheets": "node scripts/migrate-sheets.mjs"
   },
   "dependencies": {
     "@3d-dice/dice-box-threejs": "^0.0.12",

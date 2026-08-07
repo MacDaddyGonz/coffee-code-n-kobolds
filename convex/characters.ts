@@ -18,7 +18,9 @@ import {
   countCharactersInGame,
   deleteCharacter,
   longRest as takeLongRest,
-  setPerRestSpent,
+  shortRest as takeShortRest,
+  setSlotsSpent,
+  setUsesSpent,
   getCharacterInGame,
   insertCharacter,
   isReservedCharacter,
@@ -33,8 +35,11 @@ import {
   // the one a reader searching for `characters.setReserved` will be looking for.
   setReserved as writeReserved,
   visibleVitals,
+  writeDeathSaves,
+  writeHeroicInspiration,
   writeSheet,
   writeSheetRescalingHp,
+  writeTemporaryHp,
 } from './lib/characters'
 import { bestiaryEntry } from './lib/bestiary'
 import { crValidator } from './lib/creatures'
@@ -59,17 +64,21 @@ import {
   setSeatCharacter,
 } from './lib/players'
 import { SUBCLASS_LEVEL } from './lib/classes'
-import { perRestAbilities } from './lib/races'
-import { bestiaryOf, kindOf, presetOf, resolveSheet } from './lib/resolve'
+import { perRestAbilities, speciesKeyOf } from './lib/species'
+import { MAX_RESOURCE_USES } from './lib/rest'
+import { MAX_SLOT_LEVEL, MIN_SLOT_LEVEL, maxSlotsAt } from './lib/slots'
+import { bestiaryOf, kindOf, presetOf, resolveSheet, spellSlotsOf } from './lib/resolve'
 import type { BestiarySheet, PresetSheet, SheetProblem, StoredSheet } from './lib/sheet'
 import {
   MAX_MAX_HP,
   defaultSheetFor,
   isMonsterSheet,
   normaliseStoredSheet,
+  sheetEntriesOf,
   sheetProblem,
   storedSheetProblem,
   storedSheetValidator,
+  usesOf,
 } from './lib/sheet'
 
 // Not one row of the `characters` or `characterVitals` tables is read in this file.
@@ -564,15 +573,31 @@ function applyPresetPermissions(
   // The lock is the one thing a player may still be told "no" about, because here a
   // refusal is information they need: their choices are set, and somebody has to
   // unlock them.
+  // ⚠️ **Through `speciesKeyOf` rather than off the field**, which is what let the
+  // `race` → `species` rename move under this comparison without it being edited twice.
+  // ⚠️ **`lineageKey` IS in this list now, and its absence was a hole rather than a
+  // decision.** It arrived with the species branch, which added a fourth stored selection
+  // and did not add it here, so a locked Wood Elf could be saved as a High Elf — changing
+  // the character's speed from 35 to 30 and swapping every trait entry the lineage grants.
+  // That is precisely the class of change the lock exists to freeze, and the refusal below
+  // already claimed to cover it: a lineage is *part of* the species choice, so the message
+  // was true and the check was not.
+  //
+  // Widening what a lock refuses is a change to what a player is told "no" about, and that
+  // is worth being deliberate about rather than sliding in — but the honest reading is that
+  // this was always inside the promise. A player who could not change Wood to High before
+  // the lineage existed is not gaining a restriction; they are getting the one they were
+  // told they had.
   const selectionsChanged =
-    before.race !== after.race ||
+    speciesKeyOf(before) !== speciesKeyOf(after) ||
+    before.lineageKey !== after.lineageKey ||
     before.classKey !== after.classKey ||
     before.subclassKey !== after.subclassKey
 
   if (before.locked && (selectionsChanged || !after.locked)) {
     throw new ConvexError({
       kind: 'CharacterLocked',
-      message: 'Your race, class and archetype are set. Ask the DM to unlock them.',
+      message: 'Your species, class and archetype are set. Ask the DM to unlock them.',
     })
   }
 
@@ -905,17 +930,28 @@ export const longRest = mutation({
   },
 })
 
-/** Spend a once-per-long-rest ability, or hand it back if it was marked by mistake. */
-export const setPerRest = mutation({
+/**
+ * A short rest. **Whatever comes back on one comes back, and nothing else.**
+ *
+ * ⚠️ **It does not heal and it does not return hit dice** — spending hit dice is what a short
+ * rest is *for*. See `shortRest` in lib/characters.ts, where that argument lives, and
+ * `REST_LABELS` in lib/rest.ts, which is where both rests' wording comes from so that the
+ * button cannot promise something the mutation does not do. It clears neither the temporary
+ * hit points nor the death-save tally either: both of those end on a **long** rest, which is
+ * where `longRest` wipes them.
+ *
+ * Beside `longRest` above and available on the same terms and for the same reason: a rest is
+ * a thing the party decides on together, and making it DM-only would put the DM in the loop
+ * for the most routine event in the game.
+ */
+export const shortRest = mutation({
   args: {
     code: v.string(),
     characterId: v.id('characters'),
-    key: v.string(),
-    spent: v.boolean(),
     playerId: v.optional(v.id('players')),
     dmCode: v.optional(v.string()),
   },
-  returns: v.object({ spentPerRest: v.array(v.string()) }),
+  returns: v.null(),
   handler: async (ctx, args) => {
     const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
     const character = await requireEditableCharacter(
@@ -926,25 +962,170 @@ export const setPerRest = mutation({
       args.playerId,
       { allowControl: true },
     )
+    await takeShortRest(ctx, character)
+    return null
+  },
+})
 
-    // Checked against the character's own race rather than taken as given, so the
+/**
+ * Spend uses of a limited-use thing, or hand some back if they were marked by mistake.
+ *
+ * `setPerRest`'s successor, and the rename is the point rather than tidying: that mutation
+ * took a **boolean**, because the only thing it could describe was *the one use this character
+ * had is gone*. 2024 is full of features with two, three or proficiency-bonus-many uses, so
+ * the argument is a count. A client handing back everything sends `spent: 0`.
+ */
+export const setUses = mutation({
+  args: {
+    code: v.string(),
+    characterId: v.id('characters'),
+    key: v.string(),
+    spent: v.number(),
+    playerId: v.optional(v.id('players')),
+    dmCode: v.optional(v.string()),
+  },
+  returns: v.object({ spentUses: v.array(v.object({ key: v.string(), spent: v.number() })) }),
+  handler: async (ctx, args) => {
+    if (!Number.isFinite(args.spent) || args.spent < 0 || args.spent > MAX_RESOURCE_USES) {
+      throw new ConvexError({ kind: 'BadInput', message: 'That is not a number of uses.' })
+    }
+
+    const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
+    const character = await requireEditableCharacter(
+      ctx,
+      game,
+      args.characterId,
+      isDm,
+      args.playerId,
+      { allowControl: true },
+    )
+
+    // Checked against what the character actually has rather than taken as given, so the
     // stored array cannot fill up with keys nothing will ever clear.
     //
-    // **Only when spending.** Handing one back is always allowed, and the asymmetry
-    // is what stops a stale key becoming permanent: a DM who changes a character's
-    // race leaves whatever the old race had spent still marked, and a check that
-    // applied here too would make it unclearable by anything short of a long rest —
-    // refusing to undo a state it had been happy to create.
-    const preset = presetOf(character)
-    const known = preset ? perRestAbilities(preset.race).map((ability) => ability.key) : []
-    if (args.spent && !known.includes(args.key)) {
+    // **Only when spending.** Handing uses back is always allowed, and the asymmetry is what
+    // stops a stale key becoming permanent: a DM who changes a character's species, or deletes
+    // an entry, leaves whatever it had spent still marked, and a check that applied here too
+    // would make it unclearable by anything short of a long rest — refusing to undo a state it
+    // had been happy to create.
+    //
+    // ⚠️ **Two sources, `||`-ed rather than merged.** A species' once-per-long-rest ability is
+    // keyed by the species content; an entry's uses are keyed by the entry's own id. They are
+    // different vocabularies that happen to share a namespace on this row, and collapsing them
+    // into one list would mean deciding which wins on a collision — a question neither side
+    // asked. `spentUsesOf` folds them on read for exactly the same reason.
+    if (args.spent > 0) {
+      const preset = presetOf(character)
+      const fromSpecies = preset
+        ? perRestAbilities(speciesKeyOf(preset)).map((ability) => ability.key)
+        : []
+      const fromSheet = sheetEntriesOf(resolveSheet(character))
+        .filter((entry) => usesOf(entry) !== null)
+        .map((entry) => entry.id)
+      if (!fromSpecies.includes(args.key) && !fromSheet.includes(args.key)) {
+        throw new ConvexError({
+          kind: 'BadInput',
+          message: 'That character has no such ability.',
+        })
+      }
+    }
+
+    return { spentUses: await setUsesSpent(ctx, character, args.key, args.spent) }
+  },
+})
+
+/**
+ * Spend spell slots of one level, or hand some back if they were ticked by mistake.
+ *
+ * `setUses`' sibling, written on its rule exactly: the same `resolveDmAccess` →
+ * `requireEditableCharacter(…, { allowControl: true })` opening, the same argument shape with
+ * a count rather than a boolean, and the same asymmetry between spending and handing back.
+ * The difference is what the count is keyed on — a **spell level**, because a slot belongs to
+ * the character and two different spells spend from the same row, where a limited use belongs
+ * to one entry on one sheet.
+ *
+ * ⚠️ **THIS IS THE ONLY THING IN THE APPLICATION THAT SPENDS A SLOT, AND IT IS SOMEBODY
+ * PRESSING A PIP.** Casting a levelled spell through `feed.roll` spends nothing and is
+ * refused for nothing: that mutation does not call this one, does not import lib/slots.ts and
+ * must not. CLAUDE.md's *Rules scope* gives slot counting its whole licence in one sentence —
+ * *counting a slot compares nothing, refuses nothing, and changes no die of damage* — and
+ * automatic spending is how that gets exceeded, silently, in a way that reads as a
+ * convenience. ⚠️ ADR 0011's superseding table says *"a roll spends one"*; **the counting half
+ * was instructed and is what exists, and the spending half has had no decision of its own.**
+ * Whoever wants it writes the ADR.
+ *
+ * **Three refusals, in this order, and the order is the permission model rather than taste:**
+ *
+ * 1. The **arguments** are checked first, so a nonsense level or a non-finite count is one
+ *    answer regardless of who asked. `setUses` opens the same way.
+ * 2. The **caller** is checked second, so a stranger poking a monster gets
+ *    `CharacterNotFound` rather than being told the monster has no slots — an NPC's existence
+ *    is the spoiler, and a refusal that leaked the shape of its sheet would be the error
+ *    channel undoing what the payload channel withheld.
+ * 3. **What the character has** is checked last, and only when spending. Handing back is
+ *    always allowed, which is what lets a DM who has dropped somebody's level clear counts the
+ *    character can no longer justify — refusing to undo a state the application was happy to
+ *    create is the trap `setUses`' own comment describes.
+ */
+export const setSlots = mutation({
+  args: {
+    code: v.string(),
+    characterId: v.id('characters'),
+    /** The **spell** level, 1–3. Not the character's level, which nothing here takes. */
+    level: v.number(),
+    spent: v.number(),
+    playerId: v.optional(v.id('players')),
+    dmCode: v.optional(v.string()),
+  },
+  returns: v.object({
+    spentSlots: v.array(v.object({ level: v.number(), spent: v.number() })),
+  }),
+  handler: async (ctx, args) => {
+    // Written for a person rather than as a validation code, on this file's convention: the
+    // DM reads this sentence and it has to say what to do next. The bound is explained rather
+    // than stated, because "1 to 3" with no reason reads as an arbitrary limit in an
+    // application whose spell list contains 4th-level spells.
+    if (
+      !Number.isFinite(args.level) ||
+      !Number.isInteger(args.level) ||
+      args.level < MIN_SLOT_LEVEL ||
+      args.level > MAX_SLOT_LEVEL
+    ) {
       throw new ConvexError({
         kind: 'BadInput',
-        message: 'That character has no such ability.',
+        message: `Spell slots run from level ${MIN_SLOT_LEVEL} to level ${MAX_SLOT_LEVEL}, because this game stops at character level 5.`,
+      })
+    }
+    if (!Number.isFinite(args.spent) || args.spent < 0) {
+      throw new ConvexError({ kind: 'BadInput', message: 'That is not a number of spell slots.' })
+    }
+
+    const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
+    const character = await requireEditableCharacter(
+      ctx,
+      game,
+      args.characterId,
+      isDm,
+      args.playerId,
+      { allowControl: true },
+    )
+
+    // One lookup, used for the refusal and then handed to the writer as the ceiling — so the
+    // number this mutation refuses against and the number it clamps to cannot be two answers.
+    const slots = spellSlotsOf(character)
+    if (args.spent > 0 && maxSlotsAt(slots, args.level) === 0) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        // Deliberately one sentence for two situations — a character with no slots at all and
+        // one whose slots do not reach this level — because the DM's next move is the same in
+        // both and a Fighter being told which levels it lacks would be a worse message.
+        message: 'That character has no spell slots of that level.',
       })
     }
 
-    return { spentPerRest: await setPerRestSpent(ctx, character, args.key, args.spent) }
+    return {
+      spentSlots: await setSlotsSpent(ctx, character, slots, args.level, args.spent),
+    }
   },
 })
 
@@ -1070,6 +1251,160 @@ export const adjustHitDice = mutation({
         ctx,
         character,
         (remaining) => remaining + args.delta,
+      ),
+    }
+  },
+})
+
+/**
+ * Set temporary hit points. The second row of numbers on the sheet, beside the first.
+ *
+ * Absolute rather than a delta, which is the opposite of `adjustHp` next door and is right
+ * for the opposite reason: temporary hit points arrive as *a number a spell or a feature
+ * said*, not as an amount somebody adds to what is there. Two people clicking `−5` on a
+ * goblin should compose; two people granting a ward should not sum into one.
+ *
+ * ⚠️ **THEY ARE NOT HEALING AND THEY ARE NOT PART OF THE MAXIMUM, so they have their own
+ * clamp: a floor of nought and a ceiling of `MAX_TEMPORARY_HP` — never the character's
+ * `max`.** A character on 3 of 8 hit points may legitimately be holding 20 temporary, and
+ * a character at full health with fifteen of them is an ordinary state. "Clamp it to max
+ * like everything else" is the obvious wrong edit and it is unwriteable on purpose:
+ * `clampTemporaryHp` has nowhere to pass a maximum. See its docblock in lib/sheet.ts and
+ * `writeTemporaryHp`'s in lib/characters.ts.
+ *
+ * ⚠️ **It stores what it is told, and does NOT take the maximum against the stored value.**
+ * 5e's rule is that temporary hit points do not stack — you take the higher of the two —
+ * and this application **announces and counts** while the table **adjudicates** (CLAUDE.md,
+ * *Rules scope*). Folding that rule in here would make the number on screen disagree with
+ * the number a person typed, and would leave a mistake uncorrectable downwards. A person
+ * picks the larger of two numbers, exactly as they would with a pencil.
+ *
+ * Non-finite is refused rather than repaired, and a fraction is rounded rather than
+ * refused — `setHp`'s split, for `clampHp`'s stated reason: a fraction can only arrive from
+ * a client bug and normalising is what this application does with a value it can repair,
+ * whereas `NaN` poisons every comparison made against it afterwards.
+ */
+export const setTemporaryHp = mutation({
+  args: {
+    code: v.string(),
+    characterId: v.id('characters'),
+    temporaryHp: v.number(),
+    playerId: v.optional(v.id('players')),
+    dmCode: v.optional(v.string()),
+  },
+  returns: v.object({ temporaryHp: v.number() }),
+  handler: async (ctx, args) => {
+    if (!Number.isFinite(args.temporaryHp)) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message: 'That is not a number of temporary hit points.',
+      })
+    }
+
+    const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
+    const character = await requireEditableCharacter(
+      ctx,
+      game,
+      args.characterId,
+      isDm,
+      args.playerId,
+      { allowControl: true },
+    )
+
+    return { temporaryHp: await writeTemporaryHp(ctx, character, args.temporaryHp) }
+  },
+})
+
+/**
+ * Set the death-save tally: how many of each column are ticked, clamped to 0–3.
+ *
+ * ⚠️ **NOTHING HERE KILLS ANYBODY, and this is where a reader will most want to make it.**
+ * Three failures is three pips filled in. No hit point moves, no marker is set, no feed
+ * line is written, no band is recomputed and no heal is refused — CLAUDE.md's *Rules scope*
+ * names *"no death save kills a character"* as a standing exclusion, and putting death
+ * saving throws in at all reversed a stated *never* on precisely the grounds that the
+ * counter decides nothing (ADR 0016, and `deathSavesOf` in lib/characters.ts). Adding the
+ * three lines that make the third failure do something is a spec amendment and an ADR, not
+ * a branch.
+ *
+ * **Both columns in one call**, because they are one tally on one row of boxes. Two
+ * mutations would let a client write half of it, and a sheet showing this round's successes
+ * beside last round's failures is a sheet somebody acts on.
+ *
+ * The clamp rounds and bounds rather than refusing, exactly as `setHp` does; only the
+ * non-finite values are refused outright, because `NaN` is a perfectly valid float64 and
+ * would poison every comparison made against it afterwards.
+ */
+export const setDeathSaves = mutation({
+  args: {
+    code: v.string(),
+    characterId: v.id('characters'),
+    successes: v.number(),
+    failures: v.number(),
+    playerId: v.optional(v.id('players')),
+    dmCode: v.optional(v.string()),
+  },
+  returns: v.object({ successes: v.number(), failures: v.number() }),
+  handler: async (ctx, args) => {
+    if (!Number.isFinite(args.successes) || !Number.isFinite(args.failures)) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message: 'That is not a number of death saving throws.',
+      })
+    }
+
+    const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
+    const character = await requireEditableCharacter(
+      ctx,
+      game,
+      args.characterId,
+      isDm,
+      args.playerId,
+      { allowControl: true },
+    )
+
+    return await writeDeathSaves(ctx, character, args.successes, args.failures)
+  },
+})
+
+/**
+ * Tick or clear Heroic Inspiration. A boolean, and the whole of the feature.
+ *
+ * Nothing grants it, nothing spends it automatically, and nothing re-rolls anything: no die
+ * in this application consults the flag, and the 2024 rule that lets a character reroll one
+ * is the table's to apply, exactly as a condition pip's effect is. The 2024 Human regains
+ * it on a long rest, which is why `longRest` deliberately leaves it alone — that is a
+ * species trait rather than a property of resting, and granting it there would invent a
+ * rule for the eight species that do not have it.
+ *
+ * No shape check ahead of the gate, unlike the two above: a boolean has no `NaN` and no
+ * out-of-range value, so Convex's own argument validator is the whole of the normalisation.
+ */
+export const setHeroicInspiration = mutation({
+  args: {
+    code: v.string(),
+    characterId: v.id('characters'),
+    heroicInspiration: v.boolean(),
+    playerId: v.optional(v.id('players')),
+    dmCode: v.optional(v.string()),
+  },
+  returns: v.object({ heroicInspiration: v.boolean() }),
+  handler: async (ctx, args) => {
+    const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
+    const character = await requireEditableCharacter(
+      ctx,
+      game,
+      args.characterId,
+      isDm,
+      args.playerId,
+      { allowControl: true },
+    )
+
+    return {
+      heroicInspiration: await writeHeroicInspiration(
+        ctx,
+        character,
+        args.heroicInspiration,
       ),
     }
   },

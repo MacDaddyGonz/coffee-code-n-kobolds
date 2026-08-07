@@ -30,9 +30,9 @@ export type CharacterSheetViewProps = {
  * dialog — so a table of six is not holding six idle subscriptions each.
  *
  * ⚠️ **Whose sheet the roll buttons aim at is declared here, because this is the one
- * component that both holds the answer and contains every button.** `AbilityTable`,
- * `SkillList` and `SheetEntryList` are reached only through `CharacterSheetEditor`, which
- * only this component renders — so `RollTargetProvider` around it reaches every `RollButton`
+ * component that both holds the answer and contains every button.** `AbilityBlock` and
+ * `SheetEntryList` are reached only through `CharacterSheetEditor`'s panes, which only this
+ * component renders — so `RollTargetProvider` around it reaches every `RollButton`
  * in the application and nothing else. It used to sit in `RightPane`, wrapped around both
  * sheet tabs, where it re-derived `focus.kind === 'character' ? focus.characterId : null`
  * over a `SheetFocus` those tabs had already narrowed the same way to decide whether to
@@ -139,8 +139,19 @@ export function CharacterSheetView({
         // used, so a refusal has no half-filled form left on screen to attach a message to.
         onSetCreatureCr={(cr) => announce(setCreatureCr(cr))}
         onResetCreature={() => announce(resetCreature())}
-        onSetPerRest={(key, spent) => void hp.setPerRest(characterId, key, spent)}
-        onLongRest={() => void hp.longRest(characterId)}
+        // The five vitals writes, every one of which lands immediately and reports through
+        // the same `hp.error` toast above — `useHpActions` clears and sets one error for
+        // all of its writes precisely so a caller wires one message rather than one per
+        // mutation. `rest` takes the vocabulary member rather than being two callbacks, so
+        // no component has to turn a `RestKind` back into a name.
+        onSetUses={(key, spent) => void hp.setUses(characterId, key, spent)}
+        onSetSlots={(level, spent) => void hp.setSlots(characterId, level, spent)}
+        onRest={(kind) => void hp.rest(characterId, kind)}
+        onSetTemporaryHp={(temporaryHp) => void hp.setTemporaryHp(characterId, temporaryHp)}
+        onSetDeathSaves={(successes, failures) =>
+          void hp.setDeathSaves(characterId, successes, failures)
+        }
+        onSetHeroicInspiration={(on) => void hp.setHeroicInspiration(characterId, on)}
       />
     </RollTargetProvider>
   )

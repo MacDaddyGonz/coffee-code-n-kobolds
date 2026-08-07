@@ -225,7 +225,12 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
      second question about the same two hundred rows should not read them twice.)
    - **It carries hit points and stops at authorship.** `visibleVitals` sends a controller the
      `exact` variant rather than a band, and `requireEditableCharacter` takes an explicit
-     `allowControl` — true on the five hit-point paths, false on `updateSheet`. A granted pet takes
+     `allowControl` — true on every write that changes what is true of a creature *during play*
+     (hit points, temporary hit points, hit dice, the death-save tally, heroic inspiration, what is
+     spent, what a rest gives back), false on `updateSheet`. ⚠️ **That used to read "the five
+     hit-point paths" and the count was already wrong**; the docblock in `convex/lib/access.ts` now
+     argues why the enumeration is not kept anywhere, and `characters.test.ts`' permission matrix is
+     where a new mutation answers for itself. A granted pet takes
      damage; a granted monster is not a stat block a player rewrites.
 
    See [ADR 0009](docs/adr/0009-who-plays-what-and-what-control-grants.md). A **second, unrelated**
@@ -561,106 +566,122 @@ the trusted group.
 
 ## Rules scope
 
-D&D Lite is a deliberately reduced subset of 5e (2024). Before adding a rules feature, check
-[docs/requirements.md](docs/requirements.md) **including its amendments section** — the exclusion
-lists there are the originals, and two entries have since been lifted on the record.
+This application plays **D&D 5e (2024), SRD 5.2.1, at character levels 1–5.** It used to play a
+cherry-picked subset called *D&D Lite*, and Milestone 14 did not extend that subset — it **replaced**
+it. Where a number, a list or a name here disagrees with SRD 5.2.1, **the SRD is right and this
+application is wrong.** See [ADR 0016](docs/adr/0016-the-5e-2024-conversion.md).
 
-What Milestone 4 changed, precisely:
+⚠️ **Before adding a rules feature, check [docs/requirements.md](docs/requirements.md) *including its
+amendments section*.** The two `DnD Lite rule set` lists at the top of that file are the originals and
+are kept verbatim on purpose: a spec quietly edited to match the code can no longer catch the code
+being wrong. They are now a record of the game this application was **asked for**, and the amendments
+below them are the record of the game it **plays**. Reading the lists alone will tell you that races,
+skills and spell slots are excluded, all three of which are false and each of which was lifted on the
+record with an ADR behind it.
 
-- **Races are in.** Eight of them, one trait each; three change a number (Elf, Dwarf, Goliath).
-- **Skills are in — from the class, not from a background.** Thirteen skills with a proficiency flag
-  each, granted by the character's premade sheet and by the DM's override, and by no third thing.
-  **Backgrounds are still excluded**, and keeping that distinction is what stops a second source of
-  proficiency ever existing.
-- **Speed is no longer fixed.** It is a stored field defaulting to 35, read through `speedOf`,
-  because the Goliath moves 45.
+**The level cap is the whole of what is reduced.** Levels 1–5, which caps a spell at level 3 and a
+prepared creature at challenge rating 6. Everything else is either the SRD, or an exclusion below.
 
-Still excluded, and still by design: **backgrounds, inventory, multiclassing, experience points and
-movement-impairing conditions.** The fixed equipment kit on a premade sheet is not an inventory —
-it is a line of text, which is exactly what *"No inventory — set equipment per character"* asked
-for.
+### What is out, and it is still most of what was ever out
 
-Everything else on those lists is **excluded by design, not missing.** Lifting one is a spec
-amendment with an ADR behind it — see [ADR 0006](docs/adr/0006-premade-character-library.md) — not
-something a feature branch does on the way past.
+**Backgrounds as an entity, inventory, weight, encumbrance, experience points, money, languages,
+multiclassing, every biography field, levels 6–20, magic items and attunement, the action economy,
+and concentration as a check.**
 
-**The monster bestiary lifted none of them, and that is worth stating** because it is the discipline
-that makes Milestone 4's two amendments mean something. Every field it added — creature type, size,
-alignment, role, challenge rating, tier, tags, loot, DM notes — is a **label on a DM-only sheet**, not
-a rule anything adjudicates. Loot is a line of text and not an inventory. Nothing is rolled that the
-existing grammar did not already describe.
+Two of those are load-bearing rather than merely absent.
 
-CR scaling deserves the second look, because it *does* move numbers a player rolls against. It is
-still not a rule: it is arithmetic the DM performs on the DM's own sheet, with a visible before and
-after, and the app adjudicates nothing with it — a stepper that changes eight fields at once is the
-same act as typing into eight fields, done in one motion. The DM override has exactly this character
-and needed no amendment either. The test for whether that stays true is simple: **the moment one of
-these fields changes a number a player rolls against without the DM asking it to, it needs one.**
+- ⚠️ **Background is excluded, and that exclusion is what forces the absorption** — read this before
+  concluding it was lifted. In 2024 the *background* grants the ability spread, two skill
+  proficiencies and an Origin feat, and the species grants none of them. Excluding backgrounds
+  removes the **source**, so the premade sheet stores the finished numbers, which is what a premade
+  sheet has always been for. There is still **no background on a character, no background list, and
+  no second source of proficiency** — one authority for a fixed set of numbers, plus the DM's
+  override, and nothing third. Adding backgrounds as an entity puts the second source back the day it
+  lands.
+- **Equipment is still a line of text.** An SRD starting-equipment package reduced to
+  `LibrarySheet.equipment` is exactly what *"No inventory — set equipment per character"* permitted
+  for the hand-written kits, and it has now governed two entirely different rule sets without a word
+  changing.
 
-**The sheet taxonomy lifted no exclusion either, and the amendment it did write is not to the rule
-set at all.** `SheetEntry` gained a category — `weapon | action | passive` — and a weapon gained a
-to-hit, which sounds like a rule and is the opposite: it is the spec's own sentence *"clicking an
-item on a character sheet sends the roll to the game feed"* made precise enough to implement, since
-three kinds of item behave differently and the spec assumed one. **A to-hit that was already written
-into 763 descriptions as prose became a field**, and nothing new is adjudicated, evaluated or
-rolled. The two amendments in [docs/requirements.md](docs/requirements.md) record a change to the
-*screen* — the sheet and DM panels stop being slide-outs — and a clarification of what a sheet item
-is. See [ADR 0008](docs/adr/0008-one-shell-and-what-a-sheet-entry-is.md).
+Everything on those lists is **excluded by design, not missing.** Lifting one is a spec amendment
+with an ADR behind it — not something a feature branch does on the way past.
 
-**Seats, sheets and control lifted none either, and it is now three milestones in a row.** Its three
-amendments are about the *screen* (the DM's tab list is a selector grouped into Characters, NPCs and
-Monsters), about *who creates a character* (the DM does, and players claim — a consequence of
-ADR 0002 rather than a new decision), and about *which tokens a player may move* (their own, plus
-anything the DM has granted them). Nothing was added to the Included list, nothing was lifted from
-the Excluded list, and nothing new is adjudicated, evaluated or rolled. A `CharacterGroup` is a
-heading, and a grant is a permission — neither is a rule.
+### A label is not a rule, and this is the seventh time the line has been drawn
 
-**The dice lifted nothing either, and its one amendment runs the other way.** Rolls are now
-*evaluated* — the first thing in this project that parses one of the expressions three milestones
-stored — and still nothing is **adjudicated**: no result is compared to an Armour Class or a save DC,
-no damage is applied, and nothing decides whether an attack hit. The sole amendment in
-[docs/requirements.md](docs/requirements.md) is the first in that section to narrow an entry on the
-**Included** list rather than lift one from the Excluded list — *"Turns consist only of 1 action, 1
-bonus action and 1 reaction"* is a rule the table keeps and the app does not enforce, and saying so
-is the point, because an absence reads as an oversight.
+The distinction that makes a full-ruleset conversion possible at all: this application **announces
+and counts**, and the table **adjudicates**. A field that prints a word the rules use is not a rule
+that enforces it.
 
-⚠️ **Board polishing lifted no rules exclusion either — that is five milestones in a row — but its
-two amendments are the first pair in this project that are not about rules at all, and neither is
-small.** One publishes a creature's **armour class and passive perception** on its coin, which lifts
-a **secrecy** guarantee rather than a rules one and is the only entry in
-[docs/requirements.md](docs/requirements.md)'s amendments section of that kind. The other widens
-`ROLL_PATTERN` to admit **d2 and fifty dice**, which is invariant 10's cap and therefore not a
-constant bump. Both went through the same door CR scaling passed and the four declined gaps below
-did not: *does something now change a number a player rolls against without a person asking it to?*
-Neither does. Nothing is compared to an armour class, nothing notices anybody, and fifty dice roll
-only when somebody asks for fifty dice. See
-[ADR 0014](docs/adr/0014-what-a-coin-says-about-itself.md).
+| # | The label | The rule it is not |
+| - | --- | --- |
+| 1 | A premade sheet's **equipment kit** | an inventory |
+| 2 | A creature's **loot** | an inventory |
+| 3 | A creature's **type, size, alignment, role, tier, tags and DM notes** | anything adjudicated |
+| 4 | A coin's **condition pips** — seventeen of them, `prone` and `restrained` among them | a speed halved, advantage granted, a drag refused |
+| 5 | A creature's **armour class and passive perception** on its coin | a roll compared to either, or a creature noticing anybody |
+| 6 | A weapon's **mastery** — Cleave, Graze, Nick, **Push**, Sap, **Slow**, **Topple**, Vex | anything shoved ten feet, any speed reduced by ten, anybody knocked Prone |
+| 7 | A spell's **casting time and duration**, including `Concentration, up to 1 minute` | a bonus action counted, a spell dropped when its caster takes damage |
 
-⚠️ **Four neighbouring gaps were closed by declining them, and that is the discipline rather than
-laziness — but two of the four have since been reopened deliberately, so read the marks.**
+⚠️ **Rows 6 and 7 arrived with the conversion and both are near-misses on a live exclusion**, which
+is why each has an amendment rather than a comment: *"No movement-detriment status effects (prone,
+stand up, difficult terrain, etc.)"* names three of the eight masteries by their exact effect, and
+**an unrecorded near-miss is indistinguishable from a quiet lifting.** Two Goliath ancestries brush
+the same exclusion for the same reason — *Hill's Tumble* sets Prone and *Frost's Chill* reduces a
+Speed — and are named in the amendment for it.
 
-- 🚫 **No spell slots** — *decision reversed; not yet built.* There are none in the code today, and
-  a spell's level on the sheet is still only a label. **Do not defend this as a rule**: the
-  character-resources milestone in [docs/roadmap.md](docs/roadmap.md) builds slot counting, and this
-  bullet is deleted on the day it lands.
-- ✅ **No spell save DC for a hero** — still declined. A creature has one because the bestiary wrote
-  one, and nothing compares a roll to either.
-- 🚫 **Limited-use abilities stay as coarse as `spentPerRest`** — *decision reversed; not yet built.*
-  Today the app remembers whether a per-long-rest trait has been spent and counts nothing else, so
-  Rage twice a day is still the table's to track, and there is still no short rest. **Do not defend
-  this either** — same milestone, same deletion.
-- ✅ **Concentration and the action economy** — still declined. No field and no check, and nothing on
-  the sheet implies otherwise.
+⭐ **One entry left this table by becoming a rule, and that is the most instructive thing in it.** A
+spell's **level** was row 0 for three milestones — *"the spell level stays on the sheet because it is
+a label, and nothing anywhere implies a resource was spent"* — and it is a **resource** now: slots
+are counted, spent and returned by a rest. It moved by going through the door below, on the record,
+with an amendment and an ADR. Nothing else in the table has moved, and nothing moves by a branch
+deciding it is obvious.
 
-Each of those was individually small and reasonable, and each is a rules engine arriving one feature
-at a time — which is what D&D Lite exists to not be. **The test that decided all four is unchanged
-and is the one CR scaling already passed: the moment something changes a number a player rolls
-against without a person asking it to, it needs an amendment and an ADR.** The two reversals came
-back through exactly that door rather than arriving inside a feature branch, and neither of them
-trips it: counting a slot compares nothing, refuses nothing, and changes no die of damage.
+### The test that decides the next one, unchanged
 
-See [ADR 0011](docs/adr/0011-announcing-a-roll-rather-than-adjudicating-one.md) — whose decisions 1
-and 4 are **struck through in place** for this reason, and whose 2, 3 and 5 stand.
+**The moment something changes a number a player rolls against without a person asking it to, it
+needs an amendment and an ADR.**
+
+That sentence has now decided everything: CR scaling passed it (a stepper that changes eight fields
+at once is the same act as typing into eight fields, done in one motion), the DM override passed it,
+the four gaps below were declined by it, and **both reversals came back through it** rather than
+arriving inside a feature branch. Keep it exactly as written — it is the door.
+
+Applied to the conversion itself, at its full size: counting a slot compares nothing, refuses
+nothing, and changes no die of damage; a death-save tally decides whether nobody dies; a resource
+that recharges on a rest recharges when somebody presses *rest*. **No roll is compared to an armour
+class or a save DC, no damage is applied, no resistance is halved, no condition does anything, no
+mastery pushes anybody, no concentration breaks, no death save kills a character and no cast is
+refused.**
+
+The four neighbouring gaps, with their marks brought up to date:
+
+- ✅ **Spell slots — reversed and built.** A spell's level is a resource. ⚠️ **A *person* spends one,
+  and `convex/feed.ts` deducts nothing** — announcing a spell consumes no slot, refuses no cast and
+  picks no slot level, because a level 1 spell may legitimately be cast with a level 3 one and the
+  application has no way to know which. ADR 0011's supersede table says *"a roll spends one"* and that
+  clause is wrong; ADR 0016's resource-shape section is the record. This closes ADR 0011's
+  decision **1**, superseded in place there.
+- ✅ **A hero's spell save DC and spell attack bonus — reversed and built.** Every 2024 caster has
+  both, derived from a stored spellcasting ability plus the proficiency bonus, so declining them
+  ships a sheet with two boxes the rules describe left empty. ⚠️ **This reverses a *field*, not the
+  decision to announce rather than adjudicate** — nothing compares a roll to either. This closes
+  ADR 0011's decision **2**, which stood until the conversion and does not now.
+- ✅ **Limited-use abilities — reversed and built.** Counted per key, with a maximum, a recharge
+  period and an amount returned by the shorter rest, and there is a short rest. This closes ADR 0011's
+  decision **4**.
+- ✅ **Concentration and the action economy — still declined, and still the right call.** No field
+  and no check, and nothing on the sheet implies otherwise: a spell row printing *Concentration* is
+  row 7 above. Enforcing an action economy means knowing whose turn it is, which means an initiative
+  tracker that owns the round, which means the app adjudicating the one thing this project exists to
+  leave to the people at the table. **ADR 0011's decision 5 stands.**
+
+See [ADR 0011](docs/adr/0011-announcing-a-roll-rather-than-adjudicating-one.md) — decisions 1 and 4
+are struck through in place there, decision 2 is superseded by the conversion, and 3 and 5 stand.
+⚠️ That record's status line points forward at *"ADR 0015"* for the reasoning behind its reversals;
+**that number went to the fog milestone, and [ADR 0016](docs/adr/0016-the-5e-2024-conversion.md) is
+the record.** Left uncorrected there, because ADRs are not edited after the fact.
+
+### Two guard tests, because two of these exclusions are held by machinery rather than by prose
 
 **Conditions on a coin lifted nothing either, and this is the first entry where a guard *test* is
 what makes that true rather than a promise.** A coin carries a fixed vocabulary of seventeen D&D
@@ -679,6 +700,69 @@ them. See [ADR 0013](docs/adr/0013-a-coin-you-can-copy-place-and-label.md), and 
 [docs/requirements.md](docs/requirements.md) — which is written down precisely because the exclusion
 names the words now on screen, and an unrecorded near-miss is indistinguishable from a quiet lifting.
 
+**`masteryGuard.test.ts` is that paragraph's sibling, and its allow-list is narrower — one module
+where the marker guard's is three.** `convex/lib/mastery.ts` holds eight strings, a hand-spelled
+validator and a `Record` of labels that are capitalised words with **no effect description on them**;
+the one module permitted to reach any of it is `./lib/sheet.ts` — the validator that stores a mastery,
+the accessor that reads it back, and the arity rule that refuses it on anything but a weapon. Same two
+sweeps, same reason, and **the same module both guards exist to keep out**: `convex/lib/dice.ts`,
+because the way *this* exclusion breaks is somebody writing three reasonable lines that grant
+advantage for Vex.
+
+⚠️ **There is no `never`-arm switch in `lib/mastery.ts`, and it is declined explicitly rather than
+forgotten.** Invariant 9's rule is *find the place a wrong answer does damage and make the compiler
+refuse there*; for a mastery there is no such place, because a switch would be the first module in
+`convex/` to **read** one. That is `TokenMarker`'s argument reaching a second vocabulary, and two
+`Record`s plus the guard are the whole of it.
+
+### ⚠️ What the conversion did NOT change, which is nearly everything above this section
+
+A reader who has just seen 283 creatures, 183 spells, nine species and eighteen skills arrive will
+assume the guards moved with them. **They did not, and the assumption is the dangerous one**, because
+acting on it means rebuilding machinery that already works or, worse, relaxing a choke point that was
+never in the way.
+
+- **Invariant 8's table gains no table, no reader and no predicate.** `maySeeCharacter`, `maySee`,
+  `mayHearOf` and `boardCharacterAccess` are untouched. A monster's sheet is still a leaked *row*, its
+  hit points a leaked *field*, and the two corpora a leaked *module* behind `bundleGuard` and
+  `corpusGuard`. Every one of those guards keeps its exact meaning because **none of them reads a
+  rule** — they read a layer, a control grant and a document kind.
+- **Invariant 9's stored-sheet union gains no member.** It is still `pc | npc | preset | bestiary`,
+  and `isMonsterSheet` is still the one allow-list that decides monster-ness.
+- **Invariant 10's guards are true word for word.** All the arithmetic and all the randomness are
+  still in `convex/lib/dice.ts`, nothing under `src/` may import it, a roll request still names an
+  identifier and never a number, and `ROLL_PATTERN` still admits 1–50 dice over eight faces.
+
+**Every field the conversion added is a label on a DM-only sheet, a number the DM's own stepper
+moves, or a count a person ticks.** A conversion that changed one of the guards above would be doing
+something other than converting.
+
+⭐ **The migration commit has landed and the two constants this section used to name as stale have
+moved.** `SUBCLASS_LEVEL` is 3 and `SPEED_FEET` is **30**. The second one was the milestone's only
+genuine **stored-value change wearing a constant's clothes** — `speedOf` answers the constant for
+every sheet whose `speed` is absent, and every sheet stored before the conversion has it absent — so
+the order was load-bearing and is worth keeping: **the sweep pinned every hand-built `pc` and `npc`
+sheet to the 35 it already meant, and then the constant moved.** A `preset` was deliberately left
+alone, because it stores no speed and a 2024 species prints an absolute one over the resolver's
+default.
+
+⚠️ **What that sweep is, and the one thing to know before running it.** `convex/lib/migrate.ts`
+holds the six changes, `admin.listUnmigrated` and `admin.migrateGame` are the internal pair (no
+public mutation — `purgeGame`'s argument, applied to a tool that rewrites every sheet in a game), and
+`npm run migrate-sheets` is the driver, dry run by default. **The sweep and the narrowings it makes
+possible cannot land on a deployment in one push**: Convex validates existing rows on a schema push,
+so a deployment holding one unswept row refuses the narrowed schema outright. Push the wide schema
+with the migration functions, run the sweep, then push the narrowed one — `chore/narrow-token-layer`'s
+shape a second time. **The runbook is the header of `scripts/migrate-sheets.mjs`**, which is what
+somebody has open when they need it.
+
+⚠️ **So `chore/m14-migration` is two commits and they deploy separately.** The first is the sweep and
+stands on its own against a deployment full of unswept rows; the second narrows
+`presetSheetValidator`, the eighteen skill booleans and `characterVitals`, and **must not be pushed
+until the sweep has run everywhere**. Until it has, the schema is deliberately wide enough to hold
+both the rows the sweep reads and the rows it writes — which is why `preset.race` is *optional* rather
+than required, and why nothing writes `spentPerRest` any more although the field is still there.
+
 ## Commands
 
 ```powershell
@@ -689,6 +773,7 @@ npm run lint         # typecheck only — both src/ and convex/
 npm test             # vitest run — the convex-test suites in convex/*.test.ts
 npm run test:smoke   # scripts/board-smoke.mjs — the board API against the REAL dev deployment
 npm run prune-games  # scripts/prune-games.mjs — deletes the games test:smoke leaves behind
+npm run migrate-sheets  # scripts/migrate-sheets.mjs — Milestone 14's sweep. DRY RUN unless --yes
 ```
 
 `npm run test:smoke` is not a second copy of `npm test`, and the difference is the point:
@@ -712,6 +797,16 @@ that puts the authorisation question back, and that question wants an ADR. The s
 deliberately does *not* call it: it authenticates with a game code over `ConvexHttpClient` like any
 other client, and wiring the purge into its cleanup path would make a test depend on deploy
 credentials it does not otherwise need.
+
+**`npm run migrate-sheets` is the same arrangement a second time, for Milestone 14's sweep** —
+`admin.listUnmigrated` (an `internalQuery`, so the dry run is structurally unable to write) and
+`admin.migrateGame` (an `internalMutation`, one game per transaction), driven by
+`scripts/migrate-sheets.mjs`. ⚠️ **Neither gets a public mutation either**, and the reason is
+`purgeGame`'s word for word: an internal function does not have to answer *who* may run it, and
+rewriting every character sheet in a deployment is if anything the stronger case for staying
+internal. It writes nothing without `--yes`, it is idempotent — a second pass over a swept game
+patches no document at all — and it is transition code that goes away with
+`convex/lib/migrate.ts`.
 
 **`npm run dev:backend` is needed whenever you are changing anything under `convex/`** — it watches
 those files and pushes them to the dev deployment. It also writes `.env.local`, which the frontend

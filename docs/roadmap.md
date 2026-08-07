@@ -2865,14 +2865,22 @@ finding out now rather than at content time.** That milestone reasoned from a co
 2024 rules describe eight resource shapes and this corpus contains three."* After this milestone the
 corpus contains **all of them**, and the sentence is deleted rather than qualified.
 
-### The absorbed milestone, corrected in one place
+### The absorbed milestone, corrected in two places
 
-Everything the character-resources milestone planned still holds — one shape covering discrete uses,
+Most of what the character-resources milestone planned still holds — one shape covering discrete uses,
 dice pools and point pools; **absent, never zero**; the declaration optional on content with an
-allow-list test on both sides; a spend on the first part a category offers and never twice for one
-cast; the spend after the dice are evaluated; `convex/feed.ts` still reading no guarded table; and the
-band variant of the vitals payload still having nowhere to put a number. Read that section in the git
-history of this file before starting — it is not restated here because it was right.
+allow-list test on both sides; `convex/feed.ts` still reading no guarded table; and the band variant of
+the vitals payload still having nowhere to put a number. Read that section in the git history of this
+file before starting — it is not restated here because it was right.
+
+🚫 **What did not survive is the automatic spend**, which this paragraph used to promise: *a spend on
+the first part a category offers and never twice for one cast; the spend after the dice are evaluated.*
+Nothing was built that way. A use and a slot both move because a **person** pressed the counter, and
+`convex/feed.ts` deducts nothing — see the resource-shape section of
+[ADR 0016](adr/0016-the-5e-2024-conversion.md), which argues it. The short version is that a cast
+which silently consumes a resource is the application deciding an announcement *was* an action and
+*succeeded*, and that for a spell slot it could not pick the right one anyway: a level 1 spell may be
+cast with a level 2 or 3 slot, and upcasting is how half the 2024 list scales.
 
 🚫 **One of its decisions does not survive contact with the SRD.** It said:
 
@@ -3073,6 +3081,163 @@ deployment for all four sheet kinds, because it is the only thing that has ever 
 trap. And a player inspecting network traffic sees no ability score, no resource count and no spell
 save DC for any creature whose sheet they may not already read — the same scan, with the same positive
 control, over a corpus twice the size.
+
+### ⏸ Where this stopped, and what the remaining branches owe
+
+The conversion is being built on an integration branch, `feature/m14-5e-2024`, which is **not merged
+into `dev` and is not mergeable yet**. This section is the resume point. It is written here rather
+than in a branch note because the thing a reader needs on picking this up is the *difference* between
+what the ten steps above promise and what the branch currently does — and that difference is a fact
+about the milestone, not about a working copy.
+
+**Green on the branch as it stands:** `npm run lint`, `npm run build`, `npm test` (**1938 tests over
+49 files**) and `npm run test:smoke` (**331 checks against the real dev deployment**, run against both
+the wide and the narrowed schema). No guard test was
+weakened, skipped or exempted to get there, which was the condition the whole fan-out was run under.
+`leakGuard.test.ts`, `corpusGuard.test.ts`, `markerGuard.test.ts`, `storageGuard.test.ts`,
+`lib/layers.test.ts` and `lib/markers.test.ts` are byte-identical to `dev`. `bundleGuard.test.ts` is
+the only one that moved, and it moved in the two permitted directions: the `races` → `species` rename
+its existing needles already carried, and one *addition* — the needle keeping `scripts/srd/` out of
+the bundle, with both halves of its anti-vacuity pair. There is a new one beside it,
+`masteryGuard.test.ts`, written from `markerGuard.test.ts` line for line, and the module it exists to
+keep the mastery vocabulary out of is `convex/lib/dice.ts`.
+
+**Landed:** steps 1 through 9, plus the documents. The vocabulary rename and the eighteen skills; the
+`findClass` treatment for `species()`; the schema widening with the resource shape, the short rest and
+weapon mastery as a label; the nine species with 33 traits and their lineages; the twelve classes at
+one archetype each; 183 spells; 253 creatures with `benchmarks.ts` re-fitted to them; the sixty
+library sheets. ADR 0016, the requirements amendment, the CLAUDE.md *Rules scope* rewrite and the SRD
+attribution went in **ahead of** the content they describe, deliberately — an ADR that argues a
+decision is worth more before the code than after it — which is why the next paragraph exists.
+
+**The documents led the code on three things, and all three have now landed.** `SUBCLASS_LEVEL` is 3,
+the library is sixty sheets, and **`SPEED_FEET` is 30** — the last of them, and the milestone's only
+genuine stored-value change disguised as a constant edit. A `preset` sheet stores no speed —
+`resolvePreset` writes the constant into the *resolved* sheet, so flipping it re-resolves correctly,
+Goliaths included. What would have broken is every hand-built `pc` and `npc` sheet, whose
+stored-absent field would silently turn a DM-typed goblin from 35 into 30. **The pin sweep ran first
+and the constant moved after it**, in that order, in `chore/m14-migration`.
+
+**Step 10 has landed, in two halves.** The sheet redesign — the pinned header, the Play / Build /
+Spells sub-tabs, and the second renderer a hand-typed `npc` now shares with a `bestiary` creature —
+and the board half: the coin's temporary-hit-point ward, the hover card, the feed row and the floating
+announcement. ⚠️ **The card is where the guard bites**, and the answer is narrower than the design
+asked for: armour class and passive perception are ADR 0014's two published stats and **initiative and
+speed are on no vitals payload at all**, so the card reads those two off `characters.sheet`, which is
+already gated by `findEditableCharacter`. The effect is that a player hovering a *teammate's* hero
+sees armour class and hit points but not speed — strictly inside what the server already publishes,
+and no field was added to `publicVitalsValidator`'s `band` variant. Putting initiative and speed on
+that payload is a third published stat and needs its own ADR, which is exactly what ADR 0014 says.
+
+**Three things were built that the ten steps do not name, and each closed a real gap.**
+
+- **Spell slots.** CLAUDE.md's *Rules scope* claimed *"✅ Spell slots — reversed and built"* and
+  nothing existed: `grep -rin slot convex/lib/` found the word only inside spell prose. A fourth
+  docs-lead-code item, found by sweeping every *"built"* claim in the documents against the code.
+  `convex/lib/slots.ts` derives them, with the Warlock's Pact Magic as a separate **short-rest** track.
+- **The three vitals mutations.** `characterVitals` had carried `temporaryHp`, the death-save tally
+  and `heroicInspiration` since the schema widened, readable by everyone and writable by nobody.
+- **A creature's ability scores reaching its sheet.** The corpus had carried `abilityScores` and
+  `saveBonuses` since transcription and `resolveBestiary` projected neither, so `abilitiesOf` answered
+  `null` for every creature in the game and the new stat block's ability grid had nothing to draw.
+
+⭐ **That last one found a `NaN` in the corpus.** The Will-o'-Wisp held its strength *modifier* in its
+*score* column — `str: -5` where the SRD prints `STR 1 (−5)` — and a literal `NaN` in the save column
+from transcribing `(-5)` through `Number`. Neither had ever been read: `scaleCombat` leaves both
+untouched, and `scale.ts` writes its comparisons as `!(x > 0)` precisely so a `NaN` fails rather than
+propagates, so what should have been a crash was a wrong number sitting still. **A field nothing reads
+is a field nothing checks**, and the thing that caught it was the corpus test running the sheet
+validator over all 283 creatures at all 10 ratings the moment the projection existed.
+
+*`chore/m14-migration`* — last, because it could not be written until every rename was known, and it
+is **two commits that deploy separately**. The first is the **sweep**: the pin and `SPEED_FEET`
+above; clearing retired archetype keys to `null` with `locked: false` rather than remapping them,
+because remapping changes a character nobody asked to change; rewriting `preset.race` to `species`
+and back-filling five `false` skill booleans on every stored `pc` sheet and inside the preset
+override diff; folding `characterVitals.spentPerRest` into `spentUses`; `convex/lib/migrate.ts`,
+`admin.listUnmigrated`, `admin.migrateGame` and `npm run migrate-sheets`. The second is **three of
+the four narrowings** — dropping `race`, making all eighteen booleans required, and dropping
+`spentPerRest` — and it cannot be pushed until the sweep has run everywhere. **One widening is
+deliberately never narrowed**: `rollResultValidator`'s optional multi-part array, because a feed row
+is historical and must render forever.
+
+🚫 **The fourth narrowing was planned and is declined, and the plan was wrong rather than the
+branch.** `half-orc` **stays** in `storedSpeciesKeyValidator`, which is therefore ten literals for
+nine species, permanently. The milestone's own acceptance criterion is that a Half-Orc character
+created before this milestone *opens, with its name, and says plainly which species needs choosing
+again* — which requires the key to remain **storable**, and no sweep can change that. Removing it
+makes the schema push fail against any deployment holding one, which is how it was found the first
+time. `RETIRED_SPECIES` exists for exactly this; the validator says so where somebody would look.
+
+⚠️ **What the branch cannot do is land on a deployment in one push, and that is a property of Convex
+rather than of the branch.** A schema push validates *existing* rows, so a deployment holding one
+unswept character refuses the narrowed schema outright — and all three narrowings block it, since
+every stored `preset` carries a `race`, every `pc` sheet with skills carries thirteen booleans, and
+every vitals row that ever spent an ability carries a `spentPerRest`. **This is
+`chore/narrow-token-layer`'s four steps a second time**, and the property that makes it safe rather
+than merely careful is the same one recorded there: *the narrow schema is the proof the sweep
+landed*, so step 4 cannot succeed early and nothing has to be trusted. The runbook lives in the
+header of `scripts/migrate-sheets.mjs` — in the tool rather than in an ADR, for the reason this
+file's own note about ADR 0012 gives: a runbook goes stale the moment it is followed.
+
+⚠️ **Two hunks in the sweep commit are there for the *deploy* rather than for the feature**, and
+both would look like tidying to somebody rebasing. `preset.race` becomes **optional**, because the
+sweep writes rows with a `species` and no `race` and a validator that still required it would reject
+the migration's own writes. And `longRest` stops writing `spentPerRest: []`, because a long rest
+taken between the sweep and the narrowing push would otherwise put back the exact field that push
+refuses.
+
+### The runbook has been walked end to end on the dev deployment
+
+All four steps, in order, with the results — recorded because *"the sweep works"* is a claim and this
+is the evidence for it.
+
+| Step | What happened |
+| --- | --- |
+| 1. Deploy the sweep half | Accepted. |
+| 2. `npm run migrate-sheets` (dry) | **10 games**: 9 species keys, 1 retired archetype, 6 pinned speeds. |
+| 3. `npm run migrate-sheets -- --yes` | Swept 10/10. **The receipt matched the rehearsal exactly.** A second dry pass reported *nothing to do*, which is the idempotence claim discharged against real rows rather than fixtures. |
+| 4. Deploy the narrowing half | Accepted — **and that acceptance is the proof step 3 finished**, since a deployment holding one unswept row would have refused it. |
+
+⭐ **Step 4 found two stale smoke fixtures that nothing else could have.** One read `spentPerRest` off
+a payload the narrowing had just removed it from; the other sent a thirteen-key `skillProficiencies`
+where eighteen are now required. **Neither was visible to `npm run lint` or to 1938 passing tests** —
+`convex-test` calls the typed API, which fills the object in, and the smoke script sends the literal
+over the wire. Sixth outing of the field-by-field trap, by exactly the route that script's own header
+describes.
+
+### What is left
+
+1. ⚠️ **Production has NOT been swept, and that is the maintainer's to run.** Until it has,
+   `chore/m14-narrowings` must not reach `main` — the deploy would be refused. It is held off the
+   integration branch on purpose, exactly as `chore/narrow-token-layer` was: a branch that cannot
+   deploy until a sweep has run is a branch that does not sit on one somebody might deploy.
+   **Take a snapshot export first; there is no undo.** And run it promptly after deploying the sweep
+   — `convex/lib/migrate.ts` records why the speed pin cannot converge on a deployment people are
+   still playing on.
+2. **Hand verification in two browsers** — a Gnome Wizard built from nothing to level 3, a Wood Elf's
+   speed, a Warlock's short rest beside a Wizard's, a pre-conversion Half-Orc opening, and a full
+   round played from both chairs. Every milestone so far has found something this way and no other.
+
+**One thing worth carrying forward about how this was built.** Every defect the integration found was
+at a **seam** rather than inside any one agent's work: four in Milestone 13, and here a duplicated
+`lineageKey` line where two branches each added one and the weaker won; a stale
+`storedSpeciesKeyValidator` listing the old eight species; a smoke script whose eight `fog:draw` call
+sites still passed flat numbers after the signature became a discriminated union; two branches
+independently wiring the same three hooks into `useVitals`; and `spentSlots` landing on the vitals
+payload while the coin's branch was open, leaving both client fixtures a field short.
+
+⚠️ **Only the last of those was caught by a compiler, and only because the field was required rather
+than optional** — 1919 tests passed through it. The `fog:draw` one was invisible to lint *and* to the
+whole vitest suite, because `convex-test` calls the typed API and the smoke script calls the real one.
+Parallel branches do not usually break each other's code. They break the agreement between it, and the
+only three things that have ever found that are reading the merge, running `npm run test:smoke`, and —
+once — a required field.
+
+⚠️ **And every one of the three step-10 worktrees was created from `main` rather than from the
+integration branch.** All three agents noticed before writing a line, reset, and said so; that is a
+systemic hazard rather than three coincidences, and it is the first thing to check if work against a
+worktree ever reports that files which should exist do not.
 
 ---
 

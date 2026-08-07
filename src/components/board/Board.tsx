@@ -7,6 +7,7 @@ import { BoardTokenMenu } from '@/components/board/BoardTokenMenu'
 import { BoardToolbar } from '@/components/board/BoardToolbar'
 import { TableViewBadge } from '@/components/board/TableViewBadge'
 import { FogLayer } from '@/components/board/FogLayer'
+import { TokenDetailCard } from '@/components/board/TokenDetailCard'
 import { TokenHpPopover } from '@/components/board/TokenHpPopover'
 import { TokenLayers } from '@/components/board/TokenLayers'
 import { ZoomControls } from '@/components/board/ZoomControls'
@@ -25,8 +26,10 @@ import type { Dm } from '@/hooks/useDm'
 import { useBoardTool } from '@/hooks/useBoardTool'
 import { useGridTrace } from '@/hooks/useGridTrace'
 import { useGridWrite } from '@/hooks/useGridWrite'
+import { useCoinSheet } from '@/hooks/useCoinSheet'
 import { useHpTarget } from '@/hooks/useHpTarget'
 import { useSmoothPositions, useTokenMove } from '@/hooks/useTokenMove'
+import { useTokenHover } from '@/hooks/useTokenHover'
 import { useTokenSelection } from '@/hooks/useTokenSelection'
 import { useWallPaths } from '@/hooks/useWalls'
 import { useHpActions } from '@/hooks/useVitals'
@@ -247,6 +250,42 @@ export function Board({
    */
   const hpTarget = useHpTarget(tokens)
   const hpToken = hpTarget.hpToken
+
+  /**
+   * Which coin the detail card is about: the one the pointer is resting on, or the selected
+   * one when it is resting on nothing.
+   *
+   * ⚠️ **Hover wins over selection**, which is the way round that matches what a pointer
+   * means: you are asking about the thing you are pointing at, and the selection is what the
+   * arrow keys are aimed at from a minute ago. The other order would make the card refuse to
+   * follow the mouse for as long as anything was selected, which is most of a session.
+   *
+   * Given the **smoothed** array for `useHpTarget`'s reason: it anchors something to a coin
+   * rather than deciding what a key press moves, so it has to read where the coin is drawn.
+   *
+   * ⚠️ **The selection half inherits `useTokenSelection`'s own narrowing, which is to coins
+   * this caller may move** — so a player who has selected nothing (because they may move
+   * nothing) still gets a card by pointing, and that is the half that matters. Widening the
+   * selection to reach the card would change what the arrow keys are aimed at, which is a
+   * far larger decision than a tooltip.
+   */
+  const hover = useTokenHover(tokens)
+  const cardToken = hover.hoveredToken ?? selection.selectedToken
+
+  /**
+   * The card's creature, if this caller may read one.
+   *
+   * ⚠️ **`null` is the access rule and not a loading state**, and the decision was made by
+   * `characters.sheet` before this line ran — see `useCoinSheet`, which carries the whole
+   * argument, and `TokenDetailCard`, which explains why initiative and speed are the only
+   * two things drawn from it. Nothing here filters and nothing here may start to.
+   */
+  const cardSheet = useCoinSheet({
+    code,
+    characterId: cardToken?.characterId ?? null,
+    playerId,
+    dmCode: dm.dmCode,
+  })
 
   /**
    * Grid calibration: whether a tool is out, which of the two it is, and the box the DM is
@@ -718,6 +757,11 @@ export function Board({
               onDragEnd={move.onDragEnd}
               onOpenHp={onOpenHp}
               onContextMenu={onTokenContextMenu}
+              // Two more stable identities on the prop contract this component's docblock
+              // calls a contract: `useTokenHover` builds both with `[]` deps for exactly the
+              // reason listed there, so a pan still reconciles nothing and no coin rebinds.
+              onHoverStart={hover.onEnter}
+              onHoverEnd={hover.onLeave}
             />
             {/*
               ⚠️ **Over the coins, which is the opposite of where the fog goes, and the two
@@ -813,6 +857,32 @@ export function Board({
               // positioned in screen space, so it needs the pan as well as the zoom.
               camera={camera.camera}
               onAdjust={hp.adjust}
+              // The three 2024 writes, each held still by `useHpActions` for the reason
+              // `adjust` is — a mutation re-wrapped in a render body is a new function
+              // every render, and this component renders on every camera commit.
+              onSetTemporaryHp={hp.setTemporaryHp}
+              onSetDeathSaves={hp.setDeathSaves}
+              onSetHeroicInspiration={hp.setHeroicInspiration}
+            />
+          ) : null}
+          {/*
+            WHAT THE COIN IS, beside it. Hidden while this browser is dragging that coin, on
+            the popover's reason one element up: React sees a dragged position ten times a
+            second because that is the rate invariant 2 caps writes at, so a card following
+            it would stutter a quarter of a second behind the pointer dragging it.
+
+            ⚠️ **No permission test here.** The card draws what arrived — the vitals row this
+            browser was sent, and a sheet `characters.sheet` decided to answer with — and
+            `TokenDetailCard`'s docblock is where the two gates are set out. A viewer who may
+            not know a creature's initiative has no sheet, so the card has nothing to draw;
+            it does not fetch the number and then decline to print it.
+          */}
+          {cardToken && move.heldTokenId !== cardToken._id ? (
+            <TokenDetailCard
+              token={cardToken}
+              scene={scene}
+              camera={camera.camera}
+              sheet={cardSheet}
             />
           ) : null}
           {/*

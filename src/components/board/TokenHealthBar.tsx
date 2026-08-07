@@ -3,7 +3,7 @@ import { Rect, Text } from 'react-konva'
 import type Konva from 'konva'
 
 import { setCursor, swallowLeftPress } from './konvaPointer'
-import { BAND_COLOUR, healthFraction, healthLabel } from '@/lib/health'
+import { BAND_COLOUR, WARD_COLOUR, healthFraction, healthLabel, wardFraction } from '@/lib/health'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicVitals } from '@convex/lib/characters'
 import { healthBand } from '@convex/lib/sheet'
@@ -14,6 +14,27 @@ const BAR_GAP = 5
 const BAR_CORNER = 3
 const BAR_EDGE = 1
 const LABEL_FONT_SIZE = 9
+
+/**
+ * The ward: a thin strip riding **above** the bar, for temporary hit points.
+ *
+ * ⚠️ **A third of the bar's height and separated from it by a gap, and both of those are
+ * the design rather than taste.** Temporary hit points are not part of the maximum and are
+ * not healing — `writeTemporaryHp` on the server has no ceiling to clamp against precisely
+ * so that "clamp it to max like everything else" is unwriteable — so the one thing this
+ * must never look like is *more of the same bar*. Every formulation that draws it inside
+ * the track says the opposite: a segment appended to the fill reads as a heal, a segment
+ * overlaid on the right-hand end reads as the character being nearly full, and either makes
+ * a DM decide whether to attack again on a number that is not there.
+ *
+ * So it is a **separate object above a gap, in a colour no band could be**, and it has no
+ * track of its own: nothing drawn is exactly what nought temporary hit points means, and a
+ * empty strip would be a permanent slot inviting somebody to wonder what is missing from
+ * it. `wardFraction` carries the argument for measuring the width against `max` at all.
+ */
+const WARD_HEIGHT = 4
+const WARD_GAP = 2
+const WARD_CORNER = 2
 
 /**
  * Below this many screen pixels across, a coin stops carrying anything written on
@@ -38,6 +59,14 @@ const LABEL_FONT_SIZE = 9
  * follow, and it followed to the *smallest* number that still holds two rather than to a
  * comfortable margin: detail hidden on a coin that could carry it is the cost on the other
  * side. The visible effect is that coin detail now appears at a slightly higher zoom.
+ *
+ * ⚠️ **The ward rides inside this gate and did not move it, which is the point of extending
+ * the mechanism rather than adding a second one.** Temporary hit points are drawn as a strip
+ * above the bar, so they are already behind `showDetail` in `TokenCoin` along with the name,
+ * the pips and the two stat badges — a zoom-out still drops the coin's annotations together
+ * rather than leaving one four-pixel ribbon over an anonymous disc. **A separate, lower
+ * threshold for the ward is the wrong fix** if it is ever illegible: the number itself is in
+ * the hover card, which is HTML and has no zoom at all.
  */
 export const COIN_DETAIL_MIN_DIAMETER = 30
 
@@ -92,7 +121,15 @@ export type TokenHealthBarProps = {
 
 /**
  * The health bar above a coin: `20/45` for a hero, `Bloodied` for a monster a
- * player is looking at.
+ * player is looking at — with a thin ward above it when the creature is holding
+ * temporary hit points.
+ *
+ * **The ward is a second quantity and not a second band**, which is why it is a strip of
+ * its own above a gap in a colour belonging to nothing else, rather than a segment of the
+ * fill. `WARD_HEIGHT` carries that argument at length, and `wardFraction` carries the one
+ * about measuring it against a maximum it is not part of. What matters here is that the
+ * two are drawn as two things, because at a glance the only wrong reading available is
+ * *that creature has been healed*, and a DM acts on it.
  *
  * **There is no `isDm` here, and adding one would be a bug rather than a feature.**
  * The choice between exact numbers and a band was made in `visibleVitals` on the
@@ -164,6 +201,14 @@ export const TokenHealthBar = memo(function TokenHealthBar({
   const fontSize = LABEL_FONT_SIZE / scale
 
   const fraction = healthFraction(vitals)
+  // ⚠️ **Nought for a viewer holding a band, and there is nothing here to unlock.** The
+  // `band` member of `publicVitalsValidator` has no `temporaryHp` field at all, so a player
+  // looking at a goblin was never sent the number and the strip is simply not drawn — no
+  // placeholder, no dimmed slot, nothing on screen that says a ward might exist. That is
+  // CLAUDE.md invariant 1 held by the *type* rather than by a condition somebody remembered
+  // to write: **there is no `isDm` in this component and adding one would be a bug**, the
+  // same sentence the band itself carries two paragraphs up.
+  const ward = wardFraction(vitals)
   // The band, worked out once and indexed twice — the bar's colour and the ink on
   // top of it have to be the same creature's answer, and `healthColour` would take
   // the same payload and arrive at the same band a second time to give back one of
@@ -174,6 +219,33 @@ export const TokenHealthBar = memo(function TokenHealthBar({
 
   return (
     <>
+      {/*
+        THE WARD — temporary hit points, above the bar and never inside it.
+
+        Drawn first so it is the bottom of the three siblings and can never take a press
+        that was aimed at the track: it is `listening={false}` regardless, but the ordering
+        is what makes that free rather than load-bearing. It sits wholly above the bar,
+        which itself sits wholly above the coin, so nothing about picking a creature up or
+        clicking its bar changes — see the geometry argument in this component's docblock,
+        which this extends by one strip rather than reopening.
+
+        No track behind it and no label on it. Four screen pixels cannot carry a number, and
+        the honest place for one is the hover card; what this has to say at this size is
+        *there is a ward, and it is about this big compared to the creature*.
+      */}
+      {ward > 0 ? (
+        <Rect
+          x={-radius}
+          y={top - (WARD_GAP + WARD_HEIGHT) / scale}
+          width={width * ward}
+          height={WARD_HEIGHT / scale}
+          cornerRadius={WARD_CORNER / scale}
+          fill={WARD_COLOUR}
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      ) : null}
+
       <Rect
         x={-radius}
         y={top}
