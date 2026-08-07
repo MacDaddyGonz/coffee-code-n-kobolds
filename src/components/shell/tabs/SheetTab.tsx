@@ -100,10 +100,9 @@ export function SheetTab({
             from `SUBCLASS_LEVEL` up, so promising three choices would be wrong for every
             character that has just been made. ⚠️ **The word is *species* now and *race*
             before the 2024 conversion**, which is the rename reaching the last piece of
-            copy that had it. The builder writes a stored field called `species` too, as of
-            the migration commit; `speciesKeyOf` is the accessor everything reads it
-            through, because a character built before the conversion may still be holding
-            the old field until the sweep reaches it.
+            copy that had it. The stored field is called `species` too, as of the migration
+            commits; `speciesKeyOf` is the accessor everything reads it through, because a
+            rename is not the last thing that will happen to that field.
 
             It also names the Build tab, which the sheet did not have when this was
             written: landing on a blank Play pane and being told to choose a species is a

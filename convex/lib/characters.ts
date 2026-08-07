@@ -621,12 +621,13 @@ export const publicVitalsValidator = v.union(
     // short rest rewriting a spell list.
     hitDiceRemaining: v.union(v.number(), v.null()),
     hitDiceCount: v.union(v.number(), v.null()),
-    // Keys of once-per-long-rest abilities already spent. Which abilities a character
-    // *has* comes from their species, which the client can look up itself from
-    // lib/species.ts — only which ones are gone has to travel. **Nothing on either side
-    // reads it any more**: `spentUses` below is its counted successor and `spentUsesOf`
-    // folds this in, so it goes with the stored field in the narrowing commit.
-    spentPerRest: v.array(v.string()),
+    // ⚠️ **`spentPerRest` used to be here and went with the stored field.** It carried the
+    // keys of once-per-long-rest species abilities already spent, one key meaning one use;
+    // `spentUses` below is its counted successor and every client already reads that one,
+    // because `spentUsesOf` folded the legacy array in from the day the successor landed. A
+    // payload field nothing on either side reads is a field two shapes have to agree about
+    // for nothing.
+    //
     // ⚠️ **THE 2024 STATE, AND EVERY LINE OF IT IS ON THIS MEMBER ONLY.** Five fields
     // arrived on `characterVitals` and none of them appears on `band` below — which is the
     // pressure the union exists against, arriving in its largest single instalment. Three of
@@ -646,10 +647,10 @@ export const publicVitalsValidator = v.union(
     deathSaveSuccesses: v.number(),
     deathSaveFailures: v.number(),
     heroicInspiration: v.boolean(),
-    // The counted successor to `spentPerRest` above, which travels beside it until the
-    // narrowing. `spentUsesOf` folds the legacy array in, so a client reading this one alone
-    // is already correct for both — which is what will make removing the older field from
-    // this payload a deletion rather than a client change.
+    // The counted successor to the `spentPerRest` described above, which it has replaced.
+    // `spentUsesOf` folds a legacy array in, so a client reading this one alone was already
+    // correct for both from the day the successor landed — which is what made removing the
+    // older field from this payload a deletion rather than a client change.
     spentUses: v.array(v.object({ key: v.string(), spent: v.number() })),
     // ⚠️ **Spell slots spent, on THIS MEMBER ONLY, and the band gains nothing.** It is an
     // array rather than a bare number, so the `no member of the band variant is a bare
@@ -1144,7 +1145,6 @@ export async function visibleVitals(
         current,
         max: sheet.maxHp,
         hitDiceCount: isPc ? sheet.hitDice.count : null,
-        spentPerRest: vitals?.spentPerRest ?? [],
         // Through the same helper the mutations use, so the number a player reads
         // off the panel and the number a spend starts from cannot disagree. An
         // absent value means none have been spent, for the same reason a missing
@@ -1258,31 +1258,43 @@ export function heroicInspirationOf(vitals: Doc<'characterVitals'> | null): bool
 }
 
 /**
+ * A `characterVitals` row **as the database may still hold one**: the narrowed shape plus
+ * the field the narrowing removed.
+ *
+ * ⚠️ **`spentPerRest` is off the schema and this type is what still reads it, deliberately.**
+ * The narrowing was a *deletion* rather than a rename — `setPerRestSpent` had already gone,
+ * so with one writer the legacy array only ever shrank — but a schema push is not atomic, so
+ * a row written by an older deployment can be read by a newer one in the window between. The
+ * tolerance in `spentUsesOf` below outlives the field by exactly that window, and goes with
+ * lib/migrate.ts when the transition code does.
+ */
+type VitalsAsFound = Doc<'characterVitals'> & { spentPerRest?: string[] }
+
+/**
  * How many uses of each limited-use thing have been spent, **with the legacy array folded
  * in.**
  *
- * ⚠️ **`spentPerRest` is kept rather than migrated in place, and this function is what makes
- * that survivable.** That field is a list of *keys*, where a key present means the one thing
- * the character had has been used; `spentUses` counts, because 2024 is full of features with
+ * ⚠️ **`spentPerRest` was kept rather than migrated in place, and this function is what made
+ * that survivable.** That field was a list of *keys*, where a key present meant the one thing
+ * the character had had been used; `spentUses` counts, because 2024 is full of features with
  * two, three or proficiency-bonus-many uses. The fold is therefore a concatenation under one
  * rule — **every legacy key is exactly one spent use** — which is what the old field always
  * meant, said in the new field's vocabulary.
  *
- * The counted row wins on a collision. That is the direction that makes the backfill
+ * The counted row wins on a collision. That is the direction that made the backfill
  * idempotent and interruptible, for `speciesKeyOf`'s reason: a migration that has written the
  * new field for half the rows leaves both halves answering correctly, and a re-run changes
- * nothing. The other order would make the migration's own writes invisible until the
- * narrowing commit deleted the legacy field.
+ * nothing. The other order would have made the migration's own writes invisible until the
+ * narrowing deleted the legacy field.
  *
  * Legacy keys come first so that the order a client renders is stable across the migration —
  * a character whose Relentless Endurance jumped to the bottom of the list on the day the
  * backfill ran would look like something had been reset.
  *
- * ⚠️ **The fold outlives the field it reads, and must.** `planVitalsMigration` below uses this
- * function rather than re-deriving the rule, so one place decides what a legacy key means;
- * and a schema push is not atomic, so a row written by an older deployment has to keep
- * meaning what it meant in the window between. It goes with lib/migrate.ts when the
- * transition code does, and not with the schema field.
+ * ⚠️ **The fold survived the narrowing and reads through `VitalsAsFound`.** It is also what
+ * `planVitalsMigration` below uses, which is the whole reason the sweep does not re-derive
+ * the rule: one function decides what a legacy key means, and the migration is a caller of it
+ * rather than a second opinion.
  */
 export function spentUsesOf(
   vitals: Doc<'characterVitals'> | null,
@@ -1291,7 +1303,7 @@ export function spentUsesOf(
   const byKey = new Map(counted.map((use) => [use.key, Math.max(0, Math.round(use.spent))]))
 
   const out: { key: string; spent: number }[] = []
-  for (const key of vitals?.spentPerRest ?? []) {
+  for (const key of (vitals as VitalsAsFound | null)?.spentPerRest ?? []) {
     if (byKey.has(key)) continue
     out.push({ key, spent: 1 })
   }
@@ -1330,7 +1342,7 @@ export function spentUsesOf(
 export function planVitalsMigration(
   vitals: Doc<'characterVitals'>,
 ): { spentPerRest: undefined; spentUses?: { key: string; spent: number }[] } | null {
-  if (vitals.spentPerRest === undefined) return null
+  if ((vitals as VitalsAsFound).spentPerRest === undefined) return null
 
   const folded = spentUsesOf(vitals)
   return folded.length === 0
@@ -1399,7 +1411,6 @@ export function hitDiceRemainingOf(
 type VitalsPatch = {
   currentHp?: number
   hitDiceRemaining?: number
-  spentPerRest?: string[]
   temporaryHp?: number
   deathSaveSuccesses?: number
   deathSaveFailures?: number
@@ -1687,18 +1698,18 @@ export async function writeHeroicInspiration(
   return heroicInspiration
 }
 
-// ⚠️ **`setPerRestSpent` used to be here and is gone, deliberately — `spentPerRest` is now
-// READ-ONLY, and `longRest` no longer writes it either.** It marked a key spent by adding it
-// to the legacy array, and `setUsesSpent` below replaced it: 2024 has features with two,
-// three or proficiency-bonus-many uses, and a list of keys cannot say *two*.
+// ⚠️ **`setPerRestSpent` used to be here and is gone, deliberately — and `spentPerRest`
+// itself has now followed it off the schema.** It marked a key spent by adding it to the
+// legacy array, and `setUsesSpent` below replaced it: 2024 has features with two, three or
+// proficiency-bonus-many uses, and a list of keys cannot say *two*.
 //
 // Deleted rather than kept beside it, and that is the important half. Two writers against one
-// fact is how the two fields would come to disagree — a spend through the old one and a
+// fact is how the two fields would have come to disagree — a spend through the old one and a
 // hand-back through the new one leaves a key present in `spentPerRest` and absent from
-// `spentUses`, which `spentUsesOf` then folds back into *one spent use* for ever. **With no
-// writer at all the legacy array can only ever shrink**, which is what lets the narrowing be
-// a **deletion** rather than a migration of its own: the sweep in lib/migrate.ts has one
-// shape to fold and nothing racing it.
+// `spentUses`, which `spentUsesOf` then folds back into *one spent use* for ever. With one
+// writer the legacy array only ever shrank, which is what let the narrowing be a **deletion**
+// rather than a migration of its own: the sweep in lib/migrate.ts had one shape to fold and
+// no writer racing it.
 
 /**
  * Set how many uses of one thing have been spent, or hand some back.
@@ -1708,11 +1719,11 @@ export async function writeHeroicInspiration(
  * character actually has, and a hand-back never is.** That is what stops a stale key becoming
  * permanent when a DM changes somebody's species or deletes an entry.
  *
- * ⚠️ **It writes the counted field and never writes `spentPerRest`**, which is what makes that
+ * ⚠️ **It writes the counted field and never wrote `spentPerRest`**, which is what made that
  * field's removal a deletion rather than a migration of its own. A write that rewrote both
- * would have to decide what a legacy key means when its count goes to two — a question the old
- * field cannot answer — so the counted field is where every write lands, the legacy one can
- * only shrink, and the narrowing commit deletes it.
+ * would have had to decide what a legacy key means when its count goes to two — a question
+ * the old field cannot answer — so the counted field was where every write landed, the legacy
+ * one only ever shrank, and the narrowing commit deleted it.
  *
  * A count of zero is stored as **absence from the array** rather than as `{ spent: 0 }`, on
  * this codebase's usual rule: two spellings of none is what every field-by-field rebuild then
@@ -1926,19 +1937,11 @@ export async function longRest(
   // this object as a whole row and the schema requires it there. Annotated rather than
   // inferred so that a field added to `VitalsPatch` and forgotten here is a type error at the
   // insert rather than a rest that quietly stops clearing something.
-  // ⚠️⚠️ **`spentPerRest: []` USED TO BE THE FIRST LINE OF THIS PATCH AND ITS GOING IS
-  // OPERATIONAL RATHER THAN TIDY. Do not put it back.** The field is still on the schema
-  // until the narrowing commit, and while this wrote it a long rest *re-created* it on every
-  // row it touched — so a rest taken between the sweep and that push would have put back the
-  // exact field the push refuses, and the deploy would fail for a reason nothing on screen
-  // could explain. **Nothing writes that key any more, and nothing may**; `setUsesSpent` never
-  // did, so the legacy array can now only ever shrink.
-  //
-  // The price, taken knowingly and paid only inside the sweep window: a long rest no longer
-  // *clears* a legacy key either, so an unswept character keeps whatever `spentPerRest` says
-  // until `admin.migrateGame` reaches it. `spentUsesOf` still folds it in, so the sheet is
-  // honest about it meanwhile, and the sweep empties it for good. That is the right way round
-  // — a stale counter somebody can see is better than a deploy that cannot land.
+  // ⚠️ **`spentPerRest: []` used to be the first line of this patch and its going matters
+  // operationally, not just tidily.** While the legacy field was still on the schema, a long
+  // rest *re-created* it on every row it touched — so a rest taken between the sweep and the
+  // narrowing push would have put back the exact field the push refuses. Anything that writes
+  // that key again reopens the window; nothing does.
   const patch: VitalsPatch & { currentHp: number } = {
     currentHp: sheet.maxHp,
     ...(sheet.kind === 'pc' ? { hitDiceRemaining: sheet.hitDice.count } : {}),

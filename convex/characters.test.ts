@@ -5676,12 +5676,12 @@ describe('hit points against a resolved sheet', () => {
  * test below reads the counted field for that reason, and `spent: 1` is what the old
  * `spent: true` meant.
  *
- * ⚠️ **`spentPerRest` is still on the row and NOTHING writes it any more.** It is folded in on
- * *read* by `spentUsesOf`, so a row written by an older deployment keeps meaning what it
- * meant; `setUses` never touched it, and **`longRest` stopped clearing it** — because a long
- * rest taken between the sweep and the narrowing push would otherwise put back the exact
- * field that push refuses. So it can only shrink, and `admin.migrateGame` is what empties it
- * for good. A test asserting that a spend landed therefore asserts on `spentUses`.
+ * ⚠️ **`spentPerRest` is off the row entirely as of the migration commit**, and the sentence
+ * that stood here — *it is still on the row, deliberately not written by `setUses`, folded in
+ * on read, and the narrowing commit deletes it* — is the widen half described from inside it.
+ * The narrowing commit is this one. `spentUsesOf` still folds a legacy array for the window a
+ * non-atomic push opens, which `admin.test.ts` covers; nothing in this block can produce one.
+ * A test asserting that a spend landed asserts on `spentUses`, as it always did.
  */
 describe('long rest and once-per-rest abilities', () => {
   test('a long rest restores hit points, hit dice and spent abilities in one call', async () => {
@@ -6211,28 +6211,31 @@ describe('the short rest', () => {
     expect((await rawVitals(t, monk))?.spentUses).toEqual([{ key: 'feat-focus', spent: 4 }])
   })
 
-  test('it leaves the legacy per-rest array entirely alone', async () => {
+  /**
+   * ⚠️ **A test called *it leaves the legacy per-rest array entirely alone* used to sit
+   * here, and it is gone rather than weakened.** `spentPerRest` was a list of keys, one key
+   * meaning one spent use of a once-per-**long**-rest species ability, so a short rest had
+   * nothing to say about it — and that test wrote such a row directly, took a short rest and
+   * asserted both that the array survived and that `spentUsesOf` folded it into the counted
+   * view.
+   *
+   * The narrowing dropped the field from the schema, so there is no longer a row of that
+   * shape a mutation could leave alone. What survives of the claim is the *fold*, which
+   * `spentUsesOf` still performs for the window a non-atomic push opens — and that is
+   * asserted in `admin.test.ts`, beside the sweep that empties the field, where writing a
+   * legacy row is the point rather than a contrivance.
+   */
+  test('a short rest touches nothing on a character with nothing spent', async () => {
     const t = convexTest(schema, modules)
     const { code, dmCode } = await makeGame(t)
     const human = await makePreset(t, code, 'Aldis', presetSheet({ species: 'human' }))
 
-    // Written directly, as an older deployment would have: everything in `spentPerRest` is a
-    // once-per-**long**-rest species ability by construction, so a short rest has nothing to
-    // say about it and saying nothing is the correct answer rather than an omission.
-    const row = await rawVitals(t, human)
-    await t.run(async (ctx) => {
-      await ctx.db.patch('characterVitals', row!._id, { spentPerRest: ['heroic-inspiration'] })
-    })
-
+    const before = await rawVitals(t, human)
     await t.mutation(api.characters.shortRest, { code, characterId: human, dmCode })
-    expect((await rawVitals(t, human))?.spentPerRest).toEqual(['heroic-inspiration'])
-
-    // And the folded view still shows it, so a client reading `spentUses` alone is correct
-    // for both fields.
-    const rows = await t.query(api.characters.vitals, { code, dmCode })
-    expect(rows.find((entry) => entry.characterId === human)).toMatchObject({
-      spentUses: [{ key: 'heroic-inspiration', spent: 1 }],
-    })
+    // The early return in `shortRest`: a write here would invalidate the health-bar
+    // subscription for every client at the table every time somebody pressed a button that
+    // changed nothing.
+    expect(await rawVitals(t, human)).toEqual(before)
   })
 
   test('a rest is refused to a seat that is not playing the character, exactly as a long one is', async () => {

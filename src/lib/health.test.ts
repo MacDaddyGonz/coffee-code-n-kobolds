@@ -11,7 +11,6 @@ function exact(current: number, max: number, temporaryHp = 0): PublicVitals {
     max,
     hitDiceRemaining: null,
     hitDiceCount: null,
-    spentPerRest: [],
     temporaryHp,
     deathSaveSuccesses: 0,
     deathSaveFailures: 0,

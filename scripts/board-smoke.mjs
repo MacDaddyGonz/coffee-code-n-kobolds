@@ -950,17 +950,31 @@ const ROLL_WEAPON_TEXT =
 const ROLL_PASSIVE_NAME = 'Ninth-Arch Stance'
 const ROLL_CANTRIP_NAME = 'Reading of the Coil'
 
-/** All thirteen, so the sheet is a realistic one. Arcana stays false — see `ROLL_HERO_ABILITIES`. */
+/**
+ * All EIGHTEEN, so the sheet is a realistic one. Arcana stays false — see `ROLL_HERO_ABILITIES`.
+ *
+ * ⚠️ **This was thirteen, and the narrowing is what found it.** `skillProficienciesValidator`
+ * held thirteen required booleans and five optional ones while the 2024 skills were being
+ * back-filled; once the sweep had run and all eighteen became required, a thirteen-key object
+ * is a sheet the deployment refuses outright. The local suite could not see it — it calls the
+ * typed API, which fills the object in — and this script sends the literal over the wire.
+ * Sixth outing of the field-by-field trap, by the route the header describes.
+ */
 const ROLL_HERO_SKILLS = {
   athletics: true,
   acrobatics: false,
   sleightOfHand: false,
   stealth: false,
   arcana: false,
+  history: false,
   investigation: false,
+  nature: false,
+  religion: false,
   animalHandling: false,
   insight: false,
+  medicine: false,
   perception: true,
+  survival: false,
   deception: false,
   intimidation: false,
   performance: true,
@@ -3055,9 +3069,14 @@ async function main() {
       }),
     )
 
-    // 15. A long rest, which is three writes the table thinks of as one thing —
-    // and `spentPerRest` is a field that did not exist on the vitals row until this
-    // milestone, on a table whose rows were written without it.
+    // 15. A long rest, which is several writes the table thinks of as one thing.
+    //
+    // ⚠️ **`spentPerRest` is gone from this payload and this block used to assert it.**
+    // The legacy array was folded into the counted `spentUses` by the migration and then
+    // dropped from the validator, so a read of it here is a read of undefined — which is
+    // exactly how this was found: the narrowed schema deployed cleanly and THIS script was
+    // what noticed the field had left the wire. The local suite could not, because it
+    // calls the typed API and this calls the real one.
     const human = await client.mutation('characters:create', {
       code,
       dmCode,
@@ -3115,7 +3134,6 @@ async function main() {
         afterRest.kind === 'exact' &&
         afterRest.current === FIGHTER.base.maxHp &&
         afterRest.hitDiceRemaining === FIGHTER.base.hitDice.count &&
-        afterRest.spentPerRest.length === 0 &&
         afterRest.spentUses.length === 0 &&
         // ⚠️ **Shape only, and knowingly so.** This fixture is a Human Fighter, which casts
         // nothing, so an empty array here proves the field survives a real deployment's
