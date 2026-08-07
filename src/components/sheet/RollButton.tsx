@@ -21,7 +21,7 @@ import { modeNote, partRolls } from '@convex/lib/roll'
  *
  * ⚠️ **It reads the target itself rather than taking one as a prop, and prints a number
  * rather than a control when there is nothing to aim at.** Folding that test in here is what
- * keeps it out of `AbilityTable`, `SkillList` and `SheetEntryList` — three components whose
+ * keeps it out of `AbilityBlock` and `SheetEntryList` — two components whose
  * whole job is to print a sheet, which would otherwise each grow a branch about whether dice
  * are available.
  *
