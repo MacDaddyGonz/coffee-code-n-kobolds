@@ -8,7 +8,7 @@ import {
   type ClassKey,
 } from './classes'
 import { LIBRARY, librarySheet } from './library'
-import { RACE_KEYS, race } from './races'
+import { SPECIES_KEYS, species } from './species'
 // Reached from a test file, which `corpusGuard.test.ts` excludes from its sweep on
 // purpose: the confinement rule is about production modules crossing the boundary, and
 // a test that checks `groupOf` against the corpus has to be able to see the corpus.
@@ -46,7 +46,7 @@ import type { ChallengeRating } from './creatures'
 function preset(overrides: Partial<PresetSheet> = {}): PresetSheet {
   return {
     kind: 'preset',
-    race: 'human',
+    species: 'human',
     classKey: 'fighter',
     subclassKey: 'champion',
     level: 3,
@@ -92,38 +92,64 @@ describe('library, then race, then the DM', () => {
    *   DM can always change a player's sheet" true of a character whose stats
    *   are read live.
    */
-  test('an override beats the race, which beats the library, on the abilities', () => {
+  /**
+   * ⚠️ **The species layer no longer touches an ability score at all**, so what this
+   * test asserts has inverted: it used to prove an Elf's +2 was applied once and beaten
+   * by an override, and it now proves the library's numbers reach the sheet untouched
+   * whichever species is on it. In 2024 an ability increase comes from a *background*,
+   * which requirements.md excludes and whose numbers are absorbed into the premade
+   * sheet's stored `abilities` — so the middle layer of the three has nothing to add.
+   *
+   * Kept rather than deleted, because "the DM's number is the number" is still the
+   * claim, and because a species that quietly reacquired arithmetic is exactly the
+   * regression nobody would look for.
+   */
+  test('no species touches an ability score, and an override beats the library', () => {
     const dexterous: AbilityScores = { str: 8, dex: 20, con: 8, int: 8, wis: 8, cha: 8 }
 
-    const plain = resolve(preset({ race: 'human' }))
-    expect(plain.abilities).toEqual(CHAMPION_3.abilities)
+    for (const key of SPECIES_KEYS) {
+      expect(resolve(preset({ species: key })).abilities, key).toEqual(CHAMPION_3.abilities)
+    }
 
-    const elf = resolve(preset({ race: 'elf' }))
-    expect(elf.abilities.dex).toBe(CHAMPION_3.abilities.dex + 2)
-
-    const overridden = resolve(preset({ race: 'elf', overrides: { abilities: dexterous } }))
+    const overridden = resolve(preset({ species: 'elf', overrides: { abilities: dexterous } }))
     expect(overridden.abilities).toEqual(dexterous)
-    // Not `library + race + override` — the DM's number is the number, and the
-    // Elf's +2 must not be added on top of it a second time.
     expect(overridden.abilities.dex).toBe(20)
   })
 
   test('an override beats the race, which beats the library, on the hit points', () => {
     const level = 3
-    const plain = resolve(preset({ race: 'human', level }))
+    const plain = resolve(preset({ species: 'human', level }))
     expect(plain.maxHp).toBe(CHAMPION_3.maxHp)
 
-    const dwarf = resolve(preset({ race: 'dwarf', level }))
+    const dwarf = resolve(preset({ species: 'dwarf', level }))
     expect(dwarf.maxHp).toBe(CHAMPION_3.maxHp + level)
 
-    const overridden = resolve(preset({ race: 'dwarf', level, overrides: { maxHp: 99 } }))
+    const overridden = resolve(preset({ species: 'dwarf', level, overrides: { maxHp: 99 } }))
     expect(overridden.maxHp).toBe(99)
   })
 
-  test('an override beats the race, which beats the library, on the speed', () => {
-    expect(resolve(preset({ race: 'human' })).speed).toBe(SPEED_FEET)
-    expect(resolve(preset({ race: 'goliath' })).speed).toBe(SPEED_FEET + 10)
-    expect(resolve(preset({ race: 'goliath', overrides: { speed: 25 } })).speed).toBe(25)
+  /**
+   * ⚠️ **Speed is now an absolute the species SETS, and the numbers here come from the
+   * SRD rather than from `SPEED_FEET`.** The Human moves 30 and the Goliath 35 because
+   * `character-origins.md` prints those; the constant is only ever the answer for a sheet
+   * with the field *absent*, which no resolved preset ever has. That is why nothing below
+   * reads it — a test written as `SPEED_FEET + something` went on passing straight
+   * through the migration commit that moved the constant 35 → 30 and said nothing about
+   * whether a Goliath still outpaces a Human.
+   */
+  test('an override beats the lineage, which beats the species, on the speed', () => {
+    expect(resolve(preset({ species: 'human' })).speed).toBe(30)
+    expect(resolve(preset({ species: 'goliath' })).speed).toBe(35)
+    // The acceptance criterion for the whole step, in one line: the lineage is applied
+    // after the species, so 35 overwrites the Elf's printed 30 rather than the other way
+    // round.
+    expect(resolve(preset({ species: 'elf' })).speed).toBe(30)
+    expect(resolve(preset({ species: 'elf', lineageKey: 'wood' })).speed).toBe(35)
+    expect(resolve(preset({ species: 'elf', lineageKey: 'drow' })).speed).toBe(30)
+    expect(resolve(preset({ species: 'goliath', overrides: { speed: 25 } })).speed).toBe(25)
+    expect(
+      resolve(preset({ species: 'elf', lineageKey: 'wood', overrides: { speed: 25 } })).speed,
+    ).toBe(25)
   })
 
   test('an override replaces the library on every field it names', () => {
@@ -179,9 +205,9 @@ describe('library, then race, then the DM', () => {
     const gift = entry({ id: 'dm-blade', name: 'The Sunder Blade' })
     const cantrip = entry({ id: 'dm-cantrip', name: 'A Borrowed Cantrip', level: 0 })
 
-    const plain = resolve(preset({ race: 'tiefling' }))
+    const plain = resolve(preset({ species: 'tiefling' }))
     const resolved = resolve(
-      preset({ race: 'tiefling', overrides: { extraFeats: [gift], extraSpells: [cantrip] } }),
+      preset({ species: 'tiefling', overrides: { extraFeats: [gift], extraSpells: [cantrip] } }),
     )
 
     expect(resolved.feats).toHaveLength(plain.feats.length + 1)
@@ -217,7 +243,11 @@ describe('library, then race, then the DM', () => {
     expect(CHAMPION_3.abilities.str).not.toBe(30)
     expect(CHAMPION_3.hitDice.count).toBe(3)
     expect(resolve(preset()).abilities).toEqual(CHAMPION_3.abilities)
-    expect(resolve(preset()).feats).toHaveLength(CHAMPION_3.feats.length + 1) // + the race trait
+    // + the Human's three traits. Read off the species rather than written as `+ 3`, so
+    // this keeps saying what it means if the SRD transcription is ever corrected.
+    expect(resolve(preset()).feats).toHaveLength(
+      CHAMPION_3.feats.length + species('human')!.traits.length,
+    )
   })
 })
 
@@ -364,7 +394,9 @@ describe('levels the library does not cover', () => {
   test('a preset above level 1 with no archetype gets the level 1 sheet', () => {
     for (const level of [SUBCLASS_LEVEL, 3, 4, 5]) {
       const resolved = resolve(preset({ subclassKey: null, level }))
-      const base = LIBRARY.fighter.base
+      // `base` is a record of the two shared levels now, and level 1 is the one
+      // `librarySheet` falls back to when an archetype has not been chosen.
+      const base = LIBRARY.fighter.base[1]
       expect(resolved.armourClass, `level ${level}`).toBe(base.armourClass)
       expect(resolved.maxHp, `level ${level}`).toBe(base.maxHp)
       expect(resolved.abilities, `level ${level}`).toEqual(base.abilities)
@@ -397,8 +429,10 @@ describe('resolveSheet passes through everything that is not a preset', () => {
    * A Milestone 3 character, exactly as the table holds one: `kind: 'pc'` with
    * neither `skillProficiencies` nor `speed`, because both fields were added
    * afterwards and a required field cannot be added to a table that already has
-   * rows. It has to resolve, validate, read as thirteen untrained skills and
-   * read as the D&D Lite 35 feet.
+   * rows. It has to resolve, validate, read as eighteen untrained skills and
+   * read as the default speed — which the migration commit moved 35 → 30 under it, and
+   * which this reads through `SPEED_FEET` rather than as a literal because the point here
+   * is that the accessor answers the constant, not what the constant currently is.
    */
   test('a legacy sheet with no skills and no speed resolves and reads as the defaults', () => {
     const legacy: StoredSheet = {
@@ -492,8 +526,12 @@ describe('a resolved sheet is complete', () => {
         const resolved = resolve(preset({ classKey, subclassKey, level }))
         expect(resolved.skillProficiencies, `${classKey}/${level}`).toBeDefined()
         expect(resolved.speed, `${classKey}/${level}`).toBeDefined()
+        // Eighteen, not the thirteen this asserted before the 2024 skills arrived. The point is
+        // unchanged and is why it counts rather than spot-checking: a resolved sheet carries
+        // EVERY flag, so a library entry that forgot one would resolve to a sheet the renderer
+        // maps over and finds a hole in.
         expect(Object.keys(resolved.skillProficiencies ?? {}), `${classKey}/${level}`).toHaveLength(
-          13,
+          18,
         )
       }
     }
@@ -502,20 +540,26 @@ describe('a resolved sheet is complete', () => {
   /**
    * The fallback path is the exception, and it is worth stating rather than
    * leaving to be discovered. A retired archetype takes the `defaultPcSheet()`
-   * branch, which sets no `skillProficiencies`; `applyRace` spreads the sheet
+   * branch, which sets no `skillProficiencies`; `applySpecies` spreads the sheet
    * without adding one and `applyOverrides` returns early when there are no
    * overrides, so the field is absent on the sheet the server hands over.
    *
    * Harmless today only because every reader goes through
    * `skillProficienciesOf` — asserted here, since that is the property the app
-   * actually depends on. `speed`, by contrast, `applyRace` always sets, so the
+   * actually depends on. `speed`, by contrast, `applySpecies` always sets, so the
    * two optional fields behave differently on this one path.
+   *
+   * ⚠️ **The speed on this path is the species' printed 30 and not `SPEED_FEET`**, which
+   * is what changed: the fallback branch writes `SPEED_FEET` into the base and the
+   * species then *sets* over the top of it, so the constant is reached only by a sheet
+   * with the field absent — which a resolved preset never is. `speedOf` is asked as well
+   * as the field, because the two answering differently is the bug this test exists for.
    */
-  test('and a fallback resolution still reads as thirteen untrained skills', () => {
+  test('and a fallback resolution still reads as eighteen untrained skills', () => {
     const resolved = resolve(preset({ subclassKey: 'trickster', level: 4 }))
-    expect(resolved.speed).toBe(SPEED_FEET)
+    expect(resolved.speed).toBe(30)
     expect(skillProficienciesOf(resolved)).toEqual(noSkills())
-    expect(speedOf(resolved)).toBe(SPEED_FEET)
+    expect(speedOf(resolved)).toBe(30)
     expect(sheetProblem(resolved)).toBeNull()
   })
 })
@@ -535,7 +579,10 @@ describe('a preset the store would accept always resolves to a sheet it would ac
     const problems: string[] = []
     for (const classKey of Object.keys(LIBRARY) as ClassKey[]) {
       for (const subclass of findClass(classKey)!.subclasses) {
-        for (const level of [2, 3, 4, 5, 6, 20]) {
+        // From `SUBCLASS_LEVEL`, which is 3 in 2024. An archetype below it is a stored
+        // pair that contradicts itself and `storedSheetProblem` refuses it outright —
+        // the two shared levels are checked below instead.
+        for (const level of [SUBCLASS_LEVEL, 4, 5, 6, 20]) {
           const stored = preset({ classKey, subclassKey: subclass.key, level })
           const where = `${classKey}/${subclass.key}/${level}`
           if (storedSheetProblem(stored)) {
@@ -546,9 +593,12 @@ describe('a preset the store would accept always resolves to a sheet it would ac
           if (problem) problems.push(`${where} unreadable: ${problem.path} — ${problem.message}`)
         }
       }
-      const level1 = preset({ classKey, subclassKey: null, level: 1 })
-      expect(storedSheetProblem(level1), classKey).toBeNull()
-      expect(sheetProblem(resolve(level1)), classKey).toBeNull()
+      // The two shared levels, which have no archetype at all rather than an empty one.
+      for (const level of [1, 2]) {
+        const shared = preset({ classKey, subclassKey: null, level })
+        expect(storedSheetProblem(shared), `${classKey}/${level}`).toBeNull()
+        expect(sheetProblem(resolve(shared)), `${classKey}/${level}`).toBeNull()
+      }
     }
     expect(problems).toEqual([])
   })
@@ -574,13 +624,20 @@ describe('a preset the store would accept always resolves to a sheet it would ac
     }
   })
 
-  /** The race a character picked is on the sheet, whichever class it was pinned to. */
-  test('and the race is applied for every class', () => {
+  /** The species a character picked is on the sheet, whichever class it was pinned to. */
+  test('and the species is applied for every class', () => {
     for (const classKey of Object.keys(LIBRARY) as ClassKey[]) {
       const source = librarySheet(classKey, null, 1)
-      const elf = resolve(preset({ classKey, subclassKey: null, level: 1, race: 'elf' }))
-      expect(elf.abilities.dex, classKey).toBe((source?.abilities.dex ?? 0) + 2)
-      expect(elf.feats.some((e) => e.name === race('elf').traitName), classKey).toBe(true)
+      const elf = resolve(preset({ classKey, subclassKey: null, level: 1, species: 'elf' }))
+      // Untouched, because no 2024 species moves a score. Asserted against the library
+      // sheet rather than against a literal, so it keeps meaning what it says.
+      expect(elf.abilities, classKey).toEqual(source?.abilities)
+      // All five of the Elf's traits, not the first one.
+      for (const trait of species('elf')!.traits) {
+        expect(elf.feats.some((e) => e.name === trait.name), `${classKey}: ${trait.name}`).toBe(
+          true,
+        )
+      }
     }
   })
 })
@@ -597,48 +654,73 @@ describe('a preset the store would accept always resolves to a sheet it would ac
 // ---------------------------------------------------------------------------
 
 describe('the category survives every layer of resolution', () => {
-  /** The trait `applyRace` mints for every race, whichever race it is. */
-  function traitOf(sheet: PcSheet, key: string): SheetEntry {
-    const found = sheet.feats.find((line) => line.id === `race:${key}`)
-    if (!found) throw new Error(`no trait line for ${key}`)
+  /** Every line `applySpecies` minted for a species' traits, in the order it minted them. */
+  function traitsOf(sheet: PcSheet, key: string): SheetEntry[] {
+    const names = new Set(species(key)!.traits.map((trait) => trait.name))
+    const found = sheet.feats.filter((line) => names.has(line.name))
+    if (found.length !== names.size) throw new Error(`missing trait lines for ${key}`)
     return found
   }
 
   /**
-   * **A race trait is a `passive`, and that is the only coherent answer rather
-   * than a choice.** It is built out of `traitName` and `traitText` and has no
-   * roll by construction, so `entriesProblem` would refuse it as anything else. A
-   * race whose trait genuinely rolls something grants a feat or a spell instead,
-   * which is exactly what the Dragonborn's breath weapon already does.
+   * **A species trait is a `passive`, and that is the only coherent answer rather
+   * than a choice.** A `SpeciesTrait` is a name and a sentence and has nowhere to put
+   * a roll, so `entriesProblem` would refuse it as anything else. A species whose
+   * trait genuinely rolls something grants a feat or a spell instead, which is exactly
+   * what the Dragonborn's draconic ancestry does with its breath.
    *
-   * Asserted for all eight rather than for one, because the trait is minted in a
-   * single place and a regression there is a regression for every character in
-   * every game at once.
+   * ⚠️ **Every trait rather than the first one**, which is the change a 2024 species
+   * forces: the Dragonborn and the Elf have five each and only one of them used to
+   * exist. They are minted in a single loop, so a regression there is a regression for
+   * every character in every game at once.
    */
-  test('every race trait resolves to a passive that carries no rolls', () => {
-    for (const key of RACE_KEYS) {
-      const sheet = resolve(preset({ race: key }))
-      const trait = traitOf(sheet, key)
-      const built = trait as unknown as Record<string, unknown>
-      expect(trait.category, key).toBe('passive')
-      expect(trait.roll, key).toBeNull()
-      expect('toHit' in built, `${key} trait carries a to-hit`).toBe(false)
-      expect(trait.name, key).toBe(race(key).traitName)
+  test('every species trait resolves to a passive that carries no rolls', () => {
+    for (const key of SPECIES_KEYS) {
+      const sheet = resolve(preset({ species: key }))
+      for (const trait of traitsOf(sheet, key)) {
+        const built = trait as unknown as Record<string, unknown>
+        const where = `${key}: ${trait.name}`
+        expect(trait.category, where).toBe('passive')
+        expect(trait.roll, where).toBeNull()
+        expect('toHit' in built, `${where} carries a to-hit`).toBe(false)
+        expect(trait.id.startsWith('race:'), `${where} id ${trait.id}`).toBe(true)
+      }
     }
   })
 
-  /** Anti-vacuity: eight races, eight traits, and the lookup really found them. */
-  test('and there is a trait line for every one of the eight', () => {
-    expect(RACE_KEYS.length).toBe(8)
-    const found = RACE_KEYS.map((key) => traitOf(resolve(preset({ race: key })), key).name)
-    expect(new Set(found).size).toBe(RACE_KEYS.length)
+  /** Anti-vacuity: nine species, thirty-three traits, and the lookup really found them. */
+  test('and there is a trait line for every one of the thirty-three', () => {
+    expect(SPECIES_KEYS.length).toBe(9)
+    const found = SPECIES_KEYS.flatMap((key) =>
+      traitsOf(resolve(preset({ species: key })), key).map((line) => line.id),
+    )
+    expect(found).toHaveLength(33)
+  })
+
+  /**
+   * The fourth layer, which is new and which nothing above would notice the loss of: a
+   * lineage's own trait, under its own prefix so that it cannot collide with the
+   * species' however either is edited.
+   */
+  test('a lineage trait resolves to a passive under the lineage prefix', () => {
+    const wood = resolve(preset({ species: 'elf', lineageKey: 'wood' }))
+    const line = wood.feats.find((entry) => entry.id.startsWith('lineage:'))
+    expect(line?.name).toBe('Elven Lineage: Wood Elf')
+    expect(line?.category).toBe('passive')
+    expect(line?.roll).toBeNull()
+    // And a species with no lineages contributes no such line at all.
+    expect(
+      resolve(preset({ species: 'halfling' })).feats.some((entry) =>
+        entry.id.startsWith('lineage:'),
+      ),
+    ).toBe(false)
   })
 
   /**
    * ⚠️ **The granted entries, which are the ones that could actually lose a
-   * category.** The trait is built inside `applyRace` with `category: 'passive'`
+   * category.** The trait is built inside `applySpecies` with `category: 'passive'`
    * written in the literal, so it cannot be dropped; a granted feat or spell is
-   * declared in `races.ts` and copied through `withId`, which is a spread — and a
+   * declared in `species.ts` and copied through `withId`, which is a spread — and a
    * spread is exactly what stops being one when somebody "tidies" it into a
    * field-by-field rebuild.
    *
@@ -647,11 +729,11 @@ describe('the category survives every layer of resolution', () => {
    * than "the sheet says passive", which would keep passing over a resolver that
    * had stopped reading the corpus at all.
    */
-  test('a granted feat or spell keeps the category its race declared', () => {
+  test('a granted feat or spell keeps the category its species declared', () => {
     let checked = 0
-    for (const key of RACE_KEYS) {
-      const chosen = race(key)
-      const sheet = resolve(preset({ race: key }))
+    for (const key of SPECIES_KEYS) {
+      const chosen = species(key)!
+      const sheet = resolve(preset({ species: key }))
       const granted = [
         ...(chosen.grantedFeats ?? []).map((source) => ({ source, list: sheet.feats })),
         ...(chosen.grantedSpells ?? []).map((source) => ({ source, list: sheet.spells })),
@@ -667,26 +749,41 @@ describe('the category survives every layer of resolution', () => {
           source.toHit !== undefined,
         )
         expect(line?.toHit, `${key}: ${source.name}`).toBe(source.toHit)
-        // And it really came through the race layer, under the race prefix.
-        expect(line?.id.startsWith(`race-${key}:`), `${key}: ${source.name} id ${line?.id}`).toBe(
-          true,
-        )
+        // And it really came through the species layer, under the species prefix.
+        expect(line?.id.startsWith('race:'), `${key}: ${source.name} id ${line?.id}`).toBe(true)
       }
     }
-    // Not vacuous: two races grant entries — the Tiefling a cantrip and the
-    // Dragonborn a breath weapon — and this loop would be empty if either lost it.
-    expect(checked).toBeGreaterThanOrEqual(2)
+    // Not vacuous: the Tiefling grants a cantrip, and this loop would be empty if it
+    // lost it.
+    expect(checked).toBeGreaterThanOrEqual(1)
   })
 
-  /** The two grants, named, so the loop above is anchored to something concrete. */
-  test('the Dragonborn’s breath weapon is an action and the Tiefling’s cantrip a passive', () => {
-    const dragonborn = resolve(preset({ race: 'dragonborn' }))
-    const breath = dragonborn.feats.find((line) => line.name === 'Breath Weapon')
+  /**
+   * The grants, named, so the loop above is anchored to something concrete.
+   *
+   * ⚠️ **The Dragonborn's rollable breath now comes from its ancestry rather than from
+   * the species**, and that is the resolution of a defect this codebase carried for a
+   * milestone. `Breath Weapon` is one of the five SRD traits and is therefore a
+   * `passive` by construction; the roll needs a damage type, and the damage type is
+   * exactly what the ancestry decides — so `Fire Breath` is a different row saying a
+   * different thing, where `Breath Weapon` beside `Breath Weapon` was one thing printed
+   * twice with only one of the two rollable.
+   */
+  test('a Red Dragonborn breathes fire as an action and the Tiefling’s cantrip is a passive', () => {
+    const plain = resolve(preset({ species: 'dragonborn' }))
+    expect(plain.feats.find((line) => line.name === 'Breath Weapon')?.category).toBe('passive')
+    expect(plain.feats.some((line) => line.roll !== null && line.id.startsWith('lineage:'))).toBe(
+      false,
+    )
+
+    const red = resolve(preset({ species: 'dragonborn', lineageKey: 'red' }))
+    const breath = red.feats.find((line) => line.name === 'Fire Breath')
     expect(breath?.category).toBe('action')
-    expect(breath?.roll).not.toBeNull()
+    expect(breath?.roll).toBe('1d10')
+    expect(breath?.id.startsWith('lineage:')).toBe(true)
     expect('toHit' in (breath as unknown as Record<string, unknown>)).toBe(false)
 
-    const tiefling = resolve(preset({ race: 'tiefling' }))
+    const tiefling = resolve(preset({ species: 'tiefling' }))
     const cantrip = tiefling.spells.find((line) => line.name === 'Thaumaturgy')
     expect(cantrip?.category).toBe('passive')
     expect(cantrip?.roll).toBeNull()
@@ -702,7 +799,7 @@ describe('the category survives every layer of resolution', () => {
     const at = { classKey: 'fighter' as ClassKey, subclassKey: 'champion', level: 3 }
     const found = librarySheet(at.classKey, at.subclassKey, at.level)
     expect(found, 'the fixture sheet is missing').toBeDefined()
-    const sheet = resolve(preset({ ...at, race: 'human' }))
+    const sheet = resolve(preset({ ...at, species: 'human' }))
 
     let checked = 0
     for (const source of [...(found?.feats ?? []), ...(found?.spells ?? [])]) {
@@ -819,12 +916,12 @@ describe('the category survives every layer of resolution', () => {
    */
   test('and every resolved combination satisfies the arity rule', () => {
     const problems: string[] = []
-    for (const key of RACE_KEYS) {
+    for (const key of SPECIES_KEYS) {
       for (const definition of CLASSES) {
         for (const level of [MIN_LEVEL, SUBCLASS_LEVEL, MAX_LIBRARY_LEVEL]) {
           const subclassKey = level < SUBCLASS_LEVEL ? null : definition.subclasses[0].key
           const sheet = resolve(
-            preset({ race: key, classKey: definition.key, subclassKey, level }),
+            preset({ species: key, classKey: definition.key, subclassKey, level }),
           )
           const problem = sheetProblem(sheet)
           if (problem) {

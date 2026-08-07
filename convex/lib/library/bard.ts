@@ -1,1169 +1,439 @@
-// The bard: levels 1 to 5, College of Lore and College of Valour.
+// The Bard: five premade sheets, level 1 to 5, College of Lore.
 //
-// This is the class the spec's philosophy fits best. D&D Lite is not a combat game
-// — it is exploration, investigation, puzzles and talking your way out of things —
-// so the bard's spell list is deliberately weighted towards Charm Person,
-// Comprehend Languages, Suggestion, Knock and Detect Magic rather than towards
-// damage. The one spell on either list that could be called a nuke is Hypnotic
-// Pattern, and it deals none.
+// Content only — the shape is in ./types.ts, and see barbarian.ts for why an entry is
+// named once and listed rather than written out at every level that carries it.
 //
-// Every sheet is written out in full rather than spread from the level below it.
-// Nine sheets of duplication is the price of being able to read one level and know
-// exactly what a character of that level has, without holding four other objects in
-// your head — and the sheets are content, so a diff on one of them is meant to be
-// legible to somebody who does not read TypeScript.
+// **The build: Acolyte.** The standard array goes 15 Charisma, 14 Dexterity, 13
+// Constitution, 12 Wisdom, 10 Intelligence, 8 Strength, and the Acolyte background's
+// **+2 Charisma and +1 Wisdom** are already in the numbers below. Insight and Religion
+// are the Acolyte's two skills; Deception, Performance and Persuasion are the three the
+// class chooses freely, and College of Lore adds three more at level 3.
 //
-// Where an entry already exists in lib/rules.ts the wording is reused verbatim and
-// `catalogueKey` records it. Two of those — Cure Wounds and Healing Word — carry a
-// `+WIS` roll in the catalogue because a cleric is their commonest caster; the copy
-// here says `+CHA`, which is exactly the edit the note on `SPELLS` anticipates. A
-// bard's healing scaling off a Wisdom of 10 would be a wrong number on a beginner's
-// sheet, and the entry is stored as a copy precisely so it can be right.
+// ⚠️ **Acolyte is the only one of the SRD's four backgrounds that touches Charisma**, so
+// every Charisma class in this library takes it — Bard, Cleric, Paladin, Sorcerer and
+// Warlock. That is a fact about a four-row table rather than a preference, and it is
+// worth knowing before somebody "diversifies" one of the five into a build two points
+// worse at the thing it exists to do.
+//
+// **The spell list is a selection, not the whole prepared list.** The SRD says *choose
+// four level 1 spells* and this sheet is one such choice; nothing in this application
+// counts prepared spells, and a sheet carrying all nine a level 5 Bard may prepare is a
+// sheet nobody reads. `library.test.ts` bounds the count per level and says so.
 
-import type { ClassLibrary } from './types'
+import { noSkills } from '../sheet'
+import type { ClassLibrary, LibraryEntry } from './types'
+
+const SKILLS = {
+  ...noSkills(),
+  insight: true,
+  religion: true,
+  deception: true,
+  performance: true,
+  persuasion: true,
+}
+
+/** College of Lore's Bonus Proficiencies at level 3: three more, chosen for a scholar. */
+const SKILLS_AT_3 = { ...SKILLS, arcana: true, history: true, investigation: true }
+
+const DAGGER: LibraryEntry = {
+  name: 'Dagger',
+  text: 'You carry two. Quick and finesse, so they use Dexterity rather than Strength, and either can be thrown 20 feet without trouble.',
+  roll: '1d4+DEX',
+  level: null,
+  catalogueKey: null,
+  category: 'weapon',
+  toHit: '1d20+DEX+PROF',
+  mastery: 'nick',
+}
+
+/**
+ * Bardic Inspiration, with the count stated as a literal per level rather than derived.
+ *
+ * The SRD says *a number of times equal to your Charisma modifier*, which is 3 while
+ * Charisma is 17 and 4 once level 4 raises it to 19 — and because a library sheet is
+ * written per level, a literal is exact and cannot drift. That is the same argument the
+ * roadmap makes about proficiency-bonus-many counts, reaching a second kind of
+ * derivation and holding.
+ */
+const BARDIC_INSPIRATION: LibraryEntry = {
+  name: 'Bardic Inspiration',
+  text: 'A bonus action, and a word or a bar of music to somebody within 60 feet who can see or hear you. For the next hour, once, they may roll this die after a failed d20 test and add it — which often turns the failure into a success.',
+  roll: '1d6',
+  level: null,
+  catalogueKey: null,
+  category: 'action',
+  uses: { max: 3, recharge: 'long' },
+}
+
+const BARDIC_INSPIRATION_AT_4: LibraryEntry = {
+  ...BARDIC_INSPIRATION,
+  uses: { max: 4, recharge: 'long' },
+}
+
+/** Level 5 does two things to it at once: a bigger die, and Font of Inspiration's rest. */
+const BARDIC_INSPIRATION_AT_5: LibraryEntry = {
+  ...BARDIC_INSPIRATION,
+  roll: '1d8',
+  uses: { max: 4, recharge: 'short' },
+}
+
+const MAGIC_INITIATE: LibraryEntry = {
+  name: 'Magic Initiate',
+  text: 'Origin feat. Two cantrips and one 1st-level spell from the Cleric, Druid or Wizard list, cast with an ability you choose when you take this. The 1st-level spell can be cast once a day without a slot, or with any slot you have. Swap one of the three whenever you gain a level.',
+  roll: null,
+  level: null,
+  catalogueKey: 'magic-initiate',
+  category: 'passive',
+}
+
+const EXPERTISE: LibraryEntry = {
+  name: 'Expertise',
+  text: 'Two of your trained skills are now doubly trained — Performance and Persuasion here — so you add twice your proficiency bonus to them rather than once.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const JACK_OF_ALL_TRADES: LibraryEntry = {
+  name: 'Jack of All Trades',
+  text: 'Any ability check that uses a skill you are not trained in gets half your proficiency bonus, rounded down. You are passable at everything and nobody has to ask why.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const BONUS_PROFICIENCIES: LibraryEntry = {
+  name: 'Bonus Proficiencies',
+  text: 'College of Lore trains you in three more skills — Arcana, History and Investigation on this sheet. It is the widest single grant of proficiency in the game.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const CUTTING_WORDS: LibraryEntry = {
+  name: 'Cutting Words',
+  text: 'A reaction, spending a use of Bardic Inspiration, when something you can see within 60 feet rolls damage or succeeds on a check or an attack. Roll and subtract — which can turn the success back into a failure.',
+  roll: '1d6',
+  level: null,
+  catalogueKey: null,
+  category: 'action',
+}
+
+const CUTTING_WORDS_AT_5: LibraryEntry = { ...CUTTING_WORDS, roll: '1d8' }
+
+const FONT_OF_INSPIRATION: LibraryEntry = {
+  name: 'Font of Inspiration',
+  text: 'Every use of Bardic Inspiration comes back on a short rest as well as a long one — and you can spend a spell slot to buy one back at any time, no action needed.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const ABILITY_SCORE_IMPROVEMENT: LibraryEntry = {
+  name: 'Ability Score Improvement',
+  text: 'General feat, from level 4. Raise one ability score by 2, or two of them by 1 each, to a maximum of 20. It can be taken again every time you are offered a feat. Taken here as +2 Charisma.',
+  roll: null,
+  level: null,
+  catalogueKey: 'ability-score-improvement',
+  category: 'passive',
+}
+
+// --- spells ---------------------------------------------------------------
+//
+// ⚠️ **A bard heals and mocks off Charisma, and the catalogue says Wisdom.** The roll on
+// a keyed entry is deliberately tailorable for exactly this — lib/rules.ts writes the
+// commonest caster's ability into the picker's copy and says so — so Cure Wounds and
+// Healing Word read `+CHA` here and are correct on both sides.
+
+const DANCING_LIGHTS: LibraryEntry = {
+  name: 'Dancing Lights',
+  text: 'Four hovering lights, or one faint humanoid shape made of light, out to 120 feet. You move them about with a thought while you keep concentrating.',
+  roll: null,
+  level: 0,
+  catalogueKey: 'dancing-lights',
+  category: 'passive',
+}
+
+const VICIOUS_MOCKERY: LibraryEntry = {
+  name: 'Vicious Mockery',
+  text: 'An insult barbed with magic at something within 60 feet that can hear you. It makes a Wisdom save; on a failure it takes psychic damage and rolls its next attack with disadvantage.',
+  roll: '1d6',
+  level: 0,
+  catalogueKey: 'vicious-mockery',
+  category: 'action',
+}
+
+/** Cantrip damage steps up at level 5 — the one place a cantrip's numbers move in range. */
+const VICIOUS_MOCKERY_AT_5: LibraryEntry = { ...VICIOUS_MOCKERY, roll: '2d6' }
+
+const MINOR_ILLUSION: LibraryEntry = {
+  name: 'Minor Illusion',
+  text: 'A sound, or an object no bigger than five feet across, within 30 feet. It does not move, and a hand passes straight through it — but nobody has to put a hand through it.',
+  roll: null,
+  level: 0,
+  catalogueKey: 'minor-illusion',
+  category: 'passive',
+}
+
+const HEALING_WORD: LibraryEntry = {
+  name: 'Healing Word',
+  text: 'A bonus action and one shouted word, out to 60 feet. Small healing, but it reaches across the room and it costs you almost nothing on your turn.',
+  roll: '2d4+CHA',
+  level: 1,
+  catalogueKey: 'healing-word',
+  category: 'action',
+}
+
+const CURE_WOUNDS: LibraryEntry = {
+  name: 'Cure Wounds',
+  text: 'A hand laid on somebody within reach, and the wound closes. More healing than Healing Word, but you have to be standing next to them and it costs your action.',
+  roll: '2d8+CHA',
+  level: 1,
+  catalogueKey: 'cure-wounds',
+  category: 'action',
+}
+
+const DISSONANT_WHISPERS: LibraryEntry = {
+  name: 'Dissonant Whispers',
+  text: 'A melody only one creature within 60 feet can hear, and it is horrible. Wisdom save; on a failure it takes the full psychic damage and turns to run, on a success half and it stands its ground.',
+  roll: '3d6',
+  level: 1,
+  catalogueKey: 'dissonant-whispers',
+  category: 'action',
+}
+
+const CHARM_PERSON: LibraryEntry = {
+  name: 'Charm Person',
+  text: 'One humanoid within 30 feet makes a Wisdom save, with advantage if you or your friends are fighting it. On a failure it is charmed for an hour and treats you as a friend — and knows it was charmed afterwards.',
+  roll: null,
+  level: 1,
+  catalogueKey: 'charm-person',
+  category: 'passive',
+}
+
+const HEROISM: LibraryEntry = {
+  name: 'Heroism',
+  text: 'A creature you touch cannot be frightened while you concentrate, and gains temporary hit points equal to your Charisma at the start of each of its turns.',
+  roll: null,
+  level: 1,
+  catalogueKey: 'heroism',
+  category: 'passive',
+}
+
+const SHATTER: LibraryEntry = {
+  name: 'Shatter',
+  text: 'A ringing note bursts in a 10-foot sphere within 60 feet. Everything in it makes a Constitution save for half. Objects and anything made of stone or metal take it worse.',
+  roll: '3d8',
+  level: 2,
+  catalogueKey: 'shatter',
+  category: 'action',
+}
+
+const INVISIBILITY: LibraryEntry = {
+  name: 'Invisibility',
+  text: 'A creature you touch is unseen for an hour, along with whatever it is carrying. It ends the moment they attack or cast a spell.',
+  roll: null,
+  level: 2,
+  catalogueKey: 'invisibility',
+  category: 'passive',
+}
+
+const SUGGESTION: LibraryEntry = {
+  name: 'Suggestion',
+  text: 'A sentence or two of reasonable-sounding course of action to one creature within 30 feet that can hear and understand you. Wisdom save; on a failure it spends up to eight hours doing it.',
+  roll: null,
+  level: 2,
+  catalogueKey: 'suggestion',
+  category: 'passive',
+}
+
+const HYPNOTIC_PATTERN: LibraryEntry = {
+  name: 'Hypnotic Pattern',
+  text: 'A drifting pattern of colour in a 30-foot cube within 120 feet. Everything that sees it makes a Wisdom save; on a failure it is charmed and does nothing at all until somebody shakes it or hurts it.',
+  roll: null,
+  level: 3,
+  catalogueKey: 'hypnotic-pattern',
+  category: 'passive',
+}
+
+const DISPEL_MAGIC: LibraryEntry = {
+  name: 'Dispel Magic',
+  text: 'Ends one spell of level 3 or lower on a creature, object or effect within 120 feet outright. Anything higher needs a check against your spellcasting ability.',
+  roll: null,
+  level: 3,
+  catalogueKey: 'dispel-magic',
+  category: 'passive',
+}
+
+const EQUIPMENT =
+  'Leather armour, two daggers, a musical instrument and an entertainer\'s pack, plus an acolyte\'s: calligrapher\'s supplies, a book of prayers, a holy symbol, parchment and a robe.'
+
+const HIT_DIE = 8
+const ARMOUR_CLASS = 13
 
 export const BARD: ClassLibrary = {
   classKey: 'bard',
-
-  // -------------------------------------------------------------------------
-  // Level 1 — before a college exists to choose
-  // -------------------------------------------------------------------------
   base: {
-    level: 1,
-    abilities: { str: 8, dex: 14, con: 13, int: 12, wis: 10, cha: 15 },
-    saveProficiencies: { str: false, dex: true, con: false, int: false, wis: false, cha: true },
-    skillProficiencies: {
-      athletics: false,
-      acrobatics: false,
-      sleightOfHand: false,
-      stealth: false,
-      arcana: false,
-      investigation: false,
-      animalHandling: false,
-      insight: false,
-      perception: false,
-      deception: true,
-      intimidation: false,
-      performance: true,
-      persuasion: true,
+    1: {
+      level: 1,
+      // Charisma first, because everything the class does runs off it — the spells, the
+      // save DC, the inspiration die's count and half the skills. Dexterity second,
+      // because leather armour is the only armour a bard gets.
+      abilities: { str: 8, dex: 14, con: 13, int: 10, wis: 13, cha: 17 },
+      saveProficiencies: { str: false, dex: true, con: false, int: false, wis: false, cha: true },
+      skillProficiencies: SKILLS,
+      armourClass: ARMOUR_CLASS,
+      maxHp: 9,
+      hitDice: { count: 1, faces: HIT_DIE },
+      feats: [DAGGER, BARDIC_INSPIRATION, MAGIC_INITIATE],
+      spells: [
+        DANCING_LIGHTS,
+        VICIOUS_MOCKERY,
+        HEALING_WORD,
+        CURE_WOUNDS,
+        DISSONANT_WHISPERS,
+        CHARM_PERSON,
+      ],
+      equipment: EQUIPMENT,
+      levellingNotes:
+        'Where you start: two cantrips, four spells, and a die you hand to somebody else three times between long rests. You are the only character at the table who makes everybody else better at their own job.',
     },
-    armourClass: 13,
-    maxHp: 9,
-    hitDice: { count: 1, faces: 8 },
-    feats: [
-      {
-        name: 'Spellcasting',
-        text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
-        roll: null,
-        level: null,
-        category: 'passive',
-        catalogueKey: null,
-      },
-      {
-        name: 'Bardic Inspiration',
-        text: 'A bonus action hands an ally the die for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
-        roll: '1d6',
-        level: null,
-        category: 'action',
-        catalogueKey: 'bardic-inspiration',
-      },
-    ],
-    spells: [
-      {
-        name: 'Vicious Mockery',
-        text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
-        roll: '1d6',
-        level: 0,
-        category: 'action',
-        catalogueKey: null,
-      },
-      {
-        name: 'Healing Word',
-        text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
-        roll: '2d4+CHA',
-        level: 1,
-        category: 'action',
-        catalogueKey: 'healing-word',
-      },
-    ],
-    equipment:
-      'Leather armour, a rapier, a dagger, a lute, a diplomat\'s pack and a notebook of half-finished songs.',
-    levellingNotes:
-      'Your first level: Bardic Inspiration to hand an ally, a cantrip and a healing spell, and a d8 of hit points. At level 2 you choose a college.',
+    2: {
+      level: 2,
+      abilities: { str: 8, dex: 14, con: 13, int: 10, wis: 13, cha: 17 },
+      saveProficiencies: { str: false, dex: true, con: false, int: false, wis: false, cha: true },
+      skillProficiencies: SKILLS,
+      armourClass: ARMOUR_CLASS,
+      maxHp: 15,
+      hitDice: { count: 2, faces: HIT_DIE },
+      feats: [DAGGER, BARDIC_INSPIRATION, EXPERTISE, JACK_OF_ALL_TRADES, MAGIC_INITIATE],
+      spells: [
+        DANCING_LIGHTS,
+        VICIOUS_MOCKERY,
+        HEALING_WORD,
+        CURE_WOUNDS,
+        DISSONANT_WHISPERS,
+        CHARM_PERSON,
+        HEROISM,
+      ],
+      equipment: EQUIPMENT,
+      levellingNotes:
+        'Expertise doubles your proficiency in Performance and Persuasion, and Jack of All Trades quietly gives you half of it in everything you are not trained in. The two together make you the party\'s answer to almost any check.',
+    },
   },
-
   paths: {
-    // -----------------------------------------------------------------------
-    // College of Lore — Cutting Words, and knowing a little of everything
-    // -----------------------------------------------------------------------
     lore: {
-      2: {
-        level: 2,
-        abilities: { str: 8, dex: 14, con: 13, int: 12, wis: 10, cha: 15 },
-        saveProficiencies: { str: false, dex: true, con: false, int: false, wis: false, cha: true },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: false,
-          deception: true,
-          intimidation: false,
-          performance: true,
-          persuasion: true,
-        },
-        armourClass: 13,
-        maxHp: 15,
-        hitDice: { count: 2, faces: 8 },
-        feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Bardic Inspiration',
-            text: 'A bonus action hands an ally the die for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
-            roll: '1d6',
-            level: null,
-            category: 'action',
-            catalogueKey: 'bardic-inspiration',
-          },
-          {
-            name: 'Jack of All Trades',
-            text: 'Add half your proficiency bonus, rounded down, to any ability check that does not already include it. A bard is never completely hopeless at anything.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Cutting Words',
-            text: 'A reaction when a creature within 60 feet makes an attack roll or an ability check: spend a Bardic Inspiration die and subtract it from their roll. You may decide after seeing their d20 but before the result is called, so it is the same die used to spoil rather than to help.',
-            roll: '1d6',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Vicious Mockery',
-            text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
-            roll: '1d6',
-            level: 0,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Healing Word',
-            text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
-            roll: '2d4+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'healing-word',
-          },
-          {
-            name: 'Charm Person',
-            text: 'One person within 30 feet who can see and hear you is charmed for an hour on a failed Wisdom saving throw, and treats you as a friend while it lasts. They know they were charmed once it ends, so it buys a conversation rather than a servant.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Comprehend Languages',
-            text: 'For an hour you understand every spoken language you hear, and you can read any writing you touch at about a page a minute. Secret codes and invisible ink stay secret.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        equipment:
-          'Leather armour, a rapier, a dagger, a lute, a diplomat\'s pack and a notebook of half-finished songs.',
-        levellingNotes:
-          'You joined the College of Lore: Cutting Words spends an Inspiration die to spoil an enemy\'s roll, and Jack of All Trades props up every check you are not trained in. Charm Person and Comprehend Languages join the list.',
-      },
-
       3: {
         level: 3,
-        abilities: { str: 8, dex: 14, con: 13, int: 12, wis: 10, cha: 17 },
+        abilities: { str: 8, dex: 14, con: 13, int: 10, wis: 13, cha: 17 },
         saveProficiencies: { str: false, dex: true, con: false, int: false, wis: false, cha: true },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: true,
-          animalHandling: false,
-          insight: true,
-          perception: false,
-          deception: true,
-          intimidation: false,
-          performance: true,
-          persuasion: true,
-        },
-        armourClass: 13,
+        skillProficiencies: SKILLS_AT_3,
+        armourClass: ARMOUR_CLASS,
         maxHp: 21,
-        hitDice: { count: 3, faces: 8 },
+        hitDice: { count: 3, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Bardic Inspiration',
-            text: 'A bonus action hands an ally the die for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
-            roll: '1d6',
-            level: null,
-            category: 'action',
-            catalogueKey: 'bardic-inspiration',
-          },
-          {
-            name: 'Jack of All Trades',
-            text: 'Add half your proficiency bonus, rounded down, to any ability check that does not already include it. A bard is never completely hopeless at anything.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Cutting Words',
-            text: 'A reaction when a creature within 60 feet makes an attack roll or an ability check: spend a Bardic Inspiration die and subtract it from their roll. You may decide after seeing their d20 but before the result is called, so it is the same die used to spoil rather than to help.',
-            roll: '1d6',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Expertise',
-            text: 'Two of the skills you are trained in count your proficiency bonus twice. Persuasion and Investigation are the pair that suit this build — the two things your bard becomes famous for.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          DAGGER,
+          BARDIC_INSPIRATION,
+          EXPERTISE,
+          JACK_OF_ALL_TRADES,
+          BONUS_PROFICIENCIES,
+          CUTTING_WORDS,
+          MAGIC_INITIATE,
         ],
         spells: [
-          {
-            name: 'Vicious Mockery',
-            text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
-            roll: '1d6',
-            level: 0,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Healing Word',
-            text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
-            roll: '2d4+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'healing-word',
-          },
-          {
-            name: 'Charm Person',
-            text: 'One person within 30 feet who can see and hear you is charmed for an hour on a failed Wisdom saving throw, and treats you as a friend while it lasts. They know they were charmed once it ends, so it buys a conversation rather than a servant.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Comprehend Languages',
-            text: 'For an hour you understand every spoken language you hear, and you can read any writing you touch at about a page a minute. Secret codes and invisible ink stay secret.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Detect Magic',
-            text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'detect-magic',
-          },
-          {
-            name: 'Suggestion',
-            text: 'Put one reasonable course of action to a creature that can hear and understand you. On a failed Wisdom saving throw it spends up to eight hours following the suggestion, and anything obviously harmful to it breaks the spell at once.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          DANCING_LIGHTS,
+          VICIOUS_MOCKERY,
+          HEALING_WORD,
+          CURE_WOUNDS,
+          DISSONANT_WHISPERS,
+          CHARM_PERSON,
+          HEROISM,
+          SHATTER,
+          INVISIBILITY,
         ],
-        equipment:
-          'Leather armour, a rapier, a dagger, a lute, a diplomat\'s pack, a notebook of half-finished songs and a sealed letter of introduction from the College.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'Charisma rose from 15 to 17, so every spell and every conversation is one better. Lore adds Arcana, Investigation and Insight, Expertise doubles your bonus in two skills, and Suggestion is your first 2nd-level spell.',
+          'You join the College of Lore. Three more trained skills, level 2 spells, and Cutting Words — a reaction that spends an inspiration die to take a chunk off somebody else\'s roll after you have seen it.',
       },
-
       4: {
         level: 4,
-        abilities: { str: 8, dex: 14, con: 13, int: 12, wis: 10, cha: 17 },
+        // The improvement goes into Charisma: 17 → 19. It is the only score on this sheet
+        // that pays twice, raising the spell save DC and the number of inspiration dice
+        // in the same step.
+        abilities: { str: 8, dex: 14, con: 13, int: 10, wis: 13, cha: 19 },
         saveProficiencies: { str: false, dex: true, con: false, int: false, wis: false, cha: true },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: true,
-          animalHandling: false,
-          insight: true,
-          perception: false,
-          deception: true,
-          intimidation: false,
-          performance: true,
-          persuasion: true,
-        },
-        armourClass: 13,
+        skillProficiencies: SKILLS_AT_3,
+        armourClass: ARMOUR_CLASS,
         maxHp: 27,
-        hitDice: { count: 4, faces: 8 },
+        hitDice: { count: 4, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Bardic Inspiration',
-            text: 'A bonus action hands an ally the die for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
-            roll: '1d6',
-            level: null,
-            category: 'action',
-            catalogueKey: 'bardic-inspiration',
-          },
-          {
-            name: 'Jack of All Trades',
-            text: 'Add half your proficiency bonus, rounded down, to any ability check that does not already include it. A bard is never completely hopeless at anything.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Cutting Words',
-            text: 'A reaction when a creature within 60 feet makes an attack roll or an ability check: spend a Bardic Inspiration die and subtract it from their roll. You may decide after seeing their d20 but before the result is called, so it is the same die used to spoil rather than to help.',
-            roll: '1d6',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Expertise',
-            text: 'Two of the skills you are trained in count your proficiency bonus twice. Persuasion and Investigation are the pair that suit this build — the two things your bard becomes famous for.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          DAGGER,
+          BARDIC_INSPIRATION_AT_4,
+          EXPERTISE,
+          JACK_OF_ALL_TRADES,
+          BONUS_PROFICIENCIES,
+          CUTTING_WORDS,
+          ABILITY_SCORE_IMPROVEMENT,
+          MAGIC_INITIATE,
         ],
         spells: [
-          {
-            name: 'Vicious Mockery',
-            text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
-            roll: '1d6',
-            level: 0,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Healing Word',
-            text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
-            roll: '2d4+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'healing-word',
-          },
-          {
-            name: 'Charm Person',
-            text: 'One person within 30 feet who can see and hear you is charmed for an hour on a failed Wisdom saving throw, and treats you as a friend while it lasts. They know they were charmed once it ends, so it buys a conversation rather than a servant.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Comprehend Languages',
-            text: 'For an hour you understand every spoken language you hear, and you can read any writing you touch at about a page a minute. Secret codes and invisible ink stay secret.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Detect Magic',
-            text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'detect-magic',
-          },
-          {
-            name: 'Suggestion',
-            text: 'Put one reasonable course of action to a creature that can hear and understand you. On a failed Wisdom saving throw it spends up to eight hours following the suggestion, and anything obviously harmful to it breaks the spell at once.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Knock',
-            text: 'A sharp crack of sound unlocks whatever you point at within 60 feet — a door, a chest, a set of manacles, a lid held shut by magic. Everyone within 300 feet hears the bang, so it is never the quiet option.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Dispel Magic',
-            text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: 'dispel-magic',
-          },
+          DANCING_LIGHTS,
+          VICIOUS_MOCKERY,
+          MINOR_ILLUSION,
+          HEALING_WORD,
+          CURE_WOUNDS,
+          DISSONANT_WHISPERS,
+          CHARM_PERSON,
+          HEROISM,
+          SHATTER,
+          INVISIBILITY,
+          SUGGESTION,
         ],
-        equipment:
-          'Leather armour, a rapier, a dagger, a lute, a diplomat\'s pack, a notebook of half-finished songs and a sealed letter of introduction from the College.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'The power spike: 3rd-level spells. Dispel Magic unpicks almost any enchantment standing between the party and the next room, and Knock opens what the rogue could not.',
+          'Charisma goes from 17 to 19, which raises your spell save DC and hands you a fourth inspiration die at the same time. A third cantrip and another level 2 spell come with it.',
       },
-
       5: {
         level: 5,
-        abilities: { str: 8, dex: 14, con: 13, int: 12, wis: 10, cha: 17 },
+        abilities: { str: 8, dex: 14, con: 13, int: 10, wis: 13, cha: 19 },
         saveProficiencies: { str: false, dex: true, con: false, int: false, wis: false, cha: true },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: true,
-          animalHandling: false,
-          insight: true,
-          perception: false,
-          deception: true,
-          intimidation: false,
-          performance: true,
-          persuasion: true,
-        },
-        armourClass: 13,
+        skillProficiencies: SKILLS_AT_3,
+        armourClass: ARMOUR_CLASS,
         maxHp: 33,
-        hitDice: { count: 5, faces: 8 },
+        hitDice: { count: 5, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Bardic Inspiration',
-            text: 'A bonus action hands an ally the die — now a d8 — for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
-            roll: '1d8',
-            level: null,
-            category: 'action',
-            catalogueKey: 'bardic-inspiration',
-          },
-          {
-            name: 'Font of Inspiration',
-            text: 'You get every Bardic Inspiration die back on a short rest as well as a long one, so handing them out freely costs you almost nothing.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Jack of All Trades',
-            text: 'Add half your proficiency bonus, rounded down, to any ability check that does not already include it. A bard is never completely hopeless at anything.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Cutting Words',
-            text: 'A reaction when a creature within 60 feet makes an attack roll or an ability check: spend a Bardic Inspiration die — a d8 now — and subtract it from their roll. You may decide after seeing their d20 but before the result is called.',
-            roll: '1d8',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Expertise',
-            text: 'Two of the skills you are trained in count your proficiency bonus twice. Persuasion and Investigation are the pair that suit this build — the two things your bard becomes famous for.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          DAGGER,
+          BARDIC_INSPIRATION_AT_5,
+          EXPERTISE,
+          JACK_OF_ALL_TRADES,
+          BONUS_PROFICIENCIES,
+          CUTTING_WORDS_AT_5,
+          FONT_OF_INSPIRATION,
+          ABILITY_SCORE_IMPROVEMENT,
+          MAGIC_INITIATE,
         ],
         spells: [
-          {
-            name: 'Vicious Mockery',
-            text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
-            roll: '1d6',
-            level: 0,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Minor Illusion',
-            text: 'Make a sound, or an image no bigger than a cupboard, somewhere within 30 feet for a minute — a voice round the corner, a wall where there is none, a chest that is not there. Anyone who studies it and succeeds on an Investigation check sees straight through it.',
-            roll: null,
-            level: 0,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Healing Word',
-            text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
-            roll: '2d4+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'healing-word',
-          },
-          {
-            name: 'Charm Person',
-            text: 'One person within 30 feet who can see and hear you is charmed for an hour on a failed Wisdom saving throw, and treats you as a friend while it lasts. They know they were charmed once it ends, so it buys a conversation rather than a servant.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Comprehend Languages',
-            text: 'For an hour you understand every spoken language you hear, and you can read any writing you touch at about a page a minute. Secret codes and invisible ink stay secret.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Detect Magic',
-            text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'detect-magic',
-          },
-          {
-            name: 'Suggestion',
-            text: 'Put one reasonable course of action to a creature that can hear and understand you. On a failed Wisdom saving throw it spends up to eight hours following the suggestion, and anything obviously harmful to it breaks the spell at once.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Knock',
-            text: 'A sharp crack of sound unlocks whatever you point at within 60 feet — a door, a chest, a set of manacles, a lid held shut by magic. Everyone within 300 feet hears the bang, so it is never the quiet option.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Dispel Magic',
-            text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: 'dispel-magic',
-          },
-          {
-            name: 'Counterspell',
-            text: 'A reaction that interrupts a spell you can see being cast within 60 feet. The caster makes a Constitution saving throw, and on a failure the spell does nothing and the slot is spent anyway.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: 'counterspell',
-          },
+          DANCING_LIGHTS,
+          VICIOUS_MOCKERY_AT_5,
+          MINOR_ILLUSION,
+          HEALING_WORD,
+          CURE_WOUNDS,
+          DISSONANT_WHISPERS,
+          CHARM_PERSON,
+          HEROISM,
+          SHATTER,
+          INVISIBILITY,
+          SUGGESTION,
+          HYPNOTIC_PATTERN,
+          DISPEL_MAGIC,
         ],
-        equipment:
-          'Leather armour, a rapier, a dagger, a lute, a diplomat\'s pack, a notebook of half-finished songs and a sealed letter of introduction from the College.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'Bardic Inspiration grows from a d6 to a d8, Cutting Words with it, and Font of Inspiration hands the dice back on a short rest. Counterspell lets you shut down an enemy caster, and Minor Illusion is the puzzle-solver.',
-      },
-    },
-
-    // -----------------------------------------------------------------------
-    // College of Valour — Combat Inspiration, sung from the front rank
-    // -----------------------------------------------------------------------
-    valour: {
-      2: {
-        level: 2,
-        abilities: { str: 8, dex: 14, con: 13, int: 12, wis: 10, cha: 15 },
-        saveProficiencies: { str: false, dex: true, con: false, int: false, wis: false, cha: true },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: false,
-          deception: true,
-          intimidation: false,
-          performance: true,
-          persuasion: true,
-        },
-        armourClass: 17,
-        maxHp: 15,
-        hitDice: { count: 2, faces: 8 },
-        feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Bardic Inspiration',
-            text: 'A bonus action hands an ally the die for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
-            roll: '1d6',
-            level: null,
-            category: 'action',
-            catalogueKey: 'bardic-inspiration',
-          },
-          {
-            name: 'Jack of All Trades',
-            text: 'Add half your proficiency bonus, rounded down, to any ability check that does not already include it. A bard is never completely hopeless at anything.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Combat Inspiration',
-            text: 'An ally holding one of your Bardic Inspiration dice may instead add it to a damage roll, or to their Armour Class against one attack. The Armour Class use is decided after the attacker rolls, which is what turns a hit into a miss.',
-            roll: '1d6',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Martial Training',
-            text: 'Your training covers medium armour, shields and martial weapons, so you sing from inside the shield wall rather than from behind it.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Vicious Mockery',
-            text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
-            roll: '1d6',
-            level: 0,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Healing Word',
-            text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
-            roll: '2d4+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'healing-word',
-          },
-          {
-            name: 'Heroism',
-            text: 'For a minute a creature you touch cannot be frightened, and at the start of each of its turns it gains temporary hit points equal to your Charisma modifier. The spell for the ally who is about to do something brave.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Charm Person',
-            text: 'One person within 30 feet who can see and hear you is charmed for an hour on a failed Wisdom saving throw, and treats you as a friend while it lasts. They know they were charmed once it ends, so it buys a conversation rather than a servant.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        equipment:
-          'A chain shirt, a shield, a longsword, a dagger, a war horn, an entertainer\'s pack and a tabard in your company\'s colours.',
-        levellingNotes:
-          'You joined the College of Valour: Combat Inspiration turns your die into damage or armour, and Martial Training puts you in a chain shirt behind a shield — Armour Class 13 up to 17. Heroism and Charm Person join the list.',
-      },
-
-      3: {
-        level: 3,
-        abilities: { str: 8, dex: 14, con: 13, int: 12, wis: 10, cha: 17 },
-        saveProficiencies: { str: false, dex: true, con: false, int: false, wis: false, cha: true },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: false,
-          deception: true,
-          intimidation: false,
-          performance: true,
-          persuasion: true,
-        },
-        armourClass: 17,
-        maxHp: 21,
-        hitDice: { count: 3, faces: 8 },
-        feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Bardic Inspiration',
-            text: 'A bonus action hands an ally the die for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
-            roll: '1d6',
-            level: null,
-            category: 'action',
-            catalogueKey: 'bardic-inspiration',
-          },
-          {
-            name: 'Jack of All Trades',
-            text: 'Add half your proficiency bonus, rounded down, to any ability check that does not already include it. A bard is never completely hopeless at anything.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Combat Inspiration',
-            text: 'An ally holding one of your Bardic Inspiration dice may instead add it to a damage roll, or to their Armour Class against one attack. The Armour Class use is decided after the attacker rolls, which is what turns a hit into a miss.',
-            roll: '1d6',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Martial Training',
-            text: 'Your training covers medium armour, shields and martial weapons, so you sing from inside the shield wall rather than from behind it.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Expertise',
-            text: 'Two of the skills you are trained in count your proficiency bonus twice. Persuasion and Performance are the pair that suit this build — the two things your bard becomes famous for.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Vicious Mockery',
-            text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
-            roll: '1d6',
-            level: 0,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Healing Word',
-            text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
-            roll: '2d4+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'healing-word',
-          },
-          {
-            name: 'Heroism',
-            text: 'For a minute a creature you touch cannot be frightened, and at the start of each of its turns it gains temporary hit points equal to your Charisma modifier. The spell for the ally who is about to do something brave.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Charm Person',
-            text: 'One person within 30 feet who can see and hear you is charmed for an hour on a failed Wisdom saving throw, and treats you as a friend while it lasts. They know they were charmed once it ends, so it buys a conversation rather than a servant.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Aid',
-            text: 'Three creatures gain 5 hit points, to both their current and their maximum, for eight hours. Another 5 for each slot level above 2nd.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: 'aid',
-          },
-          {
-            name: 'Suggestion',
-            text: 'Put one reasonable course of action to a creature that can hear and understand you. On a failed Wisdom saving throw it spends up to eight hours following the suggestion, and anything obviously harmful to it breaks the spell at once.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        equipment:
-          'A chain shirt, a shield, a longsword, a dagger, a war horn, an entertainer\'s pack and a tabard in your company\'s colours.',
-        levellingNotes:
-          'Charisma rose from 15 to 17, so every spell and every conversation is one better, and Expertise doubles your bonus in two skills. Aid and Suggestion are your first 2nd-level spells.',
-      },
-
-      4: {
-        level: 4,
-        abilities: { str: 8, dex: 14, con: 13, int: 12, wis: 10, cha: 17 },
-        saveProficiencies: { str: false, dex: true, con: false, int: false, wis: false, cha: true },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: false,
-          deception: true,
-          intimidation: false,
-          performance: true,
-          persuasion: true,
-        },
-        armourClass: 17,
-        maxHp: 27,
-        hitDice: { count: 4, faces: 8 },
-        feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Bardic Inspiration',
-            text: 'A bonus action hands an ally the die for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
-            roll: '1d6',
-            level: null,
-            category: 'action',
-            catalogueKey: 'bardic-inspiration',
-          },
-          {
-            name: 'Jack of All Trades',
-            text: 'Add half your proficiency bonus, rounded down, to any ability check that does not already include it. A bard is never completely hopeless at anything.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Combat Inspiration',
-            text: 'An ally holding one of your Bardic Inspiration dice may instead add it to a damage roll, or to their Armour Class against one attack. The Armour Class use is decided after the attacker rolls, which is what turns a hit into a miss.',
-            roll: '1d6',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Martial Training',
-            text: 'Your training covers medium armour, shields and martial weapons, so you sing from inside the shield wall rather than from behind it.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Expertise',
-            text: 'Two of the skills you are trained in count your proficiency bonus twice. Persuasion and Performance are the pair that suit this build — the two things your bard becomes famous for.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Vicious Mockery',
-            text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
-            roll: '1d6',
-            level: 0,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Healing Word',
-            text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
-            roll: '2d4+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'healing-word',
-          },
-          {
-            name: 'Heroism',
-            text: 'For a minute a creature you touch cannot be frightened, and at the start of each of its turns it gains temporary hit points equal to your Charisma modifier. The spell for the ally who is about to do something brave.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Charm Person',
-            text: 'One person within 30 feet who can see and hear you is charmed for an hour on a failed Wisdom saving throw, and treats you as a friend while it lasts. They know they were charmed once it ends, so it buys a conversation rather than a servant.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Aid',
-            text: 'Three creatures gain 5 hit points, to both their current and their maximum, for eight hours. Another 5 for each slot level above 2nd.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: 'aid',
-          },
-          {
-            name: 'Suggestion',
-            text: 'Put one reasonable course of action to a creature that can hear and understand you. On a failed Wisdom saving throw it spends up to eight hours following the suggestion, and anything obviously harmful to it breaks the spell at once.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Hypnotic Pattern',
-            text: 'A twist of shimmering colour hangs in the air within 120 feet. Every creature that can see it and fails a Wisdom saving throw is charmed and gazes at it, doing nothing at all, until the pattern fades or an ally shakes it out of the trance. A whole ambush undone without a point of damage.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Dispel Magic',
-            text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: 'dispel-magic',
-          },
-        ],
-        equipment:
-          'A chain shirt, a shield, a longsword, a dagger, a war horn, an entertainer\'s pack and a tabard in your company\'s colours.',
-        levellingNotes:
-          'The power spike: 3rd-level spells. Hypnotic Pattern can take an entire group of enemies out of a fight without dealing any damage, and Dispel Magic unpicks whatever is left.',
-      },
-
-      5: {
-        level: 5,
-        abilities: { str: 8, dex: 14, con: 13, int: 12, wis: 10, cha: 17 },
-        saveProficiencies: { str: false, dex: true, con: false, int: false, wis: false, cha: true },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: false,
-          deception: true,
-          intimidation: false,
-          performance: true,
-          persuasion: true,
-        },
-        armourClass: 17,
-        maxHp: 33,
-        hitDice: { count: 5, faces: 8 },
-        feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Your magic runs on Charisma and comes out as a song, a speech or a few bars on an instrument. Your spell save DC is 8 plus your proficiency bonus plus your Charisma modifier, and your spell attacks add the same two.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Bardic Inspiration',
-            text: 'A bonus action hands an ally the die — now a d8 — for the next ten minutes. They add it to one attack roll, ability check or saving throw, and may decide to spend it after seeing the d20 but before the result is called.',
-            roll: '1d8',
-            level: null,
-            category: 'action',
-            catalogueKey: 'bardic-inspiration',
-          },
-          {
-            name: 'Font of Inspiration',
-            text: 'You get every Bardic Inspiration die back on a short rest as well as a long one, so handing them out freely costs you almost nothing.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Jack of All Trades',
-            text: 'Add half your proficiency bonus, rounded down, to any ability check that does not already include it. A bard is never completely hopeless at anything.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Combat Inspiration',
-            text: 'An ally holding one of your Bardic Inspiration dice — a d8 now — may instead add it to a damage roll, or to their Armour Class against one attack. The Armour Class use is decided after the attacker rolls, which is what turns a hit into a miss.',
-            roll: '1d8',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Martial Training',
-            text: 'Your training covers medium armour, shields and martial weapons, so you sing from inside the shield wall rather than from behind it.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Extra Attack',
-            text: 'When you take the Attack action you swing twice instead of once. Valour is the only college that gets this, and it is what makes singing from the front rank a real fighting style.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Expertise',
-            text: 'Two of the skills you are trained in count your proficiency bonus twice. Persuasion and Performance are the pair that suit this build — the two things your bard becomes famous for.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Vicious Mockery',
-            text: 'A string of magically barbed insults at one creature within 60 feet that can hear you. On a failed Wisdom saving throw it takes the psychic damage and has disadvantage on its next attack roll.',
-            roll: '1d6',
-            level: 0,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Healing Word',
-            text: 'A bonus action that restores hit points to a creature within 60 feet — the spell for getting someone back on their feet mid-fight. Another 2d4 per slot level above 1st.',
-            roll: '2d4+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'healing-word',
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+CHA',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Heroism',
-            text: 'For a minute a creature you touch cannot be frightened, and at the start of each of its turns it gains temporary hit points equal to your Charisma modifier. The spell for the ally who is about to do something brave.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Charm Person',
-            text: 'One person within 30 feet who can see and hear you is charmed for an hour on a failed Wisdom saving throw, and treats you as a friend while it lasts. They know they were charmed once it ends, so it buys a conversation rather than a servant.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Aid',
-            text: 'Three creatures gain 5 hit points, to both their current and their maximum, for eight hours. Another 5 for each slot level above 2nd.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: 'aid',
-          },
-          {
-            name: 'Suggestion',
-            text: 'Put one reasonable course of action to a creature that can hear and understand you. On a failed Wisdom saving throw it spends up to eight hours following the suggestion, and anything obviously harmful to it breaks the spell at once.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Misty Step',
-            text: 'A bonus action: you vanish in a puff of silver mist and reappear in an unoccupied space you can see up to 30 feet away.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: 'misty-step',
-          },
-          {
-            name: 'Hypnotic Pattern',
-            text: 'A twist of shimmering colour hangs in the air within 120 feet. Every creature that can see it and fails a Wisdom saving throw is charmed and gazes at it, doing nothing at all, until the pattern fades or an ally shakes it out of the trance. A whole ambush undone without a point of damage.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Dispel Magic',
-            text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: 'dispel-magic',
-          },
-        ],
-        equipment:
-          'A chain shirt, a shield, a longsword, a dagger, a war horn, an entertainer\'s pack and a tabard in your company\'s colours.',
-        levellingNotes:
-          'Extra Attack means two swings instead of one, Bardic Inspiration grows from a d6 to a d8 and Font of Inspiration refreshes it on a short rest. Cure Wounds and Misty Step join the list.',
+          'The inspiration die grows to a d8 and Font of Inspiration hands all four back on a short rest, so you stop hoarding them. Level 3 spells arrive, and Vicious Mockery doubles its dice.',
       },
     },
   },

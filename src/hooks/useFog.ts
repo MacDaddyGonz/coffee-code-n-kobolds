@@ -1,15 +1,24 @@
-import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
+import { useMemo, useRef } from 'react'
 import { useQuery } from 'convex/react'
 
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicFog } from '@convex/lib/fog'
-import type { Point, Rect } from '@convex/lib/grid'
-import { anyRectCovers } from '@convex/lib/grid'
+import type { Point, Shape } from '@convex/lib/grid'
+import { anyShapeCovers } from '@convex/lib/grid'
+import type { FogBase } from '@convex/lib/fogBase'
+import { startsCovered } from '@convex/lib/fogBase'
 import { positionsArgs } from '@/hooks/useBoard'
 
-// FOG OF WAR, in the browser: the rectangles, the tool the DM has armed, and who is
-// standing in the dark.
+// FOG OF WAR, in the browser: the shapes, and who is standing in the dark.
+//
+// ⚠️ **The armed tool used to live here and does not any more.** `useFogMode` was one of
+// three module-level cells that could each say *my tool is out* — and could all say it at
+// once, which mounted three draw surfaces spanning the whole image and let the last one
+// rendered swallow every press. There is one cell now, `src/lib/boardTool.ts`, and its
+// header carries the argument. Everything that paragraph said about *why a module-level cell
+// rather than `useState`*, and about never writing an armed eraser to `localStorage`, moved
+// with it unchanged.
 //
 // Nothing here decides what anybody may see. `fog.list` is ungated by design — a player
 // who cannot see that the corridor is black does not experience suspense, they wonder
@@ -64,86 +73,6 @@ export function useFog(
   return useQuery(api.fog.list, sceneId === null ? 'skip' : fogArgs(code, sceneId, dmCode))
 }
 
-/** Which fog tool the DM has armed. `off` is the board behaving normally. */
-export type FogMode = 'off' | 'draw' | 'erase'
-
-/**
- * The modes, in the order they are offered. Iterated rather than three buttons written
- * out, for `TOKEN_LAYERS`' reason: a fourth mode arrives with a control rather than with
- * nowhere to be pressed.
- */
-export const FOG_MODES: readonly FogMode[] = ['off', 'draw', 'erase']
-
-type Store = { mode: FogMode; listeners: Set<() => void> }
-
-/**
- * ⚠️ **A module-level store rather than `useState`, and it is `useBoardLayers`' argument
- * with the same two halves of the screen in it.** The controls are in `FogTools`, deep
- * inside the right-hand pane; the gesture they arm is in `FogLayer`, inside the Konva
- * tree in the map pane. Two `useState`s cannot be that, and hoisting the mode to
- * `GameShell` would thread a board concern through the component whose job is to arrange
- * two panes — the same trade that file makes and declines, for the same reason.
- *
- * Keyed by game code so a browser that has been in two games does not carry the first
- * one's armed eraser into the second.
- *
- * **Nothing is written to `localStorage`, and that is the one place this departs from
- * `useBoardLayers`.** A layer preference is worth remembering across a reload; an armed
- * eraser is one click from deleting the ambush the DM spent the afternoon drawing, and a
- * tool that is still armed after a refresh nobody remembers doing is exactly how that
- * click happens. Off is the only safe thing to open at.
- */
-const stores = new Map<string, Store>()
-
-function storeFor(code: string): Store {
-  const existing = stores.get(code)
-  if (existing) return existing
-
-  const store: Store = { mode: 'off', listeners: new Set() }
-  stores.set(code, store)
-  return store
-}
-
-/**
- * The fog tool this browser has armed, and the way to change it.
- *
- * ⚠️ **A view and never a permission, on ADR 0004's terms.** Arming the eraser paints a
- * cursor and makes the rectangles clickable on *this* screen; the refusal behind the
- * click is `requireDm` on every one of `fog.draw`, `fog.erase` and `fog.clear`
- * (CLAUDE.md invariant 7). A player who reached into this cell would arm a tool over a
- * layer that is not listening for them and get a refusal from the mutation if they got
- * past that.
- */
-export function useFogMode(code: string): { mode: FogMode; setMode: (mode: FogMode) => void } {
-  const subscribe = useCallback(
-    (listener: () => void) => {
-      const store = storeFor(code)
-      store.listeners.add(listener)
-      return () => {
-        store.listeners.delete(listener)
-      }
-    },
-    [code],
-  )
-
-  const mode = useSyncExternalStore(subscribe, useCallback(() => storeFor(code).mode, [code]))
-
-  const setMode = useCallback(
-    (next: FogMode) => {
-      const store = storeFor(code)
-      // Not tidiness: `useSyncExternalStore` re-renders every subscriber on any
-      // notification, so pressing the tool you are already holding would repaint the
-      // board. `setTools` next door declines the same no-op for the same reason.
-      if (store.mode === next) return
-      store.mode = next
-      for (const listener of store.listeners) listener()
-    },
-    [code],
-  )
-
-  return { mode, setMode }
-}
-
 /**
  * The two fields the cue needs off a token, so both callers can pass what they have —
  * `BoardToken` from the canvas, `PublicToken` from the DM's coin list.
@@ -171,10 +100,18 @@ export type FoggableToken = {
  *
  * Three clauses, and each is the server's own, in its order:
  *
- * - **`anyRectCovers`, imported and not re-implemented.** It is the same function the
+ * - **`anyShapeCovers`, imported and not re-implemented.** It is the same function the
  *   server ran, which is what makes the cue and the withholding one answer rather than
  *   two that agree until somebody edits one. Its half-open edges and its fail-open on a
- *   non-finite coordinate are argued in convex/lib/grid.ts and inherited whole.
+ *   non-finite coordinate are argued in convex/lib/grid.ts and inherited whole — and since
+ *   polygons landed that inheritance is worth more, because the edge convention a hand-rolled
+ *   copy would get subtly wrong is the keystone `polygonCovers` spends a docblock on.
+ * - ⚠️ **The base inverts it, and this cue is one of the two client inversions that would
+ *   have been missed.** Under a lit map a shape is the dark, so a coin inside one is hidden.
+ *   Under a covered map the shape is a hole, so a coin inside one is the only kind the party
+ *   *can* see. Half-inverting this makes the DM's crossed-disc cue say the opposite of what
+ *   the party's screen is doing, which is worse than not having the cue at all — the DM plans
+ *   an ambush around it.
  * - **The centre point, never the footprint.** The stored coordinate already *is* the
  *   centre, so no grid enters and a 2×2 ogre one pixel over the line does not vanish
  *   from the cue while most of it stands in the lit room. `foggedTokenIds` carries the
@@ -190,11 +127,16 @@ export type FoggableToken = {
 export function hiddenFromParty(
   token: FoggableToken,
   position: Point | null,
-  rects: readonly Rect[],
+  shapes: readonly Shape[],
+  base: FogBase,
 ): boolean {
   if (position === null) return false
   if (token.controllerIds.length > 0) return false
-  return anyRectCovers(rects, position)
+  // `veiled` in convex/lib/board.ts, one line for one line. Written the same way round on
+  // purpose: two spellings of one inversion is how the DM's cue and the party's board end up
+  // disagreeing about which half of the map is dark.
+  const inside = anyShapeCovers(shapes, position)
+  return startsCovered(base) ? !inside : inside
 }
 
 /** Held still so a board with nothing in the dark hands every consumer the same empty set. */
@@ -224,15 +166,20 @@ function sameIds(a: ReadonlySet<Id<'tokens'>>, b: ReadonlySet<Id<'tokens'>>): bo
  * hold — so this costs sockets and server executions nothing and costs renders something.
  * That something is the reason for the gate below.
  *
- * ⚠️ **`board.positions` is skipped until a rectangle exists, and that is the whole cost
+ * ⚠️ **`board.positions` is skipped until there is fog to apply, and that is the whole cost
  * model rather than a micro-optimisation.** Positions are written ten times a second
  * during a drag, and this tab's own ⚠️ says at length why a placement must not be folded
  * into its low-churn view of a coin (CLAUDE.md invariant 2). Gated on fog, a game that
- * never draws a rectangle re-renders this list exactly as often as it did before fog
- * existed — the same pay-as-you-go line `foggedTokenIds` draws on the server, for the
- * same reason. A game that *is* using fog pays a re-render of the list per position tick
- * while somebody is dragging, which is the honest price of a cue that is never stale, and
- * is recorded here rather than discovered.
+ * never uses the feature re-renders this list exactly as often as it did before fog
+ * existed — the same pay-as-you-go line `fogShape` draws on the server, for the same reason.
+ * A game that *is* using fog pays a re-render of the list per position tick while somebody
+ * is dragging, which is the honest price of a cue that is never stale.
+ *
+ * ⚠️ **The gate inverts with the base, exactly as the server's early return does.** It used
+ * to be "no rectangles, no cost"; under a covered map no rectangles is the most hidden a map
+ * can be, so the free case is now *this scene is in the state it shipped in*. Turning a scene
+ * to dark buys this subscription for the rest of the session without drawing anything, and
+ * that is the sentence CLAUDE.md invariant 2 now carries.
  *
  * The DM gate is `dmCode`, not `players.isDm` (CLAUDE.md invariant 7). It costs nothing
  * — this tab is DM-only already — and it is what stops the cue ever being drawn on a
@@ -262,11 +209,15 @@ export function useHiddenFromParty(
   const sceneId = scene?._id ?? null
 
   const fog = useFog(code, sceneId, dmCode)
-  const rects = fog ?? NO_FOG
+  const shapes = fog ?? NO_FOG
+  // `scenes.active` already carries the base, resolved through `fogBaseOf` on the server, so
+  // the browser never spells the absent-means-lit default a second time.
+  const covered = startsCovered(scene?.fogBase ?? 'lit')
+  const fogging = covered || shapes.length > 0
 
   const positions = useQuery(
     api.board.positions,
-    sceneId !== null && rects.length > 0 ? positionsArgs(code, sceneId, dmCode) : 'skip',
+    sceneId !== null && fogging ? positionsArgs(code, sceneId, dmCode) : 'skip',
   )
 
   const at = useMemo(
@@ -280,16 +231,18 @@ export function useHiddenFromParty(
   const isDm = dmCode !== null
 
   const built = useMemo(() => {
-    // Nothing to be in the dark, and the early return is what keeps a game that never fogs
-    // anything holding one shared empty set for the life of the session.
-    if (!isDm || rects.length === 0) return NONE_HIDDEN
+    // Nothing to be in the dark, and the early return is what keeps a game that never uses the
+    // feature holding one shared empty set for the life of the session. Not `shapes.length` any
+    // more — a covered map with no holes in it hides everything.
+    if (!isDm || !fogging) return NONE_HIDDEN
 
+    const base: FogBase = covered ? 'dark' : 'lit'
     const hidden = new Set<Id<'tokens'>>()
     for (const token of tokens) {
-      if (hiddenFromParty(token, at.get(token._id) ?? null, rects)) hidden.add(token._id)
+      if (hiddenFromParty(token, at.get(token._id) ?? null, shapes, base)) hidden.add(token._id)
     }
     return hidden
-  }, [isDm, at, rects, tokens])
+  }, [isDm, at, shapes, tokens, fogging, covered])
 
   // ⚠️ **A ref written during render, which is the identity-collapsing escape hatch and not a
   // piece of state.** The value above is a pure function of the inputs, so a render that runs

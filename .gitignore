@@ -55,6 +55,11 @@ docs/sample-images/
 Thumbs.db
 desktop.ini
 
+# Scratch git worktrees an agent session creates to work in isolation. They are real
+# checkouts of this repository, so committing one makes it an embedded repo that a clone
+# cannot fetch — and they are disposable by construction.
+.claude/worktrees/
+
 # Convex agent skills are installed twice — once into .claude/ for Claude Code and
 # once into .agents/ for the generic convention. We only use the former, so the
 # duplicate is ignored. Regenerate either with `npx convex ai-files install`.

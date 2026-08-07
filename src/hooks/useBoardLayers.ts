@@ -11,7 +11,15 @@ import type { TokenLayer } from '@convex/lib/layers'
 import { TOKEN_LAYERS, maySeeLayer } from '@convex/lib/layers'
 
 export type BoardLayers = {
-  /** Whether the DM is previewing the table's view or looking at all of it. */
+  /**
+   * Whether the DM is previewing the table's view or looking at all of it.
+   *
+   * ⚠️ **It means two things now and it used to mean one.** It has always chosen the
+   * layers; since fog gained a base it also means *paint the fog the way the party is seeing
+   * it*. Both are the same act — "show me their screen" — and giving the fog half a switch
+   * of its own would let the DM sit in a state that is neither screen, and be sure they had
+   * previewed something they had not.
+   */
   view: LayerView
   setView: (view: LayerView) => void
   /**
@@ -19,6 +27,21 @@ export type BoardLayers = {
    * one fact is how a toggle comes to disagree with the board it toggles.
    */
   shown: ReadonlySet<TokenLayer>
+  /**
+   * Whether to paint what the table is seeing rather than what the DM was sent — the *fog*
+   * half of the same toggle, derived from `view` for `shown`'s reason and stored nowhere.
+   *
+   * Three readers, and each does something the other two cannot: `FogLayer` paints the veil
+   * opaque instead of at `DM_FOG_OPACITY`, `TokenLayers` leaves out the coins the party has
+   * lost sight of, and `TableViewBadge` says on the board that this is happening.
+   *
+   * ⚠️ **It does not consult `isDm`, deliberately.** Every one of the three is already
+   * correct for a player without it: a player's fog is opaque anyway, `hiddenFromParty` on a
+   * coin is `isDm &&`-gated on the server-facing side, and the badge is rendered behind an
+   * `isDm` of its own. Folding the check in here would be a fourth place holding an opinion
+   * about who is looking, which is how the DM's cue and the party's board come to disagree.
+   */
+  tableView: boolean
   /** Which layer the DM's next token lands on. */
   active: TokenLayer
   setActive: (layer: TokenLayer) => void
@@ -102,6 +125,30 @@ function setTools(code: string, next: Tools): void {
  * that actually keeps the GM layer off a player's screen is `maySee`, server-side, before
  * the payload is assembled (CLAUDE.md invariant 1).
  *
+ * ⚠️ **`tableView` is a preference and never a permission either, and the sentence is
+ * inherited verbatim rather than adapted — but read what it means here, because the fog case
+ * is the one where somebody will be tempted to call this a filter.** This is **the browser
+ * choosing what to paint of a payload it is fully entitled to**. The DM was sent every
+ * position row, every health band and every feed line on the board, because
+ * `resolveDmAccess` said so; nothing is withheld from this client and nothing is being
+ * withheld by this cell. Leaving a coin out of the picture is a *drawing* decision, in the
+ * same register as `shown` leaving out a layer.
+ *
+ * **It is not a filter and must never be described as one.** The withholding that matters
+ * happened in `visiblePositions` and `boardCharacterAccess`, server-side, before the party's
+ * payload was assembled — see `veiled` in convex/lib/board.ts. If this cell were ever the
+ * thing keeping something off a screen, the secret would already have been sent to the
+ * browser that must not have it, which is exactly the inversion CLAUDE.md invariant 1
+ * forbids. A hand-edited `localStorage` key here reveals nothing, because there is nothing
+ * on this client's payload that this client was not entitled to.
+ *
+ * The consequence is worth stating in the other direction too: **the preview is an
+ * approximation and is honest about being one.** It answers *what would the party's board
+ * look like* by re-running the server's own predicates over the DM's payload —
+ * `hiddenFromParty` shares `anyShapeCovers` with `veiled` for exactly that reason — rather
+ * than by asking the server for a player's payload, which would need a second subscription
+ * keyed by a seat this browser does not hold.
+ *
  * The player view is computed by asking `maySeeLayer` what a non-DM is sent rather than by
  * naming the GM layer here — the same discipline `useBoard` applies to `mayPlayersMove`. It
  * is what makes the one thing this toggle must not get wrong impossible to get wrong:
@@ -148,5 +195,14 @@ export function useBoardLayers(code: string): BoardLayers {
     [tools.view],
   )
 
-  return { view: tools.view, setView, shown, active: tools.active, setActive }
+  return {
+    view: tools.view,
+    setView,
+    shown,
+    // Not memoised, unlike `shown`: a boolean is compared by value, so there is no identity
+    // to hold still and a `useMemo` would cost more than the comparison it saved.
+    tableView: tools.view === 'player',
+    active: tools.active,
+    setActive,
+  }
 }

@@ -2,40 +2,26 @@ import { useId, useState } from 'react'
 import { useQuery } from 'convex/react'
 import { Minus, Plus, RotateCcw } from 'lucide-react'
 
+import { signed } from '@/lib/vitals'
 import { FieldError } from '@/components/FieldError'
 import { ConfirmDialog } from '@/components/lobby/ConfirmDialog'
+import type { PublicCreature } from '@/components/sheet/CreatureStatBlock'
+import { CreatureStatBlock } from '@/components/sheet/CreatureStatBlock'
 import { OverrideMark, OverrideNumberField, merge } from '@/components/sheet/PresetNumbers'
 import { SheetEntryList } from '@/components/sheet/SheetEntryList'
-import {
-  DerivedStat,
-  SheetField,
-  SheetTextArea,
-  StatGrid,
-  marksField,
-  signed,
-  speedHint,
-  tagName,
-} from '@/components/sheet/SheetFields'
+import { SheetField, SheetTextArea, marksField } from '@/components/sheet/SheetFields'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { api } from '@convex/_generated/api'
-import type { PublicSheet } from '@convex/lib/characters'
 import type { ChallengeRating } from '@convex/lib/creatures'
-import {
-  CREATURE_SIZE_NAMES,
-  crLabel,
-  findRole,
-  findTier,
-  stepCr,
-} from '@convex/lib/creatures'
+import { crLabel, findRole, stepCr } from '@convex/lib/creatures'
 import { NPC_ACTIONS } from '@convex/lib/rules'
 import type { BestiaryOverrides, BestiarySheet, NpcSheet, SheetProblem } from '@convex/lib/sheet'
 import {
   MAX_NPC_NOTES_LENGTH,
   attackBonusOf,
-  creatureSkillsOf,
   messageAtField,
   passivePerceptionOf,
   saveDcOf,
@@ -43,13 +29,6 @@ import {
   withoutUndefined,
 } from '@convex/lib/sheet'
 import { SKILLS } from '@convex/lib/skills'
-
-/**
- * Everything about a linked creature that is not a number on its statline — taken from
- * the payload's own type rather than restated here, so a field added to
- * `publicSheetValidator` cannot arrive with this file still describing the old shape.
- */
-export type PublicCreature = NonNullable<PublicSheet['creature']>
 
 export type CreatureSheetViewProps = {
   /** The draft. Only the overrides on it are edited here; the rating is `onSetCr`'s. */
@@ -78,7 +57,8 @@ export type CreatureSheetViewProps = {
  * A creature taken off the shelf: which one it is, what rating it is running at, and the
  * parts of it the DM has changed.
  *
- * **The same arrangement as `PresetSheetView` and for the same reasons**, one corpus over.
+ * **The same arrangement as a library character's Build pane and for the same reasons**,
+ * one corpus over.
  * The numbers are read live out of the bestiary every time the document is resolved, so a
  * box the DM could type an armour class into would be a box the next CR shift silently
  * discards; the only edit that survives resolution is an *override*, which is what the
@@ -268,7 +248,12 @@ export function CreatureSheetView({
               works — it is the numbers the last resolution produced.
             </p>
           ) : creature.hasCombat ? (
-            <CreatureStatline sheet={original.sheet} idPrefix={`${fieldId}-original`} />
+            // The same component the sheet below draws, which is most of what makes *View
+            // original* worth having: two grids assembled separately would eventually
+            // disagree about which fields exist or how a missing one reads, and a
+            // comparison whose rows do not line up with the sheet's is one nobody can make.
+            // No labels, because they are the same creature's and are printed once, above.
+            <CreatureStatBlock sheet={original.sheet} labels={null} />
           ) : (
             // The same answer the sheet below gives, from the same boolean. This drew the
             // grid unconditionally and so filled an innkeeper's comparison with the very
@@ -282,16 +267,18 @@ export function CreatureSheetView({
 
       {creature.hasCombat ? (
         <>
-          <CreatureStatline
-            sheet={resolved}
-            idPrefix={fieldId}
-            overrides={overrides}
-            problem={problem}
-            disabled={disabled}
-            onChange={isDm ? set : undefined}
-          />
+          <CreatureStatBlock sheet={resolved} labels={creature} />
 
-          <CreatureSkills sheet={resolved} />
+          {isDm ? (
+            <CreatureOverrides
+              sheet={resolved}
+              idPrefix={fieldId}
+              overrides={overrides}
+              problem={problem}
+              disabled={disabled}
+              onChange={set}
+            />
+          ) : null}
 
           <Separator />
 
@@ -444,26 +431,28 @@ function pinned(count: number): string {
 }
 
 /**
- * A creature's seven numbers, printed — and, for the DM, each one with a handle on it.
+ * The DM's thumb on a creature's seven numbers — **the handles only, because the numbers
+ * themselves are now `CreatureStatBlock`'s.**
  *
- * **The same component draws the sheet and draws the comparison**, which is most of what
- * makes *View original* worth having: two grids assembled separately would eventually
- * disagree about which fields exist or how a missing one reads, and a comparison panel
- * whose rows do not line up with the sheet's is a comparison nobody can make. Absent
- * `onChange` is the printed form, exactly as `PresetNumbers` arranges it.
+ * ⚠️ **This used to be one component with two modes and the split is the point.** It drew
+ * the printed statline when it had no `onChange` and the override boxes when it did, which
+ * was right while a creature's whole sheet *was* those seven numbers. It is not any more: a
+ * stat block prints ability scores, a save column and a skill list beside them, none of
+ * which is overridable, and none of which a comparison panel or a hand-typed creature's form
+ * should have had to go through an override component to show. So the reading half moved to
+ * the block every creature draws, and what is left here is the seven boxes and their marks.
  *
  * Three of the seven can be genuinely absent — `attackBonusOf`, `saveDcOf` and
- * `passivePerceptionOf` return null rather than a number, and `NumberInput` shows `NaN`
- * as an empty box. That is the truth for a creature nobody recorded one for, and it is
- * why emptying one of those boxes drops the override rather than storing a `NaN`: clearing
- * a field to mean "go back to what it was" is the same thing the reset mark does, so it
- * does the same thing. `PresetNumbers` takes this stance for `speed` and gives the
- * reasoning; here it applies to most of the grid.
+ * `passivePerceptionOf` return null rather than a number, and `NumberInput` shows `NaN` as
+ * an empty box. That is the truth for a creature nobody recorded one for, and it is why
+ * emptying one of those boxes drops the override rather than storing a `NaN`: clearing a
+ * field to mean *"go back to what it was"* is the same thing the reset mark does, so it does
+ * the same thing. `PresetNumbers` takes this stance for `speed` and gives the reasoning;
+ * here it applies to most of the grid.
  *
- * The editable half is driven from `STATLINE_FIELDS`, which is where the reasoning for
- * the table lives; the printed half stays longhand, and the note beside it says why.
+ * Driven from `STATLINE_FIELDS`, which is where the reasoning for the table lives.
  */
-function CreatureStatline({
+function CreatureOverrides({
   sheet,
   idPrefix,
   overrides,
@@ -472,37 +461,13 @@ function CreatureStatline({
   onChange,
 }: {
   sheet: NpcSheet
-  /** `useId` upstream, because two of these can be on screen at once. */
+  /** `useId` upstream, because two statlines can be on screen at once. */
   idPrefix: string
-  overrides?: BestiaryOverrides | undefined
-  problem?: SheetProblem | null
+  overrides: BestiaryOverrides | undefined
+  problem: SheetProblem | null
   disabled?: boolean
-  /** Absent means the numbers are printed rather than typed in. */
-  onChange?: (patch: Partial<BestiaryOverrides>) => void
+  onChange: (patch: Partial<BestiaryOverrides>) => void
 }) {
-  if (!onChange) {
-    const attackBonus = attackBonusOf(sheet)
-    const saveDc = saveDcOf(sheet)
-    const passive = passivePerceptionOf(sheet)
-    const speed = speedOf(sheet)
-    // Longhand rather than mapped from `STATLINE_FIELDS`, unlike the editable form below,
-    // because printing is where the seven stop being uniform: two are signed, three read
-    // `—` when nobody recorded one, one carries a unit and a hint, and the captions are
-    // the shorter ones a read-only row has room for. A table with a formatter and a
-    // caption override per row would be seven exceptions wearing a loop.
-    return (
-      <StatGrid>
-        <DerivedStat label="Armour class" value={String(sheet.armourClass)} />
-        <DerivedStat label="Hit points" value={String(sheet.maxHp)} />
-        <DerivedStat label="Attack" value={attackBonus === null ? '—' : signed(attackBonus)} />
-        <DerivedStat label="Initiative" value={signed(sheet.initiativeBonus)} />
-        <DerivedStat label="Passive Perception" value={passive === null ? '—' : String(passive)} />
-        <DerivedStat label="Save DC" value={saveDc === null ? '—' : String(saveDc)} />
-        <DerivedStat label="Speed" value={`${speed} ft`} hint={speedHint(speed)} />
-      </StatGrid>
-    )
-  }
-
   // Absent stays absent when the box is emptied: `NaN` is a perfectly valid float64 and
   // would poison every comparison made against it afterwards.
   const finite = (value: number) => (Number.isFinite(value) ? value : undefined)
@@ -538,7 +503,7 @@ function CreatureStatline({
           by hand this was an eighth place a key had to be spelled correctly, and the only
           one whose being wrong showed up as a message that silently never appeared. */}
       <FieldError
-        message={messageAtField(problem ?? null, ...STATLINE_FIELDS.map((field) => field.key))}
+        message={messageAtField(problem, ...STATLINE_FIELDS.map((field) => field.key))}
       />
     </section>
   )
@@ -609,46 +574,18 @@ function patchOf(key: NumberOverride, value: number | undefined): Partial<Bestia
 }
 
 /**
- * The two or three things a creature is good at, as skill and bonus.
+ * What the creature *is*, as opposed to what it can do — **the half of it that is not on
+ * the stat block.**
  *
- * ⚠️ **`SkillList` is not this and must not be reused here.** A hero's skills are thirteen
- * booleans, from which a bonus is worked out with an ability score, a level and a
- * proficiency bonus; a creature has none of those three, so the bonus is stored
- * pre-calculated and the map is *sparse*. The two answer the same question with
- * incompatible data — `creatureSkillsOf` in lib/sheet.ts carries the same warning, and
- * nothing converts between them in either direction.
+ * ⚠️ **The type, the size, the challenge rating, the tier, the role and the tags moved to
+ * `CreatureStatBlock` and must not come back here.** They are the block's opening line, the
+ * way an SRD entry prints *Large Dragon, chaotic evil* under the name — and having them in
+ * two components meant a hand-typed creature's panel, which never had one, silently showed
+ * none of them while the bestiary's showed all of them twice over once the block arrived.
+ * What is left is the material a DM reads *around* a fight rather than during one.
  *
- * Only what is present, in the order `SKILLS` lists them. Thirteen rows mostly reading
- * `+0` would be noise on a stat block meant to fit a screen, and a creature that is good
- * at two things should read as a creature that is good at two things.
- */
-function CreatureSkills({ sheet }: { sheet: NpcSheet }) {
-  const skills = creatureSkillsOf(sheet)
-  const listed = SKILLS.filter((skill) => skills[skill.key] !== undefined)
-  if (listed.length === 0) return null
-
-  return (
-    <section className="flex flex-col gap-1.5">
-      <h3 className="font-heading text-sm font-medium">Skills</h3>
-      <ul className="flex flex-wrap gap-1.5">
-        {listed.map((skill) => (
-          <li key={skill.key}>
-            <Badge variant="outline" className="tabular-nums">
-              {skill.name} {signed(skills[skill.key] ?? 0)}
-            </Badge>
-          </li>
-        ))}
-      </ul>
-    </section>
-  )
-}
-
-/**
- * What the creature *is*, as opposed to what it can do.
- *
- * Printed rather than offered, all of it, and that is not an omission: the type, the size
- * and the alignment are the bestiary's description of the creature, and the role and the
- * tags are what the picker filtered on. Changing any of them here would mean the sheet
+ * Printed rather than offered, all of it, and that is not an omission: these are the
+ * bestiary's description of the creature, and changing one here would mean the sheet
  * disagreeing with the shelf it came off. A DM who wants a different creature picks one.
  *
  * The recommended party levels are stored and read by nothing else — there is no encounter
@@ -660,34 +597,9 @@ function CreatureLabels({ creature }: { creature: PublicCreature }) {
 
   return (
     <section className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Badge variant="secondary">{creature.creatureType}</Badge>
-        <Badge variant="outline">{CREATURE_SIZE_NAMES[creature.size]}</Badge>
-        {/* The tier's own row, with the bare numeral as the fallback for the same reason
-            `findTier` tolerates an unknown one at all: a tier is stored on every entry, so
-            a table retired from `TIERS` has to leave everything that named it readable
-            rather than printing `undefined` into a badge mid-fight. */}
-        <Badge variant="outline">{findTier(creature.tier)?.name ?? `Tier ${creature.tier}`}</Badge>
-        {role ? <Badge variant="outline">{role.name}</Badge> : null}
-      </div>
-
       {role ? <p className="text-muted-foreground text-xs">{role.blurb}</p> : null}
 
-      {creature.tags.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {creature.tags.map((tag) => (
-            <Badge key={tag} variant="ghost">
-              {tagName(tag)}
-            </Badge>
-          ))}
-        </div>
-      ) : null}
-
       <div className="flex flex-col gap-1.5 text-xs">
-        <p>
-          <span className="text-muted-foreground">Alignment </span>
-          {creature.alignment}
-        </p>
         <p>
           <span className="text-muted-foreground">Suits a party of </span>
           {creature.recommendedPartyLevelMin === creature.recommendedPartyLevelMax

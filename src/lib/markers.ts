@@ -12,7 +12,7 @@
 // the pips can be drawn on the canvas and the same colours reused in HTML — and so
 // this is testable as arithmetic rather than through a rendered component.
 
-import { normaliseMarkers } from '@convex/lib/markers'
+import { TOKEN_MARKER_LABELS, normaliseMarkers } from '@convex/lib/markers'
 import type { TokenMarker } from '@convex/lib/markers'
 
 /**
@@ -244,6 +244,31 @@ export function pipCapacity(drawnDiameter: number): number {
  * The overflow number is drawn by the caller as a `+n` counter occupying the last
  * slot, which is why a collapse shows `capacity - 1` pips rather than `capacity`.
  */
+/**
+ * The same conditions **in words**, in the same order, with no capacity to collapse against.
+ *
+ * ⚠️ **This is the authoritative reading the pips are explicitly not.** `TOKEN_MARKER_PIPS`
+ * calls a pip *a reminder, not a label* — one hand-picked letter at seven screen pixels
+ * cannot be authoritative, and the argument that makes it defensible is that the words are
+ * always two presses away. The hover card is now a third place they are, and the shortest
+ * one: it is the surface a reader looks at *because* they could not decode a pip.
+ *
+ * ⚠️ **`normaliseMarkers` again, and for the third time in this bundle rather than a
+ * `map` over the stored array.** An older bundle reading a newer deployment receives a
+ * condition this browser's union has never heard of; mapping would take that string to a
+ * `TOKEN_MARKER_LABELS` lookup and print `undefined` in the card, which is worse than
+ * omitting it because it reads as a bug in the creature rather than in the deployment.
+ * Intersecting drops it silently, which is exactly right for a label that adjudicates
+ * nothing. `markerRow` below states the same argument for the pips.
+ *
+ * ⚠️ **No overflow and no counter, unlike `markerRow`.** The row on the coin collapses
+ * because a coin is as wide as it is; a card is HTML and wraps, so all seventeen fit and
+ * there is nothing to hide. That difference is the point of the card existing.
+ */
+export function markerLabels(stored: readonly string[]): string[] {
+  return normaliseMarkers(stored).map((marker) => TOKEN_MARKER_LABELS[marker])
+}
+
 export function markerRow(
   stored: readonly string[],
   drawnDiameter: number,

@@ -20,6 +20,24 @@ export const MAX_CHARACTER_NAME_LENGTH = 40
 export const MAX_SCENE_NAME_LENGTH = 60
 
 /**
+ * How much prep the DM may write against one board.
+ *
+ * ⚠️ **Two thousand rather than sixty, and it is beside the name limits because it is
+ * measured the same way and by the same rule** — UTF-16 `.length`, so the textarea's
+ * `maxLength`, the client's counter and the server's refusal agree exactly on where the
+ * limit is. What it is not is a *name*: `requireText` collapses whitespace and rejects a
+ * blank, and both of those are wrong for prose the DM types in paragraphs. See
+ * `requireSceneNotes` in lib/names.ts, which shares the measurement and neither of the
+ * behaviours.
+ *
+ * The number is what a page of read-aloud text costs — about 350 words — which is the unit
+ * a DM actually writes in. It is a bound on a *document* rather than on a payload: 25 scenes
+ * at 2000 characters is 50 KB in a query only the DM subscribes to, which is nothing beside
+ * a single thumbnail.
+ */
+export const MAX_SCENE_NOTES_LENGTH = 2000
+
+/**
  * Drawn from `crypto.getRandomValues`, not `Math.random`.
  *
  * The DM code is the app's only authorisation primitive, and ADR 0003 accepts

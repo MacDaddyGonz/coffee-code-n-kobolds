@@ -99,6 +99,22 @@ export type TokenCoinProps = {
    * a fourth predicate.
    */
   onContextMenu?: (token: BoardToken, at: { clientX: number; clientY: number }) => void
+  /**
+   * The pointer arriving on and leaving this coin, for the detail card.
+   *
+   * ⚠️ **Fired for every coin including one this caller may not touch, and that is not an
+   * oversight beside `onContextMenu` above.** A menu is a list of things you may do, so it
+   * is gated on `canMove`; a card is a readout of what a creature *is*, and everything on it
+   * either arrived in this browser's payload or is gated by a query of its own. Gating the
+   * hover would be the client deciding what to show, which is the mistake invariant 1 names.
+   *
+   * ⚠️ **`useTokenHover` holds both of these still for the life of the board**, which is a
+   * requirement rather than a nicety: react-konva answers a changed `on*` reference by
+   * unbinding the old listener and binding the new one, and this component is memoised on
+   * exactly that basis.
+   */
+  onHoverStart?: (token: BoardToken) => void
+  onHoverEnd?: (token: BoardToken) => void
 }
 
 /**
@@ -133,6 +149,8 @@ export const TokenCoin = memo(function TokenCoin({
   onDragEnd,
   onOpenHp,
   onContextMenu,
+  onHoverStart,
+  onHoverEnd,
 }: TokenCoinProps) {
   const art = useCanvasImage(token.artUrl)
 
@@ -216,8 +234,18 @@ export const TokenCoin = memo(function TokenCoin({
         if (event.evt.button !== 0) return
         onSelect(token)
       }}
-      onMouseEnter={(event) => setCursor(event, draggable ? 'grab' : 'pointer')}
-      onMouseLeave={(event) => setCursor(event, '')}
+      // The card's dwell timer rides on the cursor handlers that were already here rather
+      // than on two new listeners: Konva binds one handler per event per node, so a
+      // separate pair would double this coin's `mouseenter`/`mouseleave` bindings to say
+      // the same thing about the same pointer.
+      onMouseEnter={(event) => {
+        setCursor(event, draggable ? 'grab' : 'pointer')
+        onHoverStart?.(token)
+      }}
+      onMouseLeave={(event) => {
+        setCursor(event, '')
+        onHoverEnd?.(token)
+      }}
       onContextMenu={(event) => {
         // ⚠️ **Nothing happens for a caller with no menu, and that is the feature rather
         // than a missing branch.** The browser's own menu is then left alone, which is what

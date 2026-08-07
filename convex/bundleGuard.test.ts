@@ -9,7 +9,7 @@ import { describe, expect, test } from 'vitest'
  * — in a bundle that is already close to a megabyte, and not one byte of it is
  * data a client reads. The server resolves a character and sends a finished
  * `PcSheet` over the wire, so all the picker needs to draw its two dropdowns is
- * `lib/classes.ts` and `lib/races.ts`: eight class names, eight race names and a
+ * `lib/classes.ts` and `lib/species.ts`: eight class names, eight race names and a
  * blurb each. Both of those files say so at the top, and `lib/library/types.ts`
  * says in as many words that "a test asserts the separation, because it is
  * exactly the sort of thing one convenient import quietly undoes".
@@ -116,6 +116,31 @@ const scanned = Object.entries(sources)
  */
 const FORBIDDEN = /['"][^'"\n]*convex\/lib\/(?:library|resolve|bestiary|dice|feed)(?:\/[^'"\n]*)?['"]/
 
+/**
+ * **Nothing under `src/` may import anything under `scripts/`.**
+ *
+ * ⚠️ **This is the one new guard surface `scripts/srd/` creates, and it is here rather
+ * than in `corpusGuard.test.ts` because the risk is a bundle rather than a choke
+ * point.** `scripts/srd/spells.mjs` reads the SRD's 326 KB spell chapter and prints the
+ * corpus; a client module that imported it would pull a parser and a file read into the
+ * browser to produce content the server already has, and `scripts/board-smoke.mjs`
+ * would drag a Convex HTTP client and a set of fixtures in behind it.
+ *
+ * The location is what makes the generator safe at all — `scripts/` is outside `/src`
+ * so `FORBIDDEN`'s sweep never reads it, and outside `convex/` so `corpusGuard.test.ts`
+ * never reads it either — so the price of that freedom is one needle saying the
+ * directory is a dead end in the other direction.
+ *
+ * ⚠️ **Anchored to the repository root rather than matching `scripts/` anywhere in a
+ * specifier**, which is the mistake this guard's whole history is about. There is no
+ * alias to the root, so the only real routes from `src/` into `scripts/` are the
+ * relative `../../scripts/…` and the root-absolute `/scripts/…` that Vite resolves
+ * against the project directory. A needle matching any `…/scripts/…` would also flag a
+ * perfectly ordinary future `src/scripts/` or `@/lib/scripts/`, which is a false
+ * positive on client code that has nothing to do with this.
+ */
+const SCRIPTS = /['"](?:\.\.\/)*\/?scripts\/[^'"\n]*['"]/
+
 describe('the server-only modules are kept out of the browser bundle', () => {
   /**
    * The anti-vacuity check, copied in intent from `leakGuard.test.ts`: if
@@ -153,7 +178,7 @@ describe('the server-only modules are kept out of the browser bundle', () => {
     // being separate from them.
     const text = scanned.map(([, body]) => body).join('\n')
     expect(text).toContain('@convex/lib/classes')
-    expect(text).toContain('@convex/lib/races')
+    expect(text).toContain('@convex/lib/species')
     // The bestiary's own browser half. Without this the sweep below would pass
     // over a client that had stopped drawing a CR stepper at all, which is also
     // the state in which somebody is about to reach for the corpus by hand.
@@ -169,6 +194,48 @@ describe('the server-only modules are kept out of the browser bundle', () => {
       for (const hit of text.matchAll(every)) offenders.push(`${path} imports ${hit[0]}`)
     }
     expect(offenders).toEqual([])
+  })
+
+  /**
+   * The build-time generators, which live in `scripts/` precisely so that they are
+   * outside every sweep — and are therefore a directory the browser must never reach
+   * into. See the note on `SCRIPTS`.
+   */
+  test('no module under src/ imports anything from scripts/', () => {
+    const every = new RegExp(SCRIPTS.source, 'g')
+    const offenders: string[] = []
+    for (const [path, text] of scanned) {
+      for (const hit of text.matchAll(every)) offenders.push(`${path} imports ${hit[0]}`)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  /** The `scripts/` needle, exercised both ways, for the reason the one below is. */
+  test('the scripts needle matches a real route in and nothing else', () => {
+    for (const line of [
+      "import { SPELLS } from '../../scripts/srd/spells.mjs'",
+      'import { SPELLS } from "../../scripts/srd/spells.mjs"',
+      "import { parse } from '../scripts/srd/spells.mjs'",
+      "const lazy = await import('/scripts/srd/spells.mjs')",
+      "export * from 'scripts/srd/spells.mjs'",
+      "vi.mock('../../scripts/board-smoke.mjs')",
+    ]) {
+      expect(SCRIPTS.test(line), line).toBe(true)
+    }
+
+    for (const line of [
+      // A client directory that happens to be called scripts/, and an aliased one.
+      // Neither is a route into the generators, and flagging either is the false
+      // positive this guard's history is entirely about.
+      "import { runScript } from '@/scripts/boot'",
+      "import { runScript } from './scripts/boot'",
+      "import { runScript } from 'src/scripts/boot'",
+      // Prose, which is what the components explaining the boundary will contain.
+      ' * Generated by scripts/srd/spells.mjs and then written by hand — see its README.',
+      '// The smoke script is scripts/board-smoke.mjs and runs against the dev deployment.',
+    ]) {
+      expect(SCRIPTS.test(line), line).toBe(false)
+    }
   })
 
   /**
@@ -232,7 +299,7 @@ describe('the server-only modules are kept out of the browser bundle', () => {
 
     const innocent = [
       "import { CLASSES } from '@convex/lib/classes'",
-      "import { RACES } from '@convex/lib/races'",
+      "import { SPECIES } from '@convex/lib/species'",
       "import { SKILLS } from '@convex/lib/skills'",
       "import { sheetProblem } from '@convex/lib/sheet'",
       // ⚠️ **The browser's half of the bestiary, which is the whole reason it is

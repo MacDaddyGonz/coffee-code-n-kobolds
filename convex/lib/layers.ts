@@ -15,7 +15,7 @@
 // layer. Value-importing lib/board.ts from `src/` to reach them would drag the whole choke
 // point into the bundle for a `switch` over three strings.
 
-import { v, type Infer } from 'convex/values'
+import { v } from 'convex/values'
 
 /**
  * The three layers a token can be on, **bottom to top**, spelled once.
@@ -150,38 +150,8 @@ export function mayPlayersMove(layer: TokenLayer): boolean {
   }
 }
 
-// ─── TRANSITION ONLY ────────────────────────────────────────────────────────────────
-// Everything below exists to carry the rename of the GM layer's stored value from `dm` to
-// `gm` across a schema push, and is deleted once the relabel has run against every
-// deployment. Nothing new should be built on it.
-
-/**
- * The union **as it may still be found in the database**: the three canonical members plus
- * the legacy `dm` that the GM layer was stored as before it was renamed.
- *
- * Used by `convex/schema.ts` and by nothing else, which is the whole shape of the
- * widen-migrate-narrow: the *stored* union is wide enough to validate a row written before
- * the rename, and every other spelling in the codebase — the public projection,
- * `board.addToken`'s argument validator, `board.setLayer`'s — is already the narrow one.
- * So no `'dm'` can be created from this commit forward and none can leave the server, and
- * the browser never learns that the transition happened.
- */
-export const storedTokenLayerValidator = v.union(
-  v.literal('background'),
-  v.literal('player'),
-  v.literal('gm'),
-  v.literal('dm'),
-)
-export type StoredTokenLayer = Infer<typeof storedTokenLayerValidator>
-
-/**
- * A stored layer read as a canonical one. The one place `dm` means `gm`.
- *
- * Every read path calls this before asking either question above, so the legacy value is
- * normalised at the boundary rather than handled in each predicate — which is what keeps
- * the two `never` arms about the three real members and lets the narrow commit delete this
- * function instead of unpicking four switches.
- */
-export function layerOf(stored: StoredTokenLayer): TokenLayer {
-  return stored === 'dm' ? 'gm' : stored
-}
+// The GM layer was stored as `dm` before it was renamed. A widened `storedTokenLayerValidator`
+// and a `layerOf` normaliser carried that across two deploys and both are gone: the sweep has
+// run against every deployment, `admin:gamesWithLegacyLayers` reports nothing, and the schema
+// now holds the narrow union above. Convex refuses a push that narrows a union while a
+// non-conforming row survives, so this file being narrow is itself the proof the sweep landed.

@@ -261,7 +261,15 @@ export const abilityKeyValidator = v.union(
   v.literal('cha'),
 )
 
-/** The thirteen skill keys. Hand-spelled beside `SKILL_KEYS` for the reason above. */
+/**
+ * The eighteen skill keys. Hand-spelled beside `SKILL_KEYS` for the reason above.
+ *
+ * ⚠️ **This union is STORED** — `feedSubjectValidator` below carries it and a feed row holds
+ * one. Widening it is additive and safe, which is the one direction a stored union can move
+ * without a migration: a row written before the five 2024 skills existed names one of the
+ * thirteen and still validates. Narrowing it would not be, which is why removing a skill from
+ * this list is a different kind of change from adding one.
+ */
 export const skillKeyValidator = v.union(
   v.literal('athletics'),
   v.literal('acrobatics'),
@@ -269,9 +277,14 @@ export const skillKeyValidator = v.union(
   v.literal('stealth'),
   v.literal('arcana'),
   v.literal('investigation'),
+  v.literal('history'),
+  v.literal('nature'),
+  v.literal('religion'),
   v.literal('animalHandling'),
   v.literal('insight'),
   v.literal('perception'),
+  v.literal('medicine'),
+  v.literal('survival'),
   v.literal('deception'),
   v.literal('intimidation'),
   v.literal('performance'),

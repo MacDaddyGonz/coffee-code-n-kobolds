@@ -324,16 +324,11 @@ describe('the DM layer never reaches a player', () => {
       expect(serialised).not.toContain(fixture.secretToken)
       expect(serialised).not.toContain('Ambush Skeleton')
       expect(serialised).not.toContain(fixture.secret.artUrl as string)
-      // The discriminator, swept for under **both** spellings on purpose. `"gm"` is the
-      // one a correctly migrated deployment emits. `"dm"` is the legacy stored value, and
-      // keeping it here is what catches a half-run migration: `publicTokens` normalises
-      // through `layerOf` on the way out, so a leak of an unmigrated row would arrive
-      // wearing the new word and the old needle alone would miss it — but a projection
-      // that ever stopped normalising would arrive wearing the old one and the new needle
-      // alone would miss *that*. Two needles, two failure modes, neither of them the one
-      // the other catches.
+      // The discriminator. There was a second needle here for the legacy `dm` spelling
+      // while the rename was in flight, to catch a leak of an unmigrated row; it is gone
+      // with the widened stored union, because a value the schema can no longer hold is a
+      // needle that cannot fire, and this project does not keep guards that cannot fail.
       expect(serialised).not.toContain('"gm"')
-      expect(serialised).not.toContain('"dm"')
     }
   })
 
@@ -365,65 +360,31 @@ describe('the DM layer never reaches a player', () => {
   })
 
   /**
-   * ⚠️ **THE INSTRUMENT FOR THE TWO LAYER NEEDLES ABOVE, AND FOR THE HALF-RUN MIGRATION
-   * THEY ARE A PAIR TO CATCH.**
+   * ⚠️ **THE INSTRUMENT FOR THE LAYER NEEDLE ABOVE.**
    *
    * A scan whose needle does not work passes in silence, and `'"gm"'` is a needle that
-   * became correct only when the stored value was renamed. So both spellings are shown
-   * doing real work here rather than assumed to: `"gm"` really does appear in a payload
-   * that carries a GM-layer token, and a row still stored as the legacy `dm` really is
-   * projected as `gm` on the way out.
+   * became correct only when the stored value was renamed. So it is shown doing real work
+   * here rather than assumed to: `"gm"` really does appear in a payload that carries a
+   * GM-layer token, and really does not appear in a player's.
    *
-   * That second half is the whole reason `'"dm"'` stays in the scan. `publicTokens`
-   * normalises through `layerOf`, so a leak of an *unmigrated* row would arrive wearing the
-   * new word and the old needle alone would miss it — while a projection that ever stopped
-   * normalising would arrive wearing the old one and the new needle alone would miss that.
-   * Neither needle catches the other's failure, which is why there are two.
-   *
-   * The legacy row is inserted directly because it can no longer be created through the
-   * API: `board.addToken`'s validator takes the narrow three-member union while the schema
-   * still takes the wide four (see the TRANSITION section of lib/layers.ts), and this test
-   * is the only thing in the suite that stands in that gap.
+   * This test used to have a second half, inserting a row still stored as the legacy `dm`
+   * and asserting it left as `gm`. That half is gone with the rename: the schema takes the
+   * narrow three-member union now, so the row it inserted cannot exist and the assertion it
+   * made could not fail.
    */
-  test('the layer needles work: “gm” is in the DM’s payload, and a legacy “dm” row leaves as “gm”', async () => {
+  test('the layer needle works: “gm” is in the DM’s payload and not in a player’s', async () => {
     const t = harness()
     const fixture = await boardFixture(t)
 
-    // Needle one, as an instrument rather than as an assumption.
     expect(
       JSON.stringify(
         await t.query(api.board.tokens, { code: fixture.code, dmCode: fixture.dmCode }),
       ),
     ).toContain('"gm"')
 
-    const legacy = await t.run(async (ctx) => {
-      const gameId = (await ctx.db.query('games').first())!._id
-      return await ctx.db.insert('tokens', {
-        gameId,
-        name: 'Unmigrated Skeleton',
-        layer: 'dm',
-        sizeSquares: 1,
-        tint: TINT,
-      })
-    })
-    expect((await tokenRow(t, legacy))?.layer).toBe('dm')
-
-    // The stored word never leaves the server, in either audience's payload.
-    const asDm = JSON.stringify(
-      await t.query(api.board.tokens, { code: fixture.code, dmCode: fixture.dmCode }),
-    )
-    expect(asDm).toContain('"gm"')
-    expect(asDm).not.toContain('"dm"')
-    expect(await dmTokenPayload(t, fixture, legacy)).toMatchObject({ layer: 'gm' })
-
-    // And it is withheld from a player exactly as a canonical `gm` row is, which is what
-    // makes the read path `maySeeLayer(layerOf(stored))` rather than `maySeeLayer(stored)`
-    // — the latter would fall through to the `never` arm for every unmigrated ambush.
-    const asPlayer = JSON.stringify(await t.query(api.board.tokens, { code: fixture.code })) ?? ''
-    expect(asPlayer).not.toContain(legacy)
-    expect(asPlayer).not.toContain('Unmigrated Skeleton')
-    expect(asPlayer).not.toContain('"gm"')
-    expect(asPlayer).not.toContain('"dm"')
+    expect(
+      JSON.stringify(await t.query(api.board.tokens, { code: fixture.code })) ?? '',
+    ).not.toContain('"gm"')
   })
 
   /**
@@ -1394,7 +1355,11 @@ describe('board.addToken', () => {
     expect(await blobExists(t, imageId)).toBe(true)
 
     // The client's catch calls this, and it is the call that commits.
-    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId })
+    await t.mutation(api.files.discard, {
+      code: game.code,
+      dmCode: game.dmCode,
+      imageIds: [imageId],
+    })
     expect(await blobExists(t, imageId)).toBe(false)
   })
 
@@ -1422,7 +1387,11 @@ describe('board.addToken', () => {
     const game = await makeGame(t)
     const sceneId = await makeScene(t, game.code, game.dmCode)
     const imageId = await storeImage(t, 'gone-token')
-    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId })
+    await t.mutation(api.files.discard, {
+      code: game.code,
+      dmCode: game.dmCode,
+      imageIds: [imageId],
+    })
     expect(await blobExists(t, imageId)).toBe(false)
 
     await expectKind(addToken(t, game.code, game.dmCode, sceneId, { imageId }), 'BadInput')
@@ -1941,7 +1910,11 @@ describe('board.setArt', () => {
     expect(await blobExists(t, huge)).toBe(true)
 
     // The client's catch calls this, and it is the call that commits.
-    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId: huge })
+    await t.mutation(api.files.discard, {
+      code: game.code,
+      dmCode: game.dmCode,
+      imageIds: [huge],
+    })
     expect(await blobExists(t, huge)).toBe(false)
     // And the cleanup could not have taken the live art with it even if the client had
     // mis-sequenced it: `discard` refuses a blob a token still points at, which is the
@@ -1962,7 +1935,11 @@ describe('board.setArt', () => {
     const original = await storeImage(t, 'original-art')
     const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { imageId: original })
     const gone = await storeImage(t, 'gone-token')
-    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId: gone })
+    await t.mutation(api.files.discard, {
+      code: game.code,
+      dmCode: game.dmCode,
+      imageIds: [gone],
+    })
     expect(await blobExists(t, gone)).toBe(false)
 
     await expectKind(setArt(t, game, tokenId, gone), 'BadInput')
@@ -2082,7 +2059,7 @@ describe('board.setArt', () => {
       t.mutation(api.files.discard, {
         code: game.code,
         dmCode: game.dmCode,
-        imageId: replacement,
+        imageIds: [replacement],
       }),
       'BadInput',
     )
@@ -2370,10 +2347,7 @@ describe('conditions on a coin', () => {
       code: f.code,
       dmCode: f.dmCode,
       sceneId: f.sceneId,
-      x: 0,
-      y: 0,
-      width: 2000,
-      height: 2000,
+      shape: { kind: 'rect', x: 0, y: 0, width: 2000, height: 2000 },
     })
 
     // Its placement is gone from the player's payload — that is fog working …
@@ -3159,7 +3133,7 @@ describe('two tokens sharing one picture', () => {
       t.mutation(api.files.discard, {
         code: fixture.code,
         dmCode: fixture.dmCode,
-        imageId: fixture.shared,
+        imageIds: [fixture.shared],
       }),
     )
     expect(refusal.kind).toBe('BadInput')
@@ -3178,7 +3152,7 @@ describe('two tokens sharing one picture', () => {
           t.mutation(api.files.discard, {
             code: fixture.code,
             dmCode: fixture.dmCode,
-            imageId: fixture.shared,
+            imageIds: [fixture.shared],
           }),
         )
       ).kind,
@@ -3203,7 +3177,11 @@ describe('files.discard refuses art that is still in use', () => {
     const tokenId = await addToken(t, game.code, game.dmCode, sceneId, { imageId })
 
     await expectKind(
-      t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId }),
+      t.mutation(api.files.discard, {
+        code: game.code,
+        dmCode: game.dmCode,
+        imageIds: [imageId],
+      }),
       'BadInput',
     )
     expect(await blobExists(t, imageId)).toBe(true)
@@ -3227,7 +3205,11 @@ describe('files.discard refuses art that is still in use', () => {
     await addToken(t, game.code, game.dmCode, sceneId, { layer: 'gm', imageId })
 
     await expectKind(
-      t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId }),
+      t.mutation(api.files.discard, {
+        code: game.code,
+        dmCode: game.dmCode,
+        imageIds: [imageId],
+      }),
       'BadInput',
     )
     expect(await blobExists(t, imageId)).toBe(true)
@@ -3239,7 +3221,11 @@ describe('files.discard refuses art that is still in use', () => {
     const game = await makeGame(t)
     const imageId = await storeImage(t, 'orphan')
 
-    await t.mutation(api.files.discard, { code: game.code, dmCode: game.dmCode, imageId })
+    await t.mutation(api.files.discard, {
+      code: game.code,
+      dmCode: game.dmCode,
+      imageIds: [imageId],
+    })
     expect(await blobExists(t, imageId)).toBe(false)
   })
 })

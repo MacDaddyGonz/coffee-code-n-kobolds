@@ -50,6 +50,55 @@ export const BAND_FILL: Record<HealthBand, number> = {
   down: 0,
 }
 
+/**
+ * The ward's colour — temporary hit points, which are **not** hit points.
+ *
+ * ⚠️ **Deliberately outside `BAND_COLOUR` and deliberately not a fifth band.** The four
+ * above are degrees of one quantity and are chosen to be read against each other; this is a
+ * *different* quantity that happens to be drawn beside them, so it has to be a colour no
+ * band could ever be mistaken for. Sky blue is the one hue in this application already
+ * reserved for a fact about a creature rather than a state of it — `PP_FILL` on the coin's
+ * passive-perception badge is the same family — and nothing in the health vocabulary is
+ * anywhere near it.
+ */
+export const WARD_COLOUR = '#38bdf8'
+
+/**
+ * Temporary hit points, or `null` for a viewer who was not sent any.
+ *
+ * ⚠️ **`null` here means *there is no such field in this payload*, and it is not the same
+ * answer as `0`.** A player looking at a goblin holds the `band` variant, which has no
+ * `temporaryHp` member at all — so there is nothing to draw, no ward, and no hint that one
+ * might exist. That is CLAUDE.md invariant 1 arriving as a *type*: the discriminated union
+ * makes "hide it in the client" unwriteable, because the number was never sent. A caller
+ * that wants a number for the arithmetic should read `0` from a *missing* row itself and
+ * say why; this function refuses to make that decision on its behalf.
+ */
+export function temporaryHpOf(vitals: PublicVitals): number | null {
+  return vitals.kind === 'exact' ? vitals.temporaryHp : null
+}
+
+/**
+ * How much of the coin's width the ward strip spans.
+ *
+ * ⚠️ **Scaled against `max` as a *comparison* and never as a claim that it is part of it.**
+ * Temporary hit points are not healing and are not part of the maximum — `clampTemporaryHp`
+ * on the server has nowhere to pass a ceiling, on purpose — so the only honest reason to
+ * measure them against `max` is that a reader needs to know whether the ward is worth a
+ * point of damage or worth the whole fight. That is why the *renderer* draws them as a
+ * separate strip in a separate colour rather than as more of the same bar: the proportion
+ * is a comparison, and the geometry is what stops it reading as an addition.
+ *
+ * A ward larger than the character's maximum fills the strip and stops. Saturating rather
+ * than overflowing is the right failure for a comparison — 30 temporary on a maximum of 8
+ * is *plenty*, and a strip two and a half coins wide would say something about the
+ * neighbouring creature instead.
+ */
+export function wardFraction(vitals: PublicVitals): number {
+  if (vitals.kind !== 'exact' || vitals.temporaryHp <= 0) return 0
+  return vitals.max <= 0 ? 1 : Math.min(1, vitals.temporaryHp / vitals.max)
+}
+
 /** How full to draw the bar, whichever kind of answer arrived. */
 export function healthFraction(vitals: PublicVitals): number {
   if (vitals.kind === 'band') return BAND_FILL[vitals.band]

@@ -26,15 +26,10 @@ import {
 import { normaliseMarkers, tokenMarkerValidator, type TokenMarker } from './markers'
 import { addedNames, duplicateNames } from './names'
 import { findClaimHolder, holderByCharacter, listSeats } from './players'
-import type { Grid, Point, Rect } from './grid'
-import { anyRectCovers, cellOf, centreOfCell, snapToGrid } from './grid'
-import {
-  layerOf,
-  maySeeLayer,
-  mayPlayersMove,
-  tokenLayerValidator,
-  type TokenLayer,
-} from './layers'
+import { fogBaseOf, startsCovered } from './fogBase'
+import type { Grid, Point, Shape } from './grid'
+import { anyShapeCovers, cellOf, centreOfCell, snapToGrid } from './grid'
+import { maySeeLayer, mayPlayersMove, tokenLayerValidator, type TokenLayer } from './layers'
 
 // The layer union used to be declared in this file, and moving it to lib/layers.ts is not
 // a loosening of the choke point. What left is a function of a *string* — three literals,
@@ -169,23 +164,40 @@ export const TOKEN_NOT_MOVABLE = {
  * `ReadonlySet`s the compiler cannot tell apart, one of which publishes everything.
  */
 function maySee(token: Doc<'tokens'>, isDm: boolean): boolean {
-  return isDm || maySeeLayer(layerOf(token.layer))
+  return isDm || maySeeLayer(token.layer)
 }
 
-type FogVeil = {
-  rects: readonly Rect[]
+/**
+ * What a scene's fog *is* — the shapes, and whether they cover or reveal. The reading half.
+ *
+ * `covered` is `startsCovered(fogBaseOf(scene.fogBase))` and nothing else, resolved here so that every
+ * caller and `veiled` below are looking at the same answer for the same transaction.
+ */
+type FogShape = {
+  /**
+   * ⚠️ **`Shape` and not `Rect` since polygons landed, and the name of the field is the
+   * correction.** A shape is a bounding box plus, when it has one, a point list; the box is
+   * server-computed and is what `anyShapeCovers` consults first, so the cost of this array on
+   * the drag path is what it always was. The stored table is still called `fogRects`, which is
+   * history — `convex/schema.ts` argues why renaming it is a migration nothing earns.
+   */
+  shapes: readonly Shape[]
+  covered: boolean
+}
+
+type FogVeil = FogShape & {
   holders: Map<Id<'characters'>, Doc<'players'>>
 }
 
 /**
- * The fog on one scene, read once, or null when there is none to apply.
+ * The fog on one scene, read once, or null when there is nothing to withhold.
  *
  * Split from the test below because **the callers already hold most of what deciding needs**,
  * and the first version did not take advantage of that: it range-read the placements a second
  * time, point-got token documents its caller had just read, and fetched a roster it had been
  * handed. Three redundant reads on the two hottest queries in the application, for an answer
- * that was correct. So this reads only the part nobody else has — the rectangles — and
- * `veiled` below is pure.
+ * that was correct. So this reads only the parts nobody else has — the base and the shapes —
+ * and `fogVeil` and `veiled` below are both pure.
  *
  * The early returns are the cost model, and each is deliberate:
  *
@@ -193,36 +205,62 @@ type FogVeil = {
  *   transaction would put the scene's fog into the read set of every board query belonging to
  *   the one client that is *drawing* the fog, so each rectangle would re-execute the lot. The
  *   same reasoning `readableCharacterIds` uses to skip the board entirely for a DM.
- * - **A scene with no rectangles returns before anything else.** ⚠️ Stated precisely, because
- *   an earlier version of this comment claimed read sets *byte-identical* to before the feature
- *   and that is not quite true — one empty range read on this scene's `fogRects` remains. What
- *   is true is the half that matters: **nothing a `tokenPositions` write does can invalidate
- *   it**, because an empty range is invalidated only by an insert into that range, which is
- *   `fog.draw` and nothing else. So no subscription joins a drag's invalidation set until a
- *   rectangle actually exists.
+ * - ⚠️ **A LIT scene with no shapes returns before anything else, and that sentence used to
+ *   read "a scene with no shapes".** Under a covered base, *no shapes* is the most hidden a map
+ *   can be, so the free case is no longer "nobody has drawn a rectangle" — it is **"this scene
+ *   is in the state it shipped in"**. The property CLAUDE.md invariant 2 names survives, because
+ *   that is still every game until somebody uses the feature; the *reason* does not, and the
+ *   invariant is corrected in the same commit that makes it false. **Turning a scene to dark
+ *   buys the positions read for the rest of the session, without drawing anything.**
+ * - What is true of the free case either way: **nothing a `tokenPositions` write does can
+ *   invalidate it.** An empty range is invalidated only by an insert into that range, which is
+ *   `fog.draw`; the scene point-get is invalidated only by a patch of that row, which is a
+ *   calibration or a flip. So no subscription joins a *drag's* invalidation set until fog is
+ *   actually in use.
  * - **`board.tokens` is not a caller.** Fog filters positions and the character crossing, never
  *   the token projection, so signed storage URLs are not re-resolved on a drag — the cost
  *   ADR 0004 split the two board queries to avoid.
+ *
+ * ⚠️ **The scene point-get is new with the base, and it is worth naming the edge it adds.**
+ * `characters.vitals` and `feed.list` did not read `scenes` before, and now do — so a
+ * calibration drag, which patches that row at about ten writes a second, re-pushes those two
+ * subscriptions while the DM is aiming a grid. Bounded, in setup rather than mid-encounter, and
+ * `scenes.active` already re-pushes on the same write. The alternative was threading a whole
+ * `Doc<'scenes'>` down through three public queries, which spends the same read three times
+ * and widens three signatures.
+ */
+async function fogShape(
+  ctx: QueryCtx,
+  sceneId: Id<'scenes'> | null,
+  isDm: boolean,
+): Promise<FogShape | null> {
+  if (isDm || sceneId === null) return null
+
+  const [scene, shapes] = await Promise.all([
+    ctx.db.get('scenes', sceneId),
+    sceneFog(ctx, sceneId),
+  ])
+  // A scene that has gone is not covering anything. The callers have all resolved it already;
+  // this is the belt on a point get that cannot fail in practice, and `false` is right because
+  // there is no map to hide.
+  const covered = scene !== null && startsCovered(fogBaseOf(scene.fogBase))
+  if (!covered && shapes.length === 0) return null
+
+  return { shapes, covered }
+}
+
+/**
+ * The shape, plus who holds which character. **Pure** — the roster is handed in.
  *
  * ⚠️ **`seats` is taken rather than read, and an empty roster is a real answer rather than a
  * missing one.** `boardCharacterAccess` hands over the roster it already built;
  * `visibleCharacterIds` passes the empty one deliberately, because putting a `players` range
  * read into the feed's read set would re-push sixty rows on every join, rename and claim — a
- * trade that function's docblock refuses in as many words, and which the first version of this
- * one quietly made anyway by calling `listSeats` itself. The consequence is on `veiled`.
+ * trade that function's docblock refuses in as many words. The consequence is on `veiled`.
  */
-async function fogVeil(
-  ctx: QueryCtx,
-  sceneId: Id<'scenes'> | null,
-  isDm: boolean,
-  seats: Doc<'players'>[],
-): Promise<FogVeil | null> {
-  if (isDm || sceneId === null) return null
-
-  const rects = await sceneFog(ctx, sceneId)
-  if (rects.length === 0) return null
-
-  return { rects, holders: holderByCharacter(seats) }
+function fogVeil(shape: FogShape | null, seats: Doc<'players'>[]): FogVeil | null {
+  if (shape === null) return null
+  return { ...shape, holders: holderByCharacter(seats) }
 }
 
 /**
@@ -237,13 +275,26 @@ async function fogVeil(
  * at the boundary, where a footprint test makes a 2x2 ogre one pixel over the line vanish
  * entirely while most of it stands in the lit room.
  *
- * ⚠️ **A token anybody at the table controls is never veiled, and this is a correctness
- * requirement rather than a courtesy.** `board.positions` takes no seat and must not — that is
- * the per-seat cache split the feed deliberately walked away from — so fog is one answer for
- * every non-DM. Without this clause a player who drags their own hero into a fogged corridor
- * loses their own coin from their own screen, with no way to select it back and no way to undo,
- * recoverable only by asking the DM. The exclusion also says what fog is *for*: it hides what
- * the DM placed. A hero and a granted pet belong to the table.
+ * ⚠️ **A token anybody at the table controls is never veiled, and under a covered base that
+ * stops being a courtesy and becomes load-bearing twice over.** `board.positions` takes no seat
+ * and must not — that is the per-seat cache split the feed deliberately walked away from — so
+ * fog is one answer for every non-DM. On a lit map, without this clause, a player who drags
+ * their own hero into a fogged corridor loses their own coin from their own screen, with no way
+ * to select it back and no way to undo. On a **dark** map with nothing revealed yet,
+ * *everything* is hidden, so without it every player at the table loses their own hero on the
+ * first click of the toggle. The exclusion also says what fog is *for*: it hides what the DM
+ * placed. A hero and a granted pet belong to the table.
+ *
+ * ⚠️ **The one documented fail-open branch in the fog design inverts here, and ADR 0012's
+ * sentence about it no longer covers both cases.** `rectCovers` answers `false` for a
+ * non-finite coordinate — every NaN comparison is false — so a token with a broken position is
+ * inside no shape. **That is still the whole of it for a polygon**, because `shapeCovers` runs
+ * the bounds test first precisely so a NaN never reaches the ray-cast; there is one fail-open
+ * branch, not two. Under a **lit** base that publishes it, which is the fail-open ADR 0012
+ * names. Under a **covered** base the same answer withholds it, because being inside no shape
+ * is being in the dark. Neither is a bug and the direction is not a choice made here; it is
+ * `rectCovers`' one behaviour read through two bases, and ADR 0015 records it so a reader does
+ * not carry 0012's half of it across.
  *
  * ⚠️ **With an empty roster that exclusion is inert, and that is an accepted consequence rather
  * than a bug.** `visibleCharacterIds` passes no seats — see `fogVeil` — so on the feed's path a
@@ -257,7 +308,13 @@ async function fogVeil(
  */
 function veiled(veil: FogVeil | null, token: Doc<'tokens'>, at: Point): boolean {
   if (veil === null) return false
-  if (!anyRectCovers(veil.rects, at)) return false
+
+  // ⚠️ **The inversion, and it is this one line.** Under a lit base a shape *is* the darkness,
+  // so a token inside one is hidden. Under a covered base the map begins dark and a shape is a
+  // **hole** in it, so a token inside one is the only kind that is visible. Everything else
+  // about fog — the centre point, the control exemption, the call sites — is unchanged.
+  const inside = anyShapeCovers(veil.shapes, at)
+  if (veil.covered ? inside : !inside) return false
 
   const holder = token.characterId ? veil.holders.get(token.characterId) ?? null : null
   return effectiveControllersOf(token, holder).length === 0
@@ -416,12 +473,7 @@ export async function publicTokens(
       return {
         _id: token._id,
         name: token.name,
-        // Normalised on the way out, which is what keeps the rename of the GM layer
-        // invisible to the browser: `publicTokenValidator` carries the narrow three-member
-        // union, so a row still stored as the legacy `dm` is projected as `gm` and no
-        // client ever learns the transition happened. It is also why the relabel can run at
-        // any point after this deploy rather than during it.
-        layer: layerOf(token.layer),
+        layer: token.layer,
         sizeSquares: token.sizeSquares,
         // Null rather than undefined: `undefined` is not a Convex value, so an
         // optional field has to become something on the way out. A getUrl of a blob
@@ -509,10 +561,11 @@ export async function boardCharacterAccess(
   seats: Doc<'players'>[],
   playerId?: Id<'players'>,
 ): Promise<{ visible: Set<Id<'characters'>>; controlled: Set<Id<'characters'>> }> {
-  const [tokens, veil] = await Promise.all([
+  const [tokens, shape] = await Promise.all([
     visibleTokens(ctx, gameId, isDm),
-    fogVeil(ctx, sceneId, isDm, seats),
+    fogShape(ctx, sceneId, isDm),
   ])
+  const veil = fogVeil(shape, seats)
   // Read only when there is a veil to apply, and *after* it — which is why this is not in the
   // `Promise.all` above. A game with no fog therefore performs no placement read here at all,
   // which is the whole of what makes the cascade free until it is used. Sequential costs one
@@ -662,17 +715,21 @@ export async function visiblePositions(
   sceneId: Id<'scenes'>,
   isDm: boolean,
 ): Promise<PublicPosition[]> {
-  const [placements, rects] = await Promise.all([
+  const [placements, shape] = await Promise.all([
     ctx.db
       .query('tokenPositions')
       .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
       .take(MAX_PLACEMENTS_PER_SCENE),
-    isDm ? [] : sceneFog(ctx, sceneId),
+    fogShape(ctx, sceneId, isDm),
   ])
-  // The roster only once a rectangle exists — see the ⚠️ above. `fogVeil` is handed the seats
-  // rather than reading them, so the conditional lives here where the trade is being made.
-  const veil =
-    rects.length === 0 ? null : await fogVeil(ctx, sceneId, isDm, await listSeats(ctx, gameId))
+  // The roster only once there is fog to apply — see `fogShape`'s early returns, which now
+  // decide that rather than a `shapes.length` test here. `fogVeil` is handed the seats rather
+  // than reading them, so the conditional lives on this side where the trade is being made.
+  //
+  // This also stopped reading `sceneFog` twice. The old shape asked for the rectangles here
+  // *and* inside the veil builder — the same range, so no extra invalidation edge, but a
+  // second execution of the query on the hottest read path in the application.
+  const veil = shape === null ? null : fogVeil(shape, await listSeats(ctx, gameId))
 
   const rows = await Promise.all(
     placements.map(async (placement) => {
@@ -721,6 +778,18 @@ export async function visiblePositions(
  * other clients see nothing, which is the same asymmetry a GM-layer token already has. That
  * is also correct on its own terms: a monster walking into the dark is what the DM is doing
  * on purpose, and refusing the write would be enforcing a *view* on *board state*.
+ *
+ * ⚠️ **Walls are not tested here either, for the second reason above rather than the first,
+ * and they are `&&`-ed at the call site in `board.moveToken` instead.** Unlike fog, a barrier
+ * genuinely is a rule about a *move* and would look at home in this function — which is
+ * exactly why the omission is written down. The read is the problem: a `walls` range read
+ * here would join the read set of a handler that runs ten times a second during a drag, and
+ * every wall the DM traced would become an OCC conflict against every in-flight drag, on the
+ * one write path invariant 2 exists for. So the check goes on the **settling** write alone,
+ * where a drag pays for it once rather than twenty times, and `placementOf` has already been
+ * read inside that transaction so the *from* point is free. What that leaves advisory is
+ * spelled out at the call site and in ADR 0015, and it is affordable for a reason that does
+ * not apply anywhere else in this file: **nothing behind a wall is a secret.**
  */
 export async function requireMovableToken(
   ctx: QueryCtx,
@@ -748,7 +817,7 @@ export async function requireMovableToken(
   // It is also the cheaper order on a handler that runs ten times a second: a drag on
   // scenery is refused with no index read at all, the same instinct as `requireFinite`
   // running before any read in `moveToken`.
-  if (!mayPlayersMove(layerOf(token.layer))) throw new ConvexError(TOKEN_NOT_MOVABLE)
+  if (!mayPlayersMove(token.layer)) throw new ConvexError(TOKEN_NOT_MOVABLE)
 
   // Be honest about the ceiling. `playerId` is a routing argument, so anyone can pass
   // another seat's id and walk straight past the check below; it stops a misclick
@@ -1031,7 +1100,7 @@ export async function setTokenAppearance(
  * broadest one on the board** — this is the field the whole of invariant 8's structural
  * guard exists to act on.
  *
- * ⚠️ Moving a token to `'dm'` does all of the following, in one patch, with nothing
+ * ⚠️ Moving a token to `'gm'` does all of the following, in one patch, with nothing
  * else written anywhere:
  *
  * - **the coin leaves every player's `board.tokens`**, because `visibleTokens` filters
@@ -1058,14 +1127,6 @@ export async function setTokenAppearance(
  * union `board.setLayer` validates its argument against, so there is no fourth member to
  * reject and nowhere for one to appear in one copy and not the other. That is the point of
  * the union being spelled once.
- *
- * ⚠️ **The schema's union is one member wider than this one while the rename is in flight**,
- * and the no-op guard reads across that gap correctly by accident and then on purpose: a
- * token still stored as the legacy `dm` compares unequal to `'gm'`, so re-layering it writes
- * the canonical spelling. Every token the DM touches migrates itself. That does not replace
- * the sweep — a token nobody moves keeps the old value, which is what `relabelGmLayer` is
- * for — but it does mean the two mechanisms cannot disagree, because both write the same
- * canonical value through the same field.
  */
 export async function setTokenLayer(
   ctx: MutationCtx,
@@ -1075,54 +1136,6 @@ export async function setTokenLayer(
   if (token.layer === layer) return
 
   await ctx.db.patch('tokens', token._id, { layer })
-}
-
-/**
- * TRANSITION ONLY — rewrite every `dm` layer in one game to `gm`. Deleted with the rest of
- * the rename scaffolding once the sweep has run against every deployment.
- *
- * Lives here rather than in `convex/admin.ts` because it reads and writes `tokens`, and
- * `leakGuard.test.ts` sweeps `admin.ts` like every other module — a migration is not an
- * exemption from the choke point. What `admin.ts` keeps is the `internalMutation` wrapper,
- * where the authorisation question lives, which is the same split `purgeGame` already makes.
- *
- * One game per call, bounded by `MAX_TOKENS_PER_GAME`, so the natural transaction is a game
- * and the script above it can be resumable and report per game. That bound is also the
- * argument against adding `@convex-dev/migrations` for this: the component exists for
- * cursor-driven batching across a table too large for one transaction, and two hundred rows
- * is not that.
- *
- * Patches only the rows that need it, like `revokeControlForSeat` — a no-op patch is a write
- * that invalidates every subscription reading the row for no change at all.
- */
-export async function relabelGmLayer(ctx: MutationCtx, gameId: Id<'games'>): Promise<number> {
-  const tokens = await ctx.db
-    .query('tokens')
-    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
-    .take(MAX_TOKENS_PER_GAME)
-
-  let relabelled = 0
-  for (const token of tokens) {
-    if (token.layer !== 'dm') continue
-    await ctx.db.patch('tokens', token._id, { layer: 'gm' })
-    relabelled += 1
-  }
-  return relabelled
-}
-
-/**
- * TRANSITION ONLY — how many tokens in this game still carry the legacy spelling.
- *
- * The check that has to read zero across every deployment before the narrowing commit
- * lands. Returns a count and never a row, like `countTokensInGame` beside it.
- */
-export async function countLegacyLayers(ctx: QueryCtx, gameId: Id<'games'>): Promise<number> {
-  const tokens = await ctx.db
-    .query('tokens')
-    .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
-    .take(MAX_TOKENS_PER_GAME)
-
-  return tokens.filter((token) => token.layer === 'dm').length
 }
 
 /**
@@ -1432,6 +1445,84 @@ export async function deleteScenePlacements(
   for (const placement of placements) {
     await ctx.db.delete('tokenPositions', placement._id)
   }
+}
+
+/**
+ * Every placement on one scene, copied onto another. For `scenes.duplicate`'s
+ * *include what is standing on it* half.
+ *
+ * ⚠️ **The tokens are shared and only the placements are copied**, which is the
+ * arrangement `scenes.remove`'s docblock already describes from the other direction:
+ * a placement points at a scene and at a token, and a token belongs to the game and
+ * knows nothing about which boards it stands on. So a duplicated map has the same
+ * recurring villain standing on it, in the same square, and the two boards' coins are
+ * one coin — renaming it renames both, which is what a DM copying an encounter means.
+ * Copying the `tokens` rows would be `board.duplicateToken`'s act performed without
+ * being asked, twenty times over.
+ *
+ * It lives here rather than in `lib/scenes.ts` because every read of `tokenPositions`
+ * does (CLAUDE.md invariant 8), and `leakGuard.test.ts` greps the sources to prove it.
+ * No layer test and no `maySee`: a copy is not a question about contents, and the
+ * caller is `requireDm`-gated — the same reasoning `deleteTokensInGame` states, with a
+ * *number* leaving and never a row.
+ *
+ * Bounded by `MAX_PLACEMENTS_PER_SCENE` on both sides, since the source cannot hold
+ * more than the destination is allowed to.
+ */
+export async function copyScenePlacements(
+  ctx: MutationCtx,
+  fromSceneId: Id<'scenes'>,
+  toSceneId: Id<'scenes'>,
+): Promise<number> {
+  const placements = await ctx.db
+    .query('tokenPositions')
+    .withIndex('by_sceneId', (q) => q.eq('sceneId', fromSceneId))
+    .take(MAX_PLACEMENTS_PER_SCENE)
+
+  for (const placement of placements) {
+    await ctx.db.insert('tokenPositions', {
+      sceneId: toSceneId,
+      tokenId: placement.tokenId,
+      x: placement.x,
+      y: placement.y,
+    })
+  }
+  return placements.length
+}
+
+/**
+ * Multiply every placement on one scene by `k`. For `scenes.replaceImage`.
+ *
+ * ⚠️ **Not snapped afterwards, and that is a decision rather than an omission.** Every
+ * coordinate in this application is in the stored image's pixel space, so replacing the
+ * blob with a bigger or smaller one moves everything — and the grid is multiplied by the
+ * *same* factor in the same transaction, so a token that was centred on a square is
+ * still centred on it. Running `snapToGrid` over the result would re-decide a placement
+ * the DM did not touch, and it would quietly correct exactly the drift that would tell
+ * them the factor was wrong. A uniform similarity transform preserves the relationship;
+ * a snap asserts one.
+ *
+ * The other reason is that this is the one write to `tokenPositions` that is not a
+ * *move*. `board.moveToken` snaps server-side because a client bug must not leave a coin
+ * resting between squares (CLAUDE.md invariant 2); nothing here came from a client.
+ */
+export async function scaleScenePlacements(
+  ctx: MutationCtx,
+  sceneId: Id<'scenes'>,
+  k: number,
+): Promise<number> {
+  const placements = await ctx.db
+    .query('tokenPositions')
+    .withIndex('by_sceneId', (q) => q.eq('sceneId', sceneId))
+    .take(MAX_PLACEMENTS_PER_SCENE)
+
+  for (const placement of placements) {
+    await ctx.db.patch('tokenPositions', placement._id, {
+      x: placement.x * k,
+      y: placement.y * k,
+    })
+  }
+  return placements.length
 }
 
 /**
@@ -1754,9 +1845,6 @@ export async function nextTokenNames(
  * deployment. It is also exactly what makes the smoke script's field-by-field comparison
  * report `present on one side only`. `insertCharacter` carries the same warning for the
  * same reason.
- *
- * `layer` is carried as **stored**, legacy spelling and all, because `layerOf` is a
- * read-time reader and a copy is not the place to migrate a row.
  *
  * ⚠️ **`controllerIds` is omitted rather than written as `[]`**, matching `addToken` — a
  * duplicate is `addToken`'s decision made a second time, and both spellings read

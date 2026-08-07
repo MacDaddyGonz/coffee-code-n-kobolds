@@ -18,6 +18,7 @@
 //
 // Runtime imports: none, deliberately. Types only.
 
+import type { AbilityKey, AbilityScores } from '../sheet'
 import type { SkillKey } from '../skills'
 import type { ChallengeRating, CreatureSize, RoleKey, TagKey, TierNumber } from '../creatures'
 
@@ -82,13 +83,53 @@ export type BestiaryAbility = {
 }
 
 /**
+ * A creature's six saving-throw bonuses, as the SRD prints them.
+ *
+ * ⚠️ **Bonuses and not proficiency flags, and that is the whole decision.** The obvious
+ * shape is `SaveProficiencies` — six booleans, with the bonus derived as ability modifier
+ * plus proficiency, exactly as a hero's works. It reproduces the printed number wrongly for
+ * precisely the creatures worth having: the SRD's SAVE column is *not* a function of the
+ * MOD column and the proficiency bonus. The Aboleth prints Dexterity −1 with a save of +3;
+ * a derivation from a flag can spell +1 or −1 and has no way to spell +3.
+ *
+ * That is change 6's own rule applied honestly — **derive what the SRD derives, and store
+ * what the SRD prints** — and the SRD prints this. A flag would be storing a guess about
+ * where the number came from in place of the number.
+ */
+export type BestiarySaves = Record<AbilityKey, number>
+
+/**
  * The combat block. Absent on a social NPC who is not expected to fight.
  *
- * Every number here is **pre-calculated**, which is the trade the reduced sheet made when
- * it stored `initiativeBonus`: a creature has no ability scores, no level and no
- * proficiency bonus, so `skillBonus` and `passivePerception` in lib/skills.ts have nothing
- * to work from. This is the second and third instance of that decision rather than a new
- * one.
+ * ⚠️ **This block now carries ability scores *as well as* the pre-calculated numbers, and
+ * the addition did not make any of them redundant.** The obvious reading of "a monster has
+ * scores now" is that `attackBonus`, `initiativeBonus`, `passivePerception`, `saveDc` and
+ * the skill bonuses all become derivable and can go. Three reasons they stay, in order of
+ * how expensive getting it wrong would be:
+ *
+ *   1. **`scaleCombat` operates on exactly these fields, and the benchmark table's delta
+ *      columns are what make offset preservation work.** Deriving them would mean scaling
+ *      the *scores* instead — which collides with `scalesWithCr`, with `speed` being
+ *      deliberately untouched, and with ADR 0007's whole argument that a CR 6 goblin is a
+ *      goblin who has been lifting rather than one that has grown a second head.
+ *   2. **The SRD prints them.** A 2024 stat block gives an Initiative modifier that is
+ *      *"typically equal to its Dexterity modifier"* and explicitly permits extras; it
+ *      gives a SAVE column that is not always MOD plus proficiency; it gives explicit
+ *      `Skills` bonuses and an explicit Passive Perception. Deriving a number the source
+ *      prints is replacing a fact with a guess about the fact.
+ *   3. **`passivePerception` in particular.** `passivePerceptionFor` in lib/skills.ts
+ *      already argues that printing 10 for a creature nobody gave one is inventing a
+ *      statistic, and the board draws that number now.
+ *
+ * So the scores are **stored and read by nothing yet** — the same one-sided bet
+ * `recommendedPartyLevelMin` took, and for the same reason: filling a field in while the
+ * entry is being generated is free, and adding one to two hundred and fifty-three entries
+ * afterwards is not.
+ *
+ * ⚠️ **`abilityScores` rather than `abilities`, because `abilities` was already taken** by
+ * the list of `BestiaryAbility` below and renaming that would reach into lib/resolve.ts. Two
+ * meanings of one word on one type is the collision this name avoids; it is not a stylistic
+ * choice and should not be "tidied".
  */
 export type BestiaryCombat = {
   maxHp: number
@@ -102,26 +143,59 @@ export type BestiaryCombat = {
   /** Null for a creature that forces no saving throws — most of them. */
   saveDc: number | null
   /**
-   * Up to four skills, **an ordered array of pairs rather than a record**, and the choice
+   * The six scores a 2024 stat block prints. **Untouched by `scaleCombat`**, like `speed`
+   * and like everything made of words: a score is what the creature *is*, and the two
+   * numbers it would otherwise imply — the attack bonus and the save DC — are already
+   * stored and already shifted by the benchmark deltas. Scaling both would count the
+   * change twice.
+   */
+  abilityScores: AbilityScores
+  /** The SAVE column, verbatim. See `BestiarySaves` for why it is not six booleans. */
+  saveBonuses: BestiarySaves
+  /**
+   * Up to six skills, **an ordered array of pairs rather than a record**, and the choice
    * is load-bearing three times over.
    *
    * Convex record keys cannot be a union of literals — `v.record` takes `v.string()` for
-   * its keys, so a record would accept a fourteenth skill, a misspelled `steath` and any
+   * its keys, so a record would accept a nineteenth skill, a misspelled `steath` and any
    * key a client cared to invent, which is precisely the guarantee `creatureSkillsValidator`
    * in lib/sheet.ts exists to hold. Display order matters, because a creature is listed
    * with the thing it is best at first and an object's key order is not something to lean
    * on. And an array makes a duplicate or an unknown key a *checkable* condition: the
    * corpus test can say "no entry lists Stealth twice" and "every key is one of the
-   * thirteen", neither of which is expressible over a record whose keys are already
+   * eighteen", neither of which is expressible over a record whose keys are already
    * whatever they are.
    *
-   * `SkillKey` rather than a string, so a fourteenth skill fails `npm run lint` before it
+   * `SkillKey` rather than a string, so a nineteenth skill fails `npm run lint` before it
    * fails a test.
+   *
+   * ⚠️ **The cap was four and is now six, and it was read off the corpus rather than
+   * chosen.** Six is the largest number of skills any SRD creature at CR 0–6 lists — one
+   * creature reaches it, two reach five, three reach four — so the cap is exactly tight:
+   * it admits everything the source prints and refuses the first thing it does not. A
+   * rounder number would have been a cap that could never fail.
    */
   skills: { key: SkillKey; bonus: number }[]
-  /** Maximum three. The cap is a content rule, checked by the corpus test. */
+  /**
+   * Maximum three. The cap is a content rule, checked by the corpus test.
+   *
+   * ⚠️ **Re-decided against the SRD rather than inherited, and it survived unchanged.** A
+   * creature is stored with the attacks it actually makes in a turn — a Multiattack reading
+   * *"makes two Rend attacks"* is two Rend lines, because the corpus measures output as the
+   * sum over every attack listed. Four creatures in range imply a longer routine than three
+   * and three of those only through an either/or branch that is a choice at the table rather
+   * than a second thing that happens. So three is still exactly enough.
+   */
   attacks: BestiaryAttack[]
-  /** Maximum three, same treatment. */
+  /**
+   * Maximum three, same treatment — but this one is a **selection** rather than a fit.
+   *
+   * A 2024 stat block can print seven traits, bonus actions and reactions between them, so
+   * unlike `attacks` this cap really does discard content. What it keeps is ordered: an
+   * ability that *rolls damage* comes first, because `scalesWithCr` means nothing on one
+   * that does not and a dragon whose breath was dropped for a trait about breathing water
+   * is a dragon that scales wrong.
+   */
   abilities: BestiaryAbility[]
 }
 
@@ -139,7 +213,7 @@ export type BestiarySocial = {
    * plus a test. `['gruff', 'loyal', 'thirsty']`.
    */
   personality: readonly [string, string, string]
-  /** What this NPC is worth asking about. From the thirteen, no fourteenth. */
+  /** What this NPC is worth asking about. From the eighteen, no fourteenth. */
   usefulSkills: SkillKey[]
   /** The important knowledge: what they can tell the party, in a sentence or two. */
   knows: string
@@ -221,3 +295,44 @@ export type BestiaryFile = {
   category: BestiaryCategory
   entries: readonly BestiaryEntry[]
 }
+
+/**
+ * THE THREE CONTENT CAPS ON A COMBAT BLOCK — what makes a library entry fast to run at
+ * the table, rather than what the schema will accept.
+ *
+ * ⚠️ **Enforced by `lib/bestiary.test.ts` against the corpus and by nothing else, and that
+ * is the decision rather than an omission.** `MAX_SHEET_ENTRIES` is 40 and stays 40: three
+ * attacks is a rule about what belongs in *this shelf*, and a DM hand-building a boss with
+ * five legendary actions is not doing anything wrong. A content rule checked against the
+ * content is a content rule; the same rule in the schema is a refusal aimed at the wrong
+ * person. ADR 0007 argued this when the caps were written and it is unchanged.
+ *
+ * They are named here rather than left as literals in the test for `MAX_ROLL_DICE`'s reason:
+ * a bare `6` in an assertion is a number with no argument attached, and the next person to
+ * meet it cannot tell whether it was measured or guessed.
+ */
+
+/**
+ * ⚠️ **Six, and it was four until the 2024 corpus was transcribed.** Read off the SRD rather
+ * than carried over: six is the most any creature at CR 0–6 lists, exactly one creature
+ * reaches it, two reach five and three reach four — so this admits everything the SRD prints
+ * and refuses the first thing that is not. Ninety-nine list none at all.
+ *
+ * Tight on purpose. A cap set comfortably above the corpus stops being a check.
+ */
+export const MAX_CREATURE_SKILLS = 6
+
+/**
+ * Three, unchanged by the conversion and genuinely enough: only four creatures in range imply
+ * a longer routine, and three of those only through an either/or branch that is a choice at
+ * the table rather than a fourth attack.
+ */
+export const MAX_CREATURE_ATTACKS = 3
+
+/**
+ * Three, unchanged — and this one **is** a selection rather than a measurement, which is the
+ * difference worth knowing. A 2024 stat block can print seven traits, bonus actions and
+ * reactions between them, so the corpus chooses. The generator orders damaging abilities
+ * first, because `scalesWithCr` means nothing on an ability with no roll.
+ */
+export const MAX_CREATURE_ABILITIES = 3

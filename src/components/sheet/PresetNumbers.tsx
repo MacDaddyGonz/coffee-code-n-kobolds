@@ -171,7 +171,7 @@ export function PresetNumbers({
 /**
  * Whether a field is the corpus's or the DM's, and the way back.
  *
- * Exported because the ability scores are overridden through `AbilityTable` — they are
+ * Exported because the ability scores are overridden through `AbilityBlock` — they are
  * shown to everybody and merely become editable for the DM, rather than living in the
  * block above — and one mark drawn two ways is one mark that could come to mean two
  * things. A creature's statline draws it seven times, through `OverrideNumberField`
@@ -288,8 +288,8 @@ export function OverrideNumberField({
  * Merge a patch into an override set, dropping anything set back to absent — and the
  * way a field is *reset*, since "use the library's" is a patch of `undefined`.
  *
- * Exported because `PresetSheetView` resets the ability scores, which are overridden
- * through `AbilityTable` rather than through the block above. It had grown its own
+ * Exported because `CharacterSheetEditor` resets the ability scores, which are overridden
+ * through `AbilityBlock` on the Build pane rather than through the block above. It had grown its own
  * `without(overrides, key)` doing the identical two things, which is one drop-the-key
  * rule in two places for a panel with exactly one of each.
  *

@@ -5,7 +5,9 @@ import {
   MAX_DISPLAY_NAME_LENGTH,
   MAX_GAME_NAME_LENGTH,
   MAX_SCENE_NAME_LENGTH,
+  MAX_SCENE_NOTES_LENGTH,
   collapseWhitespace,
+  truncateCodePoints,
 } from './codes'
 
 /**
@@ -98,6 +100,70 @@ export function requireSceneName(raw: string): string {
     blank: 'Give the scene a name.',
     tooLong: `Keep the scene name to ${MAX_SCENE_NAME_LENGTH} characters or fewer.`,
   })
+}
+
+/**
+ * The DM's prep for one board: **trimmed, allowed to be empty, and not collapsed.**
+ *
+ * ⚠️ **Not `requireText`, and each of the three differences is deliberate rather than a
+ * shortcut past it.**
+ *
+ * - **Blank is legal**, because clearing the notes is a thing a DM does and there is no
+ *   identity riding on this field. It returns `''`, and `scenes.setNotes` turns that into an
+ *   *absent* column so there is one stored spelling of "none" — the convention ADR 0008
+ *   settled. Every name above rejects a blank because a nameless row is unusable in a list.
+ * - **Whitespace is not collapsed.** `collapseWhitespace` turns every run of spaces and
+ *   newlines into one space, which is correct for a name on one line and destroys prose
+ *   written in paragraphs. Trimming the ends is kept, because trailing blank lines are not
+ *   content and would otherwise count towards the limit.
+ * - **The measurement is the same**, UTF-16 `.length`, so the textarea's `maxLength` and
+ *   this refusal agree exactly on where the limit is.
+ *
+ * ⚠️ **It rejects rather than truncating**, for `requireText`'s second reason applied to a
+ * longer string: a cut counts code units, so it can leave half an emoji behind, and Convex
+ * refuses invalid Unicode at a boundary convex-test does not simulate. Truncating somebody's
+ * prep silently would also be the wrong behaviour even if it were safe — see
+ * `truncateCodePoints`, which exists for the one case where quietly shortening *is* right.
+ */
+export function requireSceneNotes(raw: string): string {
+  const value = raw.trim()
+  if (value.length > MAX_SCENE_NOTES_LENGTH) {
+    throw new ConvexError({
+      kind: 'BadInput',
+      message: `Keep a map's notes to ${MAX_SCENE_NOTES_LENGTH} characters or fewer.`,
+    })
+  }
+  return value
+}
+
+/**
+ * What a copy of this map is called: the source name with ` (copy)` on the end, cut to fit.
+ *
+ * ⚠️ **The cut is by code point and the suffix is reserved before it, which is the third
+ * appearance of the Milestone 1 lone-surrogate bug and the first where the app rather than a
+ * person supplies the over-long part.** A 58-character name plus ` (copy)` is 65, past
+ * `MAX_SCENE_NAME_LENGTH`, and there is no field whose `maxLength` could have stopped it
+ * because nobody typed it. Cutting the *whole* result would take the suffix off and produce
+ * a second map called almost what the first one is called; cutting with `slice` would leave
+ * half an emoji, which `requireSceneName` accepts — it is neither blank nor over-length —
+ * and which a real deployment then refuses with a raw `Invalid arguments provided`.
+ *
+ * So the budget is reserved for the suffix and `truncateCodePoints` spends what is left. It
+ * measures UTF-16 code units while stepping whole code points, which is exactly the pair of
+ * properties needed: the same unit `requireSceneName` counts in, and no split surrogate.
+ *
+ * ⚠️ **Deliberately not `duplicateNames` from below.** That is the coin rule — strip a
+ * trailing number, continue the run — and it is the wrong answer here twice over: a DM with
+ * `Cellar 2` wants `Cellar 2 (copy)` and not `Cellar 3`, and a numbered run of maps is not a
+ * thing the scene picker has. One act, one rule, and neither borrows the other's.
+ */
+export function sceneCopyName(sourceName: string): string {
+  const suffix = ' (copy)'
+  const stem = truncateCodePoints(
+    collapseWhitespace(sourceName),
+    MAX_SCENE_NAME_LENGTH - suffix.length,
+  )
+  return `${stem}${suffix}`
 }
 
 // ─── DUPLICATING A COIN ─────────────────────────────────────────────────────────────

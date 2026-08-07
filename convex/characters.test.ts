@@ -9,7 +9,8 @@ import type { Id } from './_generated/dataModel'
 import { MAX_CHARACTER_NAME_LENGTH } from './lib/codes'
 import { CLASSES, CLASS_KEYS, SUBCLASS_LEVEL } from './lib/classes'
 import { MAX_CHARACTERS_PER_GAME } from './lib/games'
-import { RACE_KEYS } from './lib/races'
+import { MAX_RESOURCE_USES } from './lib/rest'
+import { SPECIES_KEYS, species } from './lib/species'
 import { kindOf } from './lib/resolve'
 import type {
   BestiarySheet,
@@ -23,6 +24,7 @@ import type {
 import {
   MAX_ABILITY_SCORE,
   MAX_ARMOUR_CLASS,
+  MAX_DEATH_SAVES,
   MAX_ENTRY_ID_LENGTH,
   MAX_ENTRY_NAME_LENGTH,
   MAX_ENTRY_TEXT_LENGTH,
@@ -33,6 +35,7 @@ import {
   MAX_NPC_NOTES_LENGTH,
   MAX_SHEET_ENTRIES,
   MAX_SPELL_LEVEL,
+  MAX_TEMPORARY_HP,
   MIN_ABILITY_SCORE,
   MIN_ARMOUR_CLASS,
   MIN_LEVEL,
@@ -2111,7 +2114,7 @@ describe('sheet entry categories and to-hit rolls', () => {
       dmCode,
       sheet: {
         kind: 'preset',
-        race: 'elf',
+        species: 'elf',
         classKey: 'rogue',
         subclassKey: null,
         level: 1,
@@ -3101,6 +3104,759 @@ describe('characters.adjustHitDice', () => {
   })
 })
 
+/**
+ * The whole `exact` vitals row for one character, insisting it is the exact variant.
+ *
+ * `exactVitals` above returns the two hit-point numbers alone, which is what every caller
+ * written before the 2024 fields wanted. Widening *it* would have meant either changing what
+ * a hundred and forty `toEqual({ current, max })` assertions compare against, or leaving them
+ * comparing a subset — so this is a second reader of the same payload rather than a change to
+ * the first.
+ */
+async function exactRow(
+  t: Harness,
+  code: string,
+  characterId: Id<'characters'>,
+  who: Actor = {},
+) {
+  const rows = await t.query(api.characters.vitals, { code, ...who })
+  const row = rows.find((entry) => entry.characterId === characterId)
+  if (!row) throw new Error(`no vitals for ${characterId}`)
+  if (row.kind !== 'exact') throw new Error(`expected exact vitals, got a ${row.kind}`)
+  return row
+}
+
+/**
+ * ⚠️ **THREE COUNTERS, AND NOT ONE OF THEM DECIDES ANYTHING — which is the property this
+ * whole block exists to pin rather than a preamble to skip.**
+ *
+ * Temporary hit points are a number beside the hit points, a death-save tally is a row of
+ * ticked boxes, and Heroic Inspiration is a flag. Nothing is compared to an armour class,
+ * no damage is applied, no death save kills a character, no reroll consults the flag and no
+ * heal is refused at three failures. That is CLAUDE.md's *Rules scope* line — this
+ * application **announces and counts**, and the table **adjudicates** — and death saving
+ * throws are the one entry that reversed a stated *never* to get here, admissible only on
+ * exactly these grounds (ADR 0016). Several tests below therefore assert what did **not**
+ * happen, and those are the load-bearing ones.
+ */
+describe('temporary hit points, death saves and heroic inspiration', () => {
+  /** A hero with a small maximum, so "above the maximum" is easy to write down. */
+  async function fixture() {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const thorin = await makePc(t, code, 'Thorin', pcSheet({ maxHp: 8 }))
+    return { t, code, dmCode, thorin }
+  }
+
+  test('setTemporaryHp stores the number, and the row and the payload agree', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+
+    expect(
+      await t.mutation(api.characters.setTemporaryHp, {
+        code,
+        characterId: thorin,
+        temporaryHp: 5,
+        dmCode,
+      }),
+    ).toEqual({ temporaryHp: 5 })
+    expect((await rawVitals(t, thorin))?.temporaryHp).toBe(5)
+    expect((await exactRow(t, code, thorin, { dmCode })).temporaryHp).toBe(5)
+  })
+
+  /**
+   * ⚠️ **THE ONE THAT SAYS WHY THIS FIELD HAS A CLAMP OF ITS OWN.** Temporary hit points
+   * are **not part of `maxHp` and are not healing**: a character on 3 of 8 holding 20 of
+   * them is an ordinary state, so the ceiling is `MAX_TEMPORARY_HP` and never the
+   * character's own maximum. The obvious wrong edit — `clampTemporaryHp(value, sheet.maxHp)`
+   * — is unwriteable by construction, and this is the assertion that would catch a second
+   * clamp being introduced beside it.
+   */
+  test('temporary hit points far above the character’s maximum are stored exactly as given', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -5, dmCode })
+
+    expect(
+      await t.mutation(api.characters.setTemporaryHp, {
+        code,
+        characterId: thorin,
+        temporaryHp: 20,
+        dmCode,
+      }),
+    ).toEqual({ temporaryHp: 20 })
+
+    // And the hit points either side of it are untouched: 3 of 8, with 20 temporary.
+    const row = await exactRow(t, code, thorin, { dmCode })
+    expect(row).toMatchObject({ current: 3, max: 8, temporaryHp: 20 })
+  })
+
+  test('they clamp at nought and at the ceiling, and a fraction is rounded', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+
+    for (const [given, stored] of [
+      [-40, 0],
+      [MAX_TEMPORARY_HP + 500, MAX_TEMPORARY_HP],
+      [MAX_TEMPORARY_HP, MAX_TEMPORARY_HP],
+      [7.6, 8],
+      [0, 0],
+    ] as const) {
+      expect(
+        await t.mutation(api.characters.setTemporaryHp, {
+          code,
+          characterId: thorin,
+          temporaryHp: given,
+          dmCode,
+        }),
+        String(given),
+      ).toEqual({ temporaryHp: stored })
+      expect(Number.isInteger((await rawVitals(t, thorin))?.temporaryHp), String(given)).toBe(true)
+    }
+  })
+
+  test('NaN and both infinities are refused, leaving the stored value alone', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.setTemporaryHp, {
+      code,
+      characterId: thorin,
+      temporaryHp: 6,
+      dmCode,
+    })
+
+    for (const temporaryHp of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      await expectKind(
+        t.mutation(api.characters.setTemporaryHp, {
+          code,
+          characterId: thorin,
+          temporaryHp,
+          dmCode,
+        }),
+        'BadInput',
+      )
+    }
+    expect((await rawVitals(t, thorin))?.temporaryHp).toBe(6)
+  })
+
+  /**
+   * ⚠️ **5e says temporary hit points do not stack — you take the higher — and this
+   * application deliberately does not enforce it.** Announcing and counting is the line
+   * (CLAUDE.md, *Rules scope*): a `Math.max` against the stored value is three characters
+   * and it would make the number on screen disagree with the number a person typed, with no
+   * way at all to correct one downwards. A person picks the larger of two numbers.
+   */
+  test('a lower value than the stored one is written — the no-stacking rule is the table’s', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.setTemporaryHp, {
+      code,
+      characterId: thorin,
+      temporaryHp: 20,
+      dmCode,
+    })
+
+    expect(
+      await t.mutation(api.characters.setTemporaryHp, {
+        code,
+        characterId: thorin,
+        temporaryHp: 5,
+        dmCode,
+      }),
+    ).toEqual({ temporaryHp: 5 })
+    expect((await rawVitals(t, thorin))?.temporaryHp).toBe(5)
+  })
+
+  test('setting them changes no hit point, and taking damage does not spend them', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -5, dmCode })
+    await t.mutation(api.characters.setTemporaryHp, {
+      code,
+      characterId: thorin,
+      temporaryHp: 9,
+      dmCode,
+    })
+    expect((await rawVitals(t, thorin))?.currentHp).toBe(3)
+
+    // ⚠️ **Damage does not come off them here**, and the absence is the feature: 5e takes
+    // damage out of temporary hit points first, and doing that in the mutation would be the
+    // application applying damage rather than counting it. Two numbers, two controls.
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -2, dmCode })
+    expect(await rawVitals(t, thorin)).toMatchObject({ currentHp: 1, temporaryHp: 9 })
+  })
+
+  test('setDeathSaves writes both columns in one call', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+
+    expect(
+      await t.mutation(api.characters.setDeathSaves, {
+        code,
+        characterId: thorin,
+        successes: 2,
+        failures: 1,
+        dmCode,
+      }),
+    ).toEqual({ successes: 2, failures: 1 })
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      deathSaveSuccesses: 2,
+      deathSaveFailures: 1,
+    })
+    expect(await exactRow(t, code, thorin, { dmCode })).toMatchObject({
+      deathSaveSuccesses: 2,
+      deathSaveFailures: 1,
+    })
+  })
+
+  test('each column clamps to nought and to three, and a fraction is rounded', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+
+    for (const [successes, failures, stored] of [
+      [-4, -1, { successes: 0, failures: 0 }],
+      [99, MAX_DEATH_SAVES + 1, { successes: 3, failures: 3 }],
+      [1.6, 0.4, { successes: 2, failures: 0 }],
+      [MAX_DEATH_SAVES, 0, { successes: 3, failures: 0 }],
+    ] as const) {
+      expect(
+        await t.mutation(api.characters.setDeathSaves, {
+          code,
+          characterId: thorin,
+          successes,
+          failures,
+          dmCode,
+        }),
+        `${successes}/${failures}`,
+      ).toEqual(stored)
+    }
+  })
+
+  test('NaN and the infinities are refused in either column, leaving the tally alone', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: thorin,
+      successes: 2,
+      failures: 1,
+      dmCode,
+    })
+
+    for (const [successes, failures] of [
+      [Number.NaN, 0],
+      [0, Number.NaN],
+      [Number.POSITIVE_INFINITY, 1],
+      [1, Number.NEGATIVE_INFINITY],
+    ]) {
+      await expectKind(
+        t.mutation(api.characters.setDeathSaves, {
+          code,
+          characterId: thorin,
+          successes,
+          failures,
+          dmCode,
+        }),
+        'BadInput',
+      )
+    }
+    // Neither column moved, so the refusal is whole rather than half-applied.
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      deathSaveSuccesses: 2,
+      deathSaveFailures: 1,
+    })
+  })
+
+  /**
+   * ⚠️ **THE MOST IMPORTANT TEST IN THIS FILE'S 2024 SECTION.** Three failures is three pips
+   * filled in — CLAUDE.md's *Rules scope* names *"no death save kills a character"* as a
+   * standing exclusion, and this is the assertion that would fail the day somebody adds the
+   * three reasonable lines that make the third failure do something.
+   */
+  test('three failures kills nobody, announces nothing and refuses nothing', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.setHp, { code, characterId: thorin, currentHp: 0, dmCode })
+
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: thorin,
+      successes: 0,
+      failures: 3,
+      dmCode,
+    })
+
+    // No hit point moved, and no sheet did either.
+    expect(await rawVitals(t, thorin)).toMatchObject({ currentHp: 0, deathSaveFailures: 3 })
+    expect((await rawCharacter(t, thorin))?.sheet).toEqual(pcSheet({ maxHp: 8 }))
+    // Nothing was announced. The feed is the one table a rules decision would leave a trace
+    // in, and it is empty.
+    expect(await t.run(async (ctx) => (await ctx.db.query('feed').collect()).length)).toBe(0)
+    // And a heal is not refused to a character with three failures against them.
+    expect(
+      await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: 5, dmCode }),
+    ).toEqual({ currentHp: 5 })
+  })
+
+  test('setHeroicInspiration ticks the flag and clears it again', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+
+    expect(
+      await t.mutation(api.characters.setHeroicInspiration, {
+        code,
+        characterId: thorin,
+        heroicInspiration: true,
+        dmCode,
+      }),
+    ).toEqual({ heroicInspiration: true })
+    expect((await rawVitals(t, thorin))?.heroicInspiration).toBe(true)
+    expect((await exactRow(t, code, thorin, { dmCode })).heroicInspiration).toBe(true)
+
+    expect(
+      await t.mutation(api.characters.setHeroicInspiration, {
+        code,
+        characterId: thorin,
+        heroicInspiration: false,
+        dmCode,
+      }),
+    ).toEqual({ heroicInspiration: false })
+    expect((await rawVitals(t, thorin))?.heroicInspiration).toBe(false)
+  })
+
+  test('nothing spends heroic inspiration — it goes when a person clears it', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.setHeroicInspiration, {
+      code,
+      characterId: thorin,
+      heroicInspiration: true,
+      dmCode,
+    })
+
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -3, dmCode })
+    await t.mutation(api.characters.adjustHitDice, { code, characterId: thorin, delta: -1, dmCode })
+    await t.mutation(api.characters.shortRest, { code, characterId: thorin, dmCode })
+
+    expect((await rawVitals(t, thorin))?.heroicInspiration).toBe(true)
+  })
+
+  // -------------------------------------------------------------------------
+  // The tally against the thing that ended the situation it counted
+  // -------------------------------------------------------------------------
+
+  /**
+   * ⚠️ **A COUNTER RESET BY THE THING THAT ENDED THE SITUATION IT COUNTED, AND NOT AN
+   * ADJUDICATION.** Nobody died and nobody was stabilised: the pips were a record of rolls
+   * made while a character was at nought hit points, and a character who is no longer at
+   * nought is a character they have stopped being about. The three tests after this one are
+   * the bound on it — clearing on *every* heal, or on damage, would each be the application
+   * deciding something.
+   */
+  test('coming back up from nought clears the tally, through both hit-point mutations', async () => {
+    for (const heal of ['adjustHp', 'setHp'] as const) {
+      const { t, code, dmCode, thorin } = await fixture()
+      await t.mutation(api.characters.setHp, { code, characterId: thorin, currentHp: 0, dmCode })
+      await t.mutation(api.characters.setDeathSaves, {
+        code,
+        characterId: thorin,
+        successes: 1,
+        failures: 2,
+        dmCode,
+      })
+
+      if (heal === 'adjustHp') {
+        await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: 4, dmCode })
+      } else {
+        await t.mutation(api.characters.setHp, { code, characterId: thorin, currentHp: 4, dmCode })
+      }
+
+      expect(await rawVitals(t, thorin), heal).toMatchObject({
+        currentHp: 4,
+        deathSaveSuccesses: 0,
+        deathSaveFailures: 0,
+      })
+    }
+  })
+
+  test('taking damage never clears the tally, including the blow that reaches nought', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: thorin,
+      successes: 1,
+      failures: 2,
+      dmCode,
+    })
+
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -3, dmCode })
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      currentHp: 5,
+      deathSaveSuccesses: 1,
+      deathSaveFailures: 2,
+    })
+
+    // ⚠️ **The blow that takes somebody to nought is the one that matters.** Zeroing there
+    // would destroy the counter at the exact moment it starts being for something.
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -99, dmCode })
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      currentHp: 0,
+      deathSaveSuccesses: 1,
+      deathSaveFailures: 2,
+    })
+  })
+
+  test('healing somebody who was never at nought leaves the tally exactly where it was', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.setHp, { code, characterId: thorin, currentHp: 5, dmCode })
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: thorin,
+      successes: 1,
+      failures: 2,
+      dmCode,
+    })
+
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: 3, dmCode })
+
+    // 5 → 8, and a DM keeping a tally by hand for a player they had just topped up has not
+    // lost it to a point of healing.
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      currentHp: 8,
+      deathSaveSuccesses: 1,
+      deathSaveFailures: 2,
+    })
+  })
+
+  /**
+   * The write side of the same rule. `characterVitals` is rewritten whole on every patch and
+   * feeds the health-bar subscription, so a heal that *added* two nought-valued fields to a
+   * row which never had them would re-push every bar at the table for no change at all.
+   */
+  test('a heal from nought with nothing ticked writes no death-save field at all', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.setHp, { code, characterId: thorin, currentHp: 0, dmCode })
+
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: 4, dmCode })
+
+    const row = await rawVitals(t, thorin)
+    expect(row?.currentHp).toBe(4)
+    expect(row?.deathSaveSuccesses).toBeUndefined()
+    expect(row?.deathSaveFailures).toBeUndefined()
+    // The control: the field does appear once somebody ticks one, so the assertion above is
+    // about this write path rather than about a field the schema never stores.
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: thorin,
+      successes: 1,
+      failures: 0,
+      dmCode,
+    })
+    expect((await rawVitals(t, thorin))?.deathSaveSuccesses).toBe(1)
+  })
+
+  // -------------------------------------------------------------------------
+  // The two rests
+  // -------------------------------------------------------------------------
+
+  test('a long rest clears the tally and the temporary hit points, and leaves the flag', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -6, dmCode })
+    await t.mutation(api.characters.setTemporaryHp, {
+      code,
+      characterId: thorin,
+      temporaryHp: 12,
+      dmCode,
+    })
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: thorin,
+      successes: 2,
+      failures: 1,
+      dmCode,
+    })
+    await t.mutation(api.characters.setHeroicInspiration, {
+      code,
+      characterId: thorin,
+      heroicInspiration: true,
+      dmCode,
+    })
+
+    await t.mutation(api.characters.longRest, { code, characterId: thorin, dmCode })
+
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      currentHp: 8,
+      temporaryHp: 0,
+      deathSaveSuccesses: 0,
+      deathSaveFailures: 0,
+      // ⚠️ **The negative half, and it is deliberate.** The 2024 Human *regains* Heroic
+      // Inspiration on a long rest, which is a species trait rather than a property of
+      // resting — granting it here would invent a rule for the eight species that do not
+      // have it, in a function with no way to know which one it is looking at.
+      heroicInspiration: true,
+    })
+  })
+
+  /**
+   * One positive and one negative assertion, which is the convention this project keeps
+   * everywhere: without the positive control both halves below pass on a short rest that did
+   * nothing whatsoever.
+   */
+  test('a short rest clears neither, and the positive control says the rest happened', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const kaelen = await makePc(
+      t,
+      code,
+      'Kaelen',
+      pcSheet({
+        maxHp: 8,
+        feats: [
+          {
+            id: 'feat-focus',
+            name: 'Focus Points',
+            text: 'A pool that comes back the moment you sit down.',
+            roll: null,
+            level: null,
+            catalogueKey: null,
+            category: 'passive',
+            uses: { max: 5, recharge: 'short' },
+          },
+        ],
+      }),
+    )
+
+    await t.mutation(api.characters.setTemporaryHp, {
+      code,
+      characterId: kaelen,
+      temporaryHp: 12,
+      dmCode,
+    })
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: kaelen,
+      successes: 2,
+      failures: 1,
+      dmCode,
+    })
+    await t.mutation(api.characters.setUses, {
+      code,
+      characterId: kaelen,
+      key: 'feat-focus',
+      spent: 4,
+      dmCode,
+    })
+
+    await t.mutation(api.characters.shortRest, { code, characterId: kaelen, dmCode })
+
+    const rested = await rawVitals(t, kaelen)
+    // The positive control: the short-rest pool came back, so the rest genuinely ran.
+    expect(rested?.spentUses, 'the short rest did nothing at all').toEqual([])
+    // And the negative half: both of these end on a *long* rest, not on an hour sitting down.
+    expect(rested, 'the short rest cleared something a long rest is for').toMatchObject({
+      temporaryHp: 12,
+      deathSaveSuccesses: 2,
+      deathSaveFailures: 1,
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Who may write them
+  // -------------------------------------------------------------------------
+
+  /**
+   * The claim-holder half. The exhaustive matrix — a stranger's hero, a caller with no seat,
+   * a monster — lives in *the permission matrix for sheets and vitals* above, where all three
+   * mutations are now members of `writes()`; this is the affirmative case stated in one
+   * place, because "a player may tick their own death saves" is the whole point of these not
+   * being DM-gated.
+   */
+  test('the seat playing the character may write all three, and another seat may not', async () => {
+    const t = convexTest(schema, modules)
+    const { code } = await makeGame(t)
+    const ana = await makeSeat(t, code, 'Ana')
+    const ben = await makeSeat(t, code, 'Ben')
+    const thorin = await makePc(t, code, 'Thorin', pcSheet({ maxHp: 8 }))
+    await t.mutation(api.characters.claim, { code, playerId: ana, characterId: thorin })
+
+    await t.mutation(api.characters.setTemporaryHp, {
+      code,
+      characterId: thorin,
+      temporaryHp: 4,
+      playerId: ana,
+    })
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: thorin,
+      successes: 1,
+      failures: 1,
+      playerId: ana,
+    })
+    await t.mutation(api.characters.setHeroicInspiration, {
+      code,
+      characterId: thorin,
+      heroicInspiration: true,
+      playerId: ana,
+    })
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      temporaryHp: 4,
+      deathSaveSuccesses: 1,
+      deathSaveFailures: 1,
+      heroicInspiration: true,
+    })
+
+    for (const call of [
+      () =>
+        t.mutation(api.characters.setTemporaryHp, {
+          code,
+          characterId: thorin,
+          temporaryHp: 0,
+          playerId: ben,
+        }),
+      () =>
+        t.mutation(api.characters.setDeathSaves, {
+          code,
+          characterId: thorin,
+          successes: 0,
+          failures: 0,
+          playerId: ben,
+        }),
+      () =>
+        t.mutation(api.characters.setHeroicInspiration, {
+          code,
+          characterId: thorin,
+          heroicInspiration: false,
+          playerId: ben,
+        }),
+    ]) {
+      await expectKind(call(), 'CharacterNotYours')
+    }
+    // Untouched by the three refusals, which is what makes them refusals rather than
+    // failures after the fact.
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      temporaryHp: 4,
+      deathSaveSuccesses: 1,
+      deathSaveFailures: 1,
+      heroicInspiration: true,
+    })
+  })
+
+  /**
+   * ⚠️ **The grant half, and it is `allowControl: true` doing exactly what it does for the
+   * other five hit-point paths.** A DM who hands the party a pet has decided that seat may
+   * spend its hit points; a ward on it and a tally under it are the same kind of fact. The
+   * ungranted seat gets `CharacterNotFound` rather than `CharacterNotYours`, because a
+   * creature's existence is itself the spoiler.
+   */
+  test('a granted seat may write all three, and an ungranted one cannot find the creature', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await grantFixture(t)
+    const { code, ana, ben, wolf } = fixture
+    await grant(t, fixture, fixture.wolfToken, [ana])
+
+    await t.mutation(api.characters.setTemporaryHp, {
+      code,
+      characterId: wolf,
+      temporaryHp: 7,
+      playerId: ana,
+    })
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: wolf,
+      successes: 0,
+      failures: 2,
+      playerId: ana,
+    })
+    await t.mutation(api.characters.setHeroicInspiration, {
+      code,
+      characterId: wolf,
+      heroicInspiration: true,
+      playerId: ana,
+    })
+    expect(await rawVitals(t, wolf)).toMatchObject({
+      temporaryHp: 7,
+      deathSaveFailures: 2,
+      heroicInspiration: true,
+    })
+
+    await expectKind(
+      t.mutation(api.characters.setTemporaryHp, {
+        code,
+        characterId: wolf,
+        temporaryHp: 0,
+        playerId: ben,
+      }),
+      'CharacterNotFound',
+    )
+    await expectKind(
+      t.mutation(api.characters.setDeathSaves, {
+        code,
+        characterId: wolf,
+        successes: 0,
+        failures: 0,
+        playerId: ben,
+      }),
+      'CharacterNotFound',
+    )
+    await expectKind(
+      t.mutation(api.characters.setHeroicInspiration, {
+        code,
+        characterId: wolf,
+        heroicInspiration: false,
+        playerId: ben,
+      }),
+      'CharacterNotFound',
+    )
+    expect(await rawVitals(t, wolf)).toMatchObject({ temporaryHp: 7, deathSaveFailures: 2 })
+  })
+
+  /**
+   * ⚠️ **The insert branch, which used to drop everything but the two hit-point fields.** A
+   * Milestone 1 character has no `characterVitals` row at all, so any of these three writes
+   * has to create one — and `upsertVitals` named `currentHp` and `hitDiceRemaining` and
+   * nothing else, so the mutation returned the number it had been given and stored none of
+   * it. Unreachable before the 2024 fields existed; reachable the moment they did.
+   */
+  test('a character with no vitals row at all gets one, carrying what was written', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const legacy = await insertLegacyCharacter(t, code, 'Milestone One')
+    expect(await rawVitals(t, legacy)).toBeNull()
+
+    expect(
+      await t.mutation(api.characters.setTemporaryHp, {
+        code,
+        characterId: legacy,
+        temporaryHp: 7,
+        dmCode,
+      }),
+    ).toEqual({ temporaryHp: 7 })
+
+    expect(await rawVitals(t, legacy)).toMatchObject({
+      temporaryHp: 7,
+      // The fresh row is still an undamaged one with its full complement of hit dice: the
+      // patch says which of those two defaults to displace, and this one displaces neither.
+      currentHp: defaultPcSheet().maxHp,
+      hitDiceRemaining: defaultPcSheet().hitDice.count,
+    })
+  })
+
+  test('a death-save tally and a flag also create the row they need', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const one = await insertLegacyCharacter(t, code, 'Tally')
+    const two = await insertLegacyCharacter(t, code, 'Flag')
+
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: one,
+      successes: 2,
+      failures: 3,
+      dmCode,
+    })
+    await t.mutation(api.characters.setHeroicInspiration, {
+      code,
+      characterId: two,
+      heroicInspiration: true,
+      dmCode,
+    })
+
+    expect(await rawVitals(t, one)).toMatchObject({
+      deathSaveSuccesses: 2,
+      deathSaveFailures: 3,
+    })
+    expect((await rawVitals(t, two))?.heroicInspiration).toBe(true)
+  })
+})
+
 describe('the permission matrix for sheets and vitals', () => {
   /**
    * One game, two seats and three characters: a hero Ana has claimed, a hero
@@ -3121,7 +3877,15 @@ describe('the permission matrix for sheets and vitals', () => {
 
   type Write = { name: string; call: (t: Harness, who: Actor) => Promise<unknown> }
 
-  /** The four mutations that change a sheet or its numbers, parameterised on the caller. */
+  /**
+   * The mutations that change a sheet or its numbers, parameterised on the caller.
+   *
+   * ⚠️ **Every write that goes through `requireEditableCharacter` belongs in this list**,
+   * which is why the 2024 three were added to it rather than given a permission block of
+   * their own: the whole value of this table is that it is exhaustive, and a mutation
+   * tested somewhere else is a mutation whose refusal for a stranger's hero, for a caller
+   * with no seat and for a monster is asserted by nobody.
+   */
   function writes(
     code: string,
     characterId: Id<'characters'>,
@@ -3144,6 +3908,66 @@ describe('the permission matrix for sheets and vitals', () => {
         name: 'adjustHitDice',
         call: (t, who) =>
           t.mutation(api.characters.adjustHitDice, { code, characterId, delta: -1, ...who }),
+      },
+      {
+        name: 'setTemporaryHp',
+        call: (t, who) =>
+          t.mutation(api.characters.setTemporaryHp, { code, characterId, temporaryHp: 4, ...who }),
+      },
+      {
+        name: 'setDeathSaves',
+        call: (t, who) =>
+          t.mutation(api.characters.setDeathSaves, {
+            code,
+            characterId,
+            successes: 1,
+            failures: 1,
+            ...who,
+          }),
+      },
+      {
+        name: 'setHeroicInspiration',
+        call: (t, who) =>
+          t.mutation(api.characters.setHeroicInspiration, {
+            code,
+            characterId,
+            heroicInspiration: true,
+            ...who,
+          }),
+      },
+      {
+        name: 'setSlots',
+        // ⚠️ **`spent: 0` — the hand-back — because this table is about *who may call*, and a
+        // spend would answer a second question badly.** None of these three fixtures is a
+        // caster, so `spent: 1` would be refused with `BadInput` for the DM and for the
+        // claiming seat too — turning the two affirmative rows into assertions that the
+        // mutation throws. The hand-back is the branch that is always permitted once the
+        // caller is, so it isolates the permission exactly. What a spend does to a character
+        // with no slots is asserted in *spell slots* below, where it belongs.
+        call: (t, who) =>
+          t.mutation(api.characters.setSlots, { code, characterId, level: 1, spent: 0, ...who }),
+      },
+      {
+        // ⚠️ **`setUses` predates this table and was never added to it**, which is how it
+        // ended up the one play-state write whose refusals nobody asserted — its permissions
+        // were covered ad hoc, one affirmative case at a time, and the stranger's-hero and
+        // no-seat rows below were never run against it at all. `lib/access.ts`' docblock
+        // names this matrix as the place a mutation answers for itself; a mutation that is
+        // not in it has answered nothing.
+        //
+        // `spent: 0` for `setSlots`' reason exactly: the hand-back is the branch that is
+        // always permitted once the caller is, so it isolates the permission and nothing else.
+        name: 'setUses',
+        call: (t, who) =>
+          t.mutation(api.characters.setUses, { code, characterId, key: 'second-wind', spent: 0, ...who }),
+      },
+      {
+        name: 'shortRest',
+        call: (t, who) => t.mutation(api.characters.shortRest, { code, characterId, ...who }),
+      },
+      {
+        name: 'longRest',
+        call: (t, who) => t.mutation(api.characters.longRest, { code, characterId, ...who }),
       },
     ]
   }
@@ -3680,7 +4504,7 @@ const FIGHTER_MAX_HP: Record<number, number> = { 1: 12, 2: 20, 3: 28, 4: 36, 5: 
 function presetSheet(overrides: Partial<PresetSheet> = {}): PresetSheet {
   return {
     kind: 'preset',
-    race: 'human',
+    species: 'human',
     classKey: 'fighter',
     subclassKey: null,
     level: 1,
@@ -3756,7 +4580,7 @@ describe('characters.create — a character built from the library', () => {
   test('the document stores the selections, and the query resolves them', async () => {
     const t = convexTest(schema, modules)
     const { code, dmCode } = await makeGame(t)
-    const selections = presetSheet({ race: 'human', classKey: 'fighter', level: 1 })
+    const selections = presetSheet({ species: 'human', classKey: 'fighter', level: 1 })
     const thorin = await makePreset(t, code, 'Thorin', selections)
 
     // Nothing derived is stored: no maximum, no hit dice, no feats.
@@ -3768,27 +4592,39 @@ describe('characters.create — a character built from the library', () => {
       kind: 'pc',
       level: 1,
       className: 'Fighter',
-      armourClass: 18,
+      armourClass: 17,
       maxHp: FIGHTER_MAX_HP[1],
       hitDice: { count: 1, faces: 10 },
-      speed: SPEED_FEET,
+      // ⚠️ **The Human's printed 30, not `SPEED_FEET`.** A 2024 species states its own
+      // speed and the resolver *sets* it, so the constant is reached only by a sheet with
+      // the field absent, which a resolved preset never is. The two happen to agree now
+      // that the constant is also 30, which is exactly why this line names the species'
+      // number rather than importing one: the day either moves, only one of them should.
+      speed: 30,
     })
     // The library's allocation of the standard array, not the flat tens a
-    // hand-built sheet starts on.
+    // hand-built sheet starts on — **with the Soldier background's +2 Strength and +1
+    // Constitution already in it**, which is change 1 of the 2024 conversion. See
+    // `LibrarySheet.abilities`: backgrounds are still excluded, and the exclusion is
+    // what forces the premade sheet to be the authority on where the three points went.
     expect((payload!.sheet as PcSheet).abilities).toEqual({
-      str: 15,
+      str: 17,
       dex: 13,
-      con: 14,
+      con: 15,
       int: 8,
       wis: 12,
       cha: 10,
     })
     // A resolved sheet always carries both optional fields, whatever the stored
     // shape does — that is what `skillProficienciesOf` and `speedOf` default for.
+    // Four trained skills: the class's two, and the background's Athletics and
+    // Intimidation absorbed the same way the ability spread was.
     expect((payload!.sheet as PcSheet).skillProficiencies).toEqual({
       ...noSkills(),
       athletics: true,
+      intimidation: true,
       perception: true,
+      survival: true,
     })
   })
 
@@ -3893,8 +4729,25 @@ describe('characters.create — a character built from the library', () => {
     const { code } = await makeGame(t)
 
     for (const sheet of [
-      { ...presetSheet(), race: 'gnome' },
-      { ...presetSheet(), classKey: 'warlock' },
+      // ⚠️ **`half-orc`, which is the case that matters now that it is real.** This used
+      // to say `gnome`, which was an invented key until the 2024 conversion made it one of
+      // the nine — so the test would have gone on passing for entirely the wrong reason if
+      // nobody had looked. A *retired* key is the only key that can reach this boundary in
+      // anger: `species()` tolerates one on read, and this union is where the write is
+      // refused.
+      // ⚠️ **NOT `half-orc` any more, and the reason is worth the comment.** That key *is* now
+      // admitted by the argument validator, because `presetSheetValidator.race` had to widen to
+      // `storedSpeciesKeyValidator` or `npx convex deploy` is refused over characters created
+      // before the conversion. A sheet has no narrow/wide split the way a layer does — the same
+      // union is the schema AND the argument — so the write-side refusal for a retired species
+      // moved into `storedSheetProblem`, where it is a `ConvexError` and is tested next door.
+      // What this test is about is the OTHER refusal, the one that never reaches a handler.
+      // ⚠️ **`artificer`, not `warlock`.** That key *is* a class now — `CLASS_KEYS` went
+      // from eight to twelve in the 2024 conversion — so the line it used to be on would
+      // have gone on passing for entirely the wrong reason if nobody had looked. Widening
+      // a stored union is additive and safe, which is exactly why it is invisible.
+      { ...presetSheet(), species: 'kobold' },
+      { ...presetSheet(), classKey: 'artificer' },
     ]) {
       const thrown = await t
         .mutation(api.characters.create, {
@@ -3930,21 +4783,25 @@ describe('characters.create — a character built from the library', () => {
     for (const classKey of CLASS_KEYS) {
       const definition = CLASSES.find((entry) => entry.key === classKey)!
       for (const subclass of definition.subclasses) {
-        for (const level of [2, 3, 4, 5]) {
-          for (const race of RACE_KEYS) {
-            const sheet = presetSheet({ race, classKey, subclassKey: subclass.key, level })
+        // From `SUBCLASS_LEVEL`, which is 3 in 2024. Below it there is no archetype to
+        // pair a class with, and `storedSheetProblem` refuses the pair outright.
+        for (const level of [SUBCLASS_LEVEL, 4, 5]) {
+          for (const speciesKey of SPECIES_KEYS) {
+            const sheet = presetSheet({ species: speciesKey, classKey, subclassKey: subclass.key, level })
             await update(t, code, thorin, sheet, { dmCode })
 
             const resolved = await resolvedSheet(t, code, thorin, { dmCode })
-            const where = `${race}/${classKey}/${subclass.key}/${level}`
+            const where = `${speciesKey}/${classKey}/${subclass.key}/${level}`
             expect(resolved.className, where).toContain(subclass.name)
             expect(resolved.maxHp, where).toBeGreaterThan(0)
-            // The race's own trait is on every sheet, whether or not it moves a
-            // number — a Halfling's Lucky is the whole of what makes them one.
-            expect(
-              resolved.feats.map((entry) => entry.id),
-              where,
-            ).toContain(`race:${race}`)
+            // Every one of the species' own traits is on every sheet, whether or
+            // not it moves a number — a Halfling's Luck is the whole of what makes
+            // them one. Three to five each since the 2024 conversion, so this is
+            // checked per trait rather than against one `race:<key>` id.
+            const names = resolved.feats.map((entry) => entry.name)
+            for (const trait of species(speciesKey)!.traits) {
+              expect(names, `${where}: ${trait.name}`).toContain(trait.name)
+            }
             // Ids are a React key set and Milestone 6's roll targets, merged
             // across both lists.
             const ids = [...resolved.feats, ...resolved.spells].map((entry) => entry.id)
@@ -3961,11 +4818,11 @@ describe('characters.create — a character built from the library', () => {
     const thorin = await makePreset(t, code, 'Sweep')
 
     for (const classKey of CLASS_KEYS) {
-      for (const race of RACE_KEYS) {
-        await update(t, code, thorin, presetSheet({ race, classKey, level: 1 }), { dmCode })
+      for (const speciesKey of SPECIES_KEYS) {
+        await update(t, code, thorin, presetSheet({ species: speciesKey, classKey, level: 1 }), { dmCode })
         const resolved = await resolvedSheet(t, code, thorin, { dmCode })
-        expect(resolved.level, `${race}/${classKey}`).toBe(1)
-        expect(resolved.hitDice.count, `${race}/${classKey}`).toBe(1)
+        expect(resolved.level, `${speciesKey}/${classKey}`).toBe(1)
+        expect(resolved.hitDice.count, `${speciesKey}/${classKey}`).toBe(1)
       }
     }
   })
@@ -4019,13 +4876,13 @@ describe('characters.updateSheet — the permission split over a premade charact
       // A race change is something this player *is* allowed, sent in the same call
       // as the level they are not — so a passing test cannot be the whole write
       // being dropped on the floor.
-      const wanted = presetSheet({ level: 3, race: 'elf' })
+      const wanted = presetSheet({ level: 3, species: 'elf' })
 
       if (who === 'dm') {
         await update(t, fixture.code, fixture.characterId, wanted, actorFor(who, fixture))
         expect(await storedPreset(t, fixture.characterId)).toMatchObject({
           level: 3,
-          race: 'elf',
+          species: 'elf',
         })
         continue
       }
@@ -4034,7 +4891,7 @@ describe('characters.updateSheet — the permission split over a premade charact
         await update(t, fixture.code, fixture.characterId, wanted, actorFor(who, fixture))
         expect(await storedPreset(t, fixture.characterId), who).toMatchObject({
           level: 1,
-          race: 'elf',
+          species: 'elf',
         })
         // And the sheet everybody reads followed the level that is stored, not the
         // one that was asked for.
@@ -4054,7 +4911,7 @@ describe('characters.updateSheet — the permission split over a premade charact
       // Nothing moved at all, which is the other half of a refusal.
       expect(await storedPreset(t, fixture.characterId), who).toMatchObject({
         level: 1,
-        race: 'human',
+        species: 'human',
       })
     }
   })
@@ -4103,7 +4960,7 @@ describe('characters.updateSheet — the permission split over a premade charact
 
   test('the level a player sends is ignored, whatever nonsense it is', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ level: 2, subclassKey: 'champion' }))
+    const fixture = await presetFixture(t, presetSheet({ level: 3, subclassKey: 'champion' }))
     const stored = await storedPreset(t, fixture.characterId)
 
     for (const level of [5, 20, 0, -3, Number.NaN, Number.POSITIVE_INFINITY]) {
@@ -4114,16 +4971,30 @@ describe('characters.updateSheet — the permission split over a premade charact
         { ...stored, level },
         { playerId: fixture.ana },
       ).catch(() => undefined)
-      expect((await storedPreset(t, fixture.characterId)).level, String(level)).toBe(2)
+      expect((await storedPreset(t, fixture.characterId)).level, String(level)).toBe(3)
     }
   })
 
-  test('a locked character keeps its race, class and archetype against its own player', async () => {
+  test('a locked character keeps its species, class and archetype against its own player', async () => {
     const locked = presetSheet({ level: 3, subclassKey: 'champion', locked: true })
     const changes: [string, PresetSheet][] = [
-      ['race', { ...locked, race: 'elf' }],
+      ['race', { ...locked, species: 'elf' }],
       ['class', { ...locked, classKey: 'wizard', subclassKey: 'evocation' }],
-      ['archetype', { ...locked, subclassKey: 'battle-master' }],
+      // ⚠️ **Dropping the archetype rather than swapping it, because there is nothing to
+      // swap to.** Every class has exactly one archetype in 2024 — a licensing fact, not a
+      // design one — so the only change a player can attempt is back to *unchosen*, which
+      // is the mid-decision state `librarySheet` handles and which the lock must still
+      // refuse. This used to reach for `battle-master`, an archetype that appears in no
+      // SRD and is now retired by name.
+      ['archetype', { ...locked, subclassKey: null }],
+      // ⚠️ **The fourth selection, and the one the lock did not cover until it was fixed.**
+      // A lineage arrived with the species branch and was not added to `selectionsChanged`,
+      // so a locked Wood Elf could be saved as a High Elf — losing five feet of speed and
+      // every trait entry the lineage grants, on a sheet whose refusal message already
+      // promised the species was set. Asserted here rather than in its own test because the
+      // claim is *this list is the whole of what a lock freezes*, and a list is checked by
+      // walking it.
+      ['lineage', { ...locked, species: 'elf' as const, lineageKey: 'high' }],
     ]
 
     for (const [label, wanted] of changes) {
@@ -4135,7 +5006,7 @@ describe('characters.updateSheet — the permission split over a premade charact
       )
       expect(refusal.kind, label).toBe('CharacterLocked')
       expect(refusal.message, label).toBe(
-        'Your race, class and archetype are set. Ask the DM to unlock them.',
+        'Your species, class and archetype are set. Ask the DM to unlock them.',
       )
       expect(await storedPreset(t, fixture.characterId), label).toEqual(locked)
 
@@ -4150,9 +5021,9 @@ describe('characters.updateSheet — the permission split over a premade charact
     const fixture = await presetFixture(t, presetSheet({ level: 3, subclassKey: 'champion' }))
 
     const wanted = presetSheet({
-      race: 'elf',
+      species: 'elf',
       classKey: 'rogue',
-      subclassKey: 'assassin',
+      subclassKey: 'thief',
       level: 3,
     })
     await update(t, fixture.code, fixture.characterId, wanted, { playerId: fixture.ana })
@@ -4163,8 +5034,8 @@ describe('characters.updateSheet — the permission split over a premade charact
     const resolved = await resolvedSheet(t, fixture.code, fixture.characterId, {
       playerId: fixture.ana,
     })
-    expect(resolved.className).toBe('Rogue (Assassin)')
-    expect(resolved.feats.map((entry) => entry.id)).toContain('race:elf')
+    expect(resolved.className).toBe('Rogue (Thief)')
+    expect(resolved.feats.map((entry) => entry.name)).toContain('Elven Lineage')
   })
 
   test('a player may commit to their selections but may not undo the lock', async () => {
@@ -4187,7 +5058,7 @@ describe('characters.updateSheet — the permission split over a premade charact
     )
     expect(refusal.kind).toBe('CharacterLocked')
     expect(refusal.message).toBe(
-      'Your race, class and archetype are set. Ask the DM to unlock them.',
+      'Your species, class and archetype are set. Ask the DM to unlock them.',
     )
     expect((await storedPreset(t, fixture.characterId)).locked).toBe(true)
 
@@ -4208,10 +5079,10 @@ describe('characters.updateSheet — the permission split over a premade charact
     expect((await storedPreset(t, fixture.characterId)).locked).toBe(false)
 
     // And now the player may change what the lock was protecting.
-    await update(t, fixture.code, fixture.characterId, presetSheet({ race: 'goliath' }), {
+    await update(t, fixture.code, fixture.characterId, presetSheet({ species: 'goliath' }), {
       playerId: fixture.ana,
     })
-    expect((await storedPreset(t, fixture.characterId)).race).toBe('goliath')
+    expect((await storedPreset(t, fixture.characterId)).species).toBe('goliath')
   })
 
   /**
@@ -4231,14 +5102,14 @@ describe('characters.updateSheet — the permission split over a premade charact
       t,
       fixture.code,
       fixture.characterId,
-      presetSheet({ overrides, race: 'elf' }),
+      presetSheet({ overrides, species: 'elf' }),
       { playerId: fixture.ana },
     )
-    expect(await storedPreset(t, fixture.characterId)).toMatchObject({ race: 'elf' })
+    expect(await storedPreset(t, fixture.characterId)).toMatchObject({ species: 'elf' })
     expect((await storedPreset(t, fixture.characterId)).overrides).toBeUndefined()
 
     // The DM sets one, and it reaches the sheet everybody reads.
-    await update(t, fixture.code, fixture.characterId, presetSheet({ overrides, race: 'elf' }), {
+    await update(t, fixture.code, fixture.characterId, presetSheet({ overrides, species: 'elf' }), {
       dmCode: fixture.dmCode,
     })
     const asOwner = () =>
@@ -4255,10 +5126,10 @@ describe('characters.updateSheet — the permission split over a premade charact
       t,
       fixture.code,
       fixture.characterId,
-      { ...stored, race: 'halfling' },
+      { ...stored, species: 'halfling' },
       { playerId: fixture.ana },
     )
-    expect(await storedPreset(t, fixture.characterId)).toMatchObject({ race: 'halfling' })
+    expect(await storedPreset(t, fixture.characterId)).toMatchObject({ species: 'halfling' })
     expect((await storedPreset(t, fixture.characterId)).overrides).toEqual(overrides)
 
     // Editing it, or quietly dropping it, changes nothing either.
@@ -4336,9 +5207,11 @@ describe('characters.updateSheet — the permission split over a premade charact
     const fixture = await presetFixture(t, presetSheet({ locked: true }))
 
     const wanted = presetSheet({
-      race: 'dragonborn',
+      species: 'dragonborn',
       classKey: 'cleric',
-      subclassKey: 'light',
+      // The Life Domain, which is the Cleric's one SRD subclass. Light Domain appears in
+      // no SRD and is retired by name in `RETIRED_SUBCLASSES`.
+      subclassKey: 'life',
       level: 4,
       locked: true,
       overrides: { armourClass: 20 },
@@ -4354,14 +5227,14 @@ describe('characters.updateSheet — the permission split over a premade charact
     const thorin = await makePreset(t, code, 'Thorin')
 
     const refusal = await refusalOf(
-      update(t, code, thorin, presetSheet({ race: 'elf' }), { playerId: ana }),
+      update(t, code, thorin, presetSheet({ species: 'elf' }), { playerId: ana }),
     )
     expect(refusal.kind).toBe('CharacterNotYours')
     expect(refusal.message).toBe(
       'Nobody is playing that character yet, so only the DM can change it.',
     )
-    await update(t, code, thorin, presetSheet({ race: 'elf' }), { dmCode })
-    expect((await storedPreset(t, thorin)).race).toBe('elf')
+    await update(t, code, thorin, presetSheet({ species: 'elf' }), { dmCode })
+    expect((await storedPreset(t, thorin)).species).toBe('elf')
   })
 
   test('a premade character cannot be turned into a monster, nor a monster into one', async () => {
@@ -4396,13 +5269,13 @@ describe('characters.updateSheet — the permission split over a premade charact
     const thorin = await makePc(t, code, 'Thorin', pcSheet({ maxHp: 40, className: 'By hand' }))
     await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -30, dmCode })
 
-    await update(t, code, thorin, presetSheet({ level: 2, subclassKey: 'champion' }), { dmCode })
+    await update(t, code, thorin, presetSheet({ level: 3, subclassKey: 'champion' }), { dmCode })
 
     expect((await storedPreset(t, thorin)).classKey).toBe('fighter')
     // 10 hit points survive the swap; the maximum is now the library's.
     expect(await exactVitals(t, code, thorin, { dmCode })).toEqual({
       current: 10,
-      max: FIGHTER_MAX_HP[2],
+      max: FIGHTER_MAX_HP[3],
     })
   })
 })
@@ -4446,7 +5319,7 @@ describe('characters.setLevel', () => {
     expect((await storedPreset(t, fixture.characterId)).level).toBe(5)
   })
 
-  test('dropping below level 2 clears the archetype, and level 2 keeps it', async () => {
+  test('dropping below level 3 clears the archetype, and level 3 keeps it', async () => {
     const t = convexTest(schema, modules)
     const fixture = await presetFixture(t, presetSheet({ level: 5, subclassKey: 'champion' }))
     const setLevel = (level: number) =>
@@ -4461,21 +5334,21 @@ describe('characters.setLevel', () => {
     // The stored document, not the response — an archetype that survived only in a
     // payload would reapply itself on the way back up.
     expect(await storedPreset(t, fixture.characterId)).toMatchObject({
-      level: 2,
+      level: SUBCLASS_LEVEL,
       subclassKey: 'champion',
     })
 
-    await setLevel(1)
+    await setLevel(SUBCLASS_LEVEL - 1)
     expect(await storedPreset(t, fixture.characterId)).toMatchObject({
-      level: 1,
+      level: SUBCLASS_LEVEL - 1,
       subclassKey: null,
     })
 
     // And back up: the archetype is genuinely gone rather than hidden, so the
     // character is level 3 with no archetype until somebody chooses again.
-    await setLevel(3)
+    await setLevel(SUBCLASS_LEVEL)
     expect(await storedPreset(t, fixture.characterId)).toMatchObject({
-      level: 3,
+      level: SUBCLASS_LEVEL,
       subclassKey: null,
     })
     expect(
@@ -4486,7 +5359,7 @@ describe('characters.setLevel', () => {
 
   test('a level moves the whole sheet without anybody editing one', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ level: 2, subclassKey: 'champion' }))
+    const fixture = await presetFixture(t, presetSheet({ level: 3, subclassKey: 'champion' }))
     const at = async (level: number) => {
       await t.mutation(api.characters.setLevel, {
         code: fixture.code,
@@ -4497,18 +5370,24 @@ describe('characters.setLevel', () => {
       return await resolvedSheet(t, fixture.code, fixture.characterId, { playerId: fixture.ana })
     }
 
-    const two = await at(2)
-    expect(two).toMatchObject({ maxHp: FIGHTER_MAX_HP[2], hitDice: { count: 2, faces: 10 } })
-    expect(two.feats.map((entry) => entry.id)).not.toContain('lib:extra-attack')
+    // ⚠️ **Three and five rather than two and five, and the reason is `setLevel` doing
+    // its job.** Dropping to level 2 *clears the archetype*, because an archetype is
+    // chosen at level 3 in 2024 — so the way back up would land on the archetype-less
+    // fallback rather than on the level 5 Champion sheet, and this test would be pinning
+    // the fallback. That is the behaviour the test above this one exists to check.
+    const three = await at(3)
+    expect(three).toMatchObject({ maxHp: FIGHTER_MAX_HP[3], hitDice: { count: 3, faces: 10 } })
+    expect(three.feats.map((entry) => entry.id)).not.toContain('lib:extra-attack')
 
     const five = await at(5)
     expect(five).toMatchObject({ maxHp: FIGHTER_MAX_HP[5], hitDice: { count: 5, faces: 10 } })
     // Features arrive with the level, out of the library rather than out of a form.
     expect(five.feats.map((entry) => entry.id)).toContain('lib:extra-attack')
-    expect(five.feats.length).toBeGreaterThan(two.feats.length)
-    // Level 3 is where this build takes its ability score improvement.
-    expect(five.abilities.str).toBe(17)
-    expect(two.abilities.str).toBe(15)
+    expect(five.feats.length).toBeGreaterThan(three.feats.length)
+    // Level 4 is where this build takes its ability score improvement — and 17 rather
+    // than 15 below it, because the Soldier background's +2 is already in the array.
+    expect(five.abilities.str).toBe(19)
+    expect(three.abilities.str).toBe(17)
   })
 
   test('a level past the library’s last one stops gaining rather than falling back', async () => {
@@ -4548,10 +5427,10 @@ describe('characters.setLevel', () => {
     }
     const fixture = await presetFixture(
       t,
-      presetSheet({ level: 2, subclassKey: 'champion', overrides }),
+      presetSheet({ level: 3, subclassKey: 'champion', overrides }),
     )
 
-    for (const level of [3, 5, 4, 2, 5]) {
+    for (const level of [3, 5, 4, 3, 5]) {
       await t.mutation(api.characters.setLevel, {
         code: fixture.code,
         dmCode: fixture.dmCode,
@@ -4729,7 +5608,7 @@ describe('hit points against a resolved sheet', () => {
     const t = convexTest(schema, modules)
     const fixture = await presetFixture(
       t,
-      presetSheet({ race: 'dwarf', level: 3, subclassKey: 'champion' }),
+      presetSheet({ species: 'dwarf', level: 3, subclassKey: 'champion' }),
     )
     const { code, dmCode, characterId } = fixture
     const dwarfMax = FIGHTER_MAX_HP[3] + 3
@@ -4759,7 +5638,7 @@ describe('hit points against a resolved sheet', () => {
     const fixture = await presetFixture(
       t,
       presetSheet({
-        race: 'dwarf',
+        species: 'dwarf',
         level: 3,
         subclassKey: 'champion',
         overrides: { maxHp: 25 },
@@ -4790,12 +5669,26 @@ describe('hit points against a resolved sheet', () => {
   })
 })
 
+/**
+ * ⚠️ **`characters.setPerRest` is now `characters.setUses` and takes a COUNT.** The old
+ * mutation could only say *the one use this character had is gone*, because its argument was
+ * a boolean; 2024 is full of features with two, three or proficiency-bonus-many uses. Every
+ * test below reads the counted field for that reason, and `spent: 1` is what the old
+ * `spent: true` meant.
+ *
+ * ⚠️ **`spentPerRest` is still on the row and NOTHING writes it any more.** It is folded in on
+ * *read* by `spentUsesOf`, so a row written by an older deployment keeps meaning what it
+ * meant; `setUses` never touched it, and **`longRest` stopped clearing it** — because a long
+ * rest taken between the sweep and the narrowing push would otherwise put back the exact
+ * field that push refuses. So it can only shrink, and `admin.migrateGame` is what empties it
+ * for good. A test asserting that a spend landed therefore asserts on `spentUses`.
+ */
 describe('long rest and once-per-rest abilities', () => {
   test('a long rest restores hit points, hit dice and spent abilities in one call', async () => {
     const t = convexTest(schema, modules)
     const fixture = await presetFixture(
       t,
-      presetSheet({ race: 'human', level: 5, subclassKey: 'champion' }),
+      presetSheet({ species: 'human', level: 5, subclassKey: 'champion' }),
     )
     const { code, characterId, ana } = fixture
 
@@ -4806,17 +5699,17 @@ describe('long rest and once-per-rest abilities', () => {
       delta: -3,
       playerId: ana,
     })
-    await t.mutation(api.characters.setPerRest, {
+    await t.mutation(api.characters.setUses, {
       code,
       characterId,
       key: 'heroic-inspiration',
-      spent: true,
+      spent: 1,
       playerId: ana,
     })
     expect(await rawVitals(t, characterId)).toMatchObject({
       currentHp: FIGHTER_MAX_HP[5] - 20,
       hitDiceRemaining: 2,
-      spentPerRest: ['heroic-inspiration'],
+      spentUses: [{ key: 'heroic-inspiration', spent: 1 }],
     })
 
     // One call, all three — a rest that restored hit points and left the dice
@@ -4825,118 +5718,202 @@ describe('long rest and once-per-rest abilities', () => {
     expect(await rawVitals(t, characterId)).toMatchObject({
       currentHp: FIGHTER_MAX_HP[5],
       hitDiceRemaining: 5,
-      spentPerRest: [],
+      spentUses: [],
     })
+  })
+
+  test('a long rest also clears the 2024 state, and leaves heroic inspiration alone', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ species: 'human', level: 5, subclassKey: 'champion' }))
+    const { code, dmCode, characterId } = fixture
+
+    // Written directly, because nothing on the sheet path sets a death save or a temporary
+    // hit point yet — the fields are the schema spine and the controls are another branch's.
+    const row = await rawVitals(t, characterId)
+    await t.run(async (ctx) => {
+      await ctx.db.patch('characterVitals', row!._id, {
+        temporaryHp: 12,
+        deathSaveSuccesses: 2,
+        deathSaveFailures: 1,
+        heroicInspiration: true,
+      })
+    })
+
+    await t.mutation(api.characters.longRest, { code, characterId, dmCode })
+    const rested = await rawVitals(t, characterId)
+    expect(rested).toMatchObject({
+      temporaryHp: 0,
+      deathSaveSuccesses: 0,
+      deathSaveFailures: 0,
+    })
+    // ⚠️ **The one that is deliberately untouched.** The 2024 Human *regains* Heroic
+    // Inspiration on a long rest, which is a species trait rather than a property of resting
+    // — granting it here would be the application inventing a rule for the eight species that
+    // do not have it, in a function with no way to know which one it is looking at.
+    expect(rested?.heroicInspiration).toBe(true)
   })
 
   test('the spent state travels on the vitals row, for the player and the DM alike', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ race: 'human' }))
+    const fixture = await presetFixture(t, presetSheet({ species: 'human' }))
     const { code, dmCode, characterId, ana } = fixture
 
     expect(
-      await t.mutation(api.characters.setPerRest, {
+      await t.mutation(api.characters.setUses, {
         code,
         characterId,
         key: 'heroic-inspiration',
-        spent: true,
+        spent: 1,
         playerId: ana,
       }),
-    ).toEqual({ spentPerRest: ['heroic-inspiration'] })
+    ).toEqual({ spentUses: [{ key: 'heroic-inspiration', spent: 1 }] })
 
     for (const who of [{}, { dmCode }]) {
       const rows = await t.query(api.characters.vitals, { code, ...who })
       const row = rows.find((entry) => entry.characterId === characterId)
       expect(row?.kind).toBe('exact')
-      expect(row).toMatchObject({ spentPerRest: ['heroic-inspiration'] })
+      expect(row).toMatchObject({ spentUses: [{ key: 'heroic-inspiration', spent: 1 }] })
     }
 
-    // Handing it back is the same call with `spent: false`, because a mark made by
+    // Handing it back is the same call with `spent: 0`, because a mark made by
     // mistake has to be undoable.
     expect(
-      await t.mutation(api.characters.setPerRest, {
+      await t.mutation(api.characters.setUses, {
         code,
         characterId,
         key: 'heroic-inspiration',
-        spent: false,
+        spent: 0,
         playerId: ana,
       }),
-    ).toEqual({ spentPerRest: [] })
+    ).toEqual({ spentUses: [] })
+    // ⚠️ **Nought is ABSENCE from the array rather than `{ spent: 0 }`.** Two spellings of
+    // none is what every field-by-field rebuild then has to agree about, and
+    // `firstDifference` in scripts/board-smoke.mjs reports it as an extra element rather than
+    // as equality.
+    expect((await rawVitals(t, characterId))?.spentUses).toEqual([])
   })
 
-  test('spending the same ability twice is idempotent rather than cumulative', async () => {
+  test('setting the same count twice is absolute rather than cumulative', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ race: 'human' }))
+    const fixture = await presetFixture(t, presetSheet({ species: 'human' }))
     const { code, characterId, ana } = fixture
 
     for (let i = 0; i < 3; i += 1) {
-      await t.mutation(api.characters.setPerRest, {
+      await t.mutation(api.characters.setUses, {
         code,
         characterId,
         key: 'heroic-inspiration',
-        spent: true,
+        spent: 1,
         playerId: ana,
       })
     }
-    expect((await rawVitals(t, characterId))?.spentPerRest).toEqual(['heroic-inspiration'])
+    // The argument is *how many have been spent*, not *spend one more* — the same stance
+    // `characters.setHp` takes against `adjustHp`, and the reason there is exactly one row
+    // per key rather than one per call.
+    expect((await rawVitals(t, characterId))?.spentUses).toEqual([
+      { key: 'heroic-inspiration', spent: 1 },
+    ])
   })
 
   test('a key the character’s race does not have is refused', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ race: 'human' }))
+    const fixture = await presetFixture(t, presetSheet({ species: 'human' }))
     const { code, characterId, ana } = fixture
 
     for (const key of ['relentless-endurance', 'lucky', '', 'heroic_inspiration']) {
       const refusal = await refusalOf(
-        t.mutation(api.characters.setPerRest, {
+        t.mutation(api.characters.setUses, {
           code,
           characterId,
           key,
-          spent: true,
+          spent: 1,
           playerId: ana,
         }),
       )
       expect(refusal.kind, key).toBe('BadInput')
       expect(refusal.message, key).toBe('That character has no such ability.')
     }
-    expect((await rawVitals(t, characterId))?.spentPerRest ?? []).toEqual([])
+    expect((await rawVitals(t, characterId))?.spentUses ?? []).toEqual([])
+
+    // ⚠️ **And handing one back is still allowed for every one of them**, which is the
+    // asymmetry stated on the mutation: a DM who changes a character's species, or deletes an
+    // entry, leaves whatever it had spent still marked, and a check that applied here too
+    // would make it unclearable by anything short of a long rest.
+    for (const key of ['relentless-endurance', 'lucky', '', 'heroic_inspiration']) {
+      expect(
+        await t.mutation(api.characters.setUses, {
+          code,
+          characterId,
+          key,
+          spent: 0,
+          playerId: ana,
+        }),
+      ).toEqual({ spentUses: [] })
+    }
   })
 
-  test('a Dwarf has nothing to spend, and a Half-Orc has exactly one thing', async () => {
+  test('a count of nonsense or of more than anything has is refused outright', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ species: 'human' }))
+    const { code, characterId, ana } = fixture
+
+    // Refused *before* the key is looked at, because these are shapes rather than
+    // permissions — `NaN` is a perfectly valid Convex float64 and would poison every
+    // comparison made against it afterwards, exactly as it does on `adjustHp`.
+    for (const spent of [Number.NaN, Number.POSITIVE_INFINITY, -1, MAX_RESOURCE_USES + 1]) {
+      const refusal = await refusalOf(
+        t.mutation(api.characters.setUses, {
+          code,
+          characterId,
+          key: 'heroic-inspiration',
+          spent,
+          playerId: ana,
+        }),
+      )
+      expect(refusal.kind, String(spent)).toBe('BadInput')
+      expect(refusal.message, String(spent)).toBe('That is not a number of uses.')
+    }
+    expect((await rawVitals(t, characterId))?.spentUses ?? []).toEqual([])
+  })
+
+  test('a Dwarf has nothing to spend, and an Orc has exactly one thing', async () => {
     const t = convexTest(schema, modules)
     const { code, dmCode } = await makeGame(t)
-    const dwarf = await makePreset(t, code, 'Dwalin', presetSheet({ race: 'dwarf' }))
-    const halfOrc = await makePreset(t, code, 'Grash', presetSheet({ race: 'half-orc' }))
+    const dwarf = await makePreset(t, code, 'Dwalin', presetSheet({ species: 'dwarf' }))
+    // The Half-Orc used to be the one holding `relentless-endurance`. The Orc holds it
+    // now, under the same key, which is what makes retiring that species cheap — a
+    // character who had already spent their survival keeps the flag stored for it.
+    const orc = await makePreset(t, code, 'Grash', presetSheet({ species: 'orc' }))
 
     for (const key of ['heroic-inspiration', 'relentless-endurance', 'dwarven-toughness']) {
       await expectKind(
-        t.mutation(api.characters.setPerRest, {
+        t.mutation(api.characters.setUses, {
           code,
           characterId: dwarf,
           key,
-          spent: true,
+          spent: 1,
           dmCode,
         }),
         'BadInput',
       )
     }
-    expect((await rawVitals(t, dwarf))?.spentPerRest ?? []).toEqual([])
+    expect((await rawVitals(t, dwarf))?.spentUses ?? []).toEqual([])
 
     expect(
-      await t.mutation(api.characters.setPerRest, {
+      await t.mutation(api.characters.setUses, {
         code,
-        characterId: halfOrc,
+        characterId: orc,
         key: 'relentless-endurance',
-        spent: true,
+        spent: 1,
         dmCode,
       }),
-    ).toEqual({ spentPerRest: ['relentless-endurance'] })
+    ).toEqual({ spentUses: [{ key: 'relentless-endurance', spent: 1 }] })
     await expectKind(
-      t.mutation(api.characters.setPerRest, {
+      t.mutation(api.characters.setUses, {
         code,
-        characterId: halfOrc,
+        characterId: orc,
         key: 'heroic-inspiration',
-        spent: true,
+        spent: 1,
         dmCode,
       }),
       'BadInput',
@@ -4949,11 +5926,65 @@ describe('long rest and once-per-rest abilities', () => {
     const thorin = await makePc(t, code, 'Thorin', pcSheet())
 
     await expectKind(
-      t.mutation(api.characters.setPerRest, {
+      t.mutation(api.characters.setUses, {
         code,
         characterId: thorin,
         key: 'heroic-inspiration',
-        spent: true,
+        spent: 1,
+        dmCode,
+      }),
+      'BadInput',
+    )
+  })
+
+  /**
+   * ⚠️ **The second source of a key, and it is `||`-ed rather than merged.** A species'
+   * once-per-long-rest ability is keyed by species content; an entry's uses are keyed by the
+   * entry's own id. They are different vocabularies sharing one namespace on the row, and
+   * collapsing them would mean deciding which wins on a collision — a question neither side
+   * asked.
+   */
+  test('an entry that declares uses is a key a hand-built character may spend', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const bruenor = await makePc(
+      t,
+      code,
+      'Bruenor',
+      pcSheet({
+        feats: [
+          {
+            id: 'feat-rage',
+            name: 'Rage',
+            text: 'Bellow, and hit harder for a minute.',
+            roll: null,
+            level: null,
+            catalogueKey: null,
+            category: 'passive',
+            uses: { max: 3, recharge: 'long' },
+          },
+        ],
+      }),
+    )
+
+    expect(
+      await t.mutation(api.characters.setUses, {
+        code,
+        characterId: bruenor,
+        key: 'feat-rage',
+        spent: 2,
+        dmCode,
+      }),
+    ).toEqual({ spentUses: [{ key: 'feat-rage', spent: 2 }] })
+
+    // And an id that is not on the sheet is still refused, so the check is about *this*
+    // character rather than about entry ids being acceptable in general.
+    await expectKind(
+      t.mutation(api.characters.setUses, {
+        code,
+        characterId: bruenor,
+        key: 'feat-second-wind',
+        spent: 1,
         dmCode,
       }),
       'BadInput',
@@ -4962,7 +5993,7 @@ describe('long rest and once-per-rest abilities', () => {
 
   test('a rest is refused to a seat that is not playing the character, and to nobody', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ race: 'human', level: 3, subclassKey: 'champion' }))
+    const fixture = await presetFixture(t, presetSheet({ species: 'human', level: 3, subclassKey: 'champion' }))
     const { code, characterId, ana, ben } = fixture
     await t.mutation(api.characters.adjustHp, { code, characterId, delta: -10, playerId: ana })
 
@@ -5007,27 +6038,244 @@ describe('long rest and once-per-rest abilities', () => {
     expect(await rawVitals(t, legacy)).toMatchObject({
       currentHp: defaultPcSheet().maxHp,
       hitDiceRemaining: defaultPcSheet().hitDice.count,
-      spentPerRest: [],
     })
   })
 
   test('the spent state survives a level change and an edit', async () => {
     const t = convexTest(schema, modules)
-    const fixture = await presetFixture(t, presetSheet({ race: 'human', level: 2, subclassKey: 'champion' }))
+    const fixture = await presetFixture(
+      t,
+      presetSheet({ species: 'human', level: 3, subclassKey: 'champion' }),
+    )
     const { code, dmCode, characterId, ana } = fixture
 
-    await t.mutation(api.characters.setPerRest, {
+    await t.mutation(api.characters.setUses, {
       code,
       characterId,
       key: 'heroic-inspiration',
-      spent: true,
+      spent: 1,
       playerId: ana,
     })
     await t.mutation(api.characters.setLevel, { code, dmCode, characterId, level: 4 })
-    await update(t, code, characterId, presetSheet({ race: 'human', level: 4, subclassKey: 'battle-master' }), { dmCode })
+    // An edit that changes the *class* as well as the level, which is the widest rebuild
+    // a DM can make in one call. It used to swap Champion for Battle Master; that
+    // archetype appears in no SRD and is retired, and every class has exactly one now.
+    await update(
+      t,
+      code,
+      characterId,
+      presetSheet({ species: 'human', classKey: 'rogue', level: 4, subclassKey: 'thief' }),
+      { dmCode },
+    )
 
     // A rest clears it; an edit does not touch it (ADR 0005).
-    expect((await rawVitals(t, characterId))?.spentPerRest).toEqual(['heroic-inspiration'])
+    expect((await rawVitals(t, characterId))?.spentUses).toEqual([
+      { key: 'heroic-inspiration', spent: 1 },
+    ])
+  })
+})
+
+/**
+ * ⚠️ **THE SHORT REST DOES NOT HEAL AND DOES NOT RETURN HIT DICE**, and both absences are
+ * asserted rather than left implicit. *Spending* hit dice is what a short rest is for, so
+ * returning them would undo the only thing the rest exists to let somebody do, and healing is
+ * what spending them achieves — one die at a time, by a person choosing how many to burn.
+ *
+ * `HitDiceControls` is the precedent: it shipped a button labelled *"Long rest"* that only
+ * returned hit dice, and it read as broken the first time somebody pressed it at 1 hit point,
+ * because the label promised the thing the button did not do. This is that trap pointing the
+ * other way, which is why both rests read their label **and their explanation** out of
+ * `REST_LABELS`.
+ */
+describe('the short rest', () => {
+  /** Three entries, one per outcome `shortRest` can reach. */
+  function restingSheet() {
+    return pcSheet({
+      hitDice: { count: 5, faces: 10 },
+      feats: [
+        {
+          id: 'feat-focus',
+          name: 'Focus Points',
+          text: 'A pool that comes back the moment you sit down.',
+          roll: null,
+          level: null,
+          catalogueKey: null,
+          category: 'passive',
+          uses: { max: 5, recharge: 'short' },
+        },
+        {
+          id: 'feat-second-wind',
+          name: 'Second Wind',
+          text: 'Regain one expended use on a short rest, all on a long rest.',
+          roll: null,
+          level: null,
+          catalogueKey: null,
+          category: 'passive',
+          uses: { max: 3, recharge: 'long', regainOnShortRest: 1 },
+        },
+        {
+          id: 'feat-rage',
+          name: 'Rage',
+          text: 'Nothing short of a night brings this back.',
+          roll: null,
+          level: null,
+          catalogueKey: null,
+          category: 'passive',
+          uses: { max: 3, recharge: 'long' },
+        },
+      ],
+    })
+  }
+
+  async function spendEverything(t: ReturnType<typeof convexTest>, code: string, dmCode: string, characterId: Id<'characters'>) {
+    for (const [key, spent] of [
+      ['feat-focus', 4],
+      ['feat-second-wind', 3],
+      ['feat-rage', 2],
+    ] as const) {
+      await t.mutation(api.characters.setUses, { code, characterId, key, spent, dmCode })
+    }
+  }
+
+  test('a short-rest pool comes back whole, a partial one by its stated amount, and a long-rest one not at all', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const monk = await makePc(t, code, 'Kaelen', restingSheet())
+    await spendEverything(t, code, dmCode, monk)
+
+    await t.mutation(api.characters.shortRest, { code, characterId: monk, dmCode })
+
+    // ⚠️ **The three outcomes, asserted together, because any one of them alone passes on a
+    // rest that did the same thing to everything.** A rest that cleared the array would
+    // satisfy the first; one that did nothing would satisfy the third.
+    expect((await rawVitals(t, monk))?.spentUses).toEqual([
+      // Regains one of the three spent — the 2024 normal case, and the reason
+      // `regainOnShortRest` exists at all rather than being rounded down to long-rest-only.
+      { key: 'feat-second-wind', spent: 2 },
+      { key: 'feat-rage', spent: 2 },
+    ])
+  })
+
+  test('it heals nobody and returns no hit dice', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const monk = await makePc(t, code, 'Kaelen', restingSheet())
+    const full = defaultPcSheet().maxHp
+
+    await t.mutation(api.characters.adjustHp, { code, characterId: monk, delta: -6, dmCode })
+    await t.mutation(api.characters.adjustHitDice, { code, characterId: monk, delta: -3, dmCode })
+    await spendEverything(t, code, dmCode, monk)
+
+    await t.mutation(api.characters.shortRest, { code, characterId: monk, dmCode })
+    const rested = await rawVitals(t, monk)
+    expect(rested?.currentHp, 'the short rest healed somebody').toBe(full - 6)
+    expect(rested?.hitDiceRemaining, 'the short rest handed hit dice back').toBe(2)
+
+    // The positive control, and it is the load-bearing half: without it both assertions above
+    // pass on a mutation that does nothing whatsoever.
+    expect(rested?.spentUses).toEqual([
+      { key: 'feat-second-wind', spent: 2 },
+      { key: 'feat-rage', spent: 2 },
+    ])
+
+    // And the long rest, on the same fixture, does all three — so the absence above is this
+    // rest's behaviour rather than a broken write path.
+    await t.mutation(api.characters.longRest, { code, characterId: monk, dmCode })
+    expect(await rawVitals(t, monk)).toMatchObject({
+      currentHp: full,
+      hitDiceRemaining: 5,
+      spentUses: [],
+    })
+  })
+
+  test('a key whose entry the sheet no longer has is left spent rather than cleared', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const monk = await makePc(t, code, 'Kaelen', restingSheet())
+    await t.mutation(api.characters.setUses, {
+      code,
+      characterId: monk,
+      key: 'feat-focus',
+      spent: 4,
+      dmCode,
+    })
+
+    // The entry goes, and the spent count stays behind — the state `setUses`' hand-back
+    // asymmetry exists to let somebody clear.
+    await update(t, code, monk, pcSheet({ feats: [] }), { dmCode })
+    await t.mutation(api.characters.shortRest, { code, characterId: monk, dmCode })
+
+    // ⚠️ **`restores`' fail-conservative direction applied to data rather than to a union.** A
+    // key with no declaration might have been anything: leaving it spent costs one click on a
+    // counter anybody can edit, where clearing it hands out a resource nobody asked for.
+    expect((await rawVitals(t, monk))?.spentUses).toEqual([{ key: 'feat-focus', spent: 4 }])
+  })
+
+  test('it leaves the legacy per-rest array entirely alone', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const human = await makePreset(t, code, 'Aldis', presetSheet({ species: 'human' }))
+
+    // Written directly, as an older deployment would have: everything in `spentPerRest` is a
+    // once-per-**long**-rest species ability by construction, so a short rest has nothing to
+    // say about it and saying nothing is the correct answer rather than an omission.
+    const row = await rawVitals(t, human)
+    await t.run(async (ctx) => {
+      await ctx.db.patch('characterVitals', row!._id, { spentPerRest: ['heroic-inspiration'] })
+    })
+
+    await t.mutation(api.characters.shortRest, { code, characterId: human, dmCode })
+    expect((await rawVitals(t, human))?.spentPerRest).toEqual(['heroic-inspiration'])
+
+    // And the folded view still shows it, so a client reading `spentUses` alone is correct
+    // for both fields.
+    const rows = await t.query(api.characters.vitals, { code, dmCode })
+    expect(rows.find((entry) => entry.characterId === human)).toMatchObject({
+      spentUses: [{ key: 'heroic-inspiration', spent: 1 }],
+    })
+  })
+
+  test('a rest is refused to a seat that is not playing the character, exactly as a long one is', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await presetFixture(t, presetSheet({ species: 'human', level: 3, subclassKey: 'champion' }))
+    const { code, characterId, ben } = fixture
+
+    await expectKind(
+      t.mutation(api.characters.shortRest, { code, characterId, playerId: ben }),
+      'CharacterNotYours',
+    )
+    await expectKind(
+      t.mutation(api.characters.shortRest, { code, characterId }),
+      'CharacterNotYours',
+    )
+  })
+
+  test('a character with nothing spent is a no-op rather than a write', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const monk = await makePc(t, code, 'Kaelen', restingSheet())
+
+    const before = await rawVitals(t, monk)
+    await t.mutation(api.characters.shortRest, { code, characterId: monk, dmCode })
+    const after = await rawVitals(t, monk)
+
+    // Asserted on `_creationTime` staying put *and* the document being unchanged: a patch of
+    // the same value would invalidate the health-bar subscription for every client at the
+    // table every time somebody pressed a button that changed nothing.
+    expect(after).toEqual(before)
+  })
+
+  test('a Milestone 1 character with no vitals row at all survives one', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const legacy = await insertLegacyCharacter(t, code, 'Milestone One')
+    expect(await rawVitals(t, legacy)).toBeNull()
+
+    await t.mutation(api.characters.shortRest, { code, characterId: legacy, dmCode })
+    // ⚠️ And still none, unlike `longRest` which creates one: there is nothing for a short
+    // rest to restore on a character that has spent nothing, so inserting a row would be a
+    // write with no fact in it.
+    expect(await rawVitals(t, legacy)).toBeNull()
   })
 })
 
@@ -5127,8 +6375,11 @@ describe('characters built before the library existed', () => {
     expect(resolved.className).toBe('Fighter')
     expect(resolved.level).toBe(4)
     expect(resolved.hitDice).toEqual({ count: 4, faces: 10 })
-    // The race trait is still there: only the numbers it was borrowing are gone.
-    expect(resolved.feats.map((entry) => entry.id)).toEqual(['race:human'])
+    // The species traits are still there: only the numbers it was borrowing are gone.
+    // All three of the Human's, read off the species so this keeps saying what it means.
+    expect(resolved.feats.map((entry) => entry.name)).toEqual(
+      species('human')!.traits.map((trait) => trait.name),
+    )
     // And it is still a hero to everybody, rather than becoming unreadable.
     expect(rowFor(await t.query(api.characters.list, { code }), thorin).kind).toBe('pc')
   })
@@ -5318,8 +6569,8 @@ describe('normalisation covers every field the sheet has grown', () => {
 
 /** A creature the bestiary really has, so `requireUsableSheet`'s corpus check passes. */
 const BESTIARY_KEY = 'dire-wolf'
-/** 31 hit points at CR 1 — hand-copied from `convex/lib/bestiary/monstersLow.ts`. */
-const BESTIARY_MAX_HP = 31
+/** 22 hit points at CR 1 — hand-copied from `convex/lib/bestiary/monstersLow.ts`. */
+const BESTIARY_MAX_HP = 22
 
 function bestiarySheet(overrides: Partial<BestiarySheet> = {}): BestiarySheet {
   return { kind: 'bestiary', entryKey: BESTIARY_KEY, cr: 1, ...overrides }
@@ -5643,7 +6894,7 @@ describe('characters.updateSheet — monster-ness may not change, in either dire
     // door out of scaling. It stops being scalable and stays a monster.
     const resolved = (await readSheet(t, code, typedIn, { dmCode }))!.sheet as NpcSheet
     await update(t, code, typedIn, resolved, { dmCode })
-    expect((await rawCharacter(t, typedIn))?.sheet).toMatchObject({ kind: 'npc', maxHp: 31 })
+    expect((await rawCharacter(t, typedIn))?.sheet).toMatchObject({ kind: 'npc', maxHp: BESTIARY_MAX_HP })
     await expectKind(
       t.mutation(api.characters.setCreatureCr, { code, dmCode, characterId: typedIn, cr: 4 }),
       'BadInput',
@@ -6917,5 +8168,279 @@ describe('characters.sheet keeps refusing another seat’s hero', () => {
     // their own, and the DM reads either.
     expect((await readSheet(t, code, claimed, { playerId: ana }))?.name).toBe('Thorin')
     expect((await readSheet(t, code, unclaimed, { dmCode }))?.name).toBe('Nobody’s Yet')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Spell slots
+// ---------------------------------------------------------------------------
+
+/**
+ * SPELL SLOTS: COUNTED, SPENT BY A PERSON, AND RETURNED BY THE RIGHT REST.
+ *
+ * ⚠️ **The line this whole feature sits on, stated once here so that the assertions below
+ * read as what they are.** CLAUDE.md's *Rules scope* gives slot counting its entire licence in
+ * one sentence — *counting a slot compares nothing, refuses nothing, and changes no die of
+ * damage* — and every test in this block is about a number a **person** moved. There is
+ * deliberately no test that casting a spell spends a slot, because casting a spell does not
+ * spend a slot: `feed.roll` neither reads nor writes `spentSlots`, and a test asserting
+ * otherwise would be specifying a rule this project has not decided to have.
+ *
+ * The derivation itself — which class has what at which level, against SRD 5.2.1 — is
+ * `lib/slots.test.ts`. What is under test here is the write path, its refusals, and the two
+ * rests.
+ */
+describe('spell slots', () => {
+  const WIZARD_5 = presetSheet({ classKey: 'wizard', subclassKey: 'evocation', level: 5 })
+  const WARLOCK_5 = presetSheet({ classKey: 'warlock', subclassKey: 'fiend', level: 5 })
+  const WIZARD_1 = presetSheet({ classKey: 'wizard', subclassKey: null, level: 1 })
+
+  async function caster(sheet: PresetSheet, name = 'Mireth') {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const characterId = await makePreset(t, code, name, sheet)
+    return { t, code, dmCode, characterId }
+  }
+
+  const spend = (
+    t: Harness,
+    code: string,
+    characterId: Id<'characters'>,
+    level: number,
+    spent: number,
+    who: Actor,
+  ) => t.mutation(api.characters.setSlots, { code, characterId, level, spent, ...who })
+
+  test('a level 5 wizard spends slots and the row records them, ascending by level', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_5)
+
+    // Written out of order deliberately: the stored array is kept canonical by level so a
+    // browser's optimistic value and the server's are the same bytes.
+    await spend(t, code, characterId, 3, 1, { dmCode })
+    await spend(t, code, characterId, 1, 2, { dmCode })
+
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([
+      { level: 1, spent: 2 },
+      { level: 3, spent: 1 },
+    ])
+  })
+
+  test('the count is published on the exact vitals row', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_5)
+    await spend(t, code, characterId, 2, 3, { dmCode })
+
+    const rows = await t.query(api.characters.vitals, { code, dmCode })
+    expect(rows.find((row) => row.characterId === characterId)).toMatchObject({
+      kind: 'exact',
+      spentSlots: [{ level: 2, spent: 3 }],
+    })
+  })
+
+  test('a spend above the maximum is clamped to it rather than refused', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_5)
+
+    // A level 5 wizard has three 2nd-level slots. Asking for nine stores three — the same
+    // stance every other counter on this row takes: the server clamps and answers with what
+    // it actually stored, so a client cannot put a row above its own ceiling.
+    const result = await spend(t, code, characterId, 2, 9, { dmCode })
+    expect(result).toEqual({ spentSlots: [{ level: 2, spent: 3 }] })
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([{ level: 2, spent: 3 }])
+  })
+
+  test('handing every slot back removes the row rather than storing a zero', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_5)
+    await spend(t, code, characterId, 1, 4, { dmCode })
+
+    await spend(t, code, characterId, 1, 0, { dmCode })
+    // Absence is the one spelling of none — two spellings is what every field-by-field
+    // comparison then has to agree about, and `board-smoke.mjs` reports the difference as an
+    // extra element rather than as equality.
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([])
+  })
+
+  test('a spell level outside 1–3 is refused, whatever shape the nonsense takes', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_5)
+
+    for (const level of [0, -1, 4, 9, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expectKind(spend(t, code, characterId, level, 1, { dmCode }), 'BadInput')
+    }
+    expect((await rawVitals(t, characterId))?.spentSlots).toBeUndefined()
+  })
+
+  test('a count that is not a number of slots is refused', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_5)
+
+    for (const spent of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expectKind(spend(t, code, characterId, 1, spent, { dmCode }), 'BadInput')
+    }
+    expect((await rawVitals(t, characterId))?.spentSlots).toBeUndefined()
+  })
+
+  test('a spend is refused at a level the character has none at, and at every level for a non-caster', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_1)
+    const fighter = await makePreset(t, code, 'Bruenor', presetSheet({ level: 5, subclassKey: 'champion' }))
+
+    // A level 1 wizard has 1st-level slots and nothing else.
+    await expectKind(spend(t, code, characterId, 2, 1, { dmCode }), 'BadInput')
+    for (const level of [1, 2, 3]) {
+      await expectKind(spend(t, code, fighter, level, 1, { dmCode }), 'BadInput')
+    }
+
+    // The positive control: without it every refusal above passes on a mutation that refuses
+    // everything.
+    await spend(t, code, characterId, 1, 1, { dmCode })
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([{ level: 1, spent: 1 }])
+  })
+
+  /**
+   * ⚠️ **The asymmetry, and it is `setUses`' asymmetry reached by a different route.** There
+   * the danger was a stale key becoming permanent when a DM changed somebody's species; here
+   * it is a DM dropping a level with slots already spent, which leaves counts the character
+   * can no longer justify. Refusing to undo a state the application was happy to create is the
+   * trap in both cases.
+   */
+  test('handing back is always allowed, even for a level the character has lost', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_5)
+    await spend(t, code, characterId, 3, 2, { dmCode })
+
+    await t.mutation(api.characters.setLevel, { code, dmCode, characterId, level: 1 })
+    // The row survives the level change untouched — read is clamped, storage is not — which is
+    // exactly the state that has to be clearable.
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([{ level: 3, spent: 2 }])
+    // And it no longer draws, because the payload is built from the derivation.
+    const rows = await t.query(api.characters.vitals, { code, dmCode })
+    expect(rows.find((row) => row.characterId === characterId)).toMatchObject({ spentSlots: [] })
+
+    await spend(t, code, characterId, 3, 0, { dmCode })
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([])
+  })
+
+  /**
+   * ⚠️ **THE ORACLE, and the reason the caller is checked before what the character has.** A
+   * stranger poking a monster must be told the same thing a fabricated id gets — an NPC's
+   * existence is itself the spoiler. A refusal reading *"that character has no spell slots"*
+   * would confirm a creature sits behind the id and would leak the shape of its sheet through
+   * the error channel, undoing in one sentence what the payload channel withholds.
+   */
+  test('a monster refuses a spend with the same answer a character that never existed gives', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const ana = await makeSeat(t, code, 'Ana')
+    const goblin = await makeNpc(t, code, dmCode, 'Goblin', npcSheet({ maxHp: 7 }))
+    const doomed = await makeCharacter(t, code, 'Doomed')
+    await t.mutation(api.characters.remove, { code, dmCode, characterId: doomed })
+
+    const forMonster = await refusalOf(spend(t, code, goblin, 1, 1, { playerId: ana }))
+    const forGone = await refusalOf(spend(t, code, doomed, 1, 1, { playerId: ana }))
+    expect(forMonster.kind).toBe('CharacterNotFound')
+    expect(forMonster).toEqual(forGone)
+  })
+
+  /**
+   * ⚠️ **THE ACCEPTANCE CRITERION, AS ONE POSITIVE AND ONE NEGATIVE.** A Warlock takes a
+   * short rest and gets both Pact Magic slots back while the Wizard beside them gets none.
+   * The negative is the load-bearing half: **a short rest that restored the Wizard's slots
+   * would be the application inventing a rule**, and it is the one failure this feature can
+   * have that nobody at the table would report as a bug, because it looks like generosity.
+   *
+   * Both are in one test on one table, deliberately — two tests would each pass against a
+   * short rest that did the same thing to everybody, in opposite directions.
+   */
+  test('a short rest returns a warlock’s pact slots and none of a wizard’s', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const warlock = await makePreset(t, code, 'Vaskir', WARLOCK_5)
+    const wizard = await makePreset(t, code, 'Mireth', WIZARD_5)
+
+    // A level 5 Warlock has two 3rd-level slots and spends both; the wizard spends two of its
+    // four 1st-level ones.
+    await spend(t, code, warlock, 3, 2, { dmCode })
+    await spend(t, code, wizard, 1, 2, { dmCode })
+
+    await t.mutation(api.characters.shortRest, { code, characterId: warlock, dmCode })
+    await t.mutation(api.characters.shortRest, { code, characterId: wizard, dmCode })
+
+    expect((await rawVitals(t, warlock))?.spentSlots, 'the warlock got nothing back').toEqual([])
+    expect(
+      (await rawVitals(t, wizard))?.spentSlots,
+      'the short rest restored a wizard’s slots — the app inventing a rule',
+    ).toEqual([{ level: 1, spent: 2 }])
+  })
+
+  test('a long rest returns both, because it is the longest rest there is', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const warlock = await makePreset(t, code, 'Vaskir', WARLOCK_5)
+    const wizard = await makePreset(t, code, 'Mireth', WIZARD_5)
+
+    await spend(t, code, warlock, 3, 2, { dmCode })
+    await spend(t, code, wizard, 1, 4, { dmCode })
+
+    await t.mutation(api.characters.longRest, { code, characterId: warlock, dmCode })
+    await t.mutation(api.characters.longRest, { code, characterId: wizard, dmCode })
+
+    expect((await rawVitals(t, warlock))?.spentSlots).toEqual([])
+    expect((await rawVitals(t, wizard))?.spentSlots).toEqual([])
+  })
+
+  /**
+   * ⚠️ **The early return in `shortRest` tests both arrays, and this is what the version that
+   * tested only the counted uses got wrong.** A Warlock who has spent slots and nothing else —
+   * which is most Warlocks — would have been returned from before the slot branch was reached,
+   * silently, and the symptom would have been *sometimes it works*.
+   */
+  test('a warlock who has spent nothing but slots still gets them back', async () => {
+    const { t, code, dmCode, characterId } = await caster(WARLOCK_5, 'Vaskir')
+    await spend(t, code, characterId, 3, 2, { dmCode })
+    expect((await rawVitals(t, characterId))?.spentUses).toBeUndefined()
+
+    await t.mutation(api.characters.shortRest, { code, characterId, dmCode })
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([])
+  })
+
+  test('a wizard’s short rest with only slots spent writes nothing at all', async () => {
+    const { t, code, dmCode, characterId } = await caster(WIZARD_5)
+    await spend(t, code, characterId, 1, 2, { dmCode })
+
+    const before = await rawVitals(t, characterId)
+    await t.mutation(api.characters.shortRest, { code, characterId, dmCode })
+
+    // Asserted on the whole document rather than on the one field: patching an unchanged value
+    // would invalidate the health-bar subscription for every client at the table every time
+    // somebody pressed a button that changed nothing.
+    expect(await rawVitals(t, characterId)).toEqual(before)
+  })
+
+  test('the claiming seat may spend, and another seat may not', async () => {
+    const t = convexTest(schema, modules)
+    const { code } = await makeGame(t)
+    const ana = await makeSeat(t, code, 'Ana')
+    const ben = await makeSeat(t, code, 'Ben')
+    const characterId = await makePreset(t, code, 'Mireth', WIZARD_5)
+    await t.mutation(api.characters.claim, { code, playerId: ana, characterId })
+
+    await spend(t, code, characterId, 1, 1, { playerId: ana })
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([{ level: 1, spent: 1 }])
+
+    await expectKind(spend(t, code, characterId, 1, 4, { playerId: ben }), 'CharacterNotYours')
+    await expectKind(spend(t, code, characterId, 1, 4, {}), 'CharacterNotYours')
+    expect((await rawVitals(t, characterId))?.spentSlots).toEqual([{ level: 1, spent: 1 }])
+  })
+
+  /**
+   * A hand-built `pc` sheet stores a class *name* and no class key, so there is nothing to
+   * count against. Asserted rather than left to be discovered, because it is a real gap named
+   * in `spellSlotsOf` rather than an accident — and a reader finding a hand-typed Wizard with
+   * no slots should land on this test and its docblock rather than conclude the feature is
+   * broken.
+   */
+  test('a hand-built character gets no slots, because a class name is not a class key', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const handBuilt = await makePc(t, code, 'Mireth', pcSheet({ className: 'Wizard', level: 5 }))
+
+    await expectKind(spend(t, code, handBuilt, 1, 1, { dmCode }), 'BadInput')
+    const rows = await t.query(api.characters.vitals, { code, dmCode })
+    expect(rows.find((row) => row.characterId === handBuilt)).toMatchObject({ spentSlots: [] })
   })
 })

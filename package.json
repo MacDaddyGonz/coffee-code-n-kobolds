@@ -13,7 +13,7 @@
     "test:watch": "vitest",
     "test:smoke": "node scripts/board-smoke.mjs",
     "prune-games": "node scripts/prune-games.mjs",
-    "relabel-layers": "node scripts/relabel-layers.mjs"
+    "migrate-sheets": "node scripts/migrate-sheets.mjs"
   },
   "dependencies": {
     "@3d-dice/dice-box-threejs": "^0.0.12",

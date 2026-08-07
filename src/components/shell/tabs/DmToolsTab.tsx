@@ -5,6 +5,7 @@ import { MapSetupPanel } from '@/components/board/dm/MapSetupPanel'
 import { ModalImagePanel } from '@/components/board/dm/ModalImagePanel'
 import { MusicPanel } from '@/components/board/dm/MusicPanel'
 import { StartGameButton } from '@/components/board/dm/StartGameButton'
+import { WallTools } from '@/components/board/dm/WallTools'
 import { TabBody, TabPane } from '@/components/shell/TabPane'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { PublicGame } from '@/hooks/useSeat'
@@ -84,6 +85,7 @@ export function DmToolsTab({ code, dmCode, game }: DmToolsTabProps): ReactElemen
         <TabsList className="w-full">
           <TabsTrigger value="map">Map</TabsTrigger>
           <TabsTrigger value="fog">Fog</TabsTrigger>
+          <TabsTrigger value="walls">Walls</TabsTrigger>
           <TabsTrigger value="images">Images</TabsTrigger>
           <TabsTrigger value="music">Music</TabsTrigger>
         </TabsList>
@@ -112,6 +114,21 @@ export function DmToolsTab({ code, dmCode, game }: DmToolsTabProps): ReactElemen
         <TabPane>
           <TabBody className="gap-3">
             <FogTools code={code} dmCode={dmCode} />
+          </TabBody>
+        </TabPane>
+      </TabsContent>
+
+      {/* ⚠️ **Its own sub-tab beside Fog rather than a second card inside it**, which is the
+          only arrangement that stays honest about what the two features are. They look alike
+          — the DM traces something on the map and the party is affected — and they are
+          opposites: fog decides what a client is *sent* and a wall decides where a coin may
+          be *dragged*. A wall panel sitting under a Fog heading is one glance away from a DM
+          planning an ambush behind a barrier, which is the wrong tool and is exactly the
+          mistake `WallTools`' last paragraph exists to prevent. */}
+      <TabsContent value="walls" className="min-h-0">
+        <TabPane>
+          <TabBody className="gap-3">
+            <WallTools code={code} dmCode={dmCode} />
           </TabBody>
         </TabPane>
       </TabsContent>

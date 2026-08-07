@@ -87,12 +87,9 @@
 // this script has been asked about at once, and sections 31 to 35 are them.** Five distinct
 // shapes, and none of them is logic the suite already covers:
 //
-//   - **A three-member union, as an argument validator *and* as a projected field.** The
-//     stored union is one member wider than the canonical one while the GM layer's rename
-//     from `dm` to `gm` is in flight, so `board:addToken`'s narrow `tokenLayerValidator` is
-//     the *only* thing stopping a legacy value being created from here forward. Whether
-//     `'background'` and `'gm'` round-trip as themselves, and whether `'dm'` is refused at
-//     the function boundary, are three facts about Convex's own value validation and nothing
+//   - **A three-member union, as an argument validator *and* as a projected field.** Whether
+//     `'background'` and `'gm'` round-trip as themselves, and whether a non-member is refused
+//     at the function boundary, are facts about Convex's own value validation and nothing
 //     else — the local suite reaches the schema directly and so cannot be asked any of them.
 //   - **Four fresh float64s per fog rectangle, through a table that is new.** Floats through
 //     a real deployment are this script's oldest speciality, and the interesting ones here
@@ -178,7 +175,7 @@ const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
 
 /**
- * Six catalogue entries, copied out of `convex/lib/rules.ts` word for word.
+ * Seven catalogue entries, copied out of `convex/lib/rules.ts` word for word.
  *
  * Restated rather than imported for the reason `snapToGrid` below is restated: this
  * is plain .mjs on purpose, so it cannot import a .ts module, and a script that
@@ -215,18 +212,32 @@ const CATALOGUE = {
     level: 3,
     category: 'action',
   },
-  secondWind: {
-    key: 'second-wind',
-    name: 'Second Wind',
-    text: 'A bonus action, once per rest, to catch your breath and regain hit points. Add your fighter level to the die.',
-    roll: '1d10',
+  // ⚠️ **Re-copied when `FEATS` was rebuilt from the 2024 SRD.** These two used to be
+  // `second-wind` and `action-surge`, which were never feats at all — they are class
+  // features and left the catalogue with six others. A stale copy would fail this
+  // script over a change that was correct, which is the trap the greatclub comment
+  // below already records.
+  //
+  // ⚠️ **One shape of round trip went with them and is worth naming rather than
+  // quietly losing: a `level: null` entry that carries a roll and NO to-hit.**
+  // `second-wind` was that shape, and there is no replacement in `FEATS`, because not
+  // one of the ten SRD feats reachable at levels 1–5 rolls dice — every one of them
+  // grants a proficiency, a bonus, or permission. `npc-fire-breath` is the same shape
+  // and could be added here if that coverage is ever wanted back; it is left out
+  // because this fixture is a sheet somebody could plausibly have, and a hero does not
+  // have Fire Breath.
+  alert: {
+    key: 'alert',
+    name: 'Alert',
+    text: 'Origin feat. You add your proficiency bonus to initiative, and once the order is rolled you may swap your place in it with a willing ally\'s — neither of you being incapacitated at the time.',
+    roll: null,
     level: null,
-    category: 'action',
+    category: 'passive',
   },
-  actionSurge: {
-    key: 'action-surge',
-    name: 'Action Surge',
-    text: 'Once per rest, take one extra action on your turn — a whole second action, not a bonus action.',
+  savageAttacker: {
+    key: 'savage-attacker',
+    name: 'Savage Attacker',
+    text: 'Origin feat. Once a turn, when you hit with a weapon, reroll the damage dice and keep whichever total you prefer.',
     roll: null,
     level: null,
     category: 'passive',
@@ -308,6 +319,16 @@ function customEntry(fields) {
  * round trip rather than being filled in. Neither half means anything without the
  * other: the first passes on a deployment that materialised a category for everything,
  * the second on one that discarded every new field it was sent.
+ *
+ * ⚠️ **THE SEVENTH OUTING OF THE FIELD-BY-FIELD REBUILD TRAP, AND ITS LARGEST SURFACE.**
+ * The 2024 conversion adds five optional fields to this sheet, two to an entry, two to a
+ * creature and two to a preset — and CLAUDE.md records that **only `npm run test:smoke`
+ * has ever caught this trap**, four times over. So the pairing above is repeated for every
+ * one of them: this sheet carries all five, `BARE_PC_SHEET` below carries none, and
+ * `feat-runeblade` carries a mastery and a use count while `feat-aether-bolt` carries
+ * neither. The presence half fails as `present on one side only`; the absence half is
+ * asserted on the KEY, because a deployment that materialised an empty array for every
+ * missing list would satisfy the first perfectly.
  */
 const PC_NAME = 'Sköll Emberkin 🎲'
 const PC_SHEET = {
@@ -319,9 +340,21 @@ const PC_SHEET = {
   armourClass: 18,
   maxHp: 84,
   hitDice: { count: 7, faces: 10 },
+  // THE 2024 FIVE. `spellcastingAbility` is the only one of them the sheet *derives*
+  // anything from — the spell save DC and the spell attack bonus are pure functions of it
+  // and neither is stored, which is the half of the acceptance criterion a round trip can
+  // check: if either turned up on the way back, something is storing it.
+  spellcastingAbility: 'cha',
+  // Three lists rather than one, so a rebuild that named two of the three fails on the
+  // third. Non-ASCII in one of them on purpose — a damage type is free text and the SRD's
+  // own phrases run long.
+  resistances: ['fire', 'cold'],
+  immunities: ['poison'],
+  vulnerabilities: ['bludgeoning from nonmagical attacks — 🜁'],
+  senses: 'Darkvision 60 ft., Blindsight 10 ft.',
   feats: [
-    entryFrom(CATALOGUE.secondWind, 'feat-second-wind'),
-    entryFrom(CATALOGUE.actionSurge, 'feat-action-surge'),
+    entryFrom(CATALOGUE.alert, 'feat-alert'),
+    entryFrom(CATALOGUE.savageAttacker, 'feat-savage-attacker'),
     // THE NEGATIVE. Neither new field, exactly as every entry written before
     // Milestone 6 is, and the one this script asserts comes back with neither key
     // present. See `LEGACY_FEAT_ID` and the check in section 6.
@@ -344,8 +377,24 @@ const PC_SHEET = {
       catalogueKey: null,
       category: 'weapon',
       toHit: '1d20+STR+PROF',
+      // The mastery and the use count, on the one entry that already carries every other
+      // new field. `graze` rather than `push`, `slow` or `topple` — the three the
+      // movement-detriment exclusion names are asserted by `lib/mastery.test.ts`, and what
+      // this round trip is about is a *literal inside a union inside an optional field*
+      // surviving a real deployment.
+      mastery: 'graze',
+      // The 2024 normal case, spelled out: three uses, back on a long rest, one of them
+      // handed back by a short one. It is a nested object inside an optional field inside
+      // an array of objects — one level deeper than anything on this sheet before it.
+      uses: { max: 3, recharge: 'long', regainOnShortRest: 1 },
     },
     // The hand-written action: one roll, no to-hit, and it simply goes off.
+    //
+    // ⚠️ **A use count and NO mastery**, which is the pair that stops the two fields being
+    // asserted as one. Only a weapon carries a mastery — `entriesProblem` refuses one
+    // anywhere else — but any category may be limited, so an entry with `uses` and without
+    // `mastery` is the shape that proves the two travel independently. And its `uses` has
+    // no `regainOnShortRest`, so absence is checked one level down as well.
     {
       id: 'feat-verse-of-mending',
       name: 'Verse of Mending',
@@ -354,6 +403,7 @@ const PC_SHEET = {
       level: null,
       catalogueKey: null,
       category: 'action',
+      uses: { max: 2, recharge: 'short' },
     },
     // The hand-written passive: declared, not rolled.
     {
@@ -372,6 +422,60 @@ const PC_SHEET = {
     entryFrom(CATALOGUE.fireball, 'spell-fireball'),
   ],
 }
+
+/**
+ * THE NEGATIVE HALF OF THE PAIR: the same hero shaped exactly as every `pc` sheet in every
+ * existing game is — five fields poorer, and none of them spelled at all.
+ *
+ * ⚠️ **Built by naming what it keeps rather than by deleting from `PC_SHEET`**, and that is
+ * the whole reason it is a separate literal. A `const { senses, ...rest } = PC_SHEET` would
+ * drop the five *this list knows about today*, so a sixth field added to `PC_SHEET` next
+ * milestone would silently ride into the negative fixture and the absence check would start
+ * asserting nothing. Written out, a sixth field has to be *chosen* into this one.
+ *
+ * Its feats are the two that carry neither `mastery` nor `uses`, for the same reason: a
+ * legacy sheet is legacy all the way down.
+ */
+const BARE_PC_NAME = 'Marrow Quillfeather'
+const BARE_PC_SHEET = {
+  kind: 'pc',
+  level: 3,
+  className: 'Hedge Warden',
+  abilities: { str: 11, dex: 16, con: 13, int: 14, wis: 15, cha: 9 },
+  saveProficiencies: { str: false, dex: true, con: false, int: true, wis: false, cha: false },
+  armourClass: 15,
+  maxHp: 22,
+  hitDice: { count: 3, faces: 8 },
+  feats: PC_SHEET.feats.filter((each) =>
+    ['feat-aether-bolt', 'feat-stone-stance'].includes(each.id),
+  ),
+  spells: [],
+}
+
+/** Every field the 2024 conversion added to a `pc` sheet, for the absence half of the pair. */
+const NEW_PC_SHEET_FIELDS = [
+  'spellcastingAbility',
+  'resistances',
+  'immunities',
+  'vulnerabilities',
+  'senses',
+]
+
+/** The same for an entry, and for a creature. */
+const NEW_ENTRY_FIELDS = ['mastery', 'uses']
+const NEW_NPC_SHEET_FIELDS = ['abilities', 'saveProficiencies']
+/**
+ * And for a preset, which is now **one** field rather than two.
+ *
+ * ⚠️ **`species` was here and is not, and that is the migration landing rather than a
+ * field being forgotten.** It was the new half of the `race` → `species` rename, optional
+ * while both were live, so a deployment that materialised it early would have made
+ * `speciesKeyOf` answer from the new field for every character in every game before the
+ * backfill had run — exactly the absence this list exists to check. It is required now, so
+ * there is no absence left to assert and asserting one would fail on every preset.
+ * `lineageKey` is the sixth pick and is still genuinely optional.
+ */
+const NEW_PRESET_FIELDS = ['lineageKey']
 
 /**
  * The NPC the acceptance test is about. 271 and 137 are chosen to be searchable:
@@ -394,6 +498,16 @@ const NPC_SHEET = {
     entryFrom(CATALOGUE.multiattack, 'npc-multiattack'),
   ],
   notes: 'Waits under the third arch. Surfaces on a failed Perception check. 🐉',
+  // ⚠️ **AN ADDITION AND NOT A REPLACEMENT.** A 2024 stat block prints six scores *and* an
+  // initiative modifier, an attack bonus and a passive perception, and this creature carries
+  // all of them at once on purpose — the round trip below is what would notice if
+  // `normaliseSheet` had been "simplified" to derive the four from the six. `initiativeBonus`
+  // is negative and would be +1 if it were derived from this Dexterity, which is what makes
+  // that a check rather than a coincidence.
+  abilities: { str: 19, dex: 12, con: 17, int: 6, wis: 11, cha: 8 },
+  // Mixed on purpose, so a run of six booleans cannot come back collapsed into one — the
+  // same reason `saveProficiencies` on the hero above is mixed.
+  saveProficiencies: { str: true, dex: false, con: true, int: false, wis: true, cha: false },
 }
 
 /**
@@ -409,9 +523,14 @@ const NPC_SHEET = {
  * one.
  *
  * `featCount` is the length of the library's own feat list. Every resolved sheet
- * carries one more than that, because a race always contributes its trait — see the
- * `+ 1` at each use, which is `applyRace` being asserted rather than assumed.
+ * carries one more than that, because a species always contributes its traits — see the
+ * ⚠️ **`+ ELF_TRAIT_ENTRIES` at each use, and it used to be `+ 1`.** That one was the single
+ * trait a Milestone 4 race contributed — a Halfling's Lucky, an Elf's Fey Ancestry — and a
+ * 2024 species has up to five. The Elf has five, so the sum is the library's own feat list
+ * plus every trait the species appends, which is `applySpecies` being asserted rather than
+ * assumed. If a species ever grants a feat as well as its traits this stops being one number.
  */
+const ELF_TRAIT_ENTRIES = 5
 const ROGUE_SKILLS = {
   athletics: false,
   acrobatics: true,
@@ -419,50 +538,99 @@ const ROGUE_SKILLS = {
   stealth: true,
   arcana: false,
   investigation: true,
+  history: false,
+  nature: false,
+  religion: false,
   animalHandling: false,
   insight: false,
   perception: true,
+  medicine: false,
+  survival: false,
   deception: true,
   intimidation: false,
   performance: false,
-  persuasion: true,
+  persuasion: false,
 }
 const ROGUE = {
   base: {
-    abilities: { str: 8, dex: 15, con: 14, int: 13, wis: 12, cha: 10 },
+    /**
+     * ⚠️ **The standard array WITH THE BACKGROUND ALREADY IN IT**, which is the sharpest
+     * single consequence of the 2024 conversion visible from outside.
+     *
+     * No 2024 species touches an ability score — the spread comes from a *background*, which
+     * requirements.md excludes and which stays excluded, so its numbers are absorbed into the
+     * premade sheet. The Rogue is a Criminal: +2 Dexterity and +1 Constitution on 15/14, giving
+     * 17 and 15 here.
+     *
+     * So the Elf check further down asserts these numbers arrive **unchanged**, where it used
+     * to assert `base.dex + 2`. That reads as a weaker test and is the stronger one: the
+     * library's number reaching the sheet untouched is *"allocated without considering
+     * species\"* having become true by construction rather than by discipline.
+     */
+    abilities: { str: 8, dex: 17, con: 15, int: 13, wis: 12, cha: 10 },
     armourClass: 14,
     maxHp: 10,
     hitDice: { count: 1, faces: 8 },
-    featCount: 5,
+    featCount: 8,
     /**
      * The Rogue's first weapon, copied by hand out of `convex/lib/library/rogue.ts`.
      *
-     * ⚠️ **This is the only thing that proves the library's new field survives the two
-     * copies resolution makes of every entry** — `withId`'s spread in lib/resolve.ts,
-     * and the race overlay's rebuild of the feat list on top of it. A `toHit` dropped
-     * by either would leave a weapon on a hero's sheet that announces an attack and
-     * has nothing to roll for it, and no other check in this script would notice: the
-     * feat *count* would still be right.
+     * ⚠️ **This is the only thing that proves the library's fields survive the two copies
+     * resolution makes of every entry** — `withId`'s spread in lib/resolve.ts, and the species
+     * overlay rebuilding the feat list on top of it. A `toHit` dropped by either would leave a
+     * weapon on a sheet that announces an attack and has nothing to roll for it, and no other
+     * check here would notice: the feat *count* would still be right.
      *
-     * `1d20+DEX+PROF` and not `1d20+STR+PROF`, which is the detail that makes it worth
-     * copying rather than deriving. A rapier is a finesse weapon aimed with Dexterity,
-     * and `DEX` is the one modifier token containing a `D` — the token `normaliseRoll`
-     * has already destroyed once.
+     * `1d20+DEX+PROF` and not `1d20+STR+PROF`, which is the detail that makes it worth copying
+     * rather than deriving: a shortsword is a finesse weapon aimed with Dexterity, and `DEX` is
+     * the one modifier token containing a `D` — the token `normaliseRoll` has already destroyed
+     * once.
+     *
+     * ⚠️ **`mastery` is carried too, and it is a WORD.** `vex` is on the weapon because the SRD
+     * prints it there; nothing in `convex/` reads it, `masteryGuard.test.ts` is what makes that
+     * a promise rather than an intention, and this asserts it survives the same two copies.
      */
-    weapon: { name: 'Rapier', roll: '1d8+DEX', toHit: '1d20+DEX+PROF' },
+    weapon: { name: 'Shortsword', roll: '1d6+DEX', toHit: '1d20+DEX+PROF', mastery: 'vex' },
   },
-  thief2: { maxHp: 17, hitDice: { count: 2, faces: 8 }, featCount: 7 },
-  thief3: { maxHp: 24, hitDice: { count: 3, faces: 8 }, featCount: 7 },
-  thief4: { maxHp: 31, hitDice: { count: 4, faces: 8 }, featCount: 8 },
+  /**
+   * ⚠️ **Levels 1 and 2 are the shared base now, and 3 to 5 are the one archetype.** The old
+   * shape was one base sheet plus two paths covering 2 to 5, because 2014 chose a subclass at
+   * level 2. The SRD is unanimous that 2024 chooses at 3, so `thief2` below is a *base* sheet
+   * with no archetype in it at all — which is exactly what the 'held the level 1 sheet until
+   * one was chosen\" check downstream is about.
+   */
+  base2: { maxHp: 17, hitDice: { count: 2, faces: 8 }, featCount: 9 },
+  thief3: { maxHp: 24, hitDice: { count: 3, faces: 8 }, featCount: 12 },
+  thief4: { maxHp: 31, hitDice: { count: 4, faces: 8 }, featCount: 13 },
+  thief5: { maxHp: 38, hitDice: { count: 5, faces: 8 }, featCount: 15 },
 }
 const FIGHTER = {
   base: { maxHp: 12, hitDice: { count: 1, faces: 10 } },
 }
 
-/** The three races that move a number, and the only three. */
-const ELF_DEX_BONUS = 2
+/**
+ * The species that move a number, and what they move.
+ *
+ * ⚠️ **`ELF_DEX_BONUS` is gone, and its absence is the sharpest single statement of the 2024
+ * conversion.** No species grants an ability score increase any more — the spread comes from a
+ * *background*, which stays excluded and whose numbers are absorbed into the premade sheet. The
+ * assertion that used to read `base.dex + 2` now reads `base.dex`, which looks like a weaker
+ * test and is the stronger one: it says the library's number reaches the sheet **untouched**,
+ * which is what "allocated without considering species" became true *by construction* rather
+ * than by discipline.
+ *
+ * The Goliath moved 45 (35 + a 10 bonus) and now moves 35 (an absolute base). Same species,
+ * same reason it exists, different arithmetic — `speedBonus` became `baseSpeed` so that a
+ * number the SRD prints is stored rather than computed.
+ *
+ * ⚠️ **And the assertion below only started meaning anything once `SPEED_FEET` moved to
+ * 30.** While that constant said 35 the Goliath's printed 35 was *also* the default every
+ * other character got, so a `resolvePreset` that ignored `baseSpeed` entirely would have
+ * satisfied this check. The Goliath is now the one species above the default, which is what
+ * makes reading 35 here evidence that the species layer ran.
+ */
 const DWARF_HP_PER_LEVEL = 1
-const GOLIATH_SPEED = 45
+const GOLIATH_SPEED = 35
 
 /** The DM's thumb on the scale, in the one field this section overrides. */
 const DM_ARMOUR_CLASS = 21
@@ -523,60 +691,80 @@ const WOLF = {
   key: 'dire-wolf',
   entryName: 'Dire Wolf',
   libraryCr: 1,
-  blurb: 'Horse-sized wolf that hunts in twos and does not tire.',
+  blurb: 'Beast · Darts in, hits, and is gone.',
   loot: 'Nothing carried and nothing hidden. A beast owns only itself.',
+  /**
+   * ⚠️ **Every number below moved with the 2024 corpus, and the fixture is the point.**
+   * This is an independent hand-written copy of what the library says, so when the corpus
+   * was re-transcribed from the SRD and `benchmarks.ts` re-fitted to it, this is what said
+   * so — against the real deployment, field by field, rather than by agreeing with itself.
+   *
+   * The Dire Wolf is CR 1 in both editions and is a different animal on paper: 22 hit points
+   * rather than 31, AC 14 rather than 12, and one `1d10+3` Bite where the old hand-written
+   * entry had `2d6+3`.
+   */
   /** The entry as written. CR 1 → CR 1 is the exact identity and is not short-circuited. */
   atCr1: {
-    maxHp: 31,
-    armourClass: 12,
-    attackBonus: 4,
-    initiativeBonus: 2,
-    passivePerception: 13,
-    speed: 50,
-    skills: { perception: 3, stealth: 4 },
-    damage: '2d6+3',
-    toHit: '1d20+4',
-    // Every attack in the corpus is a weapon by construction — the entry separates
-    // `attacks` from `abilities`, and an attack is the thing that has to land before its
-    // damage applies. Asserted rather than assumed, because it is read off the structure
-    // rather than declared on a hundred and fifty-nine hand-written attacks.
-    category: 'weapon',
-  },
-  /** 31 × 70/26 = 83.46… → 83, and +2 on every d20 column. Damage 16/8 = 2.0× exactly. */
-  atCr4: {
-    maxHp: 83,
+    maxHp: 22,
     armourClass: 14,
-    attackBonus: 6,
-    initiativeBonus: 4,
+    attackBonus: 5,
+    initiativeBonus: 2,
     passivePerception: 15,
     speed: 50,
-    skills: { perception: 5, stealth: 6 },
-    damage: '4d6+6',
+    skills: { perception: 5, stealth: 4 },
+    damage: '1d10+3',
+    toHit: '1d20+5',
+    category: 'weapon',
+  },
+
+  /** Up three ratings. Hit points and damage scale on ratios, the d20 columns on deltas. */
+  atCr4: {
+    maxHp: 62,
+    armourClass: 16,
+    attackBonus: 6,
+    initiativeBonus: 3,
+    passivePerception: 16,
+    speed: 50,
+    skills: { perception: 6, stealth: 5 },
+    damage: '2d10+6',
     toHit: '1d20+6',
     category: 'weapon',
   },
-  /** 31 × 120/26 = 143.07… → 143, and +3 on every d20 column. Damage 25/8 = 3.125×. */
+
+  /** The ceiling. `scaleRoll` keeps the faces and moves the count and the modifier. */
   atCr6: {
-    maxHp: 143,
-    armourClass: 15,
+    maxHp: 94,
+    armourClass: 17,
     attackBonus: 7,
-    initiativeBonus: 5,
-    passivePerception: 16,
+    initiativeBonus: 4,
+    passivePerception: 17,
     speed: 50,
-    skills: { perception: 6, stealth: 7 },
-    damage: '6d6+10',
+    skills: { perception: 7, stealth: 6 },
+    damage: '3d10+12',
     toHit: '1d20+7',
     category: 'weapon',
   },
+
   /** The composed opening of the resolved Bite at each rating, from `attackText`. */
-  biteAtCr1: 'Melee. 2d6+3 piercing damage.',
-  biteAtCr6: 'Melee. 6d6+10 piercing damage.',
+  biteAtCr1: 'Melee. 1d10+3 piercing damage.',
+  biteAtCr6: 'Melee. 3d10+12 piercing damage.',
 }
+
+/**
+ * How many creatures are on the DM's shelf.
+ *
+ * ⚠️ **Hand-written here rather than counted from the corpus, which is the whole point of
+ * this file.** `bestiary.test.ts` asserts the same number from the inside; this asserts that
+ * the *deployment* sends that many rows, so a query that silently truncated — a `take` past
+ * its bound, a filter that dropped a category — would be caught by a number a person typed
+ * rather than by the corpus agreeing with itself.
+ */
+const BESTIARY_ENTRIES = 283
 
 /** The creature's own name in the game, which is neither the entry's nor the token's. */
 const WOLF_CHARACTER_NAME = 'Wyrmshadow at the Ford 🐺'
-/** 89 of 143. Distinctive digits, for the reason 271 and 137 are. */
-const WOLF_CURRENT_HP = 89
+/** 59 of 94, the CR 6 maximum. Distinctive digits, for the reason 271 and 137 are. */
+const WOLF_CURRENT_HP = 59
 
 /**
  * A social NPC with **no combat block at all** — twenty-two of the thirty are like this
@@ -762,17 +950,31 @@ const ROLL_WEAPON_TEXT =
 const ROLL_PASSIVE_NAME = 'Ninth-Arch Stance'
 const ROLL_CANTRIP_NAME = 'Reading of the Coil'
 
-/** All thirteen, so the sheet is a realistic one. Arcana stays false — see `ROLL_HERO_ABILITIES`. */
+/**
+ * All EIGHTEEN, so the sheet is a realistic one. Arcana stays false — see `ROLL_HERO_ABILITIES`.
+ *
+ * ⚠️ **This was thirteen, and the narrowing is what found it.** `skillProficienciesValidator`
+ * held thirteen required booleans and five optional ones while the 2024 skills were being
+ * back-filled; once the sweep had run and all eighteen became required, a thirteen-key object
+ * is a sheet the deployment refuses outright. The local suite could not see it — it calls the
+ * typed API, which fills the object in — and this script sends the literal over the wire.
+ * Sixth outing of the field-by-field trap, by the route the header describes.
+ */
 const ROLL_HERO_SKILLS = {
   athletics: true,
   acrobatics: false,
   sleightOfHand: false,
   stealth: false,
   arcana: false,
+  history: false,
   investigation: false,
+  nature: false,
+  religion: false,
   animalHandling: false,
   insight: false,
+  medicine: false,
   perception: true,
+  survival: false,
   deception: false,
   intimidation: false,
   performance: true,
@@ -1645,16 +1847,52 @@ async function main() {
     uploads.push(imageId)
     check('files:generateUploadUrl accepted a POST and returned a storageId', Boolean(imageId))
 
+    // A SECOND BLOB FOR THE SAME ROW, which is what makes this the interesting upload in the
+    // file rather than a repeat of the one above. `scenes.thumbnailId` is a *new optional
+    // column on a populated table*, and that is the shape of change this script exists for:
+    // convex-test does not apply Convex's own value validation, so an insert that spells the
+    // field with an explicit `undefined` rather than omitting it passes the whole suite and
+    // is a different write against a real deployment.
+    const thumbnailId = await uploadPng(client, code, dmCode)
+    uploads.push(thumbnailId)
+
     const scene = await client.mutation('scenes:create', {
       code,
       dmCode,
       name: 'Admittance',
       imageId,
+      thumbnailId,
       imageWidth: MAP_WIDTH,
       imageHeight: MAP_HEIGHT,
     })
     sceneId = scene.sceneId
     check('scenes:create stored a scene', Boolean(sceneId))
+
+    // 1b. THE PROJECTION SPLIT, ASSERTED AS A PAIR AGAINST THE REAL DEPLOYMENT. `scenes:list`
+    // is DM-only and carries a signed URL for the derivative; `scenes:active` is ungated and
+    // must carry no trace of it, because every player at the table subscribes to it. Either
+    // half alone proves nothing — a payload with no thumbnail anywhere would satisfy the
+    // second, so the first is the positive control for it.
+    const dmScenes = await client.query('scenes:list', { code, dmCode })
+    const listedScene = dmScenes.find((row) => row._id === sceneId)
+    const tableScene = await client.query('scenes:active', { code })
+    check(
+      'scenes:list gave the DM a thumbnail URL, and scenes:active gave the table none',
+      listedScene &&
+        typeof listedScene.thumbnailUrl === 'string' &&
+        listedScene.thumbnailUrl !== listedScene.imageUrl &&
+        tableScene !== null &&
+        !Object.prototype.hasOwnProperty.call(tableScene, 'thumbnailUrl'),
+      listedScene
+        ? `DM keys ${Object.keys(listedScene).length}, table keys ${tableScene ? Object.keys(tableScene).length : 0}`
+        : 'the DM’s list did not contain the scene it just made',
+    )
+    // AND THE OTHER HALF OF `files.discard`'s NEW COLUMN. `sceneReferencesThumbnail` is the
+    // predicate `storageGuard.test.ts` had to be rewritten per-field to force into existence;
+    // without it this call would delete the bytes of a picture the picker is drawing.
+    await refuses('files:discard refused a blob a scene holds as its thumbnail', () =>
+      client.mutation('files:discard', { code, dmCode, imageIds: [thumbnailId] }),
+    )
 
     // 2. Non-integer floats through the real value validation. 37.5 and −12.25
     // are exact in binary; a deployment that mangled them would break every snap.
@@ -1863,6 +2101,90 @@ async function main() {
       `${storedFeats.length} feats, categories ${JSON.stringify(storedFeats.map((entry) => entry.category ?? null))}`,
     )
 
+    // ⚠️ **THE 2024 PAIRS, AND THE REASON THEY ARE ON THIS COMMIT RATHER THAN AFTER THE
+    // CONTENT.** `firstDifference` above already names a field the rebuild dropped — that is
+    // the presence half, and it fires for all five sheet fields and both entry fields for
+    // free. What it cannot do is tell a deployment that stores an omitted optional field as
+    // omitted from one that materialises it, and a materialised `resistances: []` or
+    // `uses: { max: 0 }` would look exactly like a correct round trip everywhere else in this
+    // script. So the absence half is asserted on the KEY, against fixtures built to carry
+    // none of them.
+    const legacyEntryClean =
+      legacyFeat && NEW_ENTRY_FIELDS.every((field) => !(field in legacyFeat))
+    check(
+      'an entry sent with neither a mastery nor a use count came back with neither key',
+      legacyEntryClean,
+      legacyFeat ? `keys: ${Object.keys(legacyFeat).sort().join(', ')}` : 'no legacy feat came back',
+    )
+    const mendingFeat = storedFeats.find((entry) => entry.id === 'feat-verse-of-mending')
+    check(
+      'its two siblings came back with exactly what each was sent, one field apart',
+      weaponFeat &&
+        weaponFeat.mastery === 'graze' &&
+        weaponFeat.uses &&
+        weaponFeat.uses.max === 3 &&
+        weaponFeat.uses.recharge === 'long' &&
+        weaponFeat.uses.regainOnShortRest === 1 &&
+        // ⚠️ The pair that stops the two fields being asserted as one: only a weapon carries
+        // a mastery, but any category may be limited — so this one has `uses` and no
+        // `mastery`, and its `uses` has no `regainOnShortRest`, which checks absence one
+        // level deeper than any other assertion in this script.
+        mendingFeat &&
+        !('mastery' in mendingFeat) &&
+        mendingFeat.uses &&
+        mendingFeat.uses.max === 2 &&
+        mendingFeat.uses.recharge === 'short' &&
+        !('regainOnShortRest' in mendingFeat.uses),
+      weaponFeat
+        ? `positive control — got mastery ${JSON.stringify(weaponFeat.mastery)} and uses ${JSON.stringify(weaponFeat.uses)}`
+        : 'no weapon feat came back',
+    )
+
+    // The sheet-level five, and the negative built by naming what it keeps rather than by
+    // deleting from `PC_SHEET` — see `BARE_PC_SHEET`.
+    const barePc = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: BARE_PC_NAME,
+      sheet: BARE_PC_SHEET,
+    })
+    createdCharacters.push(barePc.characterId)
+    const bareBack = await client.query('characters:sheet', {
+      code,
+      dmCode,
+      characterId: barePc.characterId,
+    })
+    const bareDrift = bareBack
+      ? firstDifference(BARE_PC_SHEET, bareBack.sheet, 'bareSheet')
+      : 'no sheet came back'
+    check(
+      'a hero sent without any of the 2024 five came back without any of them',
+      bareBack &&
+        bareDrift === null &&
+        NEW_PC_SHEET_FIELDS.every((field) => !(field in bareBack.sheet)),
+      bareDrift ?? `keys: ${Object.keys(bareBack.sheet).sort().join(', ')}`,
+    )
+    check(
+      'and its sibling carried all five across, lists and prose alike',
+      storedPc &&
+        storedPc.sheet.spellcastingAbility === 'cha' &&
+        Array.isArray(storedPc.sheet.resistances) &&
+        storedPc.sheet.resistances.length === 2 &&
+        storedPc.sheet.immunities.length === 1 &&
+        // Non-ASCII in a damage label, because a list of free text is exactly where the
+        // UTF-16 failure this whole script exists for would next appear.
+        storedPc.sheet.vulnerabilities[0].includes('🜁') &&
+        storedPc.sheet.senses === PC_SHEET.senses &&
+        // ⚠️ **And NOTHING derived came back stored.** The acceptance criterion is that a
+        // caster's sheet *prints* a spell save DC and a spell attack bonus and that neither
+        // is written down; this is the half a round trip can check.
+        !('spellSaveDc' in storedPc.sheet) &&
+        !('spellAttackBonus' in storedPc.sheet),
+      storedPc
+        ? `positive control — without it the check above passes on a deployment that discarded everything; senses ${JSON.stringify(storedPc.sheet.senses)}`
+        : 'no sheet came back',
+    )
+
     // 7. The forty-entry cap, which is the largest thing this application asks a
     // document to hold. Convex has opinions about document size and nesting depth
     // that convex-test does not, and eighty objects inside a union inside an
@@ -2041,6 +2363,36 @@ async function main() {
         !('max' in npcVitals),
       npcVitals ? `keys: ${Object.keys(npcVitals).sort().join(', ')}` : 'no row for the NPC',
     )
+    // ⚠️ **THE BAND VARIANT GAINED NOTHING, AND SIX NEW FIELDS AT ONCE IS THE PRESSURE THAT
+    // ASSERTION EXISTS AGAINST.** Three of the six are not numbers at all —
+    // `heroicInspiration` is a boolean, and `spentUses` and `spentSlots` are arrays — so
+    // `publicVitalsValidator`'s *no bare float64 on the band member* guarantee, which
+    // `vitals.test.ts` pins, does not reach any of them. This does, against a real
+    // deployment's serialisation.
+    const bandForbidden = [
+      'temporaryHp',
+      'deathSaveSuccesses',
+      'deathSaveFailures',
+      'heroicInspiration',
+      'spentUses',
+      'spentSlots',
+    ]
+    const dmExactRow = (await client.query('characters:vitals', { code, dmCode })).find(
+      (row) => row.characterId === npc.characterId,
+    )
+    check(
+      'none of the five 2024 state fields reached a player’s band row, and all five reached the DM’s',
+      npcVitals &&
+        bandForbidden.every((field) => !(field in npcVitals)) &&
+        // The positive control, and it is the load-bearing half: without it this passes on a
+        // deployment that stopped sending any of them to anybody, which would also be wrong.
+        dmExactRow &&
+        dmExactRow.kind === 'exact' &&
+        bandForbidden.every((field) => field in dmExactRow),
+      npcVitals
+        ? `band keys: ${Object.keys(npcVitals).sort().join(', ')} — positive control included`
+        : 'no row for the NPC',
+    )
 
     const playerList = await client.query('characters:list', { code })
     const playerNpcSheet = await client.query('characters:sheet', {
@@ -2082,11 +2434,23 @@ async function main() {
     // 11. And the count, which is the leak that is easy to miss: a band for every
     // prepared monster tells a player how many are waiting even when it tells them
     // nothing else.
+    // ⚠️ **Written out rather than spread from `NPC_SHEET`, and it is the negative half of
+    // the creature pair.** This is a creature shaped exactly as every `kind: 'npc'` sheet in
+    // every existing game is — no ability scores and no save column — so the absence check
+    // below has something real to be about. A spread of `NPC_SHEET` would inherit both fields
+    // and the pair would be two positives.
     const hidden = await client.mutation('characters:create', {
       code,
       dmCode,
       name: 'Wyrmling in the Rafters',
-      sheet: { ...NPC_SHEET, maxHp: 33, actions: [] },
+      sheet: {
+        kind: 'npc',
+        armourClass: 13,
+        maxHp: 33,
+        initiativeBonus: 1,
+        actions: [],
+        notes: '',
+      },
     })
     createdCharacters.push(hidden.characterId)
     const vitalsAfterHidden = await client.query('characters:vitals', { code })
@@ -2096,6 +2460,38 @@ async function main() {
       !vitalsAfterHidden.some((row) => row.characterId === hidden.characterId) &&
         dmVitalsAfterHidden.some((row) => row.characterId === hidden.characterId),
       `player ${vitalsAfterHidden.length} rows, DM ${dmVitalsAfterHidden.length} — positive control included`,
+    )
+
+    // ⚠️ **THE CREATURE HALF OF THE 2024 FIXTURE PAIR.** `firstDifference` names a *dropped*
+    // field; nothing but this names a *materialised* one, and a deployment that helpfully
+    // filled in six tens would satisfy every other assertion in this script. Asserted on the
+    // KEY, because `abilities: {}` is not how absence is said.
+    const hiddenBack = await client.query('characters:sheet', {
+      code,
+      dmCode,
+      characterId: hidden.characterId,
+    })
+    const statted = await client.query('characters:sheet', {
+      code,
+      dmCode,
+      characterId: npc.characterId,
+    })
+    check(
+      'a creature sent without ability scores came back without them, and its statted sibling kept all four pre-calculated numbers',
+      hiddenBack &&
+        NEW_NPC_SHEET_FIELDS.every((field) => !(field in hiddenBack.sheet)) &&
+        // The positive control, and it is the load-bearing half: without it this passes on a
+        // deployment that discarded everything it was sent. It also asserts the thing the
+        // roadmap's "simplification" would have deleted — the scores arrived *beside* the
+        // four printed numbers, not instead of them, and `initiativeBonus` is still the −2
+        // the DM wrote rather than the +1 this Dexterity would derive.
+        statted &&
+        statted.sheet.abilities.str === 19 &&
+        statted.sheet.saveProficiencies.wis === true &&
+        statted.sheet.initiativeBonus === NPC_SHEET.initiativeBonus,
+      hiddenBack
+        ? `bare keys: ${Object.keys(hiddenBack.sheet).sort().join(', ')}`
+        : 'no sheet came back',
     )
 
     // 12. Values the local suite cannot judge, because convex-test does not apply
@@ -2300,7 +2696,7 @@ async function main() {
       code,
       dmCode,
       name: 'Nightingale of the Ninth Step',
-      sheet: presetSheet({ race: 'elf', classKey: 'rogue' }),
+      sheet: presetSheet({ species: 'elf', classKey: 'rogue' }),
     })
     createdCharacters.push(elf.characterId)
 
@@ -2311,7 +2707,7 @@ async function main() {
         elfAtOne.sheet.kind === 'pc' &&
         elfAtOne.preset !== null &&
         elfAtOne.preset.kind === 'preset' &&
-        elfAtOne.preset.race === 'elf' &&
+        elfAtOne.preset.species === 'elf' &&
         elfAtOne.preset.classKey === 'rogue' &&
         elfAtOne.preset.subclassKey === null &&
         elfAtOne.preset.level === 1 &&
@@ -2319,16 +2715,73 @@ async function main() {
       elfAtOne ? `preset ${JSON.stringify(elfAtOne.preset)}` : 'no sheet came back',
     )
 
-    // None of this was sent in. `characters:create` was given a name, a race, a
+    // ⚠️ **THE PRESET HALF OF THE 2024 FIXTURE PAIR — the fourth stored kind.** It used to be
+    // a pair of new fields: `species`, which was `race` under its 2024 name and which the
+    // migration backfilled, and `lineageKey`, the sixth pick. The rename has narrowed, so
+    // `species` is required and only the lineage is optional now — the Elf above is the
+    // negative half, created without one, and that key must not come back on it.
+    const woodElf = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: 'Faelar of the Deep Wood',
+      sheet: presetSheet({
+        species: 'elf',
+        lineageKey: 'wood',
+        classKey: 'rogue',
+        subclassKey: 'thief',
+        level: 3,
+      }),
+    })
+    createdCharacters.push(woodElf.characterId)
+    const woodElfBack = await readSheet(woodElf.characterId)
+    check(
+      'a preset carrying a species and a lineage round-tripped both, and the one without carried no lineage',
+      woodElfBack &&
+        woodElfBack.preset &&
+        woodElfBack.preset.species === 'elf' &&
+        woodElfBack.preset.lineageKey === 'wood' &&
+        // The negative half: a deployment that materialised a `lineageKey` for a character
+        // nobody asked would collapse *nobody was asked* into *asked, and there is none*.
+        elfAtOne &&
+        elfAtOne.preset &&
+        NEW_PRESET_FIELDS.every((field) => !(field in elfAtOne.preset)),
+      woodElfBack
+        ? `preset ${JSON.stringify(woodElfBack.preset)} against ${JSON.stringify(elfAtOne && elfAtOne.preset)}`
+        : 'no sheet came back',
+    )
+
+    // ⚠️ **`null` is a THIRD state on `lineageKey` and it has to survive as one.** Absent
+    // means *nobody was ever asked*; `null` means *asked, and this species has no lineage to
+    // pick*. A deployment that dropped the key, or the client library turning it into an
+    // absent field, collapses two facts into one — and `firstDifference` reports exactly that
+    // as `present on one side only`, which is why the check is on the key rather than on the
+    // value.
+    const askedElf = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: 'Ilyra, Asked and Answered',
+      sheet: presetSheet({ species: 'elf', lineageKey: null, classKey: 'rogue' }),
+    })
+    createdCharacters.push(askedElf.characterId)
+    const askedBack = await readSheet(askedElf.characterId)
+    check(
+      'an explicit null lineage came back as a null rather than as an absent key',
+      askedBack &&
+        askedBack.preset &&
+        'lineageKey' in askedBack.preset &&
+        askedBack.preset.lineageKey === null,
+      askedBack ? `preset ${JSON.stringify(askedBack.preset)}` : 'no sheet came back',
+    )
+
+    // None of this was sent in. `characters:create` was given a name, a species, a
     // class and a level; the scores, the armour class, the hit dice, the thirteen
     // skill flags and every feat below came back out of the library.
     const built = elfAtOne ? elfAtOne.sheet : null
+    // ⚠️ The library's abilities, UNCHANGED — see the note on `DWARF_HP_PER_LEVEL` above. An
+    // Elf used to arrive with +2 Dexterity on top of this; no 2024 species touches a score, so
+    // a drift of even one point here means something reintroduced a species ability bonus.
     const abilityDrift = built
-      ? firstDifference(
-          { ...ROGUE.base.abilities, dex: ROGUE.base.abilities.dex + ELF_DEX_BONUS },
-          built.abilities,
-          'abilities',
-        )
+      ? firstDifference({ ...ROGUE.base.abilities }, built.abilities, 'abilities')
       : 'no sheet came back'
     const skillDrift = built
       ? firstDifference(ROGUE_SKILLS, built.skillProficiencies, 'skillProficiencies')
@@ -2343,7 +2796,7 @@ async function main() {
         built.maxHp === ROGUE.base.maxHp &&
         built.hitDice.count === ROGUE.base.hitDice.count &&
         built.hitDice.faces === ROGUE.base.hitDice.faces &&
-        built.feats.length === ROGUE.base.featCount + 1,
+        built.feats.length === ROGUE.base.featCount + ELF_TRAIT_ENTRIES,
       abilityDrift ??
         skillDrift ??
         (built
@@ -2352,7 +2805,7 @@ async function main() {
     )
 
     // ⚠️ **THE LIBRARY'S OWN TO-HIT, THROUGH TWO REBUILDS.** A premade hero's feats are
-    // copied by `withId`'s spread in lib/resolve.ts and then copied again by the race
+    // copied by `withId`'s spread in lib/resolve.ts and then copied again by the species
     // overlay, which rebuilds the list to append the racial trait. A field added to the
     // library's entry type and dropped by either copy leaves a weapon on the sheet that
     // announces an attack and has nothing to roll for it — and no other check here would
@@ -2372,7 +2825,7 @@ async function main() {
         ? `${libraryWeapon.name}: ${JSON.stringify(libraryWeapon.toHit)} / ${JSON.stringify(libraryWeapon.roll)}, wanted ${JSON.stringify(ROGUE.base.weapon.toHit)} / ${JSON.stringify(ROGUE.base.weapon.roll)}`
         : `no ${ROGUE.base.weapon.name} among ${built ? built.feats.map((entry) => entry.name).join(', ') : '—'}`,
     )
-    // The race's own contribution, which is the entry the overlay *adds* rather than
+    // The species' own contribution, which is the entry the overlay *adds* rather than
     // copies — and a passive by construction, since a trait is built from two strings
     // and has no roll. Without this the check above passes on an overlay that dropped
     // the category from everything it appended.
@@ -2391,7 +2844,7 @@ async function main() {
         : 'no sheet came back',
     )
 
-    // THE ARITHMETIC THAT IS EASY TO APPLY TWICE. A race is added on top of a
+    // THE ARITHMETIC THAT IS EASY TO APPLY TWICE. A species is added on top of a
     // library sheet that was written without one in mind, so a resolver that
     // applied it in both the base and the overlay would give this Elf a Dexterity
     // of 19 and nothing on screen would look obviously wrong.
@@ -2399,7 +2852,7 @@ async function main() {
       code,
       dmCode,
       name: 'Hrada Stoneminder',
-      sheet: presetSheet({ race: 'dwarf', classKey: 'rogue', subclassKey: 'thief', level: 3 }),
+      sheet: presetSheet({ species: 'dwarf', classKey: 'rogue', subclassKey: 'thief', level: 3 }),
     })
     createdCharacters.push(dwarf.characterId)
     // Named through the constant because section 25 reserves this one and scans a
@@ -2409,7 +2862,7 @@ async function main() {
       code,
       dmCode,
       name: RESERVED_NAME,
-      sheet: presetSheet({ race: 'goliath', classKey: 'rogue' }),
+      sheet: presetSheet({ species: 'goliath', classKey: 'rogue' }),
     })
     createdCharacters.push(goliath.characterId)
 
@@ -2417,14 +2870,14 @@ async function main() {
     const goliathSheet = await readSheet(goliath.characterId)
     const wantedDwarfHp = ROGUE.thief3.maxHp + DWARF_HP_PER_LEVEL * 3
     check(
-      'each race landed on the library sheet exactly once',
+      'each species landed on the library sheet exactly once',
       built &&
-        built.abilities.dex === ROGUE.base.abilities.dex + ELF_DEX_BONUS &&
+        built.abilities.dex === ROGUE.base.abilities.dex &&
         dwarfSheet &&
         dwarfSheet.sheet.maxHp === wantedDwarfHp &&
         goliathSheet &&
         goliathSheet.sheet.speed === GOLIATH_SPEED,
-      `elf dex ${built ? built.abilities.dex : '—'} of ${ROGUE.base.abilities.dex}+${ELF_DEX_BONUS}, dwarf ${dwarfSheet ? dwarfSheet.sheet.maxHp : '—'} hp of ${wantedDwarfHp}, goliath ${goliathSheet ? goliathSheet.sheet.speed : '—'} feet`,
+      `elf dex ${built ? built.abilities.dex : '—'} of ${ROGUE.base.abilities.dex} unchanged, dwarf ${dwarfSheet ? dwarfSheet.sheet.maxHp : '—'} hp of ${wantedDwarfHp}, goliath ${goliathSheet ? goliathSheet.sheet.speed : '—'} feet`,
     )
 
     // Levelling up. Nothing below sends a sheet except the one call that supplies
@@ -2436,26 +2889,61 @@ async function main() {
       level: 2,
     })
     const atTwo = await readSheet(elf.characterId)
+
+    // ⚠️ **AN ARCHETYPE AT LEVEL 2 IS NOW REFUSED, and this check used to assert the
+    // opposite.** It read *a level 2 with no archetype held the level 1 sheet until one was
+    // chosen* — which was the 2014 rule and was true of this application for eleven
+    // milestones. 2024 chooses a subclass at level 3 and the SRD is unanimous, which is worth
+    // knowing because 2014 was not.
+    //
+    // So level 2 is a *base* sheet in its own right rather than a level 1 sheet waiting for a
+    // decision, and the interesting assertion is the refusal: `requireUsableSheet` throws
+    // rather than quietly storing a selection the library would ignore. Nothing else in this
+    // script would notice a `SUBCLASS_LEVEL` silently reverting to 2 — the sheet it resolved
+    // would simply be the wrong one, with a plausible number on every line.
+    // Captured inline rather than through `refusalOf`, which is a local defined further down
+    // this function and is in its temporal dead zone here.
+    const earlyArchetype = await client
+      .mutation('characters:updateSheet', {
+        code,
+        dmCode,
+        characterId: elf.characterId,
+        sheet: presetSheet({ species: 'elf', classKey: 'rogue', subclassKey: 'thief', level: 2 }),
+      })
+      .then(
+        () => null,
+        (error) => (error && error.data ? error.data : { kind: String(error.message ?? error) }),
+      )
+
+    await client.mutation('characters:setLevel', {
+      code,
+      dmCode,
+      characterId: elf.characterId,
+      level: 3,
+    })
     await client.mutation('characters:updateSheet', {
       code,
       dmCode,
       characterId: elf.characterId,
-      sheet: presetSheet({ race: 'elf', classKey: 'rogue', subclassKey: 'thief', level: 2 }),
+      sheet: presetSheet({ species: 'elf', classKey: 'rogue', subclassKey: 'thief', level: 3 }),
     })
-    const atTwoThief = await readSheet(elf.characterId)
+    const atThreeThief = await readSheet(elf.characterId)
     check(
-      'a level 2 with no archetype held the level 1 sheet until one was chosen',
+      'level 2 is a sheet of its own, an archetype before level 3 is refused, and level 3 takes one',
       atTwo &&
         atTwo.sheet.level === 2 &&
-        atTwo.sheet.maxHp === ROGUE.base.maxHp &&
-        atTwo.sheet.hitDice.count === ROGUE.base.hitDice.count &&
-        atTwoThief &&
-        atTwoThief.sheet.className === 'Rogue (Thief)' &&
-        atTwoThief.sheet.maxHp === ROGUE.thief2.maxHp &&
-        atTwoThief.sheet.hitDice.count === ROGUE.thief2.hitDice.count &&
-        atTwoThief.sheet.feats.length === ROGUE.thief2.featCount + 1,
-      atTwo && atTwoThief
-        ? `undecided ${atTwo.sheet.maxHp} hp, then ${atTwoThief.sheet.maxHp} hp and ${atTwoThief.sheet.feats.length} feats as a ${atTwoThief.sheet.className}`
+        atTwo.sheet.maxHp === ROGUE.base2.maxHp &&
+        atTwo.sheet.hitDice.count === ROGUE.base2.hitDice.count &&
+        atTwo.sheet.className === 'Rogue' &&
+        earlyArchetype !== null &&
+        earlyArchetype.kind === 'BadInput' &&
+        atThreeThief &&
+        atThreeThief.sheet.className === 'Rogue (Thief)' &&
+        atThreeThief.sheet.maxHp === ROGUE.thief3.maxHp &&
+        atThreeThief.sheet.hitDice.count === ROGUE.thief3.hitDice.count &&
+        atThreeThief.sheet.feats.length === ROGUE.thief3.featCount + ELF_TRAIT_ENTRIES,
+      atTwo && atThreeThief
+        ? `level 2 as a ${atTwo.sheet.className} on ${atTwo.sheet.maxHp} hp, refused with ${JSON.stringify(earlyArchetype)}, then ${atThreeThief.sheet.maxHp} hp and ${atThreeThief.sheet.feats.length} feats as a ${atThreeThief.sheet.className}`
         : 'no sheet came back',
     )
 
@@ -2469,12 +2957,14 @@ async function main() {
     check(
       'setLevel alone moved hit points, hit dice and the feat list — no sheet was sent',
       atFour &&
-        atTwoThief &&
+        atThreeThief &&
         atFour.sheet.maxHp === ROGUE.thief4.maxHp &&
-        atFour.sheet.maxHp !== atTwoThief.sheet.maxHp &&
+        // Genuinely moved, rather than the level 3 sheet read twice.
+        atFour.sheet.maxHp !== atThreeThief.sheet.maxHp &&
         atFour.sheet.hitDice.count === ROGUE.thief4.hitDice.count &&
-        atFour.sheet.feats.length === ROGUE.thief4.featCount + 1 &&
-        atFour.sheet.feats.some((entry) => entry.name === 'Uncanny Dodge'),
+        atFour.sheet.feats.length === ROGUE.thief4.featCount + ELF_TRAIT_ENTRIES &&
+        // Level 4 is where a Rogue's improvement lands — Uncanny Dodge is level 5.
+        atFour.sheet.feats.some((entry) => entry.name === 'Ability Score Improvement'),
       atFour
         ? `${atFour.sheet.maxHp} hp, ${atFour.sheet.hitDice.count} hit dice, ${atFour.sheet.feats.length} feats`
         : 'no sheet came back',
@@ -2487,7 +2977,7 @@ async function main() {
       dmCode,
       characterId: elf.characterId,
       sheet: presetSheet({
-        race: 'elf',
+        species: 'elf',
         classKey: 'rogue',
         subclassKey: 'thief',
         level: 4,
@@ -2533,7 +3023,7 @@ async function main() {
       code,
       dmCode,
       name: 'Bramblefoot Tosscobble',
-      sheet: presetSheet({ race: 'halfling', classKey: 'rogue', locked: true }),
+      sheet: presetSheet({ species: 'halfling', classKey: 'rogue', locked: true }),
     })
     createdCharacters.push(bramble.characterId)
     await client.mutation('characters:claim', {
@@ -2542,12 +3032,12 @@ async function main() {
       characterId: bramble.characterId,
     })
 
-    await refuses('characters:updateSheet refused a locked race change by the seat holding it', () =>
+    await refuses('characters:updateSheet refused a locked species change by the seat holding it', () =>
       client.mutation('characters:updateSheet', {
         code,
         playerId: seat.playerId,
         characterId: bramble.characterId,
-        sheet: presetSheet({ race: 'elf', classKey: 'rogue', locked: true }),
+        sheet: presetSheet({ species: 'elf', classKey: 'rogue', locked: true }),
       }),
     )
     await client.mutation('characters:setUnlocked', {
@@ -2560,14 +3050,14 @@ async function main() {
       code,
       playerId: seat.playerId,
       characterId: bramble.characterId,
-      sheet: presetSheet({ race: 'elf', classKey: 'rogue', locked: false }),
+      sheet: presetSheet({ species: 'elf', classKey: 'rogue', locked: false }),
     })
     const unlocked = await readSheet(bramble.characterId)
     check(
       'characters:setUnlocked let the same change straight through',
-      unlocked && unlocked.preset && unlocked.preset.race === 'elf' && !unlocked.preset.locked,
+      unlocked && unlocked.preset && unlocked.preset.species === 'elf' && !unlocked.preset.locked,
       unlocked && unlocked.preset
-        ? `race ${unlocked.preset.race}, locked ${unlocked.preset.locked}`
+        ? `species ${unlocked.preset.species}, locked ${unlocked.preset.locked}`
         : 'no sheet came back',
     )
     await refuses('characters:setLevel refused a level without the DM code', () =>
@@ -2579,14 +3069,19 @@ async function main() {
       }),
     )
 
-    // 15. A long rest, which is three writes the table thinks of as one thing —
-    // and `spentPerRest` is a field that did not exist on the vitals row until this
-    // milestone, on a table whose rows were written without it.
+    // 15. A long rest, which is several writes the table thinks of as one thing.
+    //
+    // ⚠️ **`spentPerRest` is gone from this payload and this block used to assert it.**
+    // The legacy array was folded into the counted `spentUses` by the migration and then
+    // dropped from the validator, so a read of it here is a read of undefined — which is
+    // exactly how this was found: the narrowed schema deployed cleanly and THIS script was
+    // what noticed the field had left the wire. The local suite could not, because it
+    // calls the typed API and this calls the real one.
     const human = await client.mutation('characters:create', {
       code,
       dmCode,
       name: 'Aldis Fenwake',
-      sheet: presetSheet({ race: 'human', classKey: 'fighter' }),
+      sheet: presetSheet({ species: 'human', classKey: 'fighter' }),
     })
     createdCharacters.push(human.characterId)
 
@@ -2602,12 +3097,16 @@ async function main() {
       characterId: human.characterId,
       delta: -1,
     })
-    const perRestBack = await client.mutation('characters:setPerRest', {
+    // ⚠️ **`characters:setPerRest` is now `characters:setUses` and takes a COUNT**, and the
+    // returned array is objects rather than strings — a nested `v.object` inside a `v.array`
+    // inside an optional field, which is the shape convex-test waves through and a real
+    // deployment has opinions about.
+    const usesBack = await client.mutation('characters:setUses', {
       code,
       dmCode,
       characterId: human.characterId,
       key: 'heroic-inspiration',
-      spent: true,
+      spent: 1,
     })
     const hurt = await dmVitalsFor(human.characterId)
     check(
@@ -2618,42 +3117,246 @@ async function main() {
         hurt.current === FIGHTER.base.maxHp - 5 &&
         hurt.hitDiceCount === FIGHTER.base.hitDice.count &&
         hurt.hitDiceRemaining === 0 &&
-        hurt.spentPerRest.length === 1 &&
-        hurt.spentPerRest[0] === 'heroic-inspiration' &&
-        perRestBack.spentPerRest.length === 1,
+        hurt.spentUses.length === 1 &&
+        hurt.spentUses[0].key === 'heroic-inspiration' &&
+        hurt.spentUses[0].spent === 1 &&
+        usesBack.spentUses.length === 1,
       hurt
-        ? `${hurt.current}/${hurt.max}, ${hurt.hitDiceRemaining} of ${hurt.hitDiceCount} hit dice, spent ${JSON.stringify(hurt.spentPerRest)}`
+        ? `${hurt.current}/${hurt.max}, ${hurt.hitDiceRemaining} of ${hurt.hitDiceCount} hit dice, spent ${JSON.stringify(hurt.spentUses)}`
         : 'no vitals row',
     )
 
     await client.mutation('characters:longRest', { code, dmCode, characterId: human.characterId })
     const afterRest = await dmVitalsFor(human.characterId)
     check(
-      'characters:longRest reset hit points, hit dice and the per-rest array in one call',
+      'characters:longRest reset hit points, hit dice, the per-rest array and the 2024 state in one call',
       afterRest &&
         afterRest.kind === 'exact' &&
         afterRest.current === FIGHTER.base.maxHp &&
         afterRest.hitDiceRemaining === FIGHTER.base.hitDice.count &&
-        afterRest.spentPerRest.length === 0,
+        afterRest.spentUses.length === 0 &&
+        // ⚠️ **Shape only, and knowingly so.** This fixture is a Human Fighter, which casts
+        // nothing, so an empty array here proves the field survives a real deployment's
+        // serialisation and **not** that a slot round-trips. A genuine round trip needs a
+        // caster fixture — see the note beside `characters:setSlots` in the suite, and
+        // `characters.test.ts`' *spell slots* block, which is where the behaviour is asserted.
+        afterRest.spentSlots.length === 0 &&
+        afterRest.temporaryHp === 0 &&
+        afterRest.deathSaveSuccesses === 0 &&
+        afterRest.deathSaveFailures === 0,
       afterRest
-        ? `${afterRest.current}/${afterRest.max}, ${afterRest.hitDiceRemaining} hit dice, spent ${JSON.stringify(afterRest.spentPerRest)}`
+        ? `${afterRest.current}/${afterRest.max}, ${afterRest.hitDiceRemaining} hit dice, spent ${JSON.stringify(afterRest.spentUses)}`
         : 'no vitals row',
     )
-    // Checked against the character's own race rather than taken as given, so the
-    // stored array cannot fill with keys nothing will ever clear. A Human has no
-    // Relentless Endurance to spend.
-    await refuses('characters:setPerRest refused a key this character’s race does not have', () =>
-      client.mutation('characters:setPerRest', {
+
+    // ⚠️ **THE SHORT REST, AS ONE POSITIVE AND TWO NEGATIVES.** It does not heal and does not
+    // return hit dice — *spending* hit dice is what a short rest is for — and a check that
+    // only asserted the restoration would pass on a mutation that reset the whole row. All
+    // three in one place, because any one of them alone is satisfied by the wrong mutation.
+    await client.mutation('characters:adjustHp', {
+      code,
+      dmCode,
+      characterId: human.characterId,
+      delta: -4,
+    })
+    await client.mutation('characters:adjustHitDice', {
+      code,
+      dmCode,
+      characterId: human.characterId,
+      delta: -1,
+    })
+    await client.mutation('characters:setUses', {
+      code,
+      dmCode,
+      characterId: human.characterId,
+      key: 'heroic-inspiration',
+      spent: 1,
+    })
+    await client.mutation('characters:shortRest', { code, dmCode, characterId: human.characterId })
+    const afterShort = await dmVitalsFor(human.characterId)
+    check(
+      'characters:shortRest healed nobody, returned no hit dice, and left a long-rest ability spent',
+      afterShort &&
+        afterShort.kind === 'exact' &&
+        afterShort.current === FIGHTER.base.maxHp - 4 &&
+        afterShort.hitDiceRemaining === FIGHTER.base.hitDice.count - 1 &&
+        // The positive control for the pair above: the rest ran and had something to do. A
+        // Human's Heroic Inspiration comes back on a *long* rest, so it must still be spent —
+        // a short rest that restored it would be the app inventing a rule, which is the same
+        // failure as a Wizard getting slots back from one.
+        afterShort.spentUses.length === 1 &&
+        afterShort.spentUses[0].key === 'heroic-inspiration',
+      afterShort
+        ? `${afterShort.current}/${afterShort.max}, ${afterShort.hitDiceRemaining} hit dice, spent ${JSON.stringify(afterShort.spentUses)}`
+        : 'no vitals row',
+    )
+    await client.mutation('characters:longRest', { code, dmCode, characterId: human.characterId })
+
+    // ── Spell slots, and the one assertion this milestone was written around ─────────────
+    //
+    // ⚠️ **Two casters rather than one, because the claim is a DIFFERENCE and a single
+    // character cannot express one.** The acceptance criterion is *a Warlock takes a short
+    // rest and gets both Pact Magic slots back while the Wizard beside them gets none* — and
+    // the negative half is the one that matters, since a short rest that restored a Wizard's
+    // slots would be the application inventing a rule nobody would report as a bug. The two
+    // sit in one game and take the same rest so that nothing about the run differs except
+    // which class is asking.
+    //
+    // Here rather than only in `lib/slots.test.ts` because this is the round trip: the
+    // derivation is pure and already pinned against the SRD, but `spentSlots` is a **new
+    // stored field** and the local suite does not apply Convex's own value validation. A
+    // level and a count going through a real float64 column, and coming back on a real
+    // payload, is what this script exists for.
+    const wizard = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: 'Mira',
+      sheet: presetSheet({ species: 'gnome', lineageKey: 'forest', classKey: 'wizard', level: 5, subclassKey: 'evocation' }),
+    })
+    const warlock = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: 'Sable',
+      sheet: presetSheet({ species: 'tiefling', lineageKey: 'infernal', classKey: 'warlock', level: 5, subclassKey: 'fiend' }),
+    })
+
+    // A level 5 full caster holds 4/3/2 and a level 5 Warlock holds two level 3 slots — the
+    // numbers are `lib/slots.test.ts`' business, so what is spent here is only ever a count
+    // the derivation must already admit. One of each track, both fully spent, so "came back"
+    // and "did not" are both visible.
+    await client.mutation('characters:setSlots', {
+      code,
+      dmCode,
+      characterId: wizard.characterId,
+      level: 1,
+      spent: 4,
+    })
+    await client.mutation('characters:setSlots', {
+      code,
+      dmCode,
+      characterId: warlock.characterId,
+      level: 3,
+      spent: 2,
+    })
+
+    const wizardSpent = await dmVitalsFor(wizard.characterId)
+    const warlockSpent = await dmVitalsFor(warlock.characterId)
+    check(
+      'characters:setSlots stored a spent count against a spell level, on both tracks',
+      wizardSpent &&
+        wizardSpent.kind === 'exact' &&
+        wizardSpent.spentSlots.length === 1 &&
+        wizardSpent.spentSlots[0].level === 1 &&
+        wizardSpent.spentSlots[0].spent === 4 &&
+        warlockSpent &&
+        warlockSpent.kind === 'exact' &&
+        warlockSpent.spentSlots.length === 1 &&
+        warlockSpent.spentSlots[0].level === 3 &&
+        warlockSpent.spentSlots[0].spent === 2,
+      `wizard ${JSON.stringify(wizardSpent?.spentSlots)}, warlock ${JSON.stringify(warlockSpent?.spentSlots)}`,
+    )
+
+    await client.mutation('characters:shortRest', { code, dmCode, characterId: wizard.characterId })
+    await client.mutation('characters:shortRest', {
+      code,
+      dmCode,
+      characterId: warlock.characterId,
+    })
+    const wizardAfterShort = await dmVitalsFor(wizard.characterId)
+    const warlockAfterShort = await dmVitalsFor(warlock.characterId)
+    check(
+      'a short rest returned the Warlock every Pact Magic slot and the Wizard none of theirs',
+      // The positive half.
+      warlockAfterShort &&
+        warlockAfterShort.kind === 'exact' &&
+        warlockAfterShort.spentSlots.every((row) => row.spent === 0) &&
+        // ⚠️ **The negative half, and the reason this check exists at all.** A Wizard's slots
+        // come back on a LONG rest. If this ever passes as `0` the application has started
+        // handing out a resource nobody asked for, on a rest a party takes several times a
+        // session.
+        wizardAfterShort &&
+        wizardAfterShort.kind === 'exact' &&
+        wizardAfterShort.spentSlots.length === 1 &&
+        wizardAfterShort.spentSlots[0].spent === 4,
+      `wizard ${JSON.stringify(wizardAfterShort?.spentSlots)}, warlock ${JSON.stringify(warlockAfterShort?.spentSlots)}`,
+    )
+
+    await client.mutation('characters:longRest', { code, dmCode, characterId: wizard.characterId })
+    const wizardAfterLong = await dmVitalsFor(wizard.characterId)
+    check(
+      'a long rest returned the Wizard every slot',
+      wizardAfterLong &&
+        wizardAfterLong.kind === 'exact' &&
+        wizardAfterLong.spentSlots.every((row) => row.spent === 0),
+      `${JSON.stringify(wizardAfterLong?.spentSlots)}`,
+    )
+
+    // ⚠️ **Nothing refuses a cast, and this is where that would show up first.** Spending
+    // the last slot is permitted, spending past it is clamped rather than refused, and no
+    // mutation anywhere asks how many are left before rolling. See ADR 0016's resource-shape
+    // section: a person spends a slot and `feed.roll` never will.
+    await refuses('characters:setSlots refused a spell level outside 1-3', () =>
+      client.mutation('characters:setSlots', {
+        code,
+        dmCode,
+        characterId: wizard.characterId,
+        level: 4,
+        spent: 1,
+      }),
+    )
+
+    for (const spent of [wizard, warlock]) {
+      await client.mutation('characters:remove', {
+        code,
+        dmCode,
+        characterId: spent.characterId,
+      })
+    }
+
+    // Checked against the character's own species and its own sheet rather than taken as
+    // given, so the stored array cannot fill with keys nothing will ever clear. A Human has
+    // no Relentless Endurance to spend.
+    await refuses('characters:setUses refused a key this character does not have', () =>
+      client.mutation('characters:setUses', {
         code,
         dmCode,
         characterId: human.characterId,
         key: 'relentless-endurance',
-        spent: true,
+        spent: 1,
       }),
     )
+    // ⚠️ **And handing one back is still allowed**, which is the asymmetry the mutation keeps
+    // deliberately: a DM who changes a character's species leaves whatever the old one had
+    // spent still marked, and a check that applied here too would make it unclearable by
+    // anything short of a long rest.
+    const handedBack = await client.mutation('characters:setUses', {
+      code,
+      dmCode,
+      characterId: human.characterId,
+      key: 'relentless-endurance',
+      spent: 0,
+    })
+    check(
+      'characters:setUses allowed a hand-back of the same key it refused a spend of',
+      handedBack && handedBack.spentUses.length === 0,
+      handedBack ? JSON.stringify(handedBack.spentUses) : 'no answer came back',
+    )
+    // A count that is not one. `NaN` and `Infinity` are perfectly valid Convex float64s, so
+    // this is exactly the class of value convex-test stores without a word.
+    for (const spent of [Number.NaN, Number.POSITIVE_INFINITY, -1, 21]) {
+      await refuses(`characters:setUses refused a spend of ${spent}`, () =>
+        client.mutation('characters:setUses', {
+          code,
+          dmCode,
+          characterId: human.characterId,
+          key: 'heroic-inspiration',
+          spent,
+        }),
+      )
+    }
 
     // 16. Selections the deployment has to refuse. The first two are the argument
-    // validator's — a race and a class are unions of literals, so a key that is not
+    // validator's — a species and a class are unions of literals, so a key that is not
     // one of the eight never reaches a handler. The rest are `storedSheetProblem`'s,
     // and every one of them is a value convex-test would store without a word.
     //
@@ -2663,12 +3366,17 @@ async function main() {
     // while asserting nothing at all about archetypes. The two argument-validator cases
     // above it would still refuse for the right reason, and they carry the code anyway so
     // that the whole block is refused by the bound it names rather than by the gate.
-    await refuses('characters:create refused a race that is not one of the eight', () =>
+    // ⚠️ **The probe was `gnome`, which is now a real species.** It has to be a key the narrow
+    // validator genuinely refuses, and the interesting one is `half-orc`: it is the key this
+    // application *used to* accept, so it is the one somebody reintroduces — from an old
+    // fixture, an old comment, or a stored validator widened "for compatibility". A made-up
+    // string would refuse for a reason nothing is under pressure to break.
+    await refuses('characters:create refused the retired half-orc species', () =>
       client.mutation('characters:create', {
         code,
         dmCode,
-        name: 'Uninvited Gnome',
-        sheet: presetSheet({ race: 'gnome', classKey: 'rogue' }),
+        name: 'Uninvited Half-Orc',
+        sheet: presetSheet({ species: 'half-orc', classKey: 'rogue' }),
       }),
     )
     await refuses('characters:create refused a class that is not one of the eight', () =>
@@ -2676,7 +3384,7 @@ async function main() {
         code,
         dmCode,
         name: 'Uninvited Artificer',
-        sheet: presetSheet({ race: 'human', classKey: 'artificer' }),
+        sheet: presetSheet({ species: 'human', classKey: 'artificer' }),
       }),
     )
     await refuses('characters:create refused an archetype belonging to another class', () =>
@@ -2685,7 +3393,7 @@ async function main() {
         dmCode,
         name: 'Champion Rogue',
         sheet: presetSheet({
-          race: 'human',
+          species: 'human',
           classKey: 'rogue',
           subclassKey: 'champion',
           level: 2,
@@ -2697,7 +3405,7 @@ async function main() {
         code,
         dmCode,
         name: 'Premature Thief',
-        sheet: presetSheet({ race: 'human', classKey: 'rogue', subclassKey: 'thief', level: 1 }),
+        sheet: presetSheet({ species: 'human', classKey: 'rogue', subclassKey: 'thief', level: 1 }),
       }),
     )
     // NaN and Infinity are perfectly ordinary float64s, so both survive the argument
@@ -2726,7 +3434,7 @@ async function main() {
         dmCode,
         characterId: elf.characterId,
         sheet: presetSheet({
-          race: 'elf',
+          species: 'elf',
           classKey: 'rogue',
           overrides: {
             armourClass: DM_ARMOUR_CLASS,
@@ -2753,7 +3461,7 @@ async function main() {
         untouched.preset.overrides &&
         untouched.preset.overrides.armourClass === DM_ARMOUR_CLASS &&
         untouched.preset.overrides.extraFeats === undefined &&
-        untouched.sheet.feats.length === ROGUE.base.featCount + 1,
+        untouched.sheet.feats.length === ROGUE.base.featCount + ELF_TRAIT_ENTRIES,
       untouched
         ? `${JSON.stringify(untouched.preset)}, ${untouched.sheet.feats.length} feats`
         : 'no sheet came back',
@@ -2855,7 +3563,10 @@ async function main() {
       wolfAtOne &&
         oneDrift === null &&
         wolfAtOne.sheet.kind === 'npc' &&
-        wolfAtOne.sheet.actions.length === 3 &&
+        // Two: one Bite and one Pack Tactics. The old hand-written entry had three; the SRD
+        // Dire Wolf has one attack and one trait, and this is a hand-written count rather than
+        // a derived one for the reason the whole fixture is.
+        wolfAtOne.sheet.actions.length === 2 &&
         wolfAtOne.sheet.actions[0].id === 'atk:bite' &&
         wolfAtOne.sheet.actions[0].text.startsWith(WOLF.biteAtCr1),
       oneDrift ??
@@ -2947,9 +3658,9 @@ async function main() {
     const rescaled = await dmVitalsFor(wolf.characterId)
     check(
       'a creature on half its hit points came out on half of the new maximum',
-      // round(15 × 83/31) = round(40.16) = 40 of 83. Neither dead nor healed.
-      rescaled && rescaled.current === 40 && rescaled.max === WOLF.atCr4.maxHp,
-      rescaled ? `${rescaled.current}/${rescaled.max}, wanted 40/${WOLF.atCr4.maxHp}` : 'no vitals row',
+      // round(15 × 62/22) = round(42.27) = 42 of 62. Neither dead nor healed.
+      rescaled && rescaled.current === 42 && rescaled.max === WOLF.atCr4.maxHp,
+      rescaled ? `${rescaled.current}/${rescaled.max}, wanted 42/${WOLF.atCr4.maxHp}` : 'no vitals row',
     )
 
     // An override is the DM's last word, and the scale happens before it — so a boss-fight
@@ -2997,6 +3708,14 @@ async function main() {
               catalogueKey: null,
               category: 'weapon',
               toHit: '1d20+9',
+              // The fourth stored kind's turn at the 2024 entry pair, reached through its
+              // override diff — the sixth array position `sheetEntryValidator` occupies and
+              // the only one where these two fields cross the wire on a `bestiary` document.
+              // `topple` deliberately: it is one of the three the movement-detriment
+              // exclusion names, and nothing in the codebase reads it. Nobody is knocked
+              // down, and this check is that the *word* survives a CR shift.
+              mastery: 'topple',
+              uses: { max: 2, recharge: 'short' },
             },
           ],
         },
@@ -3092,13 +3811,35 @@ async function main() {
         ? `${JSON.stringify(dmWeapon.toHit)} against the creature's ${DM_CREATURE_TO_HIT}`
         : `no DM action among ${wolfAtSix ? wolfAtSix.sheet.actions.map((entry) => entry.id).join(', ') : '—'}`,
     )
+    // ⚠️ **THE 2024 ENTRY PAIR, ON THE FOURTH STORED KIND AND ACROSS TWO CR SHIFTS.** The
+    // corpus's own attacks are the negative — nothing in `lib/bestiary/` declares a mastery
+    // or a use count today — and the DM's own entry is the positive. A CR shift rebuilds
+    // every attack the corpus contributes and appends the DM's untouched, so this is the one
+    // place in the script where the two new fields have to survive a *resolution* rather than
+    // only a write.
+    check(
+      "the DM's entry kept its mastery and its use count across two shifts, and the corpus's own attacks grew neither",
+      dmWeapon &&
+        dmWeapon.mastery === 'topple' &&
+        dmWeapon.uses &&
+        dmWeapon.uses.max === 2 &&
+        dmWeapon.uses.recharge === 'short' &&
+        !('regainOnShortRest' in dmWeapon.uses) &&
+        // The negative, and it is what makes this a pair: a resolver that materialised a
+        // mastery on every weapon it built would satisfy the positive perfectly.
+        corpusAttacks.length > 0 &&
+        corpusAttacks.every((entry) => NEW_ENTRY_FIELDS.every((field) => !(field in entry))),
+      dmWeapon
+        ? `${JSON.stringify(dmWeapon.mastery)} / ${JSON.stringify(dmWeapon.uses)} against ${corpusAttacks.length} corpus attacks carrying neither`
+        : 'no DM action came back',
+    )
     const rescaledAgain = await dmVitalsFor(wolf.characterId)
     check(
       'the fraction survived the second shift too',
-      // round(40 × 143/83) = round(68.92) = 69 of 143.
-      rescaledAgain && rescaledAgain.current === 69 && rescaledAgain.max === WOLF.atCr6.maxHp,
+      // round(42 × 94/62) = round(63.67) = 64 of 94.
+      rescaledAgain && rescaledAgain.current === 64 && rescaledAgain.max === WOLF.atCr6.maxHp,
       rescaledAgain
-        ? `${rescaledAgain.current}/${rescaledAgain.max}, wanted 69/${WOLF.atCr6.maxHp}`
+        ? `${rescaledAgain.current}/${rescaledAgain.max}, wanted 64/${WOLF.atCr6.maxHp}`
         : 'no vitals row',
     )
 
@@ -3231,8 +3972,8 @@ async function main() {
     const shelf = await client.query('bestiary:index', { code, dmCode })
     const shelfText = JSON.stringify(shelf)
     check(
-      'bestiary:index hands the DM 129 summary rows and no stat block',
-      shelf.length === 129 &&
+      'bestiary:index hands the DM every summary row and no stat block',
+      shelf.length === BESTIARY_ENTRIES &&
         shelfText.includes(WOLF.key) &&
         shelfText.includes(WOLF.entryName) &&
         shelfText.includes(WOLF.blurb) &&
@@ -3293,13 +4034,13 @@ async function main() {
         reset.creature.cr === WOLF.libraryCr &&
         reset.creature.overrides === null &&
         reset.creature.overriddenFields.length === 0 &&
-        // round(89 × 31/143) = round(19.29) = 19 of 31.
+        // round(59 × 22/94) = round(13.80) = 14 of 22.
         resetVitals &&
-        resetVitals.current === 19 &&
+        resetVitals.current === 14 &&
         resetVitals.max === WOLF.atCr1.maxHp,
       resetDrift ??
         (resetVitals
-          ? `CR ${reset.creature.cr}, ${resetVitals.current}/${resetVitals.max}, wanted 19/${WOLF.atCr1.maxHp}`
+          ? `CR ${reset.creature.cr}, ${resetVitals.current}/${resetVitals.max}, wanted 14/${WOLF.atCr1.maxHp}`
           : 'no vitals row'),
     )
 
@@ -3415,7 +4156,7 @@ async function main() {
         code,
         dmCode,
         characterId: wolf.characterId,
-        sheet: presetSheet({ race: 'human', classKey: 'fighter' }),
+        sheet: presetSheet({ species: 'human', classKey: 'fighter' }),
       }),
     )
     await refuses('characters:claim refused a creature to a seat', () =>
@@ -4212,14 +4953,14 @@ async function main() {
     // through `tokenReferencesImage`, so the only transaction allowed to delete the outgoing
     // art is the one that stopped referencing it.
     await refuses('files:discard refused the new blob, because the coin now references it', () =>
-      client.mutation('files:discard', { code, dmCode, imageId: secondArt }),
+      client.mutation('files:discard', { code, dmCode, imageIds: [secondArt] }),
     )
     // The other half of that, and the property the cleanup registry at the bottom of this
     // file rests on: `discard` returns early when the blob is not in storage, so discarding
     // one `setArt` has already deleted is a no-op rather than a second error on top of the
     // first. Asserted through what it did *not* disturb, because "it did not throw" is a
     // claim the run's own catch already makes.
-    await client.mutation('files:discard', { code, dmCode, imageId: firstArt })
+    await client.mutation('files:discard', { code, dmCode, imageIds: [firstArt] })
     const artAfterDiscard = await tokensOf(editable.tokenId)
     const liveArtFetch = newArtUrl ? await fetch(newArtUrl) : null
     check(
@@ -5232,16 +5973,17 @@ async function main() {
     // 31. THREE LAYERS: A UNION AS AN ARGUMENT VALIDATOR, AS A STORED VALUE AND AS A
     // PROJECTED FIELD — AND THE ONE SECRECY CHECK IN THIS SCRIPT THAT ASSERTS PRESENCE.
     //
-    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE.** The stored layer union is **one member
-    // wider than the canonical one**: `schema.ts` still admits the legacy `dm` spelling so a
-    // row written before the GM layer was renamed keeps validating, while `board:addToken`'s
-    // and `board:setLayer`'s arguments take the narrow three-member `tokenLayerValidator`. That
-    // arrangement is a widen-migrate-narrow, and the *only* thing holding its second half is
-    // Convex's own argument validation at the function boundary. The local suite writes through
-    // the schema, so it can be asked whether the wide union stores a `dm` — which it must — and
-    // structurally cannot be asked the question that matters here: whether a client can still
-    // *create* one. So the refusal below is not a duplicate of anything in `board.test.ts`; it
-    // is the half of the migration that has no other guard.
+    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE.** `tokenLayerValidator` is one union doing
+    // three jobs — `schema.ts`'s stored field, `board:addToken`'s and `board:setLayer`'s
+    // arguments, and `publicTokenValidator`'s projected field — and what refuses a value that
+    // is not one of its three members is Convex's own validation at the function boundary. The
+    // local suite writes through the schema with a typed literal, so it structurally cannot be
+    // asked whether a *client* can send something else. The refusals below are therefore not
+    // duplicates of anything in `board.test.ts`.
+    //
+    // This section used to carry the second half of the `dm` → `gm` widen-migrate-narrow, and
+    // that half is finished: the sweep ran, the widened stored union is gone, and `'dm'` is now
+    // refused for the ordinary reason rather than a special one.
     //
     // The round trips beside it are the same point from the other end. `'background'` and
     // `'gm'` are two literals of a union that has three, in a field this application both
@@ -5420,12 +6162,13 @@ async function main() {
         : 'no placement came back',
     )
 
-    // ⚠️ **THE NARROW VALIDATOR, WHICH IS THE HALF OF THE MIGRATION WITH NO OTHER GUARD.** A
-    // `dm` row must remain *readable* and must not be *creatable*, and only Convex's own
-    // argument validation enforces the second — nothing in either handler asks. Both writes are
-    // refused because both take the narrow union, which is what makes the wide one in
-    // `schema.ts` safe to keep until the relabel has run.
-    await refuses('board:addToken refused the legacy `dm` layer at the function boundary', () =>
+    // ⚠️ **A RETIRED LITERAL, WHICH IS THE ONE MOST LIKELY TO COME BACK.** `dm` was the GM
+    // layer's stored value until the rename, and it is refused now for the ordinary reason:
+    // the schema, both argument validators and the projection are one three-member union and
+    // it is not a member. Kept as a *named* case beside the never-existed one below, because a
+    // value that used to be legal is the value somebody reintroduces — from an old comment, an
+    // old fixture, or a widened validator "for compatibility" — and a made-up string is not.
+    await refuses('board:addToken refused the retired `dm` layer at the function boundary', () =>
       client.mutation('board:addToken', {
         code,
         dmCode,
@@ -5438,7 +6181,7 @@ async function main() {
         y: 400,
       }),
     )
-    await refuses('board:setLayer refused the legacy `dm` layer too', () =>
+    await refuses('board:setLayer refused the retired `dm` layer too', () =>
       client.mutation('board:setLayer', {
         code,
         dmCode,
@@ -5575,7 +6318,12 @@ async function main() {
       width: FOG_REACH * 2,
       height: FOG_REACH * 2,
     }
-    const drawn = await client.mutation('fog:draw', { code, dmCode, sceneId, ...overCreature })
+    const drawn = await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId,
+      shape: { kind: 'rect', ...overCreature },
+    })
     const darkened = await fogState()
     check(
       'the rectangle took the placement, the band and both lines off the wire — and left the coin where it was',
@@ -5656,10 +6404,13 @@ async function main() {
       code,
       dmCode,
       sceneId,
-      x: overCreature.x + overCreature.width,
-      y: overCreature.y + overCreature.height,
-      width: -overCreature.width,
-      height: -overCreature.height,
+      shape: {
+        kind: 'rect',
+        x: overCreature.x + overCreature.width,
+        y: overCreature.y + overCreature.height,
+        width: -overCreature.width,
+        height: -overCreature.height,
+      },
     })
     const draggedRow =
       (await client.query('fog:list', { code, sceneId })).find((row) => row._id === dragged.fogId) ??
@@ -5697,12 +6448,17 @@ async function main() {
       width: FOG_REACH * 2,
       height: FOG_REACH * 2,
     }
-    const overHeroRect = await client.mutation('fog:draw', { code, dmCode, sceneId, ...overHero })
+    const overHeroRect = await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId,
+      shape: { kind: 'rect', ...overHero },
+    })
     const alsoOverCreature = await client.mutation('fog:draw', {
       code,
       dmCode,
       sceneId,
-      ...overCreature,
+      shape: { kind: 'rect', ...overCreature },
     })
     const bothDrawn = await client.query('board:positions', { code, sceneId })
     check(
@@ -5719,16 +6475,12 @@ async function main() {
     await client.mutation('fog:erase', { code, dmCode, fogId: alsoOverCreature.fogId })
 
     // (e) WHAT `fog:draw` REFUSES, against real value validation.
-    const badRect = (fields) =>
+    const badRect = ({ dmCode: badDm, ...fields }) =>
       client.mutation('fog:draw', {
         code,
-        dmCode,
+        dmCode: badDm ?? dmCode,
         sceneId,
-        x: 200,
-        y: 200,
-        width: 300,
-        height: 200,
-        ...fields,
+        shape: { kind: 'rect', x: 200, y: 200, width: 300, height: 200, ...fields },
       })
     // A zero-area rectangle looks like a usability refusal and is a data one: it covers no
     // point, so it hides nothing — and there is nothing on screen to click, so the DM cannot
@@ -5778,10 +6530,7 @@ async function main() {
       code,
       dmCode,
       sceneId: otherMap.sceneId,
-      x: 200,
-      y: 200,
-      width: 400,
-      height: 300,
+      shape: { kind: 'rect', x: 200, y: 200, width: 400, height: 300 },
     })
     const otherForPlayer = await client.query('fog:list', { code, sceneId: otherMap.sceneId })
     const otherForDm = await client.query('fog:list', { code, sceneId: otherMap.sceneId, dmCode })
@@ -5813,10 +6562,7 @@ async function main() {
       code,
       dmCode,
       sceneId,
-      x: 2100,
-      y: 1600,
-      width: 100,
-      height: 60,
+      shape: { kind: 'rect', x: 2100, y: 1600, width: 100, height: 60 },
     })
 
     // 33. HANDOUTS: A NEW `v.id('_storage')` TABLE, AND AN OPTIONAL POINTER ON A POPULATED ONE.
@@ -5961,7 +6707,7 @@ async function main() {
     // half alone is meaningless — a `discard` that refused unconditionally would satisfy the
     // first, and one that never asked any table would satisfy the second.
     const discardWhileLive = await refusalOf(() =>
-      client.mutation('files:discard', { code, dmCode, imageId: handoutBlob }),
+      client.mutation('files:discard', { code, dmCode, imageIds: [handoutBlob] }),
     )
     check(
       'files:discard refused the blob while the handout still pointed at it',
@@ -6010,7 +6756,7 @@ async function main() {
     // whole upload list in `finally` safe rather than a list of guesses about which uploads
     // survived a run that failed halfway.
     const discardAfterRemove = await refusalOf(() =>
-      client.mutation('files:discard', { code, dmCode, imageId: handoutBlob }),
+      client.mutation('files:discard', { code, dmCode, imageIds: [handoutBlob] }),
     )
     check(
       'the same files:discard call accepted once the handout was gone',
@@ -6154,7 +6900,7 @@ async function main() {
     // the blob could be ten megabytes — which is the other half of why `discard` matters more to
     // `music.create` than to the two mutations it copies.
     await refuses('files:discard refused the audio while the track still pointed at it', () =>
-      client.mutation('files:discard', { code, dmCode, imageId: trackBlob }),
+      client.mutation('files:discard', { code, dmCode, imageIds: [trackBlob] }),
     )
 
     // AND THE DELETE, with the track put back on first so the pointer repair is exercised too.
@@ -7410,6 +8156,589 @@ async function main() {
         )
       }
     }
+
+    // 42. MANAGING THE MAPS: TWO OPTIONAL COLUMNS ON A POPULATED TABLE, A SHARED BLOB, AND
+    // A REWRITE OF EVERY COORDINATE ON A BOARD.
+    //
+    // ⚠️ **Worked on a scene of its own rather than on `sceneId`**, and that is not tidiness:
+    // `scenes:replaceImage` multiplies every placement and every fog rectangle on the board
+    // it is given, so running it on the run's main scene would move the coins forty earlier
+    // checks are about. The scene made here is pushed to `extraScenes` and swept in `finally`.
+    //
+    // What the suite cannot answer, in the order the checks come:
+    //
+    //   - **`notes` and `order` are new optional columns on a populated table**, and
+    //     `dmSceneValidator` declares both as *required* over them. A deployment that
+    //     returned the raw fields for a scene nobody has written notes on or reordered would
+    //     fail its own `returns:` validation, and convex-test does not apply it.
+    //   - **The leak.** `scenes:active` is ungated and every player subscribes to it, so the
+    //     notes are scanned for out of a real payload fetched with no DM code at all, with
+    //     the DM's own list as the positive control.
+    //   - **A duplicate shares the map blob**, so deleting one map must not blank the other —
+    //     the bug that made two unconditional `ctx.storage.delete` calls conditional. Asserted
+    //     by re-fetching the copy's signed URL after the original goes, which is the only
+    //     version of that claim a real deployment can make.
+    //   - **Real float64s through the rescale.** The grid offsets here are fractional on
+    //     purpose, so the multiplication is arithmetic over the same doubles the position
+    //     table stores rather than over integers that would survive any bug.
+    const mapAdminImage = await uploadPng(client, code, dmCode)
+    uploads.push(mapAdminImage)
+    const mapAdminThumb = await uploadPng(client, code, dmCode)
+    uploads.push(mapAdminThumb)
+    const managed = await client.mutation('scenes:create', {
+      code,
+      dmCode,
+      name: 'The Sunken Chapel',
+      imageId: mapAdminImage,
+      thumbnailId: mapAdminThumb,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+    })
+    extraScenes.push(managed.sceneId)
+
+    const listedAs = async (id) =>
+      (await client.query('scenes:list', { code, dmCode })).find((row) => row._id === id) ?? null
+
+    const beforeNotes = await listedAs(managed.sceneId)
+    check(
+      'scenes:list declares notes and order as required over two absent columns',
+      beforeNotes !== null &&
+        beforeNotes.notes === '' &&
+        Number.isInteger(beforeNotes.order) &&
+        beforeNotes.order >= 0,
+      beforeNotes
+        ? `notes ${JSON.stringify(beforeNotes.notes)}, order ${beforeNotes.order}`
+        : 'not listed',
+    )
+
+    const PREP = 'the lich behind the altar is invisible until somebody casts detect magic'
+    await client.mutation('scenes:setNotes', { code, dmCode, sceneId: managed.sceneId, notes: PREP })
+    await client.mutation('scenes:setActive', { code, dmCode, sceneId: managed.sceneId })
+
+    const asTheTable = await client.query('scenes:active', { code })
+    const asTheDm = await listedAs(managed.sceneId)
+    check(
+      'the DM’s prep reached the DM and reached nobody else',
+      asTheDm !== null &&
+        asTheDm.notes === PREP &&
+        asTheTable !== null &&
+        !JSON.stringify(asTheTable).includes('lich') &&
+        !Object.prototype.hasOwnProperty.call(asTheTable, 'notes'),
+      asTheDm ? `${asTheDm.notes.length} characters to the DM, ${Object.keys(asTheTable ?? {}).length} keys to the table` : 'not listed',
+    )
+    // Put the table back on the board every other section is about, before anything below
+    // starts moving this one around.
+    await client.mutation('scenes:setActive', { code, dmCode, sceneId })
+
+    // REORDER: THE WHOLE LIST, ONE TRANSACTION. A permutation check the deployment performs
+    // over its own rows, which is why the refusal below is worth a round trip.
+    const allSceneIds = (await client.query('scenes:list', { code, dmCode })).map((row) => row._id)
+    const reversed = [...allSceneIds].reverse()
+    await client.mutation('scenes:reorder', { code, dmCode, sceneIds: reversed })
+    const afterReorder = (await client.query('scenes:list', { code, dmCode })).map((row) => row._id)
+    check(
+      'scenes:reorder stored the whole ordering and the list came back in it',
+      JSON.stringify(afterReorder) === JSON.stringify(reversed),
+      `${afterReorder.length} maps, reversed`,
+    )
+    await refuses('scenes:reorder refused a partial list', () =>
+      client.mutation('scenes:reorder', { code, dmCode, sceneIds: [managed.sceneId] }),
+    )
+
+    // DUPLICATE: THE SHARED BLOB, AND THE DELETE THAT MUST NOT RECLAIM IT.
+    const copy = await client.mutation('scenes:duplicate', {
+      code,
+      dmCode,
+      sceneId: managed.sceneId,
+      includeContents: false,
+    })
+    extraScenes.push(copy.sceneId)
+    const copyRow = await listedAs(copy.sceneId)
+    check(
+      'scenes:duplicate copied the notes and the grid and did not go on the table',
+      copyRow !== null &&
+        copyRow.name === 'The Sunken Chapel (copy)' &&
+        copyRow.notes === PREP &&
+        copyRow._id !== (await client.query('scenes:active', { code }))?._id,
+      copyRow ? copyRow.name : 'the copy is not in the list',
+    )
+
+    // Deleting the original: the copy's picture has to survive, and the only honest way to
+    // ask a deployment that is to fetch the bytes.
+    await client.mutation('scenes:remove', { code, dmCode, sceneId: managed.sceneId })
+    extraScenes.splice(extraScenes.indexOf(managed.sceneId), 1)
+    const copyAfterDelete = await listedAs(copy.sceneId)
+    const sharedFetch = copyAfterDelete?.imageUrl ? await fetch(copyAfterDelete.imageUrl) : null
+    check(
+      'deleting the original left the duplicate’s shared map image in storage',
+      sharedFetch !== null && sharedFetch.ok,
+      sharedFetch ? `${sharedFetch.status} from the copy’s image URL` : 'no image URL to fetch',
+    )
+
+    // REPLACE: ONE FACTOR THROUGH THE GRID, THE PLACEMENTS AND THE FOG.
+    await client.mutation('scenes:updateGrid', {
+      code,
+      dmCode,
+      sceneId: copy.sceneId,
+      gridSize: GRID.gridSize,
+      gridOffsetX: GRID.gridOffsetX,
+      gridOffsetY: GRID.gridOffsetY,
+      gridVisible: true,
+    })
+    await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId: copy.sceneId,
+      shape: { kind: 'rect', x: 101.5, y: 202.25, width: 303.75, height: 404.5 },
+    })
+    // ⚠️ **A polygon as well, because the box and the outline are two representations of one
+    // shape and `replaceImage` has to move both.** Scaling the four numbers and leaving the
+    // vertices gives a correctly-sized bounding box around the old map's outline — a shape that
+    // hides the wrong part of the map, and one that looks like a rendering bug from either
+    // chair. Fractional on purpose: these are real float64s through a real deployment.
+    await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId: copy.sceneId,
+      shape: {
+        kind: 'polygon',
+        points: [
+          { x: 600.5, y: 300.25 },
+          { x: 800.25, y: 340.5 },
+          { x: 700.75, y: 520.5 },
+        ],
+      },
+    })
+
+    const differentShape = await uploadPng(client, code, dmCode)
+    uploads.push(differentShape)
+    await refuses('scenes:replaceImage refused a map of a different shape', () =>
+      client.mutation('scenes:replaceImage', {
+        code,
+        dmCode,
+        sceneId: copy.sceneId,
+        imageId: differentShape,
+        imageWidth: MAP_HEIGHT,
+        imageHeight: MAP_WIDTH,
+      }),
+    )
+
+    const doubled = await uploadPng(client, code, dmCode)
+    uploads.push(doubled)
+    await client.mutation('scenes:replaceImage', {
+      code,
+      dmCode,
+      sceneId: copy.sceneId,
+      imageId: doubled,
+      imageWidth: MAP_WIDTH * 2,
+      imageHeight: MAP_HEIGHT * 2,
+    })
+    const scaledMap = await listedAs(copy.sceneId)
+    const scaledFog = await client.query('fog:list', { code, dmCode, sceneId: copy.sceneId })
+    const scaledRect = scaledFog.find((row) => row.points === undefined) ?? null
+    const scaledPolygon = scaledFog.find((row) => row.points !== undefined) ?? null
+    check(
+      'scenes:replaceImage put one factor through the grid and the fog, in real float64s',
+      scaledMap !== null &&
+        scaledMap.imageWidth === MAP_WIDTH * 2 &&
+        scaledMap.gridSize === GRID.gridSize * 2 &&
+        scaledMap.gridOffsetX === GRID.gridOffsetX * 2 &&
+        scaledMap.gridOffsetY === GRID.gridOffsetY * 2 &&
+        scaledFog.length === 2 &&
+        scaledRect !== null &&
+        scaledRect.x === 203 &&
+        scaledRect.y === 404.5 &&
+        scaledRect.width === 607.5 &&
+        scaledRect.height === 809,
+      scaledMap
+        ? `grid ${scaledMap.gridSize} / ${scaledMap.gridOffsetX} / ${scaledMap.gridOffsetY}, fog ${JSON.stringify(scaledRect)}`
+        : 'the copy is not in the list',
+    )
+
+    // ⚠️ **The polygon's vertices moved by the same factor as its box, in real float64s.**
+    // Compared field for field rather than value-compared, so a deployment that scaled the box
+    // and left the outline is *named* rather than reported as an inequality — which is the one
+    // failure this whole fixture pair exists for, and the one that reads as a rendering bug
+    // rather than as a data bug from either chair.
+    const polygonScaleDrift = scaledPolygon
+      ? firstDifference(
+          {
+            _id: scaledPolygon._id,
+            x: 1201,
+            y: 600.5,
+            width: 399.5,
+            height: 440.5,
+            points: [
+              { x: 1201, y: 600.5 },
+              { x: 1600.5, y: 681 },
+              { x: 1401.5, y: 1041 },
+            ],
+          },
+          scaledPolygon,
+          'scaledPolygon',
+        )
+      : 'no polygon came back'
+    check(
+      'a polygon’s vertices scaled with its box, and both are the same one factor',
+      polygonScaleDrift === null,
+      polygonScaleDrift ?? JSON.stringify(scaledPolygon),
+    )
+
+    // 43. A MAP THAT STARTS COVERED, AND A SHAPE THAT IS NOT A RECTANGLE.
+    //
+    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE, and there are three things here rather than
+    // one.**
+    //
+    //   - **An optional field whose absence has a meaning.** `scenes.fogBase` is absent on every
+    //     row this deployment already holds, and `fogBaseOf` answers `lit` for it. The local
+    //     suite creates its scenes through the same mutation, so it proves the *default* and
+    //     structurally cannot prove that a row written *before the field existed* still reads as
+    //     lit — because it has no such rows. This script talks to the deployment that does.
+    //   - **A discriminated union as an argument validator.** `fog:draw` takes `rect | polygon`
+    //     and Convex's own value validation is the only thing refusing a call that carries
+    //     neither, or both. `convex-test` does not apply it.
+    //   - **An array of float64 objects through a new optional column.** `points` is the first
+    //     nested array of records this schema stores, and floats through a real deployment are
+    //     this script's oldest speciality.
+    const baseSceneArt = await uploadPng(client, code, dmCode)
+    uploads.push(baseSceneArt)
+    const baseScene = await client.mutation('scenes:create', {
+      code,
+      dmCode,
+      name: 'Board Smoke — The Covered Vault',
+      imageId: baseSceneArt,
+      imageWidth: MAP_WIDTH,
+      imageHeight: MAP_HEIGHT,
+    })
+    extraScenes.push(baseScene.sceneId)
+
+    // (a) THE ABSENT FIELD, RESOLVED BY THE SERVER. A brand-new scene is written with no
+    // `fogBase` at all, and the projection must still carry a real base — because the browser
+    // must never spell the absent-means-lit default a second time. A client that disagreed with
+    // the server about whether a map is covered is a client that paints the party a floor plan.
+    const freshScenes = await client.query('scenes:list', { code, dmCode })
+    const freshRow = freshScenes.find((row) => row._id === baseScene.sceneId) ?? null
+    check(
+      'a scene created with no fogBase comes back as lit, resolved server-side',
+      freshRow !== null && freshRow.fogBase === 'lit',
+      freshRow ? `fogBase ${JSON.stringify(freshRow.fogBase)}` : 'the new scene did not come back',
+    )
+
+    // (b) A POLYGON ROUND TRIP. Five points, deliberately not axis-aligned and deliberately
+    // fractional, so a deployment that rounded a coordinate or dropped the array is named. The
+    // bounding box is **computed server-side and never taken from the client**, so the four
+    // numbers that come back are an answer rather than an echo — which is the whole reason the
+    // union has two members instead of one shape with an optional point list.
+    const pentagon = [
+      { x: 300.5, y: 400.25 },
+      { x: 520.75, y: 360.5 },
+      { x: 610.25, y: 560.75 },
+      { x: 450.5, y: 700.25 },
+      { x: 280.75, y: 590.5 },
+    ]
+    const polygon = await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId: baseScene.sceneId,
+      shape: { kind: 'polygon', points: pentagon },
+    })
+    const polygonRows = await client.query('fog:list', { code, sceneId: baseScene.sceneId, dmCode })
+    const polygonRow = polygonRows.find((row) => row._id === polygon.fogId) ?? null
+    // The box the server should have computed, spelled out by hand rather than derived from the
+    // same helper the server used — a shared helper would agree with itself.
+    const expectedBox = { x: 280.75, y: 360.5, width: 329.5, height: 339.75 }
+    const polygonDrift = polygonRow
+      ? firstDifference(
+          { _id: polygon.fogId, ...expectedBox, points: pentagon },
+          polygonRow,
+          'polygon',
+        )
+      : 'no polygon came back'
+    check(
+      'a five-point polygon round-tripped with its points intact and a server-computed box',
+      polygonDrift === null,
+      polygonDrift ?? `stored ${JSON.stringify(polygonRow)}`,
+    )
+
+    // ⚠️ **THE FIXTURE PAIR.** `points` is optional, so the trap this script exists for is a
+    // rebuild that drops it — or, in the other direction, one that writes `points: undefined`
+    // onto a rectangle. `firstDifference` reports a key present on one side only, so a rectangle
+    // sent with no points must come back with **no `points` key at all**.
+    const alsoRect = await client.mutation('fog:draw', {
+      code,
+      dmCode,
+      sceneId: baseScene.sceneId,
+      shape: { kind: 'rect', x: 1200, y: 900, width: 240, height: 180 },
+    })
+    const rectRow =
+      (await client.query('fog:list', { code, sceneId: baseScene.sceneId, dmCode })).find(
+        (row) => row._id === alsoRect.fogId,
+      ) ?? null
+    const rectDrift = rectRow
+      ? firstDifference(
+          { _id: alsoRect.fogId, x: 1200, y: 900, width: 240, height: 180 },
+          rectRow,
+          'rect',
+        )
+      : 'no rectangle came back'
+    check(
+      'a rectangle sent with no points came back with no points key — the fixture pair',
+      rectDrift === null,
+      rectDrift ?? `stored ${JSON.stringify(rectRow)}`,
+    )
+
+    // (c) WHAT THE UNION REFUSES. Neither member, both members, and a polygon below the three
+    // points a region needs — each refused by Convex's own validation or by the argument check
+    // in front of every read, and none of them reachable from the local suite.
+    for (const [label, shape] of [
+      ['a shape naming neither member', { x: 0, y: 0, width: 10, height: 10 }],
+      ['a shape naming both spellings', { kind: 'rect', x: 0, y: 0, width: 10, height: 10, points: pentagon }],
+      ['a polygon of two points', { kind: 'polygon', points: pentagon.slice(0, 2) }],
+      ['a polygon with a NaN vertex', { kind: 'polygon', points: [{ x: Number.NaN, y: 1 }, { x: 2, y: 3 }, { x: 4, y: 5 }] }],
+    ]) {
+      await refuses(`fog:draw refused ${label}`, () =>
+        client.mutation('fog:draw', { code, dmCode, sceneId: baseScene.sceneId, shape }),
+      )
+    }
+
+    // (d) THE BASE, FLIPPED — and the property the confirm dialog promises in words: **nothing
+    // is deleted.** Two shapes are on this scene; both must survive the flip and the flip back,
+    // which is what makes "flipping back returns it exactly as it is now" true rather than
+    // hopeful.
+    const beforeFlip = JSON.stringify(
+      await client.query('fog:list', { code, sceneId: baseScene.sceneId, dmCode }),
+    )
+    await client.mutation('scenes:setFogBase', {
+      code,
+      dmCode,
+      sceneId: baseScene.sceneId,
+      fogBase: 'dark',
+    })
+    const darkRow =
+      (await client.query('scenes:list', { code, dmCode })).find(
+        (row) => row._id === baseScene.sceneId,
+      ) ?? null
+    const afterFlip = JSON.stringify(
+      await client.query('fog:list', { code, sceneId: baseScene.sceneId, dmCode }),
+    )
+    check(
+      'flipping a map to dark kept both shapes byte for byte',
+      darkRow !== null && darkRow.fogBase === 'dark' && afterFlip === beforeFlip,
+      darkRow ? `base ${darkRow.fogBase}, shapes ${afterFlip === beforeFlip}` : 'no scene row',
+    )
+
+    await refuses('scenes:setFogBase refused a caller without the DM code', () =>
+      client.mutation('scenes:setFogBase', {
+        code,
+        dmCode: 'not-the-dm-code',
+        sceneId: baseScene.sceneId,
+        fogBase: 'lit',
+      }),
+    )
+    await refuses('scenes:setFogBase refused a base that is not one of the two', () =>
+      client.mutation('scenes:setFogBase', {
+        code,
+        dmCode,
+        sceneId: baseScene.sceneId,
+        fogBase: 'candlelit',
+      }),
+    )
+
+    // 44. WALLS: A NEW TABLE, AN ARRAY OF RECORDS, AND A REFUSAL ON THE SETTLING WRITE ONLY.
+    //
+    // ⚠️ **WHAT ONLY A REAL DEPLOYMENT CAN SETTLE.** Three things, and the third is the one
+    // that matters:
+    //
+    //   - **A brand-new table whose only column is an array of float64 records.** `points` is
+    //     required here — the table is new, so the pressure that makes a field optional in this
+    //     schema never applied — and a polyline of real fractional coordinates through real
+    //     value validation is this script's oldest speciality.
+    //   - **A refusal kind that is deliberately NOT `TokenNotFound`.** Every wall goes to every
+    //     client, so a blocked player has been sent the thing that blocked them and there is
+    //     nothing to enumerate — answering *not found* about a coin on their own screen would
+    //     be a lie that reads as a bug. The suite asserts the kind; this asserts that a real
+    //     deployment carries it across the wire as a `ConvexError` payload rather than as a
+    //     generic server error.
+    //   - ⚠️ **THE SPLIT: the backstop fires on the settling write and on nothing else.** That
+    //     is the whole design — `requireMovableToken` runs ten times a second and a range read
+    //     there would turn every wall the DM draws into a conflict against every in-flight
+    //     drag — and it means an *unsettled* move through a wall is accepted. That is the
+    //     advisory ceiling, and it is asserted here as a **positive** rather than described,
+    //     because a documented hole no test names becomes a bug report.
+    const wallScene = baseScene.sceneId
+    const wallSeat = await client.mutation('players:join', {
+      code,
+      displayName: 'Board Smoke Wall Walker',
+    })
+    seats.push(wallSeat.playerId)
+    const wallChar = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: 'Board Smoke Wall Walker',
+    })
+    createdCharacters.push(wallChar.characterId)
+    await client.mutation('characters:claim', {
+      code,
+      playerId: wallSeat.playerId,
+      characterId: wallChar.characterId,
+    })
+    const walker = await client.mutation('board:addToken', {
+      code,
+      dmCode,
+      sceneId: wallScene,
+      name: 'Wall Walker',
+      layer: 'player',
+      sizeSquares: 1,
+      tint: '#2c3e50',
+      characterId: wallChar.characterId,
+      x: 400,
+      y: 400,
+    })
+    created.push(walker.tokenId)
+
+    // A wall straight down the map between where the coin stands and where it is sent.
+    const wall = await client.mutation('walls:add', {
+      code,
+      dmCode,
+      sceneId: wallScene,
+      points: [
+        { x: 700.5, y: 100.25 },
+        { x: 700.5, y: 1500.75 },
+      ],
+    })
+    const wallRows = await client.query('walls:list', { code, dmCode, sceneId: wallScene })
+    const wallRow = wallRows.find((row) => row._id === wall.wallId) ?? null
+    const wallDrift = wallRow
+      ? firstDifference(
+          {
+            _id: wall.wallId,
+            points: [
+              { x: 700.5, y: 100.25 },
+              { x: 700.5, y: 1500.75 },
+            ],
+          },
+          wallRow,
+          'wall',
+        )
+      : 'no wall came back'
+    check(
+      'a two-point wall round-tripped with its fractional coordinates intact',
+      wallDrift === null,
+      wallDrift ?? JSON.stringify(wallRow),
+    )
+
+    // ⚠️ **Ungated, but only about the board in front of you** — `fog.list`'s guard restated
+    // rather than borrowed, and closing the same hole for a different payload. Every wall on
+    // the *active* scene goes to every client, because the client cannot block a drag against
+    // geometry it does not have. A wall sketch of a map the party has not reached is a floor
+    // plan, and that is withheld. This scene is not the active one, so a player gets nothing.
+    check(
+      'a wall on a board nobody is looking at reached the DM and not the table',
+      wallRow !== null &&
+        (await client.query('walls:list', { code, sceneId: wallScene })).length === 0,
+      `${wallRows.length} to the DM`,
+    )
+
+    // THE BACKSTOP. A settling move from one side of the wall to the other, as the seat rather
+    // than as the DM, because walls do not block the DM.
+    const blocked = await refusalOf(() =>
+      client.mutation('board:moveToken', {
+        code,
+        playerId: wallSeat.playerId,
+        sceneId: wallScene,
+        tokenId: walker.tokenId,
+        x: 1100,
+        y: 400,
+        settle: true,
+      }),
+    )
+    check(
+      'board:moveToken refused a settling move across a wall, as WallBlocks and not TokenNotFound',
+      blocked !== null && blocked.kind === 'WallBlocks',
+      blocked ? JSON.stringify(blocked) : 'the deployment let the coin through',
+    )
+
+    // ⚠️ **THE ADVISORY CEILING, ASSERTED AS A POSITIVE.** The same move unsettled is accepted:
+    // the check is on the settling write only, so a client that never settles can park a coin
+    // anywhere. That is written into ADR 0015's costs, and a hole nobody tests is a hole
+    // somebody reports.
+    const unsettled = await refusalOf(() =>
+      client.mutation('board:moveToken', {
+        code,
+        playerId: wallSeat.playerId,
+        sceneId: wallScene,
+        tokenId: walker.tokenId,
+        x: 1100,
+        y: 400,
+        settle: false,
+      }),
+    )
+    check(
+      'and accepted the identical move unsettled — the advisory ceiling, on the record',
+      unsettled === null,
+      unsettled ? JSON.stringify(unsettled) : 'the unsettled write went through, as designed',
+    )
+
+    // The DM is not blocked. They place creatures inside sealed rooms and drag the party
+    // through a door they have just narrated open.
+    const asDm = await refusalOf(() =>
+      client.mutation('board:moveToken', {
+        code,
+        dmCode,
+        sceneId: wallScene,
+        tokenId: walker.tokenId,
+        x: 1400,
+        y: 400,
+        settle: true,
+      }),
+    )
+    check(
+      'a wall does not block the DM',
+      asDm === null,
+      asDm ? JSON.stringify(asDm) : 'the DM crossed it',
+    )
+
+    await refuses('walls:add refused a one-point wall', () =>
+      client.mutation('walls:add', {
+        code,
+        dmCode,
+        sceneId: wallScene,
+        points: [{ x: 10, y: 10 }],
+      }),
+    )
+    await refuses('walls:add refused a NaN vertex', () =>
+      client.mutation('walls:add', {
+        code,
+        dmCode,
+        sceneId: wallScene,
+        points: [
+          { x: Number.NaN, y: 10 },
+          { x: 20, y: 20 },
+        ],
+      }),
+    )
+    await refuses('walls:add refused a caller without the DM code', () =>
+      client.mutation('walls:add', {
+        code,
+        dmCode: 'not-the-dm-code',
+        sceneId: wallScene,
+        points: [
+          { x: 10, y: 10 },
+          { x: 20, y: 20 },
+        ],
+      }),
+    )
+    await refuses('walls:remove refused a caller without the DM code', () =>
+      client.mutation('walls:remove', { code, dmCode: 'not-the-dm-code', wallId: wall.wallId }),
+    )
+
+    const wallsCleared = await client.mutation('walls:clear', { code, dmCode, sceneId: wallScene })
+    check(
+      'walls:clear swept the scene and said how many',
+      wallsCleared.removed === 1 &&
+        (await client.query('walls:list', { code, sceneId: wallScene })).length === 0,
+      JSON.stringify(wallsCleared),
+    )
   } catch (error) {
     const data = error && error.data ? ` ${JSON.stringify(error.data)}` : ''
     record('the run completed without an unexpected error', false, `${error.message ?? error}${data}`)
@@ -7528,7 +8857,7 @@ async function main() {
       // running it over the whole list safe rather than a list of guesses about which
       // uploads survived a run that failed halfway.
       for (const imageId of uploads) {
-        await quietly(() => client.mutation('files:discard', { code, dmCode, imageId }))
+        await quietly(() => client.mutation('files:discard', { code, dmCode, imageIds: [imageId] }))
       }
       console.log(
         `\n  cleaned up ${1 + extraScenes.length} scenes, ${created.length} tokens, ${createdCharacters.length} characters and ${seats.length} seats, and swept ${uploads.length} uploads`,
@@ -7572,7 +8901,7 @@ async function main() {
           client.mutation('files:discard', {
             code: foreign.code,
             dmCode: foreign.dmCode,
-            imageId: foreign.imageId,
+            imageIds: [foreign.imageId],
           }),
         )
       }

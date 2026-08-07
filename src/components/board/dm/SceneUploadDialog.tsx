@@ -80,6 +80,11 @@ export function SceneUploadDialog({ code, dmCode }: SceneUploadDialogProps) {
             dmCode,
             name,
             imageId: image.imageId,
+            // `?? undefined` rather than passing the null through: the argument is
+            // `v.optional`, and Convex's optional means *absent* rather than *null*.
+            // `useUpload` spells "this kind has none" as null because a union is the only
+            // way to tell it apart from a failure; the wire spells it by omission.
+            thumbnailId: image.thumbnailId ?? undefined,
             imageWidth: image.width,
             imageHeight: image.height,
           }),

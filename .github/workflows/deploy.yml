@@ -32,6 +32,25 @@ jobs:
 
       - run: npm ci
 
+      # ⚠️ These two run BEFORE the deploy, and the order is the whole point.
+      #
+      # `npm run build` below type-checks `src/` on its way past, so it was easy to
+      # believe the pipeline was checked. It was not: `tsc -p convex --noEmit` never
+      # ran here, and neither did a single test — including every guard test. The
+      # guards are the things that stop a DM-layer token, an NPC's stat block or a
+      # stat corpus reaching a browser (CLAUDE.md invariants 1 and 8), and they are
+      # exactly the tests somebody deletes at 11pm to make a red pipeline green.
+      #
+      # Running them here costs about a minute and refuses the deploy rather than
+      # reporting on one that already happened — `npx convex deploy` pushes the
+      # backend before the frontend is built, so a failure discovered afterwards is
+      # a production schema nobody asked for.
+      - name: Typecheck
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
       # Deploys the Convex backend to production AND runs the frontend build
       # with the production VITE_CONVEX_URL injected automatically. Doing both
       # in one command is what keeps the deployed frontend and backend in step.

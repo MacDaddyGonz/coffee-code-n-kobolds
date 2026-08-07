@@ -44,6 +44,18 @@ type ConfirmDialogProps = {
    * synchronous handler cannot fail, so the dialog just closes.
    */
   onConfirm: () => Promise<boolean> | void
+  /**
+   * One control between the description and the buttons, for a confirmation that has a
+   * *choice* in it as well as a yes.
+   *
+   * ⚠️ **Deliberately not a general slot for a form.** Duplicating a map is the case, and it
+   * is one checkbox: *also copy the tokens and the fog.* Everything else about the copy is
+   * decided by the sentence in the description, which is what keeps this a confirm rather
+   * than a dialog with an OK button. The moment something here needs two fields and a
+   * validation message it wants its own `Dialog`, like `SceneUploadDialog` — and the tell is
+   * that `onConfirm` takes no arguments, so the caller has to hold the state itself.
+   */
+  children?: ReactNode
 }
 
 /** Second click for the lobby actions that are worth confirming. */
@@ -58,6 +70,7 @@ export function ConfirmDialog({
   confirmVariant = 'destructive',
   busy = false,
   onConfirm,
+  children,
 }: ConfirmDialogProps) {
   // Uncontrolled unless the caller supplies both halves, so the six existing callers
   // that pass a trigger and nothing else are unchanged.
@@ -73,6 +86,7 @@ export function ConfirmDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
+        {children}
         <DialogFooter>
           <DialogClose asChild>
             <Button type="button" variant="outline">

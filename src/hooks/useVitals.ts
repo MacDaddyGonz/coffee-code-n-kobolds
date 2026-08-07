@@ -4,6 +4,7 @@ import { useMutation, useQuery } from 'convex/react'
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import type { PublicVitals } from '@convex/lib/characters'
+import type { RestKind } from '@convex/lib/rest'
 import { errorMessage } from '@/lib/errors'
 
 /**
@@ -117,8 +118,92 @@ export type HpActions = {
    * to notice.
    */
   longRest: (characterId: Id<'characters'>) => Promise<void>
-  /** Mark a once-per-long-rest ability spent, or hand it back if it was a misclick. */
-  setPerRest: (characterId: Id<'characters'>, key: string, spent: boolean) => Promise<void>
+  /**
+   * A short rest: whatever comes back on one comes back, and **nothing else**.
+   *
+   * ⚠️ **It does not heal and does not return hit dice** — spending hit dice is what a short
+   * rest is for. `REST_LABELS` in `@convex/lib/rest` carries the wording for both rests so
+   * that a button cannot promise something the mutation does not do, which is the mistake
+   * `HitDiceControls` shipped once already in the other direction.
+   */
+  shortRest: (characterId: Id<'characters'>) => Promise<void>
+  /**
+   * EITHER REST, CHOSEN BY THE VOCABULARY RATHER THAN BY THE CALLER.
+   *
+   * ⚠️ **This exists so that no component has to write `kind === 'short' ? … : …`.** A
+   * control that offers both rests iterates `REST_KINDS` — which is the rule CLAUDE.md
+   * invariant 9 states for a union with a renderer — and it would then have to turn the
+   * member it is holding back into one of two named callbacks, which is the ternary the
+   * iteration was for. The dispatch is a `Record` keyed by `RestKind` below, so a third
+   * period fails to compile here as well as at `REST_LABELS` and inside `restores`.
+   *
+   * `longRest` and `shortRest` stay beside it because both are called directly from
+   * elsewhere and neither is a wrapper worth removing.
+   */
+  rest: (characterId: Id<'characters'>, kind: RestKind) => Promise<void>
+  /**
+   * Spend uses of a limited thing, or hand some back.
+   *
+   * ⚠️ **A count, where this was a boolean.** `characters.setUses` replaced
+   * `characters.setPerRest` because 2024 is full of features with two, three or
+   * proficiency-bonus-many uses, and the panels now have a counter on every entry that
+   * declares a resource — so the signature widened when a control that counts arrived to
+   * want it, which is what the note here said it was waiting for. A species' one-per-rest
+   * ability is still a tick; `RestControls` sends `1` and `0` at the one call site where
+   * that is genuinely the whole vocabulary.
+   *
+   * ⚠️ **Nothing is refused at zero.** No roll consults the count, no cast is blocked, and
+   * a feature with none left is still a feature you can press. Counting is not adjudicating.
+   */
+  setUses: (characterId: Id<'characters'>, key: string, spent: number) => Promise<void>
+  /**
+   * Spend spell slots of one level, or hand some back.
+   *
+   * ⚠️ **Keyed on the spell level and not on an entry, because a slot belongs to the
+   * character rather than to the spell it was spent on.** That is the whole difference from
+   * `setUses` above: Second Wind's uses are Second Wind's, and a level 2 slot is a level 2
+   * slot whatever cast it.
+   *
+   * ⚠️ **A PERSON SPENDS ONE, AND `feed.roll` NEVER WILL.** Announcing a spell consumes
+   * nothing and refuses nothing. The application also *could not* choose correctly if it
+   * tried — a level 1 spell may be cast with a level 2 or 3 slot, and upcasting is how half
+   * the 2024 list scales — so the pip is a person's to press. ADR 0016's resource-shape
+   * section is the record, and ADR 0011's supersede table is wrong where it says a roll
+   * spends one.
+   */
+  setSlots: (characterId: Id<'characters'>, level: number, spent: number) => Promise<void>
+  /**
+   * Temporary hit points, which are **not healing and not part of the maximum.**
+   *
+   * An absolute rather than a delta, unlike `adjust`, and the difference is what each one
+   * is: damage is applied by two people at once and has to compose, where temporary hit
+   * points are *granted* — a spell says "you gain 8", replacing whatever was there, and the
+   * last write is the right one.
+   *
+   * ⚠️ **It does not take the higher of the two, and this hook must not start.** 5e's rule
+   * is that temporary hit points do not stack; this application announces and counts while
+   * the table adjudicates, so the number on screen is the number a person typed and a
+   * mistake stays correctable downwards. `characters.setTemporaryHp` says the same thing at
+   * the other end and is where the argument is written out in full.
+   */
+  setTemporaryHp: (characterId: Id<'characters'>, temporaryHp: number) => Promise<void>
+  /**
+   * The death-save tally, **both columns in one call** because they are one row of boxes.
+   *
+   * ⚠️ **Nothing here kills anybody.** Three failures is three ticked boxes: no hit point
+   * moves, no marker is set, no feed line is written and no heal is refused.
+   */
+  setDeathSaves: (
+    characterId: Id<'characters'>,
+    successes: number,
+    failures: number,
+  ) => Promise<void>
+  /**
+   * Tick or clear Heroic Inspiration. A boolean, and the whole of the feature — no die in
+   * this application consults it and no reroll is offered, which is why it is not folded
+   * into `setUses`: it has no maximum and no owning entry to count against.
+   */
+  setHeroicInspiration: (characterId: Id<'characters'>, heroicInspiration: boolean) => Promise<void>
   /** The last refusal, for the caller to toast. Cleared on the next successful call. */
   error: string | null
 }
@@ -199,7 +284,15 @@ export function useHpActions(args: {
   // is a flicker rather than a saving — the reason `adjustHp` earns one is that a
   // health bar moves on every hit of every round.
   const longRestMutation = useMutation(api.characters.longRest)
-  const setPerRestMutation = useMutation(api.characters.setPerRest)
+  const shortRestMutation = useMutation(api.characters.shortRest)
+  const setUsesMutation = useMutation(api.characters.setUses)
+  const setSlotsMutation = useMutation(api.characters.setSlots)
+  // None of these three gets an optimistic update either, for the reason above and one
+  // more: all three are written by a control the person is looking at, at a moment nothing
+  // else is happening, so a round trip is a round trip rather than a stutter in a fight.
+  const setTemporaryHpMutation = useMutation(api.characters.setTemporaryHp)
+  const setDeathSavesMutation = useMutation(api.characters.setDeathSaves)
+  const setHeroicInspirationMutation = useMutation(api.characters.setHeroicInspiration)
 
   const [error, setError] = useState<string | null>(null)
 
@@ -253,13 +346,89 @@ export function useHpActions(args: {
     [longRestMutation, caller, code, run],
   )
 
-  const setPerRest = useCallback(
-    (characterId: Id<'characters'>, key: string, spent: boolean) =>
-      run('Could not change that ability.', () =>
-        setPerRestMutation({ code, characterId, key, spent, ...caller }),
-      ),
-    [setPerRestMutation, caller, code, run],
+  const shortRest = useCallback(
+    (characterId: Id<'characters'>) =>
+      run('Could not take that rest.', () => shortRestMutation({ code, characterId, ...caller })),
+    [shortRestMutation, caller, code, run],
   )
 
-  return { adjust, adjustHitDice, longRest, setPerRest, error }
+  /**
+   * Which mutation each rest is, keyed by the vocabulary.
+   *
+   * ⚠️ **A `Record` rather than a ternary in `rest` below**, which is CLAUDE.md invariant
+   * 9's rule about finding the place a wrong answer does damage: `kind === 'short' ? … : …`
+   * compiles for a third rest and silently takes a long one, where a missing key here fails
+   * to compile. That is the same refusal `REST_LABELS` and `restores` already carry on the
+   * server, arriving in the browser.
+   */
+  const restMutations = useMemo(
+    // `satisfies` rather than an annotation, so the exhaustiveness is checked without
+    // widening either mutation's own argument type to a hand-written shape that would then
+    // be a second place the arguments are spelled.
+    () =>
+      ({ short: shortRestMutation, long: longRestMutation }) satisfies Record<RestKind, unknown>,
+    [shortRestMutation, longRestMutation],
+  )
+
+  const rest = useCallback(
+    (characterId: Id<'characters'>, kind: RestKind) =>
+      run('Could not take that rest.', () =>
+        restMutations[kind]({ code, characterId, ...caller }),
+      ),
+    [restMutations, caller, code, run],
+  )
+
+  const setUses = useCallback(
+    (characterId: Id<'characters'>, key: string, spent: number) =>
+      run('Could not change that ability.', () =>
+        setUsesMutation({ code, characterId, key, spent, ...caller }),
+      ),
+    [setUsesMutation, caller, code, run],
+  )
+
+  const setSlots = useCallback(
+    (characterId: Id<'characters'>, level: number, spent: number) =>
+      run('Could not change those spell slots.', () =>
+        setSlotsMutation({ code, characterId, level, spent, ...caller }),
+      ),
+    [setSlotsMutation, caller, code, run],
+  )
+
+  const setTemporaryHp = useCallback(
+    (characterId: Id<'characters'>, temporaryHp: number) =>
+      run('Could not change those temporary hit points.', () =>
+        setTemporaryHpMutation({ code, characterId, temporaryHp, ...caller }),
+      ),
+    [setTemporaryHpMutation, caller, code, run],
+  )
+
+  const setDeathSaves = useCallback(
+    (characterId: Id<'characters'>, successes: number, failures: number) =>
+      run('Could not change those death saving throws.', () =>
+        setDeathSavesMutation({ code, characterId, successes, failures, ...caller }),
+      ),
+    [setDeathSavesMutation, caller, code, run],
+  )
+
+  const setHeroicInspiration = useCallback(
+    (characterId: Id<'characters'>, heroicInspiration: boolean) =>
+      run('Could not change that inspiration.', () =>
+        setHeroicInspirationMutation({ code, characterId, heroicInspiration, ...caller }),
+      ),
+    [setHeroicInspirationMutation, caller, code, run],
+  )
+
+  return {
+    adjust,
+    adjustHitDice,
+    longRest,
+    shortRest,
+    rest,
+    setUses,
+    setSlots,
+    setTemporaryHp,
+    setDeathSaves,
+    setHeroicInspiration,
+    error,
+  }
 }

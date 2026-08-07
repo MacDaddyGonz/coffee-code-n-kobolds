@@ -1,4 +1,4 @@
-import { Trash2 } from 'lucide-react'
+import { Minus, Plus, Trash2 } from 'lucide-react'
 
 import { FieldError } from '@/components/FieldError'
 import { RollButton } from '@/components/sheet/RollButton'
@@ -7,9 +7,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import type { FeedPart } from '@convex/lib/roll'
 import { partLabel, partsFor } from '@convex/lib/roll'
+import { REST_LABELS } from '@convex/lib/rest'
+import type { Resource } from '@convex/lib/rest'
 import type { CatalogueEntry } from '@convex/lib/rules'
+import { WEAPON_MASTERY_LABELS } from '@convex/lib/mastery'
 import type { SheetEntry, SheetEntryCategory, SheetProblem } from '@convex/lib/sheet'
 import {
   MAX_SHEET_ENTRIES,
@@ -18,11 +23,13 @@ import {
   SHEET_ENTRY_ROLL_LABELS,
   categoryOf,
   isValidRoll,
+  masteryOf,
   messageAtField,
   normaliseRoll,
   problemAtEntry,
   rollShapeOf,
   toHitOf,
+  usesOf,
   withoutUndefined,
 } from '@convex/lib/sheet'
 
@@ -51,6 +58,39 @@ export type SheetEntryListProps = {
    */
   readOnly?: boolean
   onChange?: (entries: SheetEntry[]) => void
+  /**
+   * WHICH HEADING EACH ROW GOES UNDER — the shape of the roll, or the spell level.
+   *
+   * ⚠️ **This is deliberately not a discriminated union with a `never` arm, and knowing
+   * why is what stops somebody adding one.** CLAUDE.md invariant 9's rule is *find the
+   * place a wrong answer does damage and make the compiler refuse there*; here a wrong
+   * answer prints a row under the wrong heading and nothing else, because **both modes
+   * are total**. `'category'` walks `SHEET_ENTRY_CATEGORIES` and `categoryOf` answers one
+   * of them for every entry; `'level'` derives its buckets from the entries themselves, so
+   * a bucket exists exactly when something is in it. No entry can be stored, counted
+   * against `MAX_SHEET_ENTRIES` and left with no row in either mode, which is the failure
+   * the category iteration exists to prevent and the only thing at stake.
+   *
+   * `'level'` is the spell page's, and it is a different question rather than a nicer
+   * one: a caster's spells are read *by level* because that is the shape of the resource
+   * they are spent from, where a hero's feats are read by what happens when you press
+   * them. Both orders are right for their list.
+   */
+  groupBy?: 'category' | 'level'
+  /**
+   * How many uses of each key have already gone, or null while the vitals subscription is
+   * still answering.
+   *
+   * Read off the vitals payload's `spentUses`, which is the counted successor to
+   * the retired `spentPerRest` and still has a legacy array folded into it server-side — so a
+   * caller passing this one alone is correct for both.
+   *
+   * Absent entirely on a list nobody is playing from: a creature's actions and the DM's
+   * comparison panel show what a thing *is* rather than what is left of it.
+   */
+  spentUses?: readonly { key: string; spent: number }[] | null
+  /** Absent means the counters are printed rather than stepped. */
+  onSetUses?: (key: string, spent: number) => void
 }
 
 /**
@@ -83,6 +123,16 @@ const EMPTY_TAKEN: ReadonlySet<string> = new Set()
  * different answer for every line. So each list sub-groups under Weapons, Actions and
  * Passives rather than the categories replacing the lists.
  *
+ * **A spell list groups by level instead**, which is the one exception and is a `groupBy`
+ * rather than a fork — see that prop, where the argument for why it needs no `never` arm
+ * lives. Both modes are total: every entry lands under exactly one heading either way, so
+ * neither can leave a row stored, counted against `MAX_SHEET_ENTRIES` and unreachable.
+ *
+ * **A row with a limited-use resource carries a counter**, which is the whole of what the
+ * 2024 resource shape produces on screen. ⚠️ It counts and refuses nothing: the roll button
+ * beside it does not decrement it, no cast is blocked at zero, and a feature with none left
+ * is still one you can press. See `UseCounter`.
+ *
  * **Each row is clickable now, and what it offers comes out of `partsFor`.** A weapon
  * shows two buttons, an action one, a passive one, and alt-click on any of them sends the
  * description instead. Nothing here rolls anything: the id on each entry is what the
@@ -112,6 +162,9 @@ export function SheetEntryList({
   disabled,
   readOnly,
   onChange,
+  groupBy = 'category',
+  spentUses,
+  onSetUses,
 }: SheetEntryListProps) {
   // Only the picker asks which catalogue keys are already here, and a read-only list
   // has no picker — so three of this component's five call sites were building a map,
@@ -129,16 +182,14 @@ export function SheetEntryList({
 
   const remove = (index: number) => onChange?.(entries.filter((_, at) => at !== index))
 
-  // Bucketed in one pass, keyed by the union itself rather than by three names written
-  // out here — see the render below for why that matters.
-  const buckets = new Map<SheetEntryCategory, PositionedEntry[]>(
-    SHEET_ENTRY_CATEGORIES.map((category) => [category, []]),
-  )
-  entries.forEach((entry, index) => {
-    // `categoryOf` rather than `entry.category`, which is optional and absent on every
-    // line written before the category existed. One accessor, one default.
-    buckets.get(categoryOf(entry))?.push({ entry, index })
-  })
+  // The index is taken once, here, before anything is bucketed — see `PositionedEntry`.
+  const positioned = entries.map((entry, index) => ({ entry, index }))
+  const buckets = groupBy === 'level' ? byLevel(positioned) : byCategory(positioned)
+
+  // A `Map` rather than a scan per row: a hero at the forty-entry ceiling with a dozen
+  // counted features would otherwise be a quadratic sweep on every keystroke elsewhere on
+  // the panel.
+  const spent = new Map((spentUses ?? []).map((row) => [row.key, row.spent]))
 
   return (
     <section className="flex flex-col gap-2">
@@ -177,48 +228,118 @@ export function SheetEntryList({
           Nothing here yet.
         </p>
       ) : (
-        // ⚠️ **Driven by `SHEET_ENTRY_CATEGORIES`, and never by three sections written
-        // out in the markup.** The three-`filter` spelling of this is the formulation
-        // that fails *silently* if a fourth category is ever added: the entry would be
-        // stored, would count against `MAX_SHEET_ENTRIES`, and would have no row — so no
-        // bin to click and no way to reach it again. Every other place the union is
-        // switched on refuses to compile in that case, by the `never` arm in
-        // `rollShapeOf` and by `SHEET_ENTRY_CATEGORY_LABELS` being a `Record` keyed by
-        // it; the one screen the entries are actually seen on should not be the
-        // exception that says nothing.
-        SHEET_ENTRY_CATEGORIES.map((category) => {
-          const rows = buckets.get(category) ?? []
-          // No heading for a category nothing is in. A hero with no weapons should not
-          // be told they have a Weapons section that is empty.
-          if (rows.length === 0) return null
-
-          return (
-            <div key={category} className="flex flex-col gap-1">
-              <h4 className="text-muted-foreground text-xs font-medium">
-                {SHEET_ENTRY_CATEGORY_LABELS[category]}
-              </h4>
-              <ul className="flex flex-col gap-1.5">
-                {rows.map(({ entry, index }) => (
-                  <EntryRow
-                    key={entry.id}
-                    entry={entry}
-                    index={index}
-                    category={category}
-                    path={path}
-                    problem={problem}
-                    disabled={disabled}
-                    readOnly={readOnly}
-                    replace={replace}
-                    remove={remove}
-                  />
-                ))}
-              </ul>
-            </div>
-          )
-        })
+        buckets.map((bucket) => (
+          <div key={bucket.key} className="flex flex-col gap-1">
+            <h4 className="text-muted-foreground text-xs font-medium">{bucket.heading}</h4>
+            <ul className="flex flex-col gap-1.5">
+              {bucket.rows.map(({ entry, index }) => (
+                <EntryRow
+                  key={entry.id}
+                  entry={entry}
+                  index={index}
+                  path={path}
+                  problem={problem}
+                  disabled={disabled}
+                  readOnly={readOnly}
+                  // `null` and *no counter at all* are two different states and the second
+                  // is the absent prop: a list nobody is playing from passes neither, a
+                  // list whose subscription has not landed passes `null`, and the counter
+                  // is drawn dead in the second case rather than not drawn.
+                  spent={
+                    spentUses === undefined
+                      ? undefined
+                      : spentUses === null
+                        ? null
+                        : (spent.get(entry.id) ?? 0)
+                  }
+                  onSetUses={onSetUses}
+                  replace={replace}
+                  remove={remove}
+                />
+              ))}
+            </ul>
+          </div>
+        ))
       )}
     </section>
   )
+}
+
+/** A heading and the rows under it, already positioned against the stored array. */
+type Bucket = { key: string; heading: string; rows: PositionedEntry[] }
+
+/**
+ * ⚠️ **Driven by `SHEET_ENTRY_CATEGORIES`, and never by three sections written out in
+ * the markup.** The three-`filter` spelling of this is the formulation that fails
+ * *silently* if a fourth category is ever added: the entry would be stored, would count
+ * against `MAX_SHEET_ENTRIES`, and would have no row — so no bin to click and no way to
+ * reach it again. Every other place the union is switched on refuses to compile in that
+ * case, by the `never` arm in `rollShapeOf` and by `SHEET_ENTRY_CATEGORY_LABELS` being a
+ * `Record` keyed by it; the one screen the entries are actually seen on should not be the
+ * exception that says nothing.
+ *
+ * `categoryOf` rather than `entry.category`, which is optional and absent on every line
+ * written before the category existed. One accessor, one default.
+ *
+ * A category nothing is in gets no heading. A hero with no weapons should not be told they
+ * have a Weapons section that is empty.
+ */
+function byCategory(positioned: PositionedEntry[]): Bucket[] {
+  const buckets = new Map<SheetEntryCategory, PositionedEntry[]>(
+    SHEET_ENTRY_CATEGORIES.map((category) => [category, []]),
+  )
+  for (const row of positioned) buckets.get(categoryOf(row.entry))?.push(row)
+
+  return SHEET_ENTRY_CATEGORIES.filter((category) => (buckets.get(category)?.length ?? 0) > 0).map(
+    (category) => ({
+      key: category,
+      heading: SHEET_ENTRY_CATEGORY_LABELS[category],
+      rows: buckets.get(category) ?? [],
+    }),
+  )
+}
+
+/**
+ * Cantrips, then level 1, then level 2, then level 3 — **derived from the entries rather
+ * than from a range**, which is what makes it total without a vocabulary to iterate.
+ *
+ * A spell level is a number on a row and not a union, so there is nothing to be
+ * exhaustive against and nothing that could go missing: a bucket exists exactly when
+ * something is in it. That is also why the ceiling is not `MAX_SPELL_LEVEL` — this
+ * application caps a character at level 5 and therefore a spell at level 3, but a DM's
+ * override can put anything on a sheet, and a page that walked 0–3 would hide it.
+ *
+ * `level: null` is a real state on this list, because a hand-typed entry is not made to
+ * declare one, and its rows go last under their own heading rather than being read as
+ * cantrips. Sorting the numbered levels ascending rather than by first appearance, because
+ * the order a spell page is read in is the order the slots are spent in.
+ */
+function byLevel(positioned: PositionedEntry[]): Bucket[] {
+  const buckets = new Map<number, PositionedEntry[]>()
+  const unlevelled: PositionedEntry[] = []
+
+  for (const row of positioned) {
+    const level = row.entry.level
+    if (level === null || !Number.isFinite(level)) {
+      unlevelled.push(row)
+      continue
+    }
+    const rows = buckets.get(level)
+    if (rows) rows.push(row)
+    else buckets.set(level, [row])
+  }
+
+  const levelled = [...buckets.keys()]
+    .sort((a, b) => a - b)
+    .map((level) => ({
+      key: `level-${level}`,
+      heading: spellLevelLabel(level),
+      rows: buckets.get(level) ?? [],
+    }))
+
+  return unlevelled.length === 0
+    ? levelled
+    : [...levelled, { key: 'unlevelled', heading: 'No level given', rows: unlevelled }]
 }
 
 /**
@@ -254,22 +375,25 @@ const PART_SAYS: Record<FeedPart, (name: string) => string> = {
 function EntryRow({
   entry,
   index,
-  category,
   path,
   problem,
   disabled,
   readOnly,
+  spent,
+  onSetUses,
   replace,
   remove,
 }: {
   entry: SheetEntry
   /** Its position in the *stored* list, not in the group it is drawn under. */
   index: number
-  category: SheetEntryCategory
   path: string
   problem: SheetProblem | null
   disabled?: boolean
   readOnly?: boolean
+  /** Undefined offers no counter at all; null is one whose subscription has not landed. */
+  spent?: number | null
+  onSetUses?: (key: string, spent: number) => void
   replace: (index: number, entry: SheetEntry) => void
   remove: (index: number) => void
 }) {
@@ -283,7 +407,18 @@ function EntryRow({
   // `toHitOf` rather than `entry.toHit`, which is optional and — on anything that is
   // not a weapon — a value nothing should read even if a document carries one.
   const toHit = toHitOf(entry)
+  // Asked here rather than passed down from the bucket, because the two answers came
+  // apart the moment a list could be grouped by spell level: the heading a row sits under
+  // is a display choice, and the shape of its roll is a fact about the entry. Every reader
+  // below wants the second.
+  const category = categoryOf(entry)
   const shape = rollShapeOf(category)
+  // `masteryOf` and `usesOf` rather than the raw fields, for `toHitOf`'s reason: both are
+  // optional, both fail closed against a value written by a deployment this one has not
+  // heard of, and a mastery stored on something that is not a weapon is a value nothing
+  // should print.
+  const mastery = masteryOf(entry)
+  const uses = usesOf(entry)
 
   // Two reasons a box is marked, and both are wanted. The grammar check is immediate
   // and needs no round trip through `sheetProblem`; the path check is what catches the
@@ -342,6 +477,15 @@ function EntryRow({
             {entry.catalogueKey === null && !readOnly ? (
               <Badge variant="outline">yours</Badge>
             ) : null}
+            {/* ⚠️ **A WORD, AND IT DOES NOTHING.** Push shoves nobody ten feet, Slow
+                reduces no speed, Topple sets nobody Prone, and no roll anywhere consults
+                a mastery — `WEAPON_MASTERY_LABELS` is a `Record` of capitalised words
+                with no effect description on them, and `masteryGuard.test.ts` is what
+                makes that a promise rather than an intention. It is printed because a
+                2024 weapon prints it and the table applies it, which is the same register
+                as a condition pip on a coin and a creature's loot being a line of text.
+                See ADR 0016. */}
+            {mastery ? <Badge variant="ghost">{WEAPON_MASTERY_LABELS[mastery]}</Badge> : null}
           </span>
           {entry.text ? (
             <p className="text-muted-foreground text-xs whitespace-pre-line">{entry.text}</p>
@@ -361,6 +505,20 @@ function EntryRow({
             controls sit in the order `partsFor` returns them — to hit before damage,
             because that is the order they are pressed in. */}
         <div className="flex shrink-0 items-center gap-1">
+          {/* Before the roll buttons rather than after, so the question *have I any left*
+              is answered on the way to the button that spends one. Absent unless the entry
+              declares a resource AND this list is one somebody plays from — see the note
+              on `spentUses`. */}
+          {uses && spent !== undefined ? (
+            <UseCounter
+              uses={uses}
+              spent={spent}
+              disabled={disabled}
+              onSet={onSetUses && ((next) => onSetUses(entry.id, next))}
+              name={entry.name}
+            />
+          ) : null}
+
           {partsFor(category).map((part) => (
             <RollButton
               key={part}
@@ -507,6 +665,86 @@ function EntryRow({
 
       <FieldError message={rowProblem?.message} />
     </li>
+  )
+}
+
+/**
+ * How many uses are left of a limited thing, and the two buttons that move the tally.
+ *
+ * ⚠️ **NOTHING SPENDS THIS AND NOTHING IS REFUSED AT ZERO.** The roll buttons a centimetre
+ * to the right do not decrement it, no mutation checks it before a roll, and a feature with
+ * none left is a feature you can still press — `resourceValidator`'s own note says so, and
+ * it is the same line the whole application draws: it announces and counts, and the table
+ * adjudicates. Wiring the button beside this one to the counter is the edit that makes this
+ * a rules engine, and it needs an amendment and an ADR rather than three reasonable lines.
+ *
+ * The readout is `left of max` rather than `spent of max`, because *how many have I got*
+ * is the question being asked mid-fight; the stored fact is the other one, which is why
+ * `onSet` sends a spend count and this subtracts.
+ *
+ * The recharge is a tooltip rather than a caption, because it is read once when somebody
+ * wonders whether a short rest is worth taking and never again. `REST_LABELS` supplies both
+ * words, so a counter and the rest button below cannot describe the same rest differently.
+ */
+function UseCounter({
+  uses,
+  spent,
+  disabled,
+  name,
+  onSet,
+}: {
+  uses: Resource
+  /** Null while the vitals subscription is still answering: shown, and dead. */
+  spent: number | null
+  disabled?: boolean
+  name: string
+  onSet?: (spent: number) => void
+}) {
+  const gone = Math.min(uses.max, Math.max(0, spent ?? 0))
+  const left = uses.max - gone
+  const live = onSet !== undefined && spent !== null && !disabled
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="flex items-center gap-0.5">
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            aria-label={`Use ${name}`}
+            disabled={!live || left === 0}
+            onClick={() => onSet?.(gone + 1)}
+          >
+            <Minus />
+          </Button>
+          <span
+            className={cn(
+              'font-heading min-w-8 text-center text-xs leading-none font-medium tabular-nums',
+              left === 0 && 'text-muted-foreground',
+            )}
+          >
+            {spent === null ? '—' : `${left}/${uses.max}`}
+          </span>
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            aria-label={`Take a use of ${name} back`}
+            disabled={!live || gone === 0}
+            onClick={() => onSet?.(gone - 1)}
+          >
+            <Plus />
+          </Button>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>
+        {`${left} of ${uses.max} left. Back on a ${REST_LABELS[uses.recharge].label.toLowerCase()}` +
+          (uses.regainOnShortRest
+            ? `, and a short rest returns ${uses.regainOnShortRest}.`
+            : '.')}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 

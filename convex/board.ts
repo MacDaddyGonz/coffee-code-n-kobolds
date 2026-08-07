@@ -43,18 +43,21 @@ import {
   resolveDmAccess,
   stampReveal,
 } from './lib/games'
-// The NARROW three-member union, which is the only one anything outside `convex/schema.ts`
-// uses. `addToken` and `setLayer` validate against it, so no `dm` row can be created from
-// this deploy forward however many are still stored. `layerOf` is the transition-only
-// reader beside it: a *stored* layer may still be the legacy `dm`, so every comparison
-// against `'gm'` in this file goes through it rather than against the raw field.
-import { layerOf, tokenLayerValidator } from './lib/layers'
+// The three-member union, spelled once in lib/layers.ts and used by the schema, the public
+// projection and both argument validators alike. `addToken` and `setLayer` validate against
+// it, so a stored layer is always one of the three and a comparison can read the raw field.
+import { tokenLayerValidator } from './lib/layers'
 // The condition vocabulary. One of the three modules inside `convex/` allowed to import
 // it — the schema, the choke point, and this file. See `markerGuard.test.ts`.
 import { TOKEN_MARKERS, normaliseMarkers, tokenMarkerValidator } from './lib/markers'
 import { getSeatInGame, listSeats } from './lib/players'
 import type { Point } from './lib/grid'
-import { isUsableTokenSize, snapToGrid } from './lib/grid'
+import { isUsableTokenSize, pathCrossesAnyWall, snapToGrid } from './lib/grid'
+// The barrier backstop, and the only thing this file takes from the walls surface. The read
+// is confined to lib/walls.ts the way every other table read here is confined to its module,
+// though for a table with nothing secret in it — that module's header argues why it gets no
+// leak-guard entry rather than assuming it.
+import { WALL_BLOCKS, sceneWalls } from './lib/walls'
 import { MAX_DUPLICATE_COUNT, MAX_TOKEN_BYTES } from './lib/limits'
 import { duplicateNamesProblem, requireText } from './lib/names'
 import { findSceneInGame, getSceneInGame } from './lib/scenes'
@@ -392,6 +395,45 @@ export const addToken = mutation({
  * Ungated beyond `resolveDmAccess`, because a player has to be able to move their
  * own character. `requireMovableToken` decides what "their own" means, and refuses
  * a DM-layer token with the same error it gives for one that does not exist.
+ *
+ * ⚠️⚠️ **THE WALL CHECK IS HERE, ON THE SETTLING WRITE ALONE, AND THE SPLIT BETWEEN THIS
+ * AND THE BROWSER IS THE WHOLE DESIGN OF THE FEATURE RATHER THAN AN OPTIMISATION.**
+ *
+ * The *feel* is the client's: `useTokenMove` tests each frame against the last point it
+ * accepted and simply declines a blocked one, so the coin slides up to the barrier and
+ * stops. That is what Roll20 does and it is the entire user-facing feature. This is the
+ * backstop — one check, on the write that settles, `&&`-ed beside the layer and control
+ * rules rather than folded into `requireMovableToken`, whose docblock argues at length why a
+ * range read may not go on a handler that runs ten times a second.
+ *
+ * So a drag produces roughly twenty unchecked writes and exactly one checked one, and the
+ * three things that leaves advisory are stated rather than glossed:
+ *
+ * - **Intermediate positions are unchecked, stored and broadcast**, so a client that never
+ *   settles can park a token anywhere and everybody watches it walk through the wall.
+ * - **Those unchecked writes move the *from* point**, so a client that wants to cross a wall
+ *   crosses it in unchecked steps and the check below then sees a perfectly legal hop.
+ * - **A token is tested by its centre**, so a 2×2 ogre's body can overlap a wall its centre
+ *   missed. `pathCrossesAnyWall` carries the reason no size and no grid enter the arithmetic.
+ *
+ * ⭐ **Checked against the threat model that is clean rather than a compromise, and this is
+ * the sentence that matters: unlike `playerId`, and unlike fog, nothing behind a wall is a
+ * secret.** A wall withholds no row, no field and no payload, so CLAUDE.md invariant 1 does
+ * not enter at all and the advisory ceiling costs nothing in the register where cost is
+ * measured. *"Server-side refusals that stop a misclick are worth having and are not claimed
+ * to be more than that"* is already the written rule, and this is the first feature to which
+ * it applies with no residual worth arguing about.
+ *
+ * Three consequences of the ordering below, each deliberate:
+ *
+ * - **The DM is not blocked.** They place creatures inside sealed rooms, drag the party
+ *   through a door they have just narrated open, and rearrange scenery. A wall the DM cannot
+ *   cross is a wall the DM cannot use. The `isDm` term is first, so their drags pay no read.
+ * - **A token with no placement on this scene skips the check**, because there is no *from*
+ *   to draw a path out of. Joining a board is not a journey across it.
+ * - **Background-layer tokens are moot and needed no predicate.** Players already may not
+ *   move them (`mayPlayersMove`), so nobody subject to walls can move one, and
+ *   `convex/lib/layers.ts` is untouched. Scenery is placed, not walked.
  */
 export const moveToken = mutation({
   args: {
@@ -419,6 +461,21 @@ export const moveToken = mutation({
     const point = args.settle
       ? snapToGrid({ x: args.x, y: args.y }, scene, token.sizeSquares)
       : { x: args.x, y: args.y }
+
+    // The barrier backstop. Settling writes only, non-DM only, and the `from` point is the
+    // placement `placeToken` is about to read anyway — the same document in the same
+    // transaction, so it costs no second read. The `walls` range read is the one thing this
+    // adds, and it lands here rather than in `requireMovableToken` for the reason that
+    // function's docblock gives. Checked against the **snapped** destination because that is
+    // the write actually being made; the browser has already refused every frame on the way
+    // to it, so the two only ever disagree at the snap.
+    if (args.settle && !isDm) {
+      const from = await placementOf(ctx, scene._id, token._id)
+      if (from !== null && pathCrossesAnyWall(await sceneWalls(ctx, scene._id), from, point)) {
+        throw new ConvexError(WALL_BLOCKS)
+      }
+    }
+
     // Creates the row if this token was not on this scene yet, which is how a
     // token from another board joins this one: the row's existence is the
     // placement.
@@ -501,12 +558,11 @@ export const setLayer = mutation({
     // is what stops the map replaying all of them at once. Hiding a coin again must not
     // stamp: that suppresses the flourish for rolls nobody has been shown yet.
     //
-    // `layerOf` because the stored value may still be the legacy `dm`, and Background is
-    // deliberately not a source: it is already public, so nothing widens by leaving it.
-    // Coverage here is discipline rather than construction, as that note says at length —
-    // a new widening path that skips this line breaks the flourish and nothing else, with
-    // no type error and nothing failing until somebody writes a case beside it.
-    const widening = layerOf(token.layer) === 'gm' && args.layer === 'player'
+    // Background is deliberately not a source: it is already public, so nothing widens by
+    // leaving it. Coverage here is discipline rather than construction, as that note says at
+    // length — a new widening path that skips this line breaks the flourish and nothing
+    // else, with no type error and nothing failing until somebody writes a case beside it.
+    const widening = token.layer === 'gm' && args.layer === 'player'
 
     await setTokenLayer(ctx, token, args.layer)
     if (widening) await stampReveal(ctx, game._id)
@@ -571,7 +627,7 @@ export const setCharacter = mutation({
     // so every line that creature rolled elsewhere reaches the table at once. Only on a
     // bind, and only onto a coin the players can see — unbinding narrows, and binding onto
     // a Background or GM-layer coin publishes nothing.
-    if (args.characterId !== null && layerOf(token.layer) === 'player') {
+    if (args.characterId !== null && token.layer === 'player') {
       await stampReveal(ctx, game._id)
     }
     return null
@@ -810,12 +866,9 @@ async function requireBatchNames(
  * reading `Goblin 4` over a sheet called something else is a confusion nobody asked for —
  * and here there is nobody typing a different one.
  *
- * ⚠️ **The reveal stamp mirrors `addToken`'s condition exactly**, with one spelling
- * difference that is required rather than stylistic: `addToken` compares its **narrow**
- * argument validator and needs no `layerOf`, while this reads a **stored** layer that may
- * still be the legacy `dm`. Both clauses are needed for `addToken`'s reasons verbatim: an
- * empty coin names nobody, and a GM-layer one is the encounter being prepared rather than
- * sprung.
+ * ⚠️ **The reveal stamp mirrors `addToken`'s condition exactly.** Both clauses are needed
+ * for `addToken`'s reasons verbatim: an empty coin names nobody, and a GM-layer one is the
+ * encounter being prepared rather than sprung.
  *
  * Worth knowing what that stamp can and cannot do here: the copies' creatures are made in
  * this transaction and have rolled nothing, so no feed row becomes audible through this
@@ -877,7 +930,7 @@ export const duplicateToken = mutation({
       tokenIds.push(tokenId)
     }
 
-    if (layerOf(source.layer) === 'player' && source.characterId !== undefined) {
+    if (source.layer === 'player' && source.characterId !== undefined) {
       await stampReveal(ctx, game._id)
     }
 

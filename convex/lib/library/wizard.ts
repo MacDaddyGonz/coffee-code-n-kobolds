@@ -1,1088 +1,392 @@
-// The Wizard: levels 1 to 5, School of Evocation and School of Divination.
+// The Wizard: five premade sheets, level 1 to 5, Evoker.
 //
-// Content only — the shape is in ./types.ts. See the note at the top of that file
-// for why nothing here may ever be imported by the browser.
+// Content only — the shape is in ./types.ts, and see barbarian.ts for why an entry is
+// named once and listed rather than written out at every level that carries it.
 //
-// **The wizard's whole risk is the spell list**, so it is kept deliberately short:
-// three entries at level 1 and two more per level, ending at eleven. A player who
-// can read their entire sheet in a minute will cast something; a player facing
-// thirty spells will cast Fire Bolt every round and never look again. The spells
-// that made the cut lean towards getting into places, reading things and undoing
-// other people's magic, because that is what most of a session is — Detect Magic,
-// Mage Hand, Comprehend Languages and Knock each displaced a third damage spell.
+// **The build: Sage.** The standard array goes 15 Intelligence, 14 Constitution, 13
+// Dexterity, 12 Wisdom, 10 Charisma, 8 Strength, and the Sage background's **+2
+// Intelligence and +1 Constitution** are already in the numbers below. Arcana and History
+// are the Sage's two skills; Insight and Investigation are the class's own.
 //
-// Where a spell already exists in lib/rules.ts the wording is that entry's, word for
-// word, with `catalogueKey` naming it. Two descriptions of Fireball is exactly the
-// drift this project avoids. Only Comprehend Languages and Knock are new, and they
-// carry a null key because they are not in the catalogue.
+// ⚠️ **The armour class is a flat 11 at every level and Mage Armor is NOT in it.** A
+// wizard wears nothing, so 10 plus Dexterity is the honest number; Mage Armor is a spell
+// on the list below that raises it to 14 when it is up, and whether it is up is a fact
+// about the last hour rather than about the sheet. Baking it in would make the panel
+// print a number that is wrong every time somebody has not cast it — which is exactly the
+// kind of stored copy this project keeps deriving instead.
 //
-// Ability scores are the standard array with Intelligence first and **without race**,
-// which lib/resolve.ts applies on top. Armour class is a flat 12 at every level: a
-// wizard wears no armour, so it is 10 plus a Dexterity of 14, and the answer to being
-// hit is the Shield spell rather than a number that creeps up. Hit points are 6 plus
-// the Constitution modifier at level 1 and 4 plus it per level after — the d6 class,
-// which is the cost of the spell list.
+// ⚠️ **This file used to carry a second archetype, and School of Divination appears in no
+// SRD.** It is retired by name in `RETIRED_SUBCLASSES` in ../classes.ts along with seven
+// others. A character holding the key keeps its class, its level and its hit points and
+// is told which archetype needs choosing again.
 
-import type { ClassLibrary } from './types'
+import { noSkills } from '../sheet'
+import type { ClassLibrary, LibraryEntry } from './types'
 
-/** No armour and a Dexterity of 14. The same at every level, deliberately. */
-const ARMOUR_CLASS = 12
+const SKILLS = {
+  ...noSkills(),
+  arcana: true,
+  history: true,
+  insight: true,
+  investigation: true,
+}
 
-/**
- * The same fixed kit at every level — "set equipment per character" from
- * requirements.md, which is a sentence on a sheet rather than an inventory.
- */
+const DAGGER: LibraryEntry = {
+  name: 'Dagger',
+  text: 'You carry two, and Fire Bolt is better than either of them at every range including this one. Light and finesse, thrown 20 feet without trouble.',
+  roll: '1d4+DEX',
+  level: null,
+  catalogueKey: null,
+  category: 'weapon',
+  toHit: '1d20+DEX+PROF',
+  mastery: 'nick',
+}
+
+const RITUAL_ADEPT: LibraryEntry = {
+  name: 'Ritual Adept',
+  text: 'Any spell in your book with the Ritual tag can be cast as a ritual — ten minutes longer, and no slot spent at all. It need not be prepared; you simply read it out of the book.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const ARCANE_RECOVERY: LibraryEntry = {
+  name: 'Arcane Recovery',
+  text: 'Once between long rests, a short rest spent reading your spellbook returns spell slots worth half your wizard level in levels, rounded up — one level 2 slot at level 4, or two level 1 slots.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+  uses: { max: 1, recharge: 'long' },
+}
+
+const MAGIC_INITIATE: LibraryEntry = {
+  name: 'Magic Initiate',
+  text: 'Origin feat. Two cantrips and one 1st-level spell from the Cleric, Druid or Wizard list, cast with an ability you choose when you take this. The 1st-level spell can be cast once a day without a slot, or with any slot you have. Swap one of the three whenever you gain a level.',
+  roll: null,
+  level: null,
+  catalogueKey: 'magic-initiate',
+  category: 'passive',
+}
+
+const SCHOLAR: LibraryEntry = {
+  name: 'Scholar',
+  text: 'One of your trained skills is now doubly trained — Arcana, on this sheet — so you add twice your proficiency bonus to it rather than once.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const EVOCATION_SAVANT: LibraryEntry = {
+  name: 'Evocation Savant',
+  text: 'Two Evocation spells of level 2 or lower go into your spellbook for nothing, and one more every time a new level of spell slot opens up. Scorching Ray and Shatter are the two taken here.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const POTENT_CANTRIP: LibraryEntry = {
+  name: 'Potent Cantrip',
+  text: 'Your damaging cantrips do half damage even when they miss or the target saves. Fire Bolt stops being a coin flip and starts being a floor.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const ABILITY_SCORE_IMPROVEMENT: LibraryEntry = {
+  name: 'Ability Score Improvement',
+  text: 'General feat, from level 4. Raise one ability score by 2, or two of them by 1 each, to a maximum of 20. It can be taken again every time you are offered a feat. Taken here as +2 Intelligence.',
+  roll: null,
+  level: null,
+  catalogueKey: 'ability-score-improvement',
+  category: 'passive',
+}
+
+const MEMORIZE_SPELL: LibraryEntry = {
+  name: 'Memorize Spell',
+  text: 'Every short rest, swap one prepared spell of level 1 or higher for another out of your spellbook. You stop having to guess what today needs before it starts.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+// --- spells ---------------------------------------------------------------
+
+const FIRE_BOLT: LibraryEntry = {
+  name: 'Fire Bolt',
+  text: 'A mote of fire thrown up to 120 feet. It sets light to anything flammable it hits and nobody is carrying, and it never runs out.',
+  roll: '1d10',
+  level: 0,
+  catalogueKey: 'fire-bolt',
+  category: 'weapon',
+  toHit: '1d20+INT+PROF',
+}
+
+const FIRE_BOLT_AT_5: LibraryEntry = { ...FIRE_BOLT, roll: '2d10' }
+
+const LIGHT: LibraryEntry = {
+  name: 'Light',
+  text: 'An object you touch, no bigger than ten feet across, sheds bright light for 20 feet and dim light 20 feet past that. A colour of your choosing, and it goes out when you say so.',
+  roll: null,
+  level: 0,
+  catalogueKey: 'light',
+  category: 'passive',
+}
+
+const MAGE_HAND: LibraryEntry = {
+  name: 'Mage Hand',
+  text: 'A spectral hand within 30 feet that lifts, opens, pours and fetches up to ten pounds. It cannot attack and it cannot carry a weapon, and it solves more problems than either would.',
+  roll: null,
+  level: 0,
+  catalogueKey: 'mage-hand',
+  category: 'passive',
+}
+
+const PRESTIDIGITATION: LibraryEntry = {
+  name: 'Prestidigitation',
+  text: 'A minute of small magic: a puff of flame, a mark cleaned off or put on, a trinket conjured, a taste changed. Never damage, and never anything anybody saves against.',
+  roll: null,
+  level: 0,
+  catalogueKey: 'prestidigitation',
+  category: 'passive',
+}
+
+const MAGIC_MISSILE: LibraryEntry = {
+  name: 'Magic Missile',
+  text: 'Three darts of force at whatever you can see within 120 feet, split between targets however you like. There is no attack roll and no saving throw: they simply hit.',
+  roll: '3d4+3',
+  level: 1,
+  catalogueKey: 'magic-missile',
+  category: 'action',
+}
+
+const MAGE_ARMOR: LibraryEntry = {
+  name: 'Mage Armor',
+  text: 'Eight hours of shimmering force on a creature wearing no armour. Its Armour Class becomes 13 plus its Dexterity — 14 for you — which is the first thing you cast every morning.',
+  roll: null,
+  level: 1,
+  catalogueKey: 'mage-armor',
+  category: 'passive',
+}
+
+const SHIELD: LibraryEntry = {
+  name: 'Shield',
+  text: 'A reaction, taken after you see the attack roll and before you hear whether it hit: +5 Armour Class until your next turn, and Magic Missile cannot touch you at all.',
+  roll: null,
+  level: 1,
+  catalogueKey: 'shield',
+  category: 'passive',
+}
+
+const THUNDERWAVE: LibraryEntry = {
+  name: 'Thunderwave',
+  text: 'A wave of force out of you in a 15-foot cube. Constitution save for half, and everything unsecured in the area is blown away from you. What you cast when something has got too close.',
+  roll: '2d8',
+  level: 1,
+  catalogueKey: 'thunderwave',
+  category: 'action',
+}
+
+const SCORCHING_RAY: LibraryEntry = {
+  name: 'Scorching Ray',
+  text: 'Three rays of fire at things within 120 feet, aimed however you like. Each ray is rolled separately, so this is the damage one of them does.',
+  roll: '2d6',
+  level: 2,
+  catalogueKey: 'scorching-ray',
+  category: 'weapon',
+  toHit: '1d20+INT+PROF',
+}
+
+const MISTY_STEP: LibraryEntry = {
+  name: 'Misty Step',
+  text: 'A bonus action and a wisp of silver mist, and you are standing somewhere else within 30 feet that you can see. It is the spell that keeps a wizard alive.',
+  roll: null,
+  level: 2,
+  catalogueKey: 'misty-step',
+  category: 'passive',
+}
+
+const SHATTER: LibraryEntry = {
+  name: 'Shatter',
+  text: 'A ringing note bursts in a 10-foot sphere within 60 feet. Everything in it makes a Constitution save for half. Objects and anything made of stone or metal take it worse.',
+  roll: '3d8',
+  level: 2,
+  catalogueKey: 'shatter',
+  category: 'action',
+}
+
+const FIREBALL: LibraryEntry = {
+  name: 'Fireball',
+  text: 'A bead of fire to a point within 150 feet, and a 20-foot sphere of flame. Dexterity save for half. The most damage a level 3 slot can buy, and it does not care who is standing in it.',
+  roll: '8d6',
+  level: 3,
+  catalogueKey: 'fireball',
+  category: 'action',
+}
+
+const FLY: LibraryEntry = {
+  name: 'Fly',
+  text: 'A creature you touch flies for ten minutes while you concentrate. It ends where the creature is standing on nothing, so keep an eye on the clock.',
+  roll: null,
+  level: 3,
+  catalogueKey: 'fly',
+  category: 'passive',
+}
+
 const EQUIPMENT =
-  'Quarterstaff, dagger, spellbook, component pouch, scholar\'s pack and a set of travelling robes.'
+  'Two daggers, a quarterstaff as an arcane focus, a robe, your spellbook and a scholar\'s pack, plus the sage\'s calligrapher\'s supplies, book of history and parchment.'
+
+const HIT_DIE = 6
+const ARMOUR_CLASS = 11
 
 export const WIZARD: ClassLibrary = {
   classKey: 'wizard',
-
   base: {
-    level: 1,
-    abilities: { str: 8, dex: 14, con: 13, int: 15, wis: 12, cha: 10 },
-    saveProficiencies: { str: false, dex: false, con: false, int: true, wis: true, cha: false },
-    skillProficiencies: {
-      athletics: false,
-      acrobatics: false,
-      sleightOfHand: false,
-      stealth: false,
-      arcana: true,
-      investigation: true,
-      animalHandling: false,
-      insight: true,
-      perception: true,
-      deception: false,
-      intimidation: false,
-      performance: false,
-      persuasion: false,
+    1: {
+      level: 1,
+      // Intelligence first because it is every spell, the save DC, every spell attack and
+      // three of the four trained skills. Constitution second, because a d6 of hit points
+      // in no armour is the other thin character in this library.
+      abilities: { str: 8, dex: 13, con: 15, int: 17, wis: 12, cha: 10 },
+      saveProficiencies: { str: false, dex: false, con: false, int: true, wis: true, cha: false },
+      skillProficiencies: SKILLS,
+      armourClass: ARMOUR_CLASS,
+      maxHp: 8,
+      hitDice: { count: 1, faces: HIT_DIE },
+      feats: [DAGGER, RITUAL_ADEPT, ARCANE_RECOVERY, MAGIC_INITIATE],
+      spells: [FIRE_BOLT, LIGHT, MAGE_HAND, MAGIC_MISSILE, MAGE_ARMOR, SHIELD],
+      equipment: EQUIPMENT,
+      levellingNotes:
+        'Where you start: three cantrips that never run out, Magic Missile that never misses, and two spells that keep you standing — Mage Armor before the day starts, Shield after you have seen the attack roll.',
     },
-    armourClass: ARMOUR_CLASS,
-    maxHp: 7,
-    hitDice: { count: 1, faces: 6 },
-    feats: [
-      {
-        name: 'Spellcasting',
-        text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
-        roll: '1d20+INT+PROF',
-        level: null,
-        category: 'action',
-        catalogueKey: null,
-      },
-      {
-        name: 'Arcane Recovery',
-        text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
-        roll: null,
-        level: null,
-        category: 'passive',
-        catalogueKey: null,
-      },
-    ],
-    spells: [
-      {
-        name: 'Fire Bolt',
-        text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
-        roll: '1d10',
-        level: 0,
-        category: 'weapon',
-        toHit: '1d20+INT+PROF',
-        catalogueKey: 'fire-bolt',
-      },
-      {
-        name: 'Mage Hand',
-        text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
-        roll: null,
-        level: 0,
-        category: 'passive',
-        catalogueKey: 'mage-hand',
-      },
-      {
-        name: 'Magic Missile',
-        text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
-        roll: '3d4+3',
-        level: 1,
-        category: 'action',
-        catalogueKey: 'magic-missile',
-      },
-    ],
-    equipment: EQUIPMENT,
-    levellingNotes:
-      'Your starting sheet. Two cantrips you can cast all day, Magic Missile for when a hit simply has to land, and the four skills a wizard leans on: Arcana, Investigation, Insight and Perception.',
+    2: {
+      level: 2,
+      abilities: { str: 8, dex: 13, con: 15, int: 17, wis: 12, cha: 10 },
+      saveProficiencies: { str: false, dex: false, con: false, int: true, wis: true, cha: false },
+      skillProficiencies: SKILLS,
+      armourClass: ARMOUR_CLASS,
+      maxHp: 14,
+      hitDice: { count: 2, faces: HIT_DIE },
+      feats: [DAGGER, RITUAL_ADEPT, ARCANE_RECOVERY, SCHOLAR, MAGIC_INITIATE],
+      spells: [FIRE_BOLT, LIGHT, MAGE_HAND, MAGIC_MISSILE, MAGE_ARMOR, SHIELD, THUNDERWAVE],
+      equipment: EQUIPMENT,
+      levellingNotes:
+        'Scholar doubles your proficiency in Arcana, and Thunderwave is the answer to something standing next to you — damage, and it goes backwards whether it saves or not.',
+    },
   },
-
   paths: {
     evocation: {
-      2: {
-        level: 2,
-        abilities: { str: 8, dex: 14, con: 13, int: 15, wis: 12, cha: 10 },
-        saveProficiencies: { str: false, dex: false, con: false, int: true, wis: true, cha: false },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: true,
-          animalHandling: false,
-          insight: true,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: ARMOUR_CLASS,
-        maxHp: 12,
-        hitDice: { count: 2, faces: 6 },
-        feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
-            roll: '1d20+INT+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Arcane Recovery',
-            text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Sculpt Spells',
-            text: 'When one of your evocation spells would catch your friends, choose a few of them — one more than the spell\'s level — and the blast passes them by entirely. They take no damage and they need no saving throw. This is what stops Fireball being the spell you are afraid to cast.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Fire Bolt',
-            text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
-            roll: '1d10',
-            level: 0,
-            category: 'weapon',
-            toHit: '1d20+INT+PROF',
-            catalogueKey: 'fire-bolt',
-          },
-          {
-            name: 'Mage Hand',
-            text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
-            roll: null,
-            level: 0,
-            category: 'passive',
-            catalogueKey: 'mage-hand',
-          },
-          {
-            name: 'Magic Missile',
-            text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
-            roll: '3d4+3',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'magic-missile',
-          },
-          {
-            name: 'Shield',
-            text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'shield',
-          },
-          {
-            name: 'Burning Hands',
-            text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
-            roll: '3d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'burning-hands',
-          },
-        ],
-        equipment: EQUIPMENT,
-        levellingNotes:
-          'You joined the School of Evocation, and Sculpt Spells means your blasts leave your friends untouched. Shield and Burning Hands join your spellbook.',
-      },
-
       3: {
         level: 3,
-        abilities: { str: 8, dex: 14, con: 13, int: 17, wis: 12, cha: 10 },
+        abilities: { str: 8, dex: 13, con: 15, int: 17, wis: 12, cha: 10 },
         saveProficiencies: { str: false, dex: false, con: false, int: true, wis: true, cha: false },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: true,
-          animalHandling: false,
-          insight: true,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
+        skillProficiencies: SKILLS,
         armourClass: ARMOUR_CLASS,
-        maxHp: 17,
-        hitDice: { count: 3, faces: 6 },
+        maxHp: 20,
+        hitDice: { count: 3, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
-            roll: '1d20+INT+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Arcane Recovery',
-            text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Sculpt Spells',
-            text: 'When one of your evocation spells would catch your friends, choose a few of them — one more than the spell\'s level — and the blast passes them by entirely. They take no damage and they need no saving throw. This is what stops Fireball being the spell you are afraid to cast.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          DAGGER,
+          RITUAL_ADEPT,
+          ARCANE_RECOVERY,
+          SCHOLAR,
+          EVOCATION_SAVANT,
+          POTENT_CANTRIP,
+          MAGIC_INITIATE,
         ],
         spells: [
-          {
-            name: 'Fire Bolt',
-            text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
-            roll: '1d10',
-            level: 0,
-            category: 'weapon',
-            toHit: '1d20+INT+PROF',
-            catalogueKey: 'fire-bolt',
-          },
-          {
-            name: 'Mage Hand',
-            text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
-            roll: null,
-            level: 0,
-            category: 'passive',
-            catalogueKey: 'mage-hand',
-          },
-          {
-            name: 'Magic Missile',
-            text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
-            roll: '3d4+3',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'magic-missile',
-          },
-          {
-            name: 'Shield',
-            text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'shield',
-          },
-          {
-            name: 'Burning Hands',
-            text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
-            roll: '3d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'burning-hands',
-          },
-          {
-            name: 'Detect Magic',
-            text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'detect-magic',
-          },
-          {
-            name: 'Scorching Ray',
-            text: 'Three rays of fire, aimed at one target or split between several, each rolled separately. The damage listed is for a single ray.',
-            roll: '2d6',
-            level: 2,
-            category: 'weapon',
-            toHit: '1d20+INT+PROF',
-            catalogueKey: 'scorching-ray',
-          },
+          FIRE_BOLT,
+          LIGHT,
+          MAGE_HAND,
+          MAGIC_MISSILE,
+          MAGE_ARMOR,
+          SHIELD,
+          THUNDERWAVE,
+          SCORCHING_RAY,
+          MISTY_STEP,
         ],
         equipment: EQUIPMENT,
         levellingNotes:
-          'You put your ability score improvement into Intelligence, 15 to 17, so every spell of yours is now harder to resist. Detect Magic and your first 2nd-level spell, Scorching Ray, join the spellbook.',
+          'You are an Evoker. Potent Cantrip makes Fire Bolt do half damage even on a miss, which over a campaign is a great deal of damage, and Evocation Savant puts two spells in your book for free.',
       },
-
       4: {
         level: 4,
-        abilities: { str: 8, dex: 14, con: 13, int: 17, wis: 12, cha: 10 },
+        // The improvement goes into Intelligence: 17 → 19. Every spell attack, the save DC
+        // and three of the four trained skills move together, which nothing else here does.
+        abilities: { str: 8, dex: 13, con: 15, int: 19, wis: 12, cha: 10 },
         saveProficiencies: { str: false, dex: false, con: false, int: true, wis: true, cha: false },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: true,
-          animalHandling: false,
-          insight: true,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
+        skillProficiencies: SKILLS,
         armourClass: ARMOUR_CLASS,
-        maxHp: 22,
-        hitDice: { count: 4, faces: 6 },
+        maxHp: 26,
+        hitDice: { count: 4, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
-            roll: '1d20+INT+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Arcane Recovery',
-            text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Sculpt Spells',
-            text: 'When one of your evocation spells would catch your friends, choose a few of them — one more than the spell\'s level — and the blast passes them by entirely. They take no damage and they need no saving throw. This is what stops Fireball being the spell you are afraid to cast.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          DAGGER,
+          RITUAL_ADEPT,
+          ARCANE_RECOVERY,
+          SCHOLAR,
+          EVOCATION_SAVANT,
+          POTENT_CANTRIP,
+          ABILITY_SCORE_IMPROVEMENT,
+          MAGIC_INITIATE,
         ],
         spells: [
-          {
-            name: 'Fire Bolt',
-            text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
-            roll: '1d10',
-            level: 0,
-            category: 'weapon',
-            toHit: '1d20+INT+PROF',
-            catalogueKey: 'fire-bolt',
-          },
-          {
-            name: 'Mage Hand',
-            text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
-            roll: null,
-            level: 0,
-            category: 'passive',
-            catalogueKey: 'mage-hand',
-          },
-          {
-            name: 'Magic Missile',
-            text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
-            roll: '3d4+3',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'magic-missile',
-          },
-          {
-            name: 'Shield',
-            text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'shield',
-          },
-          {
-            name: 'Burning Hands',
-            text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
-            roll: '3d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'burning-hands',
-          },
-          {
-            name: 'Detect Magic',
-            text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'detect-magic',
-          },
-          {
-            name: 'Scorching Ray',
-            text: 'Three rays of fire, aimed at one target or split between several, each rolled separately. The damage listed is for a single ray.',
-            roll: '2d6',
-            level: 2,
-            category: 'weapon',
-            toHit: '1d20+INT+PROF',
-            catalogueKey: 'scorching-ray',
-          },
-          {
-            name: 'Fireball',
-            text: 'A roaring sphere of flame fills a 20-foot radius around a point within 150 feet, going round corners to do it. Each creature there takes the damage, halved on a successful Dexterity saving throw. Another 1d6 per slot level above 3rd.',
-            roll: '8d6',
-            level: 3,
-            category: 'action',
-            catalogueKey: 'fireball',
-          },
-          {
-            name: 'Lightning Bolt',
-            text: 'A stroke of lightning 100 feet long and 5 feet wide leaps from your hand. Everything in the line takes the damage, halved on a successful Dexterity saving throw.',
-            roll: '8d6',
-            level: 3,
-            category: 'action',
-            catalogueKey: 'lightning-bolt',
-          },
+          FIRE_BOLT,
+          LIGHT,
+          MAGE_HAND,
+          PRESTIDIGITATION,
+          MAGIC_MISSILE,
+          MAGE_ARMOR,
+          SHIELD,
+          THUNDERWAVE,
+          SCORCHING_RAY,
+          MISTY_STEP,
+          SHATTER,
         ],
         equipment: EQUIPMENT,
         levellingNotes:
-          'The big one: 3rd-level spells. Fireball and Lightning Bolt are yours, and with Sculpt Spells keeping your friends out of the blast you are the reason a roomful of trouble stops being a problem.',
+          'Intelligence goes from 17 to 19: a harder save DC and +1 on every spell attack roll. A fourth cantrip, and Shatter for the room with four things in it.',
       },
-
       5: {
         level: 5,
-        abilities: { str: 8, dex: 14, con: 13, int: 17, wis: 12, cha: 10 },
+        abilities: { str: 8, dex: 13, con: 15, int: 19, wis: 12, cha: 10 },
         saveProficiencies: { str: false, dex: false, con: false, int: true, wis: true, cha: false },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: true,
-          animalHandling: false,
-          insight: true,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
+        skillProficiencies: SKILLS,
         armourClass: ARMOUR_CLASS,
-        maxHp: 27,
-        hitDice: { count: 5, faces: 6 },
+        maxHp: 32,
+        hitDice: { count: 5, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
-            roll: '1d20+INT+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Arcane Recovery',
-            text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Sculpt Spells',
-            text: 'When one of your evocation spells would catch your friends, choose a few of them — one more than the spell\'s level — and the blast passes them by entirely. They take no damage and they need no saving throw. This is what stops Fireball being the spell you are afraid to cast.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Potent Cantrip',
-            text: 'A creature that succeeds on its saving throw against one of your cantrips still takes half the damage. Your smallest spells stop being wasted turns.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          DAGGER,
+          RITUAL_ADEPT,
+          ARCANE_RECOVERY,
+          SCHOLAR,
+          EVOCATION_SAVANT,
+          POTENT_CANTRIP,
+          MEMORIZE_SPELL,
+          ABILITY_SCORE_IMPROVEMENT,
+          MAGIC_INITIATE,
         ],
         spells: [
-          {
-            name: 'Fire Bolt',
-            text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
-            roll: '1d10',
-            level: 0,
-            category: 'weapon',
-            toHit: '1d20+INT+PROF',
-            catalogueKey: 'fire-bolt',
-          },
-          {
-            name: 'Mage Hand',
-            text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
-            roll: null,
-            level: 0,
-            category: 'passive',
-            catalogueKey: 'mage-hand',
-          },
-          {
-            name: 'Magic Missile',
-            text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
-            roll: '3d4+3',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'magic-missile',
-          },
-          {
-            name: 'Shield',
-            text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'shield',
-          },
-          {
-            name: 'Burning Hands',
-            text: 'A sheet of flame in a 15-foot cone from your fingertips. Every creature caught in it takes the damage, or half on a successful Dexterity saving throw.',
-            roll: '3d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'burning-hands',
-          },
-          {
-            name: 'Detect Magic',
-            text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'detect-magic',
-          },
-          {
-            name: 'Scorching Ray',
-            text: 'Three rays of fire, aimed at one target or split between several, each rolled separately. The damage listed is for a single ray.',
-            roll: '2d6',
-            level: 2,
-            category: 'weapon',
-            toHit: '1d20+INT+PROF',
-            catalogueKey: 'scorching-ray',
-          },
-          {
-            name: 'Knock',
-            text: 'A sharp rap rings out, heard 300 feet away, and one locked door, chest, box or gate within 60 feet comes open — a bar lifts, a padlock springs, a stuck lid gives. Whatever it opened stays open for a minute. Everyone nearby hears it, so it is an answer to a locked door rather than a quiet one.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Fireball',
-            text: 'A roaring sphere of flame fills a 20-foot radius around a point within 150 feet, going round corners to do it. Each creature there takes the damage, halved on a successful Dexterity saving throw. Another 1d6 per slot level above 3rd.',
-            roll: '8d6',
-            level: 3,
-            category: 'action',
-            catalogueKey: 'fireball',
-          },
-          {
-            name: 'Lightning Bolt',
-            text: 'A stroke of lightning 100 feet long and 5 feet wide leaps from your hand. Everything in the line takes the damage, halved on a successful Dexterity saving throw.',
-            roll: '8d6',
-            level: 3,
-            category: 'action',
-            catalogueKey: 'lightning-bolt',
-          },
-          {
-            name: 'Counterspell',
-            text: 'A reaction that interrupts a spell you can see being cast within 60 feet. The caster makes a Constitution saving throw, and on a failure the spell does nothing and the slot is spent anyway.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: 'counterspell',
-          },
+          FIRE_BOLT_AT_5,
+          LIGHT,
+          MAGE_HAND,
+          PRESTIDIGITATION,
+          MAGIC_MISSILE,
+          MAGE_ARMOR,
+          SHIELD,
+          THUNDERWAVE,
+          SCORCHING_RAY,
+          MISTY_STEP,
+          SHATTER,
+          FIREBALL,
+          FLY,
         ],
         equipment: EQUIPMENT,
         levellingNotes:
-          'Counterspell lets you shut down an enemy caster, Knock opens what you have no key for, and Potent Cantrip means a Fire Bolt that was saved against still hurts.',
-      },
-    },
-
-    divination: {
-      2: {
-        level: 2,
-        abilities: { str: 8, dex: 14, con: 13, int: 15, wis: 12, cha: 10 },
-        saveProficiencies: { str: false, dex: false, con: false, int: true, wis: true, cha: false },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: true,
-          animalHandling: false,
-          insight: true,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: ARMOUR_CLASS,
-        maxHp: 12,
-        hitDice: { count: 2, faces: 6 },
-        feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
-            roll: '1d20+INT+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Arcane Recovery',
-            text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Portent',
-            text: 'After a long rest, roll the dice shown and write both numbers down. Once each, and before the die is rolled, you may replace an attack roll, a saving throw or an ability check made by you or by a creature you can see with one of your numbers — a glimpse of the future you get to hand out.',
-            roll: '2d20',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Fire Bolt',
-            text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
-            roll: '1d10',
-            level: 0,
-            category: 'weapon',
-            toHit: '1d20+INT+PROF',
-            catalogueKey: 'fire-bolt',
-          },
-          {
-            name: 'Mage Hand',
-            text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
-            roll: null,
-            level: 0,
-            category: 'passive',
-            catalogueKey: 'mage-hand',
-          },
-          {
-            name: 'Magic Missile',
-            text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
-            roll: '3d4+3',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'magic-missile',
-          },
-          {
-            name: 'Shield',
-            text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'shield',
-          },
-          {
-            name: 'Comprehend Languages',
-            text: 'For an hour you understand the literal meaning of any language spoken near you, and you can read any writing you touch, a page at a time. It does not let you speak or write the language back, and a cipher or a magical script stays a mystery.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        equipment: EQUIPMENT,
-        levellingNotes:
-          'You joined the School of Divination, and Portent gives you two glimpses of the future each day to spend on any roll at the table. Shield and Comprehend Languages join your spellbook.',
-      },
-
-      3: {
-        level: 3,
-        abilities: { str: 8, dex: 14, con: 13, int: 17, wis: 12, cha: 10 },
-        saveProficiencies: { str: false, dex: false, con: false, int: true, wis: true, cha: false },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: true,
-          animalHandling: false,
-          insight: true,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: ARMOUR_CLASS,
-        maxHp: 17,
-        hitDice: { count: 3, faces: 6 },
-        feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
-            roll: '1d20+INT+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Arcane Recovery',
-            text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Portent',
-            text: 'After a long rest, roll the dice shown and write both numbers down. Once each, and before the die is rolled, you may replace an attack roll, a saving throw or an ability check made by you or by a creature you can see with one of your numbers — a glimpse of the future you get to hand out.',
-            roll: '2d20',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Fire Bolt',
-            text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
-            roll: '1d10',
-            level: 0,
-            category: 'weapon',
-            toHit: '1d20+INT+PROF',
-            catalogueKey: 'fire-bolt',
-          },
-          {
-            name: 'Mage Hand',
-            text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
-            roll: null,
-            level: 0,
-            category: 'passive',
-            catalogueKey: 'mage-hand',
-          },
-          {
-            name: 'Magic Missile',
-            text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
-            roll: '3d4+3',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'magic-missile',
-          },
-          {
-            name: 'Shield',
-            text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'shield',
-          },
-          {
-            name: 'Comprehend Languages',
-            text: 'For an hour you understand the literal meaning of any language spoken near you, and you can read any writing you touch, a page at a time. It does not let you speak or write the language back, and a cipher or a magical script stays a mystery.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Detect Magic',
-            text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'detect-magic',
-          },
-          {
-            name: 'Misty Step',
-            text: 'A bonus action: you vanish in a puff of silver mist and reappear in an unoccupied space you can see up to 30 feet away.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: 'misty-step',
-          },
-        ],
-        equipment: EQUIPMENT,
-        levellingNotes:
-          'You put your ability score improvement into Intelligence, 15 to 17, so every spell of yours is now harder to resist. Detect Magic and your first 2nd-level spell, Misty Step, join the spellbook.',
-      },
-
-      4: {
-        level: 4,
-        abilities: { str: 8, dex: 14, con: 13, int: 17, wis: 12, cha: 10 },
-        saveProficiencies: { str: false, dex: false, con: false, int: true, wis: true, cha: false },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: true,
-          animalHandling: false,
-          insight: true,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: ARMOUR_CLASS,
-        maxHp: 22,
-        hitDice: { count: 4, faces: 6 },
-        feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
-            roll: '1d20+INT+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Arcane Recovery',
-            text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Portent',
-            text: 'After a long rest, roll the dice shown and write both numbers down. Once each, and before the die is rolled, you may replace an attack roll, a saving throw or an ability check made by you or by a creature you can see with one of your numbers — a glimpse of the future you get to hand out.',
-            roll: '2d20',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Fire Bolt',
-            text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
-            roll: '1d10',
-            level: 0,
-            category: 'weapon',
-            toHit: '1d20+INT+PROF',
-            catalogueKey: 'fire-bolt',
-          },
-          {
-            name: 'Mage Hand',
-            text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
-            roll: null,
-            level: 0,
-            category: 'passive',
-            catalogueKey: 'mage-hand',
-          },
-          {
-            name: 'Magic Missile',
-            text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
-            roll: '3d4+3',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'magic-missile',
-          },
-          {
-            name: 'Shield',
-            text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'shield',
-          },
-          {
-            name: 'Comprehend Languages',
-            text: 'For an hour you understand the literal meaning of any language spoken near you, and you can read any writing you touch, a page at a time. It does not let you speak or write the language back, and a cipher or a magical script stays a mystery.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Detect Magic',
-            text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'detect-magic',
-          },
-          {
-            name: 'Misty Step',
-            text: 'A bonus action: you vanish in a puff of silver mist and reappear in an unoccupied space you can see up to 30 feet away.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: 'misty-step',
-          },
-          {
-            name: 'Fireball',
-            text: 'A roaring sphere of flame fills a 20-foot radius around a point within 150 feet, going round corners to do it. Each creature there takes the damage, halved on a successful Dexterity saving throw. Another 1d6 per slot level above 3rd.',
-            roll: '8d6',
-            level: 3,
-            category: 'action',
-            catalogueKey: 'fireball',
-          },
-          {
-            name: 'Dispel Magic',
-            text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: 'dispel-magic',
-          },
-        ],
-        equipment: EQUIPMENT,
-        levellingNotes:
-          'The big one: 3rd-level spells. Fireball is your answer to a crowd, and Dispel Magic ends the enchantment, the ward or the curse that nobody else at the table can touch.',
-      },
-
-      5: {
-        level: 5,
-        abilities: { str: 8, dex: 14, con: 13, int: 17, wis: 12, cha: 10 },
-        saveProficiencies: { str: false, dex: false, con: false, int: true, wis: true, cha: false },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: true,
-          investigation: true,
-          animalHandling: false,
-          insight: true,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: ARMOUR_CLASS,
-        maxHp: 27,
-        hitDice: { count: 5, faces: 6 },
-        feats: [
-          {
-            name: 'Spellcasting',
-            text: 'Intelligence is the ability behind every spell you cast. The roll shown is your spell attack, and anything of yours that forces a saving throw uses a DC of 8 plus your Intelligence modifier plus your proficiency bonus. You choose which spells to prepare from your spellbook after a long rest.',
-            roll: '1d20+INT+PROF',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Arcane Recovery',
-            text: 'Once a day, when you stop for an hour\'s rest, some of your spent spell slots come back — enough to cast a first-level spell again, and more as you gain levels. It is how a wizard avoids running dry halfway through the dungeon.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Portent',
-            text: 'After a long rest, roll the dice shown and write all three numbers down. Once each, and before the die is rolled, you may replace an attack roll, a saving throw or an ability check made by you or by a creature you can see with one of your numbers — three glimpses of the future a day now, rather than two.',
-            roll: '3d20',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: 'Fire Bolt',
-            text: 'A mote of fire hurled at one target within 120 feet. On a hit it burns, and it sets light to anything flammable nobody is holding or wearing.',
-            roll: '1d10',
-            level: 0,
-            category: 'weapon',
-            toHit: '1d20+INT+PROF',
-            catalogueKey: 'fire-bolt',
-          },
-          {
-            name: 'Mage Hand',
-            text: 'A spectral hand appears within 30 feet and can fetch, carry or fiddle with something light — a key, a lever, a lantern. It cannot attack or wield a weapon.',
-            roll: null,
-            level: 0,
-            category: 'passive',
-            catalogueKey: 'mage-hand',
-          },
-          {
-            name: 'Magic Missile',
-            text: 'Three darts of force that hit automatically: no attack roll and no saving throw. Each deals 1d4+1 and they can be split between targets however you like.',
-            roll: '3d4+3',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'magic-missile',
-          },
-          {
-            name: 'Shield',
-            text: 'A reaction, taken when you are hit or targeted by Magic Missile. Your Armour Class rises by 5 until your next turn and the triggering attack may miss because of it.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'shield',
-          },
-          {
-            name: 'Comprehend Languages',
-            text: 'For an hour you understand the literal meaning of any language spoken near you, and you can read any writing you touch, a page at a time. It does not let you speak or write the language back, and a cipher or a magical script stays a mystery.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Detect Magic',
-            text: 'For ten minutes you sense magic within 30 feet, and a moment spent on an aura tells you which school it belongs to.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: 'detect-magic',
-          },
-          {
-            name: 'Misty Step',
-            text: 'A bonus action: you vanish in a puff of silver mist and reappear in an unoccupied space you can see up to 30 feet away.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: 'misty-step',
-          },
-          {
-            name: 'Knock',
-            text: 'A sharp rap rings out, heard 300 feet away, and one locked door, chest, box or gate within 60 feet comes open — a bar lifts, a padlock springs, a stuck lid gives. Whatever it opened stays open for a minute. Everyone nearby hears it, so it is an answer to a locked door rather than a quiet one.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Fireball',
-            text: 'A roaring sphere of flame fills a 20-foot radius around a point within 150 feet, going round corners to do it. Each creature there takes the damage, halved on a successful Dexterity saving throw. Another 1d6 per slot level above 3rd.',
-            roll: '8d6',
-            level: 3,
-            category: 'action',
-            catalogueKey: 'fireball',
-          },
-          {
-            name: 'Dispel Magic',
-            text: 'End one spell on a creature, an object or an area. Anything of 3rd level or lower ends outright; for a higher one, make a spellcasting ability check against a DC of 10 plus that spell\'s level.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: 'dispel-magic',
-          },
-          {
-            name: 'Counterspell',
-            text: 'A reaction that interrupts a spell you can see being cast within 60 feet. The caster makes a Constitution saving throw, and on a failure the spell does nothing and the slot is spent anyway.',
-            roll: null,
-            level: 3,
-            category: 'passive',
-            catalogueKey: 'counterspell',
-          },
-        ],
-        equipment: EQUIPMENT,
-        levellingNotes:
-          'Portent gives you a third glimpse of the future each day. Counterspell stops an enemy caster mid-sentence and Knock opens what you have no key for.',
+          'Fireball, which is the spell everybody is waiting for, and Fly beside it. Fire Bolt doubles its dice, and Memorize Spell lets you swap a prepared spell on every short rest rather than guessing at dawn.',
       },
     },
   },

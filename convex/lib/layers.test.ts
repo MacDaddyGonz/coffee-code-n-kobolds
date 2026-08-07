@@ -3,12 +3,9 @@ import { describe, expect, test } from 'vitest'
 import {
   TOKEN_LAYERS,
   TOKEN_LAYER_LABELS,
-  layerOf,
   maySeeLayer,
   mayPlayersMove,
-  storedTokenLayerValidator,
   tokenLayerValidator,
-  type StoredTokenLayer,
   type TokenLayer,
 } from './layers'
 
@@ -33,21 +30,19 @@ import {
  */
 describe('the layer union is spelled twice and the two spellings agree', () => {
   /** The literals a `v.union` of `v.literal`s was built from, in declaration order. */
-  function literalsOf(union: typeof tokenLayerValidator | typeof storedTokenLayerValidator) {
+  function literalsOf(union: typeof tokenLayerValidator) {
     return union.members.map((member) => member.value)
   }
 
-  test('the canonical validator has exactly the members of TOKEN_LAYERS, in order', () => {
+  test('the validator has exactly the members of TOKEN_LAYERS, in order', () => {
     // Order and not just membership, because `TOKEN_LAYERS` is bottom-to-top paint order on
     // the Konva side — the array *is* the layering — so a reordering is a rendering bug that
     // set equality would wave through.
+    //
+    // This is also the assertion that the `dm` → `gm` rename finished. The schema takes this
+    // same validator, so a fourth member here is a member the database would store, and the
+    // widened `storedTokenLayerValidator` that used to sit beside it is gone.
     expect(literalsOf(tokenLayerValidator)).toEqual([...TOKEN_LAYERS])
-  })
-
-  test('the stored validator is the canonical one plus the legacy spelling, and nothing else', () => {
-    // The whole of the widen half of widen–migrate–narrow. If this ever grows a sixth member
-    // the transition has stopped being a transition.
-    expect(literalsOf(storedTokenLayerValidator)).toEqual([...TOKEN_LAYERS, 'dm'])
   })
 
   test('every layer has a label, and no label names a layer that does not exist', () => {
@@ -141,33 +136,24 @@ describe('unknown layers fail closed', () => {
   })
 })
 
-describe('the legacy spelling reads as the canonical one', () => {
-  test('dm is gm', () => {
-    expect(layerOf('dm')).toBe('gm')
-  })
+describe('the legacy spelling is gone', () => {
+  /**
+   * The narrow half of widen–migrate–narrow, asserted rather than assumed.
+   *
+   * `dm` was the GM layer's stored value before it was renamed, carried across two deploys
+   * by a widened `storedTokenLayerValidator` and a `layerOf` normaliser. Both are deleted:
+   * the sweep ran against every deployment and `admin:gamesWithLegacyLayers` read zero.
+   *
+   * ⚠️ **What makes this safe is Convex rather than this test.** A push that narrows a union
+   * while a row still holds the old value is refused, so the schema being narrow is proof no
+   * such row survives. This asserts the *code* finished the job — that the old spelling is
+   * not still being accepted somewhere out of habit — which is the half Convex cannot see.
+   */
+  test('dm is not a layer, and both predicates treat it as unknown', () => {
+    expect([...TOKEN_LAYERS]).not.toContain('dm')
 
-  test('every canonical member is its own answer', () => {
-    for (const layer of TOKEN_LAYERS) expect(layerOf(layer)).toBe(layer)
-  })
-
-  test('every stored member normalises to a canonical one', () => {
-    // The property that lets `maySee` switch over three members while the schema holds four:
-    // there is nothing `layerOf` can return that the predicates have not heard of.
-    const stored: StoredTokenLayer[] = [...TOKEN_LAYERS, 'dm']
-    for (const value of stored) {
-      expect(TOKEN_LAYERS).toContain(layerOf(value))
-    }
-  })
-
-  test('a legacy row is treated exactly as a GM-layer row, not as an unknown one', () => {
-    // The one assertion that would catch the transition being half-wired: if `layerOf` were
-    // skipped at a call site, a `dm` row would hit the `never` arm and *also* be withheld —
-    // fail-closed, so the leak test would still pass while the DM lost the coin too.
-    expect(maySeeLayer(layerOf('dm'))).toBe(maySeeLayer('gm'))
-    expect(mayPlayersMove(layerOf('dm'))).toBe(mayPlayersMove('gm'))
-    // And it is genuinely the GM answer rather than the fail-closed one coinciding with it:
-    // both predicates answer `false` for an unknown layer too, so equality alone would pass
-    // for a `layerOf` that returned nonsense. `layerOf` naming a real member is the check.
-    expect(TOKEN_LAYERS).toContain(layerOf('dm'))
+    const legacy = 'dm' as TokenLayer
+    expect(maySeeLayer(legacy)).toBe(false)
+    expect(mayPlayersMove(legacy)).toBe(false)
   })
 })

@@ -1,6 +1,7 @@
 import { memo, useCallback } from 'react'
 
 import { HpControls } from '@/components/HpControls'
+import { TokenVitalsEditor } from '@/components/board/TokenVitalsEditor'
 import type { BoardToken } from '@/hooks/useBoard'
 import type { Camera } from '@/lib/camera'
 import { toScreenSpace } from '@/lib/camera'
@@ -30,6 +31,24 @@ export type TokenHpPopoverProps = {
   camera: Camera
   /** Damage negative, healing positive. Refused server-side if this seat may not. */
   onAdjust: (characterId: Id<'characters'>, delta: number) => void
+  /**
+   * The three 2024 writes the editor grew, each taking the character rather than the token
+   * for `onAdjust`'s reason: all of them belong to the creature, and the same coin dropped
+   * on a different map is the same creature.
+   *
+   * ⚠️ **Three props rather than one `actions` object, and that is what keeps `HpCard`'s
+   * memo meaning anything.** `Board` re-renders on every frame of a pan while this is open,
+   * and an object literal assembled at the call site would be a changed prop sixty times a
+   * second on a card whose whole reason for existing separately is that it does not move.
+   * `useHpActions` already holds each of these still with a `useCallback`.
+   */
+  onSetTemporaryHp: (characterId: Id<'characters'>, temporaryHp: number) => void
+  onSetDeathSaves: (
+    characterId: Id<'characters'>,
+    successes: number,
+    failures: number,
+  ) => void
+  onSetHeroicInspiration: (characterId: Id<'characters'>, heroicInspiration: boolean) => void
 }
 
 /**
@@ -74,16 +93,47 @@ export type TokenHpPopoverProps = {
  * `canEditHp`, which is an affordance mirroring `requireEditableCharacter`, and the
  * mutation behind `onAdjust` re-checks the same question on every click.
  */
-export function TokenHpPopover({ token, scene, camera, onAdjust }: TokenHpPopoverProps) {
+export function TokenHpPopover({
+  token,
+  scene,
+  camera,
+  onAdjust,
+  onSetTemporaryHp,
+  onSetDeathSaves,
+  onSetHeroicInspiration,
+}: TokenHpPopoverProps) {
   const characterId = token.characterId
 
   // Bound to the character rather than the token, because hit points belong to the
-  // character — the same token dropped on a different scene is the same creature.
+  // character — the same token dropped on a different scene is the same creature. The three
+  // below are the identical binding for the three 2024 writes; each is its own `useCallback`
+  // rather than one object, so `HpCard`'s memo still skips a pan.
   const adjust = useCallback(
     (delta: number) => {
       if (characterId !== null) onAdjust(characterId, delta)
     },
     [characterId, onAdjust],
+  )
+
+  const setTemporaryHp = useCallback(
+    (temporaryHp: number) => {
+      if (characterId !== null) onSetTemporaryHp(characterId, temporaryHp)
+    },
+    [characterId, onSetTemporaryHp],
+  )
+
+  const setDeathSaves = useCallback(
+    (successes: number, failures: number) => {
+      if (characterId !== null) onSetDeathSaves(characterId, successes, failures)
+    },
+    [characterId, onSetDeathSaves],
+  )
+
+  const setHeroicInspiration = useCallback(
+    (heroicInspiration: boolean) => {
+      if (characterId !== null) onSetHeroicInspiration(characterId, heroicInspiration)
+    },
+    [characterId, onSetHeroicInspiration],
   )
 
   const position = token.position
@@ -118,7 +168,13 @@ export function TokenHpPopover({ token, scene, camera, onAdjust }: TokenHpPopove
         transform: `translate(${centre.x}px, ${centre.y + radius + GAP_BELOW_COIN}px) translate(-50%, 0)`,
       }}
     >
-      <HpCard vitals={token.vitals} onAdjust={adjust} />
+      <HpCard
+        vitals={token.vitals}
+        onAdjust={adjust}
+        onSetTemporaryHp={setTemporaryHp}
+        onSetDeathSaves={setDeathSaves}
+        onSetHeroicInspiration={setHeroicInspiration}
+      />
     </div>
   )
 }
@@ -144,13 +200,44 @@ export function TokenHpPopover({ token, scene, camera, onAdjust }: TokenHpPopove
 const HpCard = memo(function HpCard({
   vitals,
   onAdjust,
+  onSetTemporaryHp,
+  onSetDeathSaves,
+  onSetHeroicInspiration,
 }: {
   vitals: PublicVitals | null
   onAdjust: (delta: number) => void
+  onSetTemporaryHp: (temporaryHp: number) => void
+  onSetDeathSaves: (successes: number, failures: number) => void
+  onSetHeroicInspiration: (heroicInspiration: boolean) => void
 }) {
   return (
     <div className="bg-background/95 pointer-events-auto w-64 rounded-lg border px-2 py-1.5 shadow-lg backdrop-blur">
       <HpControls vitals={vitals} onAdjust={onAdjust} />
+      {/*
+        ⚠️ **Under the bar and inside the same card, rather than a second popover.** All
+        four of these are one question — *how is this creature doing right now* — and the
+        gesture that opened the card was a click on the bar, so a ward and a death-save
+        tally arriving somewhere else would mean two things to aim at for one answer.
+
+        It renders nothing at all for a viewer holding a band, which is why there is no
+        conditional here: the component's own early return is the whole of it, and the
+        reason is that the `band` variant has no field to put any of this in. See
+        `TokenVitalsEditor`, which carries the invariant-1 argument and the *nothing here
+        kills anybody* one together.
+
+        ⚠️ **`HpControls` is deliberately untouched.** It is shared with the character sheet
+        panel, so a board-only addition made inside it would be a change to a surface this
+        milestone's other half owns — and the sheet's version of these controls has its own
+        layout to answer to. One component, two callers, and the copy cannot drift because
+        there is only one of it.
+      */}
+      <TokenVitalsEditor
+        vitals={vitals}
+        onSetTemporaryHp={onSetTemporaryHp}
+        onSetDeathSaves={onSetDeathSaves}
+        onSetHeroicInspiration={onSetHeroicInspiration}
+        className="mt-1.5 border-t pt-1.5"
+      />
     </div>
   )
 })

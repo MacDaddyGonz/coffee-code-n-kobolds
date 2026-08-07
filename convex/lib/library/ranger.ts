@@ -1,1089 +1,367 @@
-// The Ranger: nine premade sheets, level 1 and then two archetypes to level 5.
+// The Ranger: five premade sheets, level 1 to 5, Hunter.
 //
-// Content only. The shape is in ./types.ts, the words follow the house voice set by
-// ../rules.ts — paraphrased for a DM at the table, short enough to sit in a sheet
-// panel beside a dozen others — and Cure Wounds is the catalogue's own entry rather
-// than a second wording of it.
+// Content only — the shape is in ./types.ts, and see barbarian.ts for why an entry is
+// named once and listed rather than written out at every level that carries it.
 //
-// Three decisions worth stating once rather than nine times:
+// **The build: Soldier.** The standard array goes 15 Dexterity, 14 Wisdom, 13
+// Constitution, 12 Strength, 10 Intelligence, 8 Charisma, and the Soldier background's
+// **+2 Dexterity and +1 Constitution** are already in the numbers below. Athletics and
+// Intimidation are the Soldier's two skills; Perception, Stealth and Survival are the
+// three the class chooses.
 //
-// **Level 3 is an ability score improvement, not a feat.** Sharpshooter is the feat
-// a ranger reaches for, and its interesting half is trading accuracy for damage —
-// which is exactly the sort of choice a beginner gets wrong for three levels before
-// anyone notices. A point of Dexterity and a point of Constitution improve every
-// roll on the sheet and cannot be misplayed. Both points land on an odd score, so
-// both actually move a modifier: Dexterity 15 → 16 and Constitution 13 → 14.
+// ⚠️ **The Fighting Style is Archery, and the longbow's to-hit carries the +2 from level
+// 2 onward — which is why that weapon has two entries and the melee ones do not.** Archery
+// applies to ranged attack rolls only, so writing the bonus into the shared to-hit would
+// hand it to the scimitar as well. `1d20+DEX+PROF+2` is what `ROLL_PATTERN` calls a
+// trailing term and is the only place in this corpus where a fighting style reaches a
+// stored roll.
 //
-// **The Constitution improvement is retroactive**, so levels 3 to 5 recompute hit
-// points from level 1 at the new modifier. That is why level 3 gains ten hit points
-// rather than seven, and the levelling note says so, because a number that jumps
-// without explanation is a number a player thinks is a bug.
-//
-// **Level 4 is Extra Attack, brought forward from 5.** The library stops at level 5
-// and a power spike parked on the last rung is a power spike most tables never
-// reach.
-//
-// The exclusions in docs/requirements.md cost this class more rewriting than any
-// other, and the rewriting is the point rather than an apology for it. Natural
-// Explorer and Favoured Terrain are written almost entirely in terms of the movement
-// rules D&D Lite leaves out; what survives here as Trailcraft is the half the subset
-// can honour — reading a trail, finding food and knowing which way is north.
-// Ensnaring Strike and Entangle hold a creature where it stands and are simply
-// absent, as is Longstrider, which would promise something this app cannot
-// represent: every character covers the same fixed distance in a turn, which
-// lib/sheet.ts holds as a constant with no field behind it. Nothing below names or
-// implies any of that, and the Beast Master's companion is commanded and defends
-// rather than racing about.
+// The alternative was Druidic Warrior, which trades the +2 for two Druid cantrips. It
+// lost because this build's whole plan is the bow: an archer who is +2 to hit at every
+// range beats an archer with Guidance.
 
-import type { ClassLibrary } from './types'
+import { noSkills } from '../sheet'
+import type { ClassLibrary, LibraryEntry } from './types'
+
+const SKILLS = {
+  ...noSkills(),
+  athletics: true,
+  intimidation: true,
+  perception: true,
+  stealth: true,
+  survival: true,
+}
+
+const LONGBOW: LibraryEntry = {
+  name: 'Longbow',
+  text: 'Two hands, 150 feet comfortably and 600 at a stretch, twenty arrows in the quiver. This is what the class is for.',
+  roll: '1d8+DEX',
+  level: null,
+  catalogueKey: null,
+  category: 'weapon',
+  toHit: '1d20+DEX+PROF',
+  mastery: 'slow',
+}
+
+/** Archery's +2, from level 2, and on the ranged weapon only. See the header. */
+const LONGBOW_WITH_ARCHERY: LibraryEntry = { ...LONGBOW, toHit: '1d20+DEX+PROF+2' }
+
+const SHORTSWORD: LibraryEntry = {
+  name: 'Shortsword',
+  text: 'Finesse and light, so Dexterity carries it and a second one can be swung off a bonus action. Reach 5 feet, for whatever got past the bow.',
+  roll: '1d6+DEX',
+  level: null,
+  catalogueKey: null,
+  category: 'weapon',
+  toHit: '1d20+DEX+PROF',
+  mastery: 'vex',
+}
+
+const SCIMITAR: LibraryEntry = {
+  name: 'Scimitar',
+  text: 'The other half of the pair. Light and finesse like the shortsword, and Nick is what makes carrying both worth it.',
+  roll: '1d6+DEX',
+  level: null,
+  catalogueKey: null,
+  category: 'weapon',
+  toHit: '1d20+DEX+PROF',
+  mastery: 'nick',
+}
+
+const FAVORED_ENEMY: LibraryEntry = {
+  name: 'Favored Enemy',
+  text: 'Hunter\'s Mark is always prepared and never counts against your list, and twice between long rests you cast it without spending a slot at all.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+  uses: { max: 2, recharge: 'long' },
+}
+
+const FAVORED_ENEMY_AT_5: LibraryEntry = { ...FAVORED_ENEMY, uses: { max: 3, recharge: 'long' } }
+
+const WEAPON_MASTERY: LibraryEntry = {
+  name: 'Weapon Mastery',
+  text: 'You use the mastery property of two kinds of weapon — the Longbow and the Shortsword here, so Slow and Vex. After a long rest you can swap either for another weapon you are proficient with.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const SAVAGE_ATTACKER: LibraryEntry = {
+  name: 'Savage Attacker',
+  text: 'Origin feat. Once a turn, when you hit with a weapon, reroll the damage dice and keep whichever total you prefer.',
+  roll: null,
+  level: null,
+  catalogueKey: 'savage-attacker',
+  category: 'passive',
+}
+
+const DEFT_EXPLORER: LibraryEntry = {
+  name: 'Deft Explorer',
+  text: 'One of your trained skills is now doubly trained — Survival, on this sheet — so you add twice your proficiency bonus to it. Two more languages come with it.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const ARCHERY: LibraryEntry = {
+  name: 'Archery',
+  text: 'Fighting Style feat. A +2 bonus to the attack rolls you make with ranged weapons.',
+  roll: null,
+  level: null,
+  catalogueKey: 'archery',
+  category: 'passive',
+}
+
+const HUNTERS_LORE: LibraryEntry = {
+  name: "Hunter's Lore",
+  text: 'While something is marked by your Hunter\'s Mark you know what it is immune to, what it resists and what it is vulnerable to — all of it, or that it has none.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const COLOSSUS_SLAYER: LibraryEntry = {
+  name: 'Colossus Slayer',
+  text: 'Once a turn, when a weapon of yours hits something that is already wounded, it takes this much extra damage. Anything the party has already hit once qualifies, which in practice is everything.',
+  roll: '1d8',
+  level: null,
+  catalogueKey: null,
+  category: 'action',
+}
+
+const ABILITY_SCORE_IMPROVEMENT: LibraryEntry = {
+  name: 'Ability Score Improvement',
+  text: 'General feat, from level 4. Raise one ability score by 2, or two of them by 1 each, to a maximum of 20. It can be taken again every time you are offered a feat. Taken here as +2 Dexterity.',
+  roll: null,
+  level: null,
+  catalogueKey: 'ability-score-improvement',
+  category: 'passive',
+}
+
+const EXTRA_ATTACK: LibraryEntry = {
+  name: 'Extra Attack',
+  text: 'When you take the Attack action you attack twice instead of once — two arrows a turn, each of them carrying Hunter\'s Mark and Colossus Slayer.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+// --- spells ---------------------------------------------------------------
+
+const HUNTERS_MARK: LibraryEntry = {
+  name: "Hunter's Mark",
+  text: 'A bonus action marks one creature you can see for an hour. Every weapon attack of yours that hits it deals this much extra force damage, and the mark moves to a new target with a bonus action when the first one drops.',
+  roll: '1d6',
+  level: 1,
+  catalogueKey: 'hunters-mark',
+  category: 'action',
+}
+
+const CURE_WOUNDS: LibraryEntry = {
+  name: 'Cure Wounds',
+  text: 'A hand laid on somebody within reach, and the wound closes. You are the only healing some parties have.',
+  roll: '2d8+WIS',
+  level: 1,
+  catalogueKey: 'cure-wounds',
+  category: 'action',
+}
+
+const GOODBERRY: LibraryEntry = {
+  name: 'Goodberry',
+  text: 'Ten berries that each heal 1 hit point and feed somebody for a day. They keep for a day, and ten small heals handed round the camp is worth more than one big one.',
+  roll: null,
+  level: 1,
+  catalogueKey: 'goodberry',
+  category: 'passive',
+}
+
+const FOG_CLOUD: LibraryEntry = {
+  name: 'Fog Cloud',
+  text: 'A 20-foot sphere of fog within 120 feet, for an hour while you concentrate. Nobody in it can see anything, which is a fight cancelled or an escape made.',
+  roll: null,
+  level: 1,
+  catalogueKey: 'fog-cloud',
+  category: 'passive',
+}
+
+const SPIKE_GROWTH: LibraryEntry = {
+  name: 'Spike Growth',
+  text: 'A 20-foot radius of ground within 150 feet sprouts thorns and hard spikes for ten minutes. Anything crossing it takes this much piercing damage for every five feet it covers, and it is hard to spot without a Perception check.',
+  roll: '2d4',
+  level: 2,
+  catalogueKey: 'spike-growth',
+  category: 'action',
+}
+
+const PASS_WITHOUT_TRACE: LibraryEntry = {
+  name: 'Pass without Trace',
+  text: 'You and everybody within 30 feet get +10 on every Stealth check for an hour and leave no tracks. It is the single largest bonus any level 2 spell hands out.',
+  roll: null,
+  level: 2,
+  catalogueKey: 'pass-without-trace',
+  category: 'passive',
+}
+
+const LESSER_RESTORATION: LibraryEntry = {
+  name: 'Lesser Restoration',
+  text: 'A touch ends one condition on a creature: blinded, deafened, paralyzed or poisoned.',
+  roll: null,
+  level: 2,
+  catalogueKey: 'lesser-restoration',
+  category: 'passive',
+}
+
+const EQUIPMENT =
+  'Studded leather armour, a scimitar, a shortsword, a longbow with twenty arrows and a quiver, a druidic focus and an explorer\'s pack, plus the soldier\'s spear, healer\'s kit, gaming set and travelling clothes.'
+
+const HIT_DIE = 10
 
 export const RANGER: ClassLibrary = {
   classKey: 'ranger',
-
-  // Level 1: the bow, a blade for anything that closes, and the tracking that makes
-  // the ranger the party's guide. No spells at all — a ranger's magic starts at 2,
-  // which is also where the archetype starts, so level 2 is where the class arrives.
   base: {
-    level: 1,
-    abilities: { str: 12, dex: 15, con: 13, int: 10, wis: 14, cha: 8 },
-    saveProficiencies: { str: true, dex: true, con: false, int: false, wis: false, cha: false },
-    skillProficiencies: {
-      athletics: false,
-      acrobatics: false,
-      sleightOfHand: false,
-      stealth: true,
-      arcana: false,
-      investigation: true,
-      animalHandling: true,
-      insight: false,
-      perception: true,
-      deception: false,
-      intimidation: false,
-      performance: false,
-      persuasion: false,
+    1: {
+      level: 1,
+      // Dexterity first because the bow, the armour class and two of the five skills all
+      // come off it; Wisdom second for the spells and Perception. Charisma is dumped.
+      abilities: { str: 12, dex: 17, con: 14, int: 10, wis: 14, cha: 8 },
+      saveProficiencies: { str: true, dex: true, con: false, int: false, wis: false, cha: false },
+      skillProficiencies: SKILLS,
+      armourClass: 15,
+      maxHp: 12,
+      hitDice: { count: 1, faces: HIT_DIE },
+      feats: [LONGBOW, SHORTSWORD, SCIMITAR, FAVORED_ENEMY, WEAPON_MASTERY, SAVAGE_ATTACKER],
+      spells: [HUNTERS_MARK, CURE_WOUNDS, GOODBERRY],
+      equipment: EQUIPMENT,
+      levellingNotes:
+        'Where you start: five trained skills, more than anybody else at level 1, a longbow that reaches across any room you will ever fight in, and Hunter\'s Mark twice a day for free on top of your slots.',
     },
-    armourClass: 14,
-    maxHp: 11,
-    hitDice: { count: 1, faces: 10 },
-    feats: [
-      {
-        name: 'Longbow',
-        text: 'Your main weapon and the one you reach for first, out to 150 feet. The dice here are the damage.',
-        roll: '1d8+DEX',
-        level: null,
-        category: 'weapon',
-        toHit: '1d20+DEX+PROF+2',
-        catalogueKey: null,
-      },
-      {
-        name: 'Shortsword',
-        text: 'For anything that gets close. A light blade that uses your Dexterity rather than your Strength, so it hits as reliably as your bow does, and you carry two of them.',
-        roll: '1d6+DEX',
-        level: null,
-        category: 'weapon',
-        toHit: '1d20+DEX+PROF',
-        catalogueKey: null,
-      },
-      {
-        name: 'Archery Style',
-        text: 'Add 2 to every attack roll you make with a bow or a thrown weapon. Always on, nothing to spend and nothing to remember — it simply makes you the best shot in the party.',
-        roll: null,
-        level: null,
-        category: 'passive',
-        catalogueKey: null,
-      },
-      {
-        name: 'Trailcraft',
-        text: 'The wild is home. From marks on the ground you can tell how many creatures passed, how long ago they were there and which way they were headed. Each day you can find food and clean water for yourself and five companions, and you always know which way is north and roughly what hour it is.',
-        roll: null,
-        level: null,
-        category: 'passive',
-        catalogueKey: null,
-      },
-    ],
-    spells: [],
-    equipment:
-      'Studded leather armour, a longbow and a full quiver, two shortswords, and an explorer\'s pack with rope, a bedroll, a tinderbox and rations.',
-    levellingNotes:
-      'Where the ranger starts: a bow, a blade for close work, Archery Style for accuracy and the tracking know-how that makes you the party\'s guide. No spells yet — those arrive at level 2 along with your archetype.',
+    2: {
+      level: 2,
+      abilities: { str: 12, dex: 17, con: 14, int: 10, wis: 14, cha: 8 },
+      saveProficiencies: { str: true, dex: true, con: false, int: false, wis: false, cha: false },
+      skillProficiencies: SKILLS,
+      armourClass: 15,
+      maxHp: 20,
+      hitDice: { count: 2, faces: HIT_DIE },
+      feats: [
+        LONGBOW_WITH_ARCHERY,
+        SHORTSWORD,
+        SCIMITAR,
+        FAVORED_ENEMY,
+        WEAPON_MASTERY,
+        DEFT_EXPLORER,
+        ARCHERY,
+        SAVAGE_ATTACKER,
+      ],
+      spells: [HUNTERS_MARK, CURE_WOUNDS, GOODBERRY, FOG_CLOUD],
+      equipment: EQUIPMENT,
+      levellingNotes:
+        'Archery puts +2 on every bow shot for the rest of your career — look at the longbow\'s roll, it is already in there. Deft Explorer doubles your proficiency in Survival.',
+    },
   },
-
   paths: {
-    // ---------------------------------------------------------------------------
-    // Hunter — straightforward damage. Nothing to track, nothing to feed.
-    // ---------------------------------------------------------------------------
     hunter: {
-      2: {
-        level: 2,
-        abilities: { str: 12, dex: 15, con: 13, int: 10, wis: 14, cha: 8 },
-        saveProficiencies: { str: true, dex: true, con: false, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: true,
-          arcana: false,
-          investigation: true,
-          animalHandling: true,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 14,
-        maxHp: 18,
-        hitDice: { count: 2, faces: 10 },
-        feats: [
-          {
-            name: 'Longbow',
-            text: 'Your main weapon and the one you reach for first, out to 150 feet. The dice here are the damage.',
-            roll: '1d8+DEX',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+DEX+PROF+2',
-            catalogueKey: null,
-          },
-          {
-            name: 'Shortsword',
-            text: 'For anything that gets close. A light blade that uses your Dexterity rather than your Strength, so it hits as reliably as your bow does, and you carry two of them.',
-            roll: '1d6+DEX',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+DEX+PROF',
-            catalogueKey: null,
-          },
-          {
-            name: 'Archery Style',
-            text: 'Add 2 to every attack roll you make with a bow or a thrown weapon. Always on, nothing to spend and nothing to remember — it simply makes you the best shot in the party.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Trailcraft',
-            text: 'The wild is home. From marks on the ground you can tell how many creatures passed, how long ago they were there and which way they were headed. Each day you can find food and clean water for yourself and five companions, and you always know which way is north and roughly what hour it is.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Colossus Slayer',
-            text: 'Once on each of your turns, when you hit a creature that has already lost hit points, it takes the extra damage rolled here. It is why a Hunter finishes off a wounded enemy so quickly, and it needs nothing spent to use.',
-            roll: '1d8',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: "Hunter's Mark",
-            text: 'A bonus action marks one creature you can see. Every hit you land on it deals the extra damage rolled here, and you have advantage on any check made to find it again. It lasts while you concentrate, and if the target dies a bonus action moves the mark to another.',
-            roll: '1d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-        ],
-        equipment:
-          'Studded leather armour, a longbow and a full quiver, two shortswords, and an explorer\'s pack with rope, a bedroll, a tinderbox and rations.',
-        levellingNotes:
-          'You chose the Hunter. Colossus Slayer adds a die whenever you hit something already wounded, and your first two spells arrive: Hunter\'s Mark for damage, Cure Wounds for patching the party up.',
-      },
-
       3: {
         level: 3,
-        abilities: { str: 12, dex: 16, con: 14, int: 10, wis: 14, cha: 8 },
+        abilities: { str: 12, dex: 17, con: 14, int: 10, wis: 14, cha: 8 },
         saveProficiencies: { str: true, dex: true, con: false, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: true,
-          arcana: false,
-          investigation: true,
-          animalHandling: true,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
+        skillProficiencies: SKILLS,
         armourClass: 15,
         maxHp: 28,
-        hitDice: { count: 3, faces: 10 },
+        hitDice: { count: 3, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Longbow',
-            text: 'Your main weapon and the one you reach for first, out to 150 feet. The dice here are the damage.',
-            roll: '1d8+DEX',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+DEX+PROF+2',
-            catalogueKey: null,
-          },
-          {
-            name: 'Shortsword',
-            text: 'For anything that gets close. A light blade that uses your Dexterity rather than your Strength, so it hits as reliably as your bow does, and you carry two of them.',
-            roll: '1d6+DEX',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+DEX+PROF',
-            catalogueKey: null,
-          },
-          {
-            name: 'Archery Style',
-            text: 'Add 2 to every attack roll you make with a bow or a thrown weapon. Always on, nothing to spend and nothing to remember — it simply makes you the best shot in the party.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Trailcraft',
-            text: 'The wild is home. From marks on the ground you can tell how many creatures passed, how long ago they were there and which way they were headed. Each day you can find food and clean water for yourself and five companions, and you always know which way is north and roughly what hour it is.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Colossus Slayer',
-            text: 'Once on each of your turns, when you hit a creature that has already lost hit points, it takes the extra damage rolled here. It is why a Hunter finishes off a wounded enemy so quickly, and it needs nothing spent to use.',
-            roll: '1d8',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
+          LONGBOW_WITH_ARCHERY,
+          SHORTSWORD,
+          SCIMITAR,
+          FAVORED_ENEMY,
+          WEAPON_MASTERY,
+          DEFT_EXPLORER,
+          ARCHERY,
+          HUNTERS_LORE,
+          COLOSSUS_SLAYER,
+          SAVAGE_ATTACKER,
         ],
-        spells: [
-          {
-            name: "Hunter's Mark",
-            text: 'A bonus action marks one creature you can see. Every hit you land on it deals the extra damage rolled here, and you have advantage on any check made to find it again. It lasts while you concentrate, and if the target dies a bonus action moves the mark to another.',
-            roll: '1d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Hail of Thorns',
-            text: 'Cast as you loose an arrow. Where the shot lands, thorns burst outwards: every creature within 5 feet of the target takes the damage, or half of it on a successful Dexterity saving throw.',
-            roll: '1d10',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Speak with Animals',
-            text: 'For ten minutes you can talk with beasts and understand what they answer. A crow knows who came through the gate last night; a stable cat knows what is living in the cellar.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        equipment:
-          'Studded leather armour, a longbow and a full quiver, two shortswords, and an explorer\'s pack with rope, a bedroll, a tinderbox and rations.',
+        spells: [HUNTERS_MARK, CURE_WOUNDS, GOODBERRY, FOG_CLOUD, SPIKE_GROWTH],
+        equipment: EQUIPMENT,
         levellingNotes:
-          'No new trick this level — you grew instead. Dexterity rose to 16 and Constitution to 14, which sharpens every shot, your armour class and your saves. The Constitution counts for every level you have, so the hit points were worked out again from the start, which is why they jump by ten. Hail of Thorns and Speak with Animals join your spells.',
+          'You are a Hunter. Colossus Slayer adds a d8 to one hit a turn against anything already wounded, which stacks on top of Hunter\'s Mark, and Hunter\'s Lore tells you what the thing you marked is made of.',
       },
-
       4: {
         level: 4,
-        abilities: { str: 12, dex: 16, con: 14, int: 10, wis: 14, cha: 8 },
+        // The improvement goes into Dexterity: 17 → 19. It buys a point of Armour Class,
+        // a point on every attack roll and a point of damage on every arrow at once —
+        // which is why no feat was taken instead.
+        abilities: { str: 12, dex: 19, con: 14, int: 10, wis: 14, cha: 8 },
         saveProficiencies: { str: true, dex: true, con: false, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: true,
-          arcana: false,
-          investigation: true,
-          animalHandling: true,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 15,
+        skillProficiencies: SKILLS,
+        armourClass: 16,
         maxHp: 36,
-        hitDice: { count: 4, faces: 10 },
+        hitDice: { count: 4, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Longbow',
-            text: 'Your main weapon and the one you reach for first, out to 150 feet. The dice here are the damage.',
-            roll: '1d8+DEX',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+DEX+PROF+2',
-            catalogueKey: null,
-          },
-          {
-            name: 'Shortsword',
-            text: 'For anything that gets close. A light blade that uses your Dexterity rather than your Strength, so it hits as reliably as your bow does, and you carry two of them.',
-            roll: '1d6+DEX',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+DEX+PROF',
-            catalogueKey: null,
-          },
-          {
-            name: 'Archery Style',
-            text: 'Add 2 to every attack roll you make with a bow or a thrown weapon. Always on, nothing to spend and nothing to remember — it simply makes you the best shot in the party.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Trailcraft',
-            text: 'The wild is home. From marks on the ground you can tell how many creatures passed, how long ago they were there and which way they were headed. Each day you can find food and clean water for yourself and five companions, and you always know which way is north and roughly what hour it is.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Colossus Slayer',
-            text: 'Once on each of your turns, when you hit a creature that has already lost hit points, it takes the extra damage rolled here. It is why a Hunter finishes off a wounded enemy so quickly, and it needs nothing spent to use.',
-            roll: '1d8',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Extra Attack',
-            text: 'When you take the Attack action you attack twice instead of once. Bow or blades, it doubles what a turn is worth, and it is the single largest jump the ranger gets.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          LONGBOW_WITH_ARCHERY,
+          SHORTSWORD,
+          SCIMITAR,
+          FAVORED_ENEMY,
+          WEAPON_MASTERY,
+          DEFT_EXPLORER,
+          ARCHERY,
+          HUNTERS_LORE,
+          COLOSSUS_SLAYER,
+          ABILITY_SCORE_IMPROVEMENT,
+          SAVAGE_ATTACKER,
         ],
         spells: [
-          {
-            name: "Hunter's Mark",
-            text: 'A bonus action marks one creature you can see. Every hit you land on it deals the extra damage rolled here, and you have advantage on any check made to find it again. It lasts while you concentrate, and if the target dies a bonus action moves the mark to another.',
-            roll: '1d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Hail of Thorns',
-            text: 'Cast as you loose an arrow. Where the shot lands, thorns burst outwards: every creature within 5 feet of the target takes the damage, or half of it on a successful Dexterity saving throw.',
-            roll: '1d10',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Speak with Animals',
-            text: 'For ten minutes you can talk with beasts and understand what they answer. A crow knows who came through the gate last night; a stable cat knows what is living in the cellar.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Pass without Trace',
-            text: 'While you concentrate, you and everyone within 30 feet of you add 10 to their Stealth checks and leave no tracks for anyone to follow. It is the spell that turns a noisy party into a quiet one.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Lesser Restoration',
-            text: 'Touch a creature and end one disease or one poison affecting it. Not healing — it removes the thing doing the harm rather than the harm itself.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          HUNTERS_MARK,
+          CURE_WOUNDS,
+          GOODBERRY,
+          FOG_CLOUD,
+          SPIKE_GROWTH,
+          PASS_WITHOUT_TRACE,
         ],
-        equipment:
-          'Studded leather armour, a longbow and a full quiver, two shortswords, and an explorer\'s pack with rope, a bedroll, a tinderbox and rations.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'The big one, brought forward from level 5 so it lands while it still matters: Extra Attack, so every Attack action is now two attacks. Pass without Trace and Lesser Restoration join your spells.',
+          'Dexterity goes from 17 to 19, so the armour class, every shot and every arrow\'s damage all improve together. Pass without Trace makes the whole party almost impossible to find.',
       },
-
       5: {
         level: 5,
-        abilities: { str: 12, dex: 16, con: 14, int: 10, wis: 14, cha: 8 },
+        abilities: { str: 12, dex: 19, con: 14, int: 10, wis: 14, cha: 8 },
         saveProficiencies: { str: true, dex: true, con: false, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: true,
-          arcana: false,
-          investigation: true,
-          animalHandling: true,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 15,
+        skillProficiencies: SKILLS,
+        armourClass: 16,
         maxHp: 44,
-        hitDice: { count: 5, faces: 10 },
+        hitDice: { count: 5, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Longbow',
-            text: 'Your main weapon and the one you reach for first, out to 150 feet. The dice here are the damage.',
-            roll: '1d8+DEX',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+DEX+PROF+2',
-            catalogueKey: null,
-          },
-          {
-            name: 'Shortsword',
-            text: 'For anything that gets close. A light blade that uses your Dexterity rather than your Strength, so it hits as reliably as your bow does, and you carry two of them.',
-            roll: '1d6+DEX',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+DEX+PROF',
-            catalogueKey: null,
-          },
-          {
-            name: 'Archery Style',
-            text: 'Add 2 to every attack roll you make with a bow or a thrown weapon. Always on, nothing to spend and nothing to remember — it simply makes you the best shot in the party.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Trailcraft',
-            text: 'The wild is home. From marks on the ground you can tell how many creatures passed, how long ago they were there and which way they were headed. Each day you can find food and clean water for yourself and five companions, and you always know which way is north and roughly what hour it is.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Colossus Slayer',
-            text: 'Once on each of your turns, when you hit a creature that has already lost hit points, it takes the extra damage rolled here. It is why a Hunter finishes off a wounded enemy so quickly, and it needs nothing spent to use.',
-            roll: '1d8',
-            level: null,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Extra Attack',
-            text: 'When you take the Attack action you attack twice instead of once. Bow or blades, it doubles what a turn is worth, and it is the single largest jump the ranger gets.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Horde Breaker',
-            text: 'Once on each of your turns, after you attack a creature, you may make one more attack with the same weapon against a different creature within 5 feet of the first. Two enemies standing side by side is exactly what a Hunter wants to see.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          LONGBOW_WITH_ARCHERY,
+          SHORTSWORD,
+          SCIMITAR,
+          FAVORED_ENEMY_AT_5,
+          WEAPON_MASTERY,
+          DEFT_EXPLORER,
+          ARCHERY,
+          HUNTERS_LORE,
+          COLOSSUS_SLAYER,
+          EXTRA_ATTACK,
+          ABILITY_SCORE_IMPROVEMENT,
+          SAVAGE_ATTACKER,
         ],
         spells: [
-          {
-            name: "Hunter's Mark",
-            text: 'A bonus action marks one creature you can see. Every hit you land on it deals the extra damage rolled here, and you have advantage on any check made to find it again. It lasts while you concentrate, and if the target dies a bonus action moves the mark to another.',
-            roll: '1d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Hail of Thorns',
-            text: 'Cast as you loose an arrow. Where the shot lands, thorns burst outwards: every creature within 5 feet of the target takes the damage, or half of it on a successful Dexterity saving throw.',
-            roll: '1d10',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Speak with Animals',
-            text: 'For ten minutes you can talk with beasts and understand what they answer. A crow knows who came through the gate last night; a stable cat knows what is living in the cellar.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Pass without Trace',
-            text: 'While you concentrate, you and everyone within 30 feet of you add 10 to their Stealth checks and leave no tracks for anyone to follow. It is the spell that turns a noisy party into a quiet one.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Lesser Restoration',
-            text: 'Touch a creature and end one disease or one poison affecting it. Not healing — it removes the thing doing the harm rather than the harm itself.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Barkskin',
-            text: 'For an hour your skin turns rough as oak bark. Your Armour Class counts as 16 whenever that is better than what your armour already gives you.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Silence',
-            text: 'A 20-foot sphere in which no sound can be made or heard. Nothing inside it can be heard from outside, and a spellcaster caught in it cannot cast anything that needs spoken words.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
+          HUNTERS_MARK,
+          CURE_WOUNDS,
+          GOODBERRY,
+          FOG_CLOUD,
+          SPIKE_GROWTH,
+          PASS_WITHOUT_TRACE,
+          LESSER_RESTORATION,
         ],
-        equipment:
-          'Studded leather armour, a longbow and a full quiver, two shortswords, and an explorer\'s pack with rope, a bedroll, a tinderbox and rations.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'Horde Breaker: once a turn your attack can spill onto a second enemy beside the first, which together with Extra Attack is three swings in a good round. Barkskin and Silence join your spells.',
-      },
-    },
-
-    // ---------------------------------------------------------------------------
-    // Beast Master — the same ranger with a friend. The companion's numbers are
-    // written out in full on its entry at every level, flat rather than in ability
-    // tokens, for the reason the NPC actions in ../rules.ts carry flat numbers: it
-    // has no sheet of its own for a token to resolve against, and a child running it
-    // should not have to work anything out.
-    // ---------------------------------------------------------------------------
-    'beast-master': {
-      2: {
-        level: 2,
-        abilities: { str: 12, dex: 15, con: 13, int: 10, wis: 14, cha: 8 },
-        saveProficiencies: { str: true, dex: true, con: false, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: true,
-          arcana: false,
-          investigation: true,
-          animalHandling: true,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 14,
-        maxHp: 18,
-        hitDice: { count: 2, faces: 10 },
-        feats: [
-          {
-            name: 'Longbow',
-            text: 'Your main weapon and the one you reach for first, out to 150 feet. The dice here are the damage.',
-            roll: '1d8+DEX',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+DEX+PROF+2',
-            catalogueKey: null,
-          },
-          {
-            name: 'Shortsword',
-            text: 'For anything that gets close. A light blade that uses your Dexterity rather than your Strength, so it hits as reliably as your bow does, and you carry two of them.',
-            roll: '1d6+DEX',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+DEX+PROF',
-            catalogueKey: null,
-          },
-          {
-            name: 'Archery Style',
-            text: 'Add 2 to every attack roll you make with a bow or a thrown weapon. Always on, nothing to spend and nothing to remember — it simply makes you the best shot in the party.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Trailcraft',
-            text: 'The wild is home. From marks on the ground you can tell how many creatures passed, how long ago they were there and which way they were headed. Each day you can find food and clean water for yourself and five companions, and you always know which way is north and roughly what hour it is.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Animal Companion',
-            text: 'A wolf, a hawk or a big cat that stays with you. Armour Class 13, 12 hit points, and it attacks for the damage rolled here. Spend your bonus action to tell it to attack; the rest of the time it keeps beside you and defends itself. It gets its own token on the map. At 0 hit points it is hurt rather than gone, and a long rest tending to it brings it back — it is a friend, not equipment.',
-            roll: '1d8+3',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+5',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: "Hunter's Mark",
-            text: 'A bonus action marks one creature you can see. Every hit you land on it deals the extra damage rolled here, and you have advantage on any check made to find it again. It lasts while you concentrate, and if the target dies a bonus action moves the mark to another.',
-            roll: '1d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-        ],
-        equipment:
-          'Studded leather armour, a longbow and a full quiver, two shortswords, and an explorer\'s pack with rope, a bedroll, a tinderbox and rations.',
-        levellingNotes:
-          'You chose the Beast Master, and an animal joined you — its numbers are all on its entry, ready to play. Your first two spells arrive as well: Hunter\'s Mark for damage, Cure Wounds for patching the party up.',
-      },
-
-      3: {
-        level: 3,
-        abilities: { str: 12, dex: 16, con: 14, int: 10, wis: 14, cha: 8 },
-        saveProficiencies: { str: true, dex: true, con: false, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: true,
-          arcana: false,
-          investigation: true,
-          animalHandling: true,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 15,
-        maxHp: 28,
-        hitDice: { count: 3, faces: 10 },
-        feats: [
-          {
-            name: 'Longbow',
-            text: 'Your main weapon and the one you reach for first, out to 150 feet. The dice here are the damage.',
-            roll: '1d8+DEX',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+DEX+PROF+2',
-            catalogueKey: null,
-          },
-          {
-            name: 'Shortsword',
-            text: 'For anything that gets close. A light blade that uses your Dexterity rather than your Strength, so it hits as reliably as your bow does, and you carry two of them.',
-            roll: '1d6+DEX',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+DEX+PROF',
-            catalogueKey: null,
-          },
-          {
-            name: 'Archery Style',
-            text: 'Add 2 to every attack roll you make with a bow or a thrown weapon. Always on, nothing to spend and nothing to remember — it simply makes you the best shot in the party.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Trailcraft',
-            text: 'The wild is home. From marks on the ground you can tell how many creatures passed, how long ago they were there and which way they were headed. Each day you can find food and clean water for yourself and five companions, and you always know which way is north and roughly what hour it is.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Animal Companion',
-            text: 'A wolf, a hawk or a big cat that stays with you. Armour Class 13, 16 hit points, and it attacks for the damage rolled here. Spend your bonus action to tell it to attack; the rest of the time it keeps beside you and defends itself. It gets its own token on the map. At 0 hit points it is hurt rather than gone, and a long rest tending to it brings it back — it is a friend, not equipment.',
-            roll: '1d8+3',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+5',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: "Hunter's Mark",
-            text: 'A bonus action marks one creature you can see. Every hit you land on it deals the extra damage rolled here, and you have advantage on any check made to find it again. It lasts while you concentrate, and if the target dies a bonus action moves the mark to another.',
-            roll: '1d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Hail of Thorns',
-            text: 'Cast as you loose an arrow. Where the shot lands, thorns burst outwards: every creature within 5 feet of the target takes the damage, or half of it on a successful Dexterity saving throw.',
-            roll: '1d10',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Speak with Animals',
-            text: 'For ten minutes you can talk with beasts and understand what they answer. A crow knows who came through the gate last night; a stable cat knows what is living in the cellar.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        equipment:
-          'Studded leather armour, a longbow and a full quiver, two shortswords, and an explorer\'s pack with rope, a bedroll, a tinderbox and rations.',
-        levellingNotes:
-          'No new trick this level — you grew instead. Dexterity rose to 16 and Constitution to 14, which sharpens every shot, your armour class and your saves. The Constitution counts for every level you have, so the hit points were worked out again from the start, which is why they jump by ten. Your companion toughens to 16 hit points, and Hail of Thorns and Speak with Animals join your spells.',
-      },
-
-      4: {
-        level: 4,
-        abilities: { str: 12, dex: 16, con: 14, int: 10, wis: 14, cha: 8 },
-        saveProficiencies: { str: true, dex: true, con: false, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: true,
-          arcana: false,
-          investigation: true,
-          animalHandling: true,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 15,
-        maxHp: 36,
-        hitDice: { count: 4, faces: 10 },
-        feats: [
-          {
-            name: 'Longbow',
-            text: 'Your main weapon and the one you reach for first, out to 150 feet. The dice here are the damage.',
-            roll: '1d8+DEX',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+DEX+PROF+2',
-            catalogueKey: null,
-          },
-          {
-            name: 'Shortsword',
-            text: 'For anything that gets close. A light blade that uses your Dexterity rather than your Strength, so it hits as reliably as your bow does, and you carry two of them.',
-            roll: '1d6+DEX',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+DEX+PROF',
-            catalogueKey: null,
-          },
-          {
-            name: 'Archery Style',
-            text: 'Add 2 to every attack roll you make with a bow or a thrown weapon. Always on, nothing to spend and nothing to remember — it simply makes you the best shot in the party.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Trailcraft',
-            text: 'The wild is home. From marks on the ground you can tell how many creatures passed, how long ago they were there and which way they were headed. Each day you can find food and clean water for yourself and five companions, and you always know which way is north and roughly what hour it is.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Animal Companion',
-            text: 'A wolf, a hawk or a big cat that stays with you. Armour Class 13, 20 hit points, and it attacks for the damage rolled here. Spend your bonus action to tell it to attack; the rest of the time it keeps beside you and defends itself. It gets its own token on the map. At 0 hit points it is hurt rather than gone, and a long rest tending to it brings it back — it is a friend, not equipment.',
-            roll: '1d8+3',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+5',
-            catalogueKey: null,
-          },
-          {
-            name: 'Extra Attack',
-            text: 'When you take the Attack action you attack twice instead of once. Bow or blades, it doubles what a turn is worth, and it is the single largest jump the ranger gets.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: "Hunter's Mark",
-            text: 'A bonus action marks one creature you can see. Every hit you land on it deals the extra damage rolled here, and you have advantage on any check made to find it again. It lasts while you concentrate, and if the target dies a bonus action moves the mark to another.',
-            roll: '1d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Hail of Thorns',
-            text: 'Cast as you loose an arrow. Where the shot lands, thorns burst outwards: every creature within 5 feet of the target takes the damage, or half of it on a successful Dexterity saving throw.',
-            roll: '1d10',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Speak with Animals',
-            text: 'For ten minutes you can talk with beasts and understand what they answer. A crow knows who came through the gate last night; a stable cat knows what is living in the cellar.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Pass without Trace',
-            text: 'While you concentrate, you and everyone within 30 feet of you add 10 to their Stealth checks and leave no tracks for anyone to follow. It is the spell that turns a noisy party into a quiet one.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Lesser Restoration',
-            text: 'Touch a creature and end one disease or one poison affecting it. Not healing — it removes the thing doing the harm rather than the harm itself.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        equipment:
-          'Studded leather armour, a longbow and a full quiver, two shortswords, and an explorer\'s pack with rope, a bedroll, a tinderbox and rations.',
-        levellingNotes:
-          'The big one, brought forward from level 5 so it lands while it still matters: Extra Attack, so every Attack action is now two attacks — and your companion still attacks on top of that. It toughens to 20 hit points, and Pass without Trace and Lesser Restoration join your spells.',
-      },
-
-      5: {
-        level: 5,
-        abilities: { str: 12, dex: 16, con: 14, int: 10, wis: 14, cha: 8 },
-        saveProficiencies: { str: true, dex: true, con: false, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: false,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: true,
-          arcana: false,
-          investigation: true,
-          animalHandling: true,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 15,
-        maxHp: 44,
-        hitDice: { count: 5, faces: 10 },
-        feats: [
-          {
-            name: 'Longbow',
-            text: 'Your main weapon and the one you reach for first, out to 150 feet. The dice here are the damage.',
-            roll: '1d8+DEX',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+DEX+PROF+2',
-            catalogueKey: null,
-          },
-          {
-            name: 'Shortsword',
-            text: 'For anything that gets close. A light blade that uses your Dexterity rather than your Strength, so it hits as reliably as your bow does, and you carry two of them.',
-            roll: '1d6+DEX',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+DEX+PROF',
-            catalogueKey: null,
-          },
-          {
-            name: 'Archery Style',
-            text: 'Add 2 to every attack roll you make with a bow or a thrown weapon. Always on, nothing to spend and nothing to remember — it simply makes you the best shot in the party.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Trailcraft',
-            text: 'The wild is home. From marks on the ground you can tell how many creatures passed, how long ago they were there and which way they were headed. Each day you can find food and clean water for yourself and five companions, and you always know which way is north and roughly what hour it is.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Animal Companion',
-            text: 'A wolf, a hawk or a big cat that stays with you. Armour Class 14, 24 hit points, and it attacks for the damage rolled here. Spend your bonus action to tell it to attack; the rest of the time it keeps beside you and defends itself. It gets its own token on the map. At 0 hit points it is hurt rather than gone, and a long rest tending to it brings it back — it is a friend, not equipment.',
-            roll: '1d8+4',
-            level: null,
-            category: 'weapon',
-            toHit: '1d20+6',
-            catalogueKey: null,
-          },
-          {
-            name: 'Extra Attack',
-            text: 'When you take the Attack action you attack twice instead of once. Bow or blades, it doubles what a turn is worth, and it is the single largest jump the ranger gets.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Loyal Guardian',
-            text: 'Once per rest, when an attack would hit you, your companion puts itself in the way as a reaction and takes the damage instead. It can also spend its action to Help you rather than attacking, which gives you advantage on your next attack against a creature beside it.',
-            roll: null,
-            level: null,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        spells: [
-          {
-            name: "Hunter's Mark",
-            text: 'A bonus action marks one creature you can see. Every hit you land on it deals the extra damage rolled here, and you have advantage on any check made to find it again. It lasts while you concentrate, and if the target dies a bonus action moves the mark to another.',
-            roll: '1d6',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Cure Wounds',
-            text: 'Touch a creature and restore hit points to it. Roll another 2d8 for each spell slot level above 1st.',
-            roll: '2d8+WIS',
-            level: 1,
-            category: 'action',
-            catalogueKey: 'cure-wounds',
-          },
-          {
-            name: 'Hail of Thorns',
-            text: 'Cast as you loose an arrow. Where the shot lands, thorns burst outwards: every creature within 5 feet of the target takes the damage, or half of it on a successful Dexterity saving throw.',
-            roll: '1d10',
-            level: 1,
-            category: 'action',
-            catalogueKey: null,
-          },
-          {
-            name: 'Speak with Animals',
-            text: 'For ten minutes you can talk with beasts and understand what they answer. A crow knows who came through the gate last night; a stable cat knows what is living in the cellar.',
-            roll: null,
-            level: 1,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Pass without Trace',
-            text: 'While you concentrate, you and everyone within 30 feet of you add 10 to their Stealth checks and leave no tracks for anyone to follow. It is the spell that turns a noisy party into a quiet one.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Lesser Restoration',
-            text: 'Touch a creature and end one disease or one poison affecting it. Not healing — it removes the thing doing the harm rather than the harm itself.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Barkskin',
-            text: 'For an hour your skin turns rough as oak bark. Your Armour Class counts as 16 whenever that is better than what your armour already gives you.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-          {
-            name: 'Silence',
-            text: 'A 20-foot sphere in which no sound can be made or heard. Nothing inside it can be heard from outside, and a spellcaster caught in it cannot cast anything that needs spoken words.',
-            roll: null,
-            level: 2,
-            category: 'passive',
-            catalogueKey: null,
-          },
-        ],
-        equipment:
-          'Studded leather armour, a longbow and a full quiver, two shortswords, and an explorer\'s pack with rope, a bedroll, a tinderbox and rations.',
-        levellingNotes:
-          'Your companion is at its best — Armour Class 14, 24 hit points and +6 to hit — and Loyal Guardian lets it take a blow meant for you once per rest. Barkskin and Silence join your spells.',
+          'Extra Attack: two arrows a turn, both carrying Hunter\'s Mark, and one of them carrying Colossus Slayer as well. A third free Hunter\'s Mark, and level 2 slots to spend it from.',
       },
     },
   },

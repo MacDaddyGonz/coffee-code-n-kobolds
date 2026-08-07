@@ -3,6 +3,8 @@ import { Group } from 'react-konva'
 
 import { TokenPip } from '@/components/board/TokenPip'
 import { PIP_BADGE_FONT_SIZE, PIP_DIAMETER, PIP_STROKE } from '@/lib/markers'
+import { COIN_STATS, COIN_STAT_COLOUR, coinStatOf } from '@/lib/vitals'
+import type { CoinStat } from '@/lib/vitals'
 import type { PublicVitals } from '@convex/lib/characters'
 
 /**
@@ -27,10 +29,24 @@ import type { PublicVitals } from '@convex/lib/characters'
 const BADGE_X = Math.cos(Math.PI / 6)
 const BADGE_Y = Math.sin(Math.PI / 6)
 
-/** Armour class: red, the colour of the thing you are trying to beat. */
-const AC_FILL = '#b91c1c'
-/** Passive perception: blue, and distinguishable from every condition family. */
-const PP_FILL = '#1d4ed8'
+/**
+ * Which shoulder each stat takes: `-1` is the upper one, `1` the lower.
+ *
+ * ⚠️ **A `Record` over the union rather than an index into an array, and that is the whole
+ * of what makes a third published stat a compile error here.** ADR 0014's consequences end
+ * with *"there is no seventh obvious place, so a seventh annotation is a layout decision
+ * rather than a position to pick"* — the two left shoulders are the two slots, and there is
+ * genuinely no third. A member added to `COIN_STATS` therefore has to be given a place by a
+ * person, in the same commit, instead of quietly stacking on top of one of these two.
+ *
+ * The colours live in `@/lib/vitals` beside the vocabulary rather than here, because the
+ * hover card prints the same two stats and a badge whose disc and whose row disagreed about
+ * red would read as two different facts.
+ */
+const COIN_STAT_SLOT: Record<CoinStat, number> = {
+  armourClass: -1,
+  passivePerception: 1,
+}
 
 export type TokenStatBadgesProps = {
   /**
@@ -86,12 +102,17 @@ export function TokenStatBadges({
   const x = -radius * BADGE_X
   const y = radius * BADGE_Y
 
-  // An array rather than two near-identical conditionals: a third badge would otherwise be
-  // a third copy of the same call, and the `null` filter is what the two ternaries were.
-  const badges = [
-    { key: 'ac', fill: AC_FILL, value: vitals.armourClass, y: -y },
-    { key: 'pp', fill: PP_FILL, value: vitals.passivePerception, y },
-  ].filter((badge) => badge.value !== null)
+  // ⚠️ **Iterated from `COIN_STATS` rather than written out as two entries**, which is the
+  // formulation CLAUDE.md invariant 9 asks a renderer for and is what it was: two hand-built
+  // objects naming their own fields off the payload. The `null` filter is what the two
+  // ternaries before them were, and it is load-bearing — a badge is *omitted* rather than
+  // defaulted, because a blue circle reading 10 over a creature whose DM never recorded a
+  // passive perception is a statistic the table would act on.
+  const badges = COIN_STATS.map((stat) => ({
+    stat,
+    value: coinStatOf(vitals, stat),
+    y: y * COIN_STAT_SLOT[stat],
+  })).filter((badge) => badge.value !== null)
 
   if (badges.length === 0) return null
 
@@ -99,13 +120,13 @@ export function TokenStatBadges({
     <Group listening={false}>
       {badges.map((badge) => (
         <TokenPip
-          key={badge.key}
+          key={badge.stat}
           x={x}
           y={badge.y}
           radius={pipRadius}
           stroke={stroke}
           fontSize={fontSize}
-          fill={badge.fill}
+          fill={COIN_STAT_COLOUR[badge.stat]}
           glyph={String(badge.value)}
         />
       ))}

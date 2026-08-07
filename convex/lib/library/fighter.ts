@@ -1,798 +1,327 @@
-// The Fighter: nine premade sheets, level 1 to 5, Champion and Battle Master.
+// The Fighter: five premade sheets, level 1 to 5, Champion.
 //
-// Content only — the shape is in ./types.ts and the words follow lib/rules.ts:
-// paraphrased for a DM at the table, a sentence or two, never lifted from the SRD.
+// Content only — the shape is in ./types.ts, and see barbarian.ts for why an entry is
+// named once and listed rather than written out at every level that carries it.
 //
-// Every level is written out in full rather than spread from the one below it,
-// because the reader this file is for is somebody comparing level 3 to level 4 and
-// wanting to see both.
+// **The build: Soldier.** The standard array goes 15 Strength, 14 Constitution, 13
+// Dexterity, 12 Wisdom, 10 Charisma, 8 Intelligence, and the Soldier background's **+2
+// Strength and +1 Constitution** are already in the numbers below. Athletics and
+// Intimidation are the Soldier's two skills; Perception and Survival are the class's own.
 //
-// Two of the Battle Master's best-known manoeuvres are missing on purpose. Trip
-// Attack knocks a target prone and Pushing Attack shoves it, and movement-detriment
-// effects are excluded by design (docs/requirements.md) rather than merely unbuilt —
-// so the dice went to Precision Attack, Menacing Attack, Riposte and Rally instead,
-// which do the same job at a table with none of the same problems. Nothing here
-// mentions a change of speed either. That is a rule about the *library* rather than
-// about the app: `speed` is a real field and the Goliath moves 45, but it is set by
-// the race at resolution, so a class sheet that also moved it would be a second
-// authority for one number — and the two would disagree the moment either changed.
+// **Two of the class's own choices are made here and are worth knowing.** The Fighting
+// Style is **Defense**, which is a real SRD feat and is therefore keyed to the catalogue
+// rather than written out — the +1 is already in the 17 on every sheet. The starting
+// package is option A: chain mail and a greatsword, so there is no shield anywhere on
+// this sheet and the armour class does not move between level 1 and level 5.
+//
+// ⚠️ **This file used to carry a second archetype, and Battle Master appears in no SRD.**
+// It is retired by name in `RETIRED_SUBCLASSES` in ../classes.ts along with seven others,
+// and the manoeuvres it used to hold are gone with it. Nothing was converted into a
+// Champion feature: a Battle Master is not a Champion, and a character holding the key
+// keeps its class, its level and its hit points and is told which archetype needs
+// choosing again.
 
-import type { ClassLibrary } from './types'
+import { noSkills } from '../sheet'
+import type { ClassLibrary, LibraryEntry } from './types'
+
+const SKILLS = {
+  ...noSkills(),
+  athletics: true,
+  intimidation: true,
+  perception: true,
+  survival: true,
+}
+
+const GREATSWORD: LibraryEntry = {
+  name: 'Greatsword',
+  text: 'Both hands, and the heaviest damage dice any weapon rolls. Reach 5 feet. Graze means a miss still costs the target your Strength in damage.',
+  roll: '2d6+STR',
+  level: null,
+  catalogueKey: null,
+  category: 'weapon',
+  toHit: '1d20+STR+PROF',
+  mastery: 'graze',
+}
+
+const FLAIL: LibraryEntry = {
+  name: 'Flail',
+  text: 'One-handed, reach 5 feet, and the weapon you draw when you want a free hand. Sap is what it is for.',
+  roll: '1d8+STR',
+  level: null,
+  catalogueKey: null,
+  category: 'weapon',
+  toHit: '1d20+STR+PROF',
+  mastery: 'sap',
+}
+
+const JAVELIN: LibraryEntry = {
+  name: 'Javelin',
+  text: 'Eight of them, thrown 30 feet comfortably and 120 at a stretch. What you do about the thing you cannot reach yet.',
+  roll: '1d6+STR',
+  level: null,
+  catalogueKey: null,
+  category: 'weapon',
+  toHit: '1d20+STR+PROF',
+  mastery: 'slow',
+}
+
+const DEFENCE: LibraryEntry = {
+  name: 'Defense',
+  text: 'Fighting Style feat. A +1 bonus to Armour Class while you are wearing light, medium or heavy armour.',
+  roll: null,
+  level: null,
+  catalogueKey: 'defense',
+  category: 'passive',
+}
+
+const SECOND_WIND: LibraryEntry = {
+  name: 'Second Wind',
+  text: 'A bonus action to catch your breath and take back this roll plus your fighter level in hit points. Two of them between long rests, and one comes back on a short rest.',
+  roll: '1d10',
+  level: null,
+  catalogueKey: null,
+  category: 'action',
+  uses: { max: 2, recharge: 'long', regainOnShortRest: 1 },
+}
+
+const SECOND_WIND_AT_4: LibraryEntry = {
+  ...SECOND_WIND,
+  text: 'A bonus action to catch your breath and take back this roll plus your fighter level in hit points. Three of them between long rests now, and one comes back on a short rest.',
+  uses: { max: 3, recharge: 'long', regainOnShortRest: 1 },
+}
+
+const WEAPON_MASTERY: LibraryEntry = {
+  name: 'Weapon Mastery',
+  text: 'You use the mastery property of three kinds of weapon — Greatsword, Flail and Javelin here, so Graze, Sap and Slow. After a long rest you can swap one of the three.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const WEAPON_MASTERY_AT_4: LibraryEntry = {
+  ...WEAPON_MASTERY,
+  text: 'You use the mastery property of four kinds of weapon now rather than three. After a long rest you can swap one of them for another weapon you are proficient with.',
+}
+
+const SAVAGE_ATTACKER: LibraryEntry = {
+  name: 'Savage Attacker',
+  text: 'Origin feat. Once a turn, when you hit with a weapon, reroll the damage dice and keep whichever total you prefer.',
+  roll: null,
+  level: null,
+  catalogueKey: 'savage-attacker',
+  category: 'passive',
+}
+
+const ACTION_SURGE: LibraryEntry = {
+  name: 'Action Surge',
+  text: 'Once between rests, take one extra action on your turn — a whole second action, not a bonus action, and not a spell. It comes back on a short rest as well as a long one.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+  uses: { max: 1, recharge: 'short' },
+}
+
+const TACTICAL_MIND: LibraryEntry = {
+  name: 'Tactical Mind',
+  text: 'Fail an ability check and you may spend a use of Second Wind to add a d10 to it instead of healing. If it still fails, the use is not spent — so there is nothing to lose by trying.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const IMPROVED_CRITICAL: LibraryEntry = {
+  name: 'Improved Critical',
+  text: 'A 19 on the d20 is a critical hit for you as well as a 20, so you land them twice as often as anybody else. On a critical, roll the weapon\'s damage dice twice and add them together.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const REMARKABLE_ATHLETE: LibraryEntry = {
+  name: 'Remarkable Athlete',
+  text: 'Trouble never catches you standing about: you roll initiative and Athletics checks with advantage. And immediately after a critical hit you may give ground — up to half your usual distance — without anyone getting a free swing at you.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const ABILITY_SCORE_IMPROVEMENT: LibraryEntry = {
+  name: 'Ability Score Improvement',
+  text: 'General feat, from level 4. Raise one ability score by 2, or two of them by 1 each, to a maximum of 20. It can be taken again every time you are offered a feat. Taken here as +2 Strength.',
+  roll: null,
+  level: null,
+  catalogueKey: 'ability-score-improvement',
+  category: 'passive',
+}
+
+const EXTRA_ATTACK: LibraryEntry = {
+  name: 'Extra Attack',
+  text: 'When you take the Attack action you attack twice instead of once. Roll each swing separately — and with Action Surge on top, that is four in one turn.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const TACTICAL_SHIFT: LibraryEntry = {
+  name: 'Tactical Shift',
+  text: 'Whenever you use Second Wind on a bonus action you may also step away — up to half your usual distance — without anyone getting a free swing at you as you go.',
+  roll: null,
+  level: null,
+  catalogueKey: null,
+  category: 'passive',
+}
+
+const EQUIPMENT =
+  'Chain mail, a greatsword, a flail, eight javelins and a dungeoneer\'s pack, plus the soldier\'s spear, shortbow and twenty arrows, healer\'s kit, gaming set and travelling clothes.'
+
+const HIT_DIE = 10
+const ARMOUR_CLASS = 17
 
 export const FIGHTER: ClassLibrary = {
   classKey: 'fighter',
   base: {
-    level: 1,
-    // Strength first, Constitution second: the fighter hits things and then gets hit
-    // back, and Intelligence is the one score nothing on these sheets consults.
-    abilities: { str: 15, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
-    saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-    skillProficiencies: {
-      athletics: true,
-      acrobatics: false,
-      sleightOfHand: false,
-      stealth: false,
-      arcana: false,
-      investigation: false,
-      animalHandling: false,
-      insight: false,
-      perception: true,
-      deception: false,
-      intimidation: false,
-      performance: false,
-      persuasion: false,
+    1: {
+      level: 1,
+      // Strength first, Constitution second: the fighter hits things and then gets hit
+      // back, and Intelligence is the one score nothing on these sheets consults.
+      abilities: { str: 17, dex: 13, con: 15, int: 8, wis: 12, cha: 10 },
+      saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
+      skillProficiencies: SKILLS,
+      armourClass: ARMOUR_CLASS,
+      maxHp: 12,
+      hitDice: { count: 1, faces: HIT_DIE },
+      feats: [
+        GREATSWORD,
+        FLAIL,
+        JAVELIN,
+        DEFENCE,
+        SECOND_WIND,
+        WEAPON_MASTERY,
+        SAVAGE_ATTACKER,
+      ],
+      spells: [],
+      equipment: EQUIPMENT,
+      levellingNotes:
+        'Where you start: the heaviest armour anybody wears, the heaviest damage dice anybody rolls, and Second Wind twice between rests to patch yourself up mid-fight. Three weapons, three mastery properties.',
     },
-    armourClass: 18,
-    maxHp: 12,
-    hitDice: { count: 1, faces: 10 },
-    feats: [
-      {
-        name: 'Longsword',
-        text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
-        roll: '1d8+STR+2',
-        level: null,
-        catalogueKey: null,
-        category: 'weapon',
-        toHit: '1d20+STR+PROF',
-      },
-      {
-        name: 'Fighting Style: Duelling',
-        text: 'You fight with one weapon and a free hand for the shield, and you have drilled at it. Every hit with a single one-handed weapon deals 2 more damage.',
-        roll: null,
-        level: null,
-        catalogueKey: null,
-        category: 'passive',
-      },
-      {
-        name: 'Second Wind',
-        text: 'A bonus action, once per rest, to catch your breath and regain hit points. Add your fighter level to the die.',
-        roll: '1d10',
-        level: null,
-        catalogueKey: 'second-wind',
-        category: 'action',
-      },
-    ],
-    spells: [],
-    equipment: 'Chain mail, a shield, a longsword, two javelins, an explorer\'s pack and 50 feet of rope.',
-    levellingNotes:
-      'Where you start: the heaviest armour in the game with a shield behind it, a sword that hits for 2 more than anyone else\'s, and Second Wind to patch yourself up in the middle of a fight.',
+    2: {
+      level: 2,
+      abilities: { str: 17, dex: 13, con: 15, int: 8, wis: 12, cha: 10 },
+      saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
+      skillProficiencies: SKILLS,
+      armourClass: ARMOUR_CLASS,
+      maxHp: 20,
+      hitDice: { count: 2, faces: HIT_DIE },
+      feats: [
+        GREATSWORD,
+        FLAIL,
+        JAVELIN,
+        DEFENCE,
+        SECOND_WIND,
+        WEAPON_MASTERY,
+        ACTION_SURGE,
+        TACTICAL_MIND,
+        SAVAGE_ATTACKER,
+      ],
+      spells: [],
+      equipment: EQUIPMENT,
+      levellingNotes:
+        'Action Surge hands you an entire extra action once between rests — and it comes back on a short one. Tactical Mind turns a spare Second Wind into a rescued ability check, and costs nothing if it fails.',
+    },
   },
   paths: {
     champion: {
-      2: {
-        level: 2,
-        abilities: { str: 15, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
-        saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 18,
-        maxHp: 20,
-        hitDice: { count: 2, faces: 10 },
-        feats: [
-          {
-            name: 'Longsword',
-            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
-            roll: '1d8+STR+2',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-          {
-            name: 'Fighting Style: Duelling',
-            text: 'You fight with one weapon and a free hand for the shield, and you have drilled at it. Every hit with a single one-handed weapon deals 2 more damage.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Second Wind',
-            text: 'A bonus action, once per rest, to catch your breath and regain hit points. Add your fighter level to the die.',
-            roll: '1d10',
-            level: null,
-            catalogueKey: 'second-wind',
-            category: 'action',
-          },
-          {
-            name: 'Action Surge',
-            text: 'Once per rest, take one extra action on your turn — a whole second action, not a bonus action.',
-            roll: null,
-            level: null,
-            catalogueKey: 'action-surge',
-            category: 'passive',
-          },
-          {
-            name: 'Improved Critical',
-            text: 'A 19 on the d20 is a critical hit for you as well as a 20, so you land them twice as often as anybody else. On a critical, roll the weapon\'s damage dice twice and add them together.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-        ],
-        spells: [],
-        equipment: 'Chain mail, a shield, a longsword, two javelins, an explorer\'s pack and 50 feet of rope.',
-        levellingNotes:
-          'You are a Champion. Action Surge hands you an entire extra action once per rest, and your critical hits now land on a 19 as well as a 20.',
-      },
       3: {
         level: 3,
-        // The level 3 improvement: Strength 15 → 17, which is +1 to hit and +1 to
-        // damage on every attack and on Athletics too. A feat was the alternative and
-        // lost on tracking: this sheet already has Second Wind, Action Surge and a
-        // crit range to remember, and a beginner is better served by the numbers
-        // getting quietly better than by a fourth thing to spend.
-        abilities: { str: 17, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
+        abilities: { str: 17, dex: 13, con: 15, int: 8, wis: 12, cha: 10 },
         saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 18,
+        skillProficiencies: SKILLS,
+        armourClass: ARMOUR_CLASS,
         maxHp: 28,
-        hitDice: { count: 3, faces: 10 },
+        hitDice: { count: 3, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Longsword',
-            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
-            roll: '1d8+STR+2',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-          {
-            name: 'Fighting Style: Duelling',
-            text: 'You fight with one weapon and a free hand for the shield, and you have drilled at it. Every hit with a single one-handed weapon deals 2 more damage.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Second Wind',
-            text: 'A bonus action, once per rest, to catch your breath and regain hit points. Add your fighter level to the die.',
-            roll: '1d10',
-            level: null,
-            catalogueKey: 'second-wind',
-            category: 'action',
-          },
-          {
-            name: 'Action Surge',
-            text: 'Once per rest, take one extra action on your turn — a whole second action, not a bonus action.',
-            roll: null,
-            level: null,
-            catalogueKey: 'action-surge',
-            category: 'passive',
-          },
-          {
-            name: 'Improved Critical',
-            text: 'A 19 on the d20 is a critical hit for you as well as a 20, so you land them twice as often as anybody else. On a critical, roll the weapon\'s damage dice twice and add them together.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
+          GREATSWORD,
+          FLAIL,
+          JAVELIN,
+          DEFENCE,
+          SECOND_WIND,
+          WEAPON_MASTERY,
+          ACTION_SURGE,
+          TACTICAL_MIND,
+          IMPROVED_CRITICAL,
+          REMARKABLE_ATHLETE,
+          SAVAGE_ATTACKER,
         ],
         spells: [],
-        equipment: 'Chain mail, a shield, a longsword, two javelins, an explorer\'s pack and 50 feet of rope.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'Your Strength goes from 15 to 17, which is +1 to hit and +1 damage on every single swing, and a better Athletics check besides. Nothing new to remember this level.',
+          'You are a Champion. Critical hits land on a 19 as well as a 20, which on a greatsword is four extra dice twice as often, and Remarkable Athlete rolls your initiative and your Athletics with advantage.',
       },
       4: {
         level: 4,
-        abilities: { str: 17, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
+        // The improvement goes into Strength: 17 → 19. A feat was the alternative and lost
+        // on tracking — this sheet already has Second Wind, Action Surge and a crit range
+        // to remember, and a beginner is better served by the numbers getting quietly
+        // better than by a fourth thing to spend.
+        abilities: { str: 19, dex: 13, con: 15, int: 8, wis: 12, cha: 10 },
         saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 18,
+        skillProficiencies: SKILLS,
+        armourClass: ARMOUR_CLASS,
         maxHp: 36,
-        hitDice: { count: 4, faces: 10 },
+        hitDice: { count: 4, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Longsword',
-            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
-            roll: '1d8+STR+2',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-          {
-            name: 'Extra Attack',
-            text: 'When you take the Attack action you attack twice instead of once. Roll each swing separately — and with Action Surge on top, that is four in one turn.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Fighting Style: Duelling',
-            text: 'You fight with one weapon and a free hand for the shield, and you have drilled at it. Every hit with a single one-handed weapon deals 2 more damage.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Second Wind',
-            text: 'A bonus action, once per rest, to catch your breath and regain hit points. Add your fighter level to the die.',
-            roll: '1d10',
-            level: null,
-            catalogueKey: 'second-wind',
-            category: 'action',
-          },
-          {
-            name: 'Action Surge',
-            text: 'Once per rest, take one extra action on your turn — a whole second action, not a bonus action.',
-            roll: null,
-            level: null,
-            catalogueKey: 'action-surge',
-            category: 'passive',
-          },
-          {
-            name: 'Improved Critical',
-            text: 'A 19 on the d20 is a critical hit for you as well as a 20, so you land them twice as often as anybody else. On a critical, roll the weapon\'s damage dice twice and add them together.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
+          GREATSWORD,
+          FLAIL,
+          JAVELIN,
+          DEFENCE,
+          SECOND_WIND_AT_4,
+          WEAPON_MASTERY_AT_4,
+          ACTION_SURGE,
+          TACTICAL_MIND,
+          IMPROVED_CRITICAL,
+          REMARKABLE_ATHLETE,
+          ABILITY_SCORE_IMPROVEMENT,
+          SAVAGE_ATTACKER,
         ],
         spells: [],
-        equipment: 'Chain mail, a shield, a longsword, two javelins, an explorer\'s pack and 50 feet of rope.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'Extra Attack: every Attack action is now two swings rather than one. It is the biggest single jump a fighter ever gets, and it doubles what Action Surge is worth as well.',
+          'Strength goes from 17 to 19 — +1 to hit and +1 damage on every swing and every javelin. A third Second Wind, and the mastery property of a fourth kind of weapon.',
       },
       5: {
         level: 5,
-        abilities: { str: 17, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
+        abilities: { str: 19, dex: 13, con: 15, int: 8, wis: 12, cha: 10 },
         saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 19,
+        skillProficiencies: SKILLS,
+        armourClass: ARMOUR_CLASS,
         maxHp: 44,
-        hitDice: { count: 5, faces: 10 },
+        hitDice: { count: 5, faces: HIT_DIE },
         feats: [
-          {
-            name: 'Longsword',
-            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
-            roll: '1d8+STR+2',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-          {
-            name: 'Extra Attack',
-            text: 'When you take the Attack action you attack twice instead of once. Roll each swing separately — and with Action Surge on top, that is four in one turn.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Fighting Style: Duelling',
-            text: 'You fight with one weapon and a free hand for the shield, and you have drilled at it. Every hit with a single one-handed weapon deals 2 more damage.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Fighting Style: Defence',
-            text: 'A second style, learned alongside the first. While you are wearing armour your Armour Class is 1 higher — already counted in the 19 on this sheet.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Second Wind',
-            text: 'A bonus action, once per rest, to catch your breath and regain hit points. Add your fighter level to the die.',
-            roll: '1d10',
-            level: null,
-            catalogueKey: 'second-wind',
-            category: 'action',
-          },
-          {
-            name: 'Action Surge',
-            text: 'Once per rest, take one extra action on your turn — a whole second action, not a bonus action.',
-            roll: null,
-            level: null,
-            catalogueKey: 'action-surge',
-            category: 'passive',
-          },
-          {
-            name: 'Improved Critical',
-            text: 'A 19 on the d20 is a critical hit for you as well as a 20, so you land them twice as often as anybody else. On a critical, roll the weapon\'s damage dice twice and add them together.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Remarkable Athlete',
-            text: 'Trouble never catches you standing about: roll initiative with advantage, taking the better of two d20s.',
-            roll: '1d20+DEX',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
+          GREATSWORD,
+          FLAIL,
+          JAVELIN,
+          DEFENCE,
+          SECOND_WIND_AT_4,
+          WEAPON_MASTERY_AT_4,
+          ACTION_SURGE,
+          TACTICAL_MIND,
+          IMPROVED_CRITICAL,
+          REMARKABLE_ATHLETE,
+          EXTRA_ATTACK,
+          TACTICAL_SHIFT,
+          ABILITY_SCORE_IMPROVEMENT,
+          SAVAGE_ATTACKER,
         ],
         spells: [],
-        equipment: 'Chain mail, a shield, a longsword, two javelins, an explorer\'s pack and 50 feet of rope.',
+        equipment: EQUIPMENT,
         levellingNotes:
-          'A second fighting style — Defence — puts your Armour Class up to 19, and Remarkable Athlete lets you roll initiative with advantage. You are now very hard to land a hit on.',
-      },
-    },
-    'battle-master': {
-      2: {
-        level: 2,
-        abilities: { str: 15, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
-        saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 18,
-        maxHp: 20,
-        hitDice: { count: 2, faces: 10 },
-        feats: [
-          {
-            name: 'Longsword',
-            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
-            roll: '1d8+STR+2',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-          {
-            name: 'Fighting Style: Duelling',
-            text: 'You fight with one weapon and a free hand for the shield, and you have drilled at it. Every hit with a single one-handed weapon deals 2 more damage.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Second Wind',
-            text: 'A bonus action, once per rest, to catch your breath and regain hit points. Add your fighter level to the die.',
-            roll: '1d10',
-            level: null,
-            catalogueKey: 'second-wind',
-            category: 'action',
-          },
-          {
-            name: 'Action Surge',
-            text: 'Once per rest, take one extra action on your turn — a whole second action, not a bonus action.',
-            roll: null,
-            level: null,
-            catalogueKey: 'action-surge',
-            category: 'passive',
-          },
-          {
-            name: 'Superiority Dice',
-            text: 'Four dice a rest, and every manoeuvre below spends one of them. Tick them off as you go and take them all back when the party rests. One manoeuvre per attack, no more.',
-            roll: '1d8',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Precision Attack',
-            text: 'Spend a die and add it to an attack roll. You may decide to spend it after you see the d20 but before the DM says whether it hit, which makes it the manoeuvre that rescues a near miss.',
-            roll: '1d8',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Menacing Attack',
-            text: 'Spend a die on a hit, add it to the damage, and the target makes a Wisdom saving throw against your manoeuvre DC. On a failure it is frightened of you until the end of your next turn.',
-            roll: '1d8',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-        ],
-        spells: [],
-        equipment: 'Chain mail, a shield, a longsword, two javelins, an explorer\'s pack and 50 feet of rope.',
-        levellingNotes:
-          'You are a Battle Master. Action Surge gives you a whole extra action once per rest, and four superiority dice give you two tricks — Precision Attack to save a near miss, Menacing Attack to frighten something off.',
-      },
-      3: {
-        level: 3,
-        // Same call as the Champion's, and for the same reason: +2 Strength rather
-        // than a feat. This sheet is the busiest of the nine already — four dice and
-        // three manoeuvres to keep track of — and a feat would be a fourth decision
-        // on a turn that has plenty.
-        abilities: { str: 17, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
-        saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 18,
-        maxHp: 28,
-        hitDice: { count: 3, faces: 10 },
-        feats: [
-          {
-            name: 'Longsword',
-            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
-            roll: '1d8+STR+2',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-          {
-            name: 'Fighting Style: Duelling',
-            text: 'You fight with one weapon and a free hand for the shield, and you have drilled at it. Every hit with a single one-handed weapon deals 2 more damage.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Second Wind',
-            text: 'A bonus action, once per rest, to catch your breath and regain hit points. Add your fighter level to the die.',
-            roll: '1d10',
-            level: null,
-            catalogueKey: 'second-wind',
-            category: 'action',
-          },
-          {
-            name: 'Action Surge',
-            text: 'Once per rest, take one extra action on your turn — a whole second action, not a bonus action.',
-            roll: null,
-            level: null,
-            catalogueKey: 'action-surge',
-            category: 'passive',
-          },
-          {
-            name: 'Superiority Dice',
-            text: 'Four dice a rest, and every manoeuvre below spends one of them. Tick them off as you go and take them all back when the party rests. One manoeuvre per attack, no more.',
-            roll: '1d8',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Precision Attack',
-            text: 'Spend a die and add it to an attack roll. You may decide to spend it after you see the d20 but before the DM says whether it hit, which makes it the manoeuvre that rescues a near miss.',
-            roll: '1d8',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Menacing Attack',
-            text: 'Spend a die on a hit, add it to the damage, and the target makes a Wisdom saving throw against your manoeuvre DC. On a failure it is frightened of you until the end of your next turn.',
-            roll: '1d8',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Riposte',
-            text: 'A reaction, taken when a creature within reach misses you with a melee attack: spend a die and swing straight back at it. Add the die to that attack\'s damage.',
-            roll: '1d8',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-        ],
-        spells: [],
-        equipment: 'Chain mail, a shield, a longsword, two javelins, an explorer\'s pack and 50 feet of rope.',
-        levellingNotes:
-          'Strength goes from 15 to 17 — +1 to hit and +1 damage on everything — and you learn Riposte, which turns somebody else\'s miss into a free swing of your own.',
-      },
-      4: {
-        level: 4,
-        abilities: { str: 17, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
-        saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 18,
-        maxHp: 36,
-        hitDice: { count: 4, faces: 10 },
-        feats: [
-          {
-            name: 'Longsword',
-            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
-            roll: '1d8+STR+2',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-          {
-            name: 'Extra Attack',
-            text: 'When you take the Attack action you attack twice instead of once. Roll each swing separately, and either of them can carry a manoeuvre.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Fighting Style: Duelling',
-            text: 'You fight with one weapon and a free hand for the shield, and you have drilled at it. Every hit with a single one-handed weapon deals 2 more damage.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Second Wind',
-            text: 'A bonus action, once per rest, to catch your breath and regain hit points. Add your fighter level to the die.',
-            roll: '1d10',
-            level: null,
-            catalogueKey: 'second-wind',
-            category: 'action',
-          },
-          {
-            name: 'Action Surge',
-            text: 'Once per rest, take one extra action on your turn — a whole second action, not a bonus action.',
-            roll: null,
-            level: null,
-            catalogueKey: 'action-surge',
-            category: 'passive',
-          },
-          {
-            name: 'Superiority Dice',
-            text: 'Four dice a rest, and every manoeuvre below spends one of them. Tick them off as you go and take them all back when the party rests. One manoeuvre per attack, no more.',
-            roll: '1d8',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Precision Attack',
-            text: 'Spend a die and add it to an attack roll. You may decide to spend it after you see the d20 but before the DM says whether it hit, which makes it the manoeuvre that rescues a near miss.',
-            roll: '1d8',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Menacing Attack',
-            text: 'Spend a die on a hit, add it to the damage, and the target makes a Wisdom saving throw against your manoeuvre DC. On a failure it is frightened of you until the end of your next turn.',
-            roll: '1d8',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Riposte',
-            text: 'A reaction, taken when a creature within reach misses you with a melee attack: spend a die and swing straight back at it. Add the die to that attack\'s damage.',
-            roll: '1d8',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-        ],
-        spells: [],
-        equipment: 'Chain mail, a shield, a longsword, two javelins, an explorer\'s pack and 50 feet of rope.',
-        levellingNotes:
-          'Extra Attack: two swings for every Attack action instead of one, and either of them can carry a manoeuvre. It is the biggest jump a fighter gets.',
-      },
-      5: {
-        level: 5,
-        abilities: { str: 17, dex: 13, con: 14, int: 8, wis: 12, cha: 10 },
-        saveProficiencies: { str: true, dex: false, con: true, int: false, wis: false, cha: false },
-        skillProficiencies: {
-          athletics: true,
-          acrobatics: false,
-          sleightOfHand: false,
-          stealth: false,
-          arcana: false,
-          investigation: false,
-          animalHandling: false,
-          insight: false,
-          perception: true,
-          deception: false,
-          intimidation: false,
-          performance: false,
-          persuasion: false,
-        },
-        armourClass: 18,
-        maxHp: 44,
-        hitDice: { count: 5, faces: 10 },
-        feats: [
-          {
-            name: 'Longsword',
-            text: 'Your everyday swing: a melee attack with the sword in one hand and the shield in the other, out to 5 feet. The 2 from Duelling is already in the damage.',
-            roll: '1d8+STR+2',
-            level: null,
-            catalogueKey: null,
-            category: 'weapon',
-            toHit: '1d20+STR+PROF',
-          },
-          {
-            name: 'Extra Attack',
-            text: 'When you take the Attack action you attack twice instead of once. Roll each swing separately, and either of them can carry a manoeuvre.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Fighting Style: Duelling',
-            text: 'You fight with one weapon and a free hand for the shield, and you have drilled at it. Every hit with a single one-handed weapon deals 2 more damage.',
-            roll: null,
-            level: null,
-            catalogueKey: null,
-            category: 'passive',
-          },
-          {
-            name: 'Second Wind',
-            text: 'A bonus action, once per rest, to catch your breath and regain hit points. Add your fighter level to the die.',
-            roll: '1d10',
-            level: null,
-            catalogueKey: 'second-wind',
-            category: 'action',
-          },
-          {
-            name: 'Action Surge',
-            text: 'Once per rest, take one extra action on your turn — a whole second action, not a bonus action.',
-            roll: null,
-            level: null,
-            catalogueKey: 'action-surge',
-            category: 'passive',
-          },
-          {
-            name: 'Superiority Dice',
-            text: 'Four dice a rest, now d10s rather than d8s, and every manoeuvre below spends one of them. Tick them off as you go and take them all back when the party rests. One manoeuvre per attack, no more.',
-            roll: '1d10',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Precision Attack',
-            text: 'Spend a die and add it to an attack roll. You may decide to spend it after you see the d20 but before the DM says whether it hit, which makes it the manoeuvre that rescues a near miss.',
-            roll: '1d10',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Menacing Attack',
-            text: 'Spend a die on a hit, add it to the damage, and the target makes a Wisdom saving throw against your manoeuvre DC. On a failure it is frightened of you until the end of your next turn.',
-            roll: '1d10',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Riposte',
-            text: 'A reaction, taken when a creature within reach misses you with a melee attack: spend a die and swing straight back at it. Add the die to that attack\'s damage.',
-            roll: '1d10',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-          {
-            name: 'Rally',
-            text: 'A bonus action that spends a die to steady an ally who can see and hear you. They gain temporary hit points equal to the roll plus your fighter level, which come off the next hit they take.',
-            roll: '1d10',
-            level: null,
-            catalogueKey: null,
-            category: 'action',
-          },
-        ],
-        spells: [],
-        equipment: 'Chain mail, a shield, a longsword, two javelins, an explorer\'s pack and 50 feet of rope.',
-        levellingNotes:
-          'Every superiority die grows from a d8 to a d10, so all four manoeuvres get better at once, and you learn Rally — a bonus action that hands an ally temporary hit points before the blow lands.',
+          'Extra Attack: every Attack action is two swings rather than one, which makes Action Surge worth four. Tactical Shift lets you catch your breath and step out of reach in the same bonus action.',
       },
     },
   },
