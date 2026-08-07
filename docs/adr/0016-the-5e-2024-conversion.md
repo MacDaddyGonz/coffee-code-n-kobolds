@@ -297,10 +297,35 @@ again until somebody picks one of the nine.
 The character-resources milestone that stood in this slot is **absorbed rather than cancelled**:
 everything it planned is built here, because the 2024 rules contain all of it. Almost all of its
 reasoning survives — one shape covering discrete uses, dice pools and point pools; *absent, never
-zero*; the declaration optional on content with an allow-list test on both sides; a spend on the first
-part a category offers and never twice for one cast; the spend after the dice are evaluated;
-`convex/feed.ts` still reading no guarded table; and the band variant of the vitals payload still
-having nowhere to put a number.
+zero*; the declaration optional on content with an allow-list test on both sides; `convex/feed.ts`
+still reading no guarded table; and the band variant of the vitals payload still having nowhere to put
+a number.
+
+🚫 **A second of its decisions does not survive either, and this paragraph is a correction to the
+sentence that used to stand here.** It said *"a spend on the first part a category offers and never
+twice for one cast; the spend after the dice are evaluated"* — an automatic deduction, made by
+`feed.roll`, at the moment somebody announces something. **Nothing was built that way and nothing
+will be.** A use is spent because a person pressed the counter, a slot is spent because a person
+pressed the pip, and `convex/feed.ts` deducts nothing at all — which is also why the sentence about it
+reading no guarded table survives so easily.
+
+Two reasons, and the second is the one that decides it.
+
+- **It is the line, applied where it is least obvious.** This application announces and counts; the
+  table adjudicates. A cast that silently consumes a resource is the application deciding that an
+  announcement *was* an action and that the action *succeeded* — neither of which it is entitled to
+  know. Every other counter in this project moves because somebody moved it.
+- ⭐ **For a slot specifically, the app cannot know which one was spent.** A level 1 spell may be cast
+  with a level 1, 2 or 3 slot, and in 2024 upcasting is how half the spell list scales. A `feed.roll`
+  that deducted "a slot of the spell's own level" would be wrong every time somebody upcast, and one
+  that asked would be a prompt in the middle of a roll. There is no answer available to it, so it
+  makes no decision — which is the same shape as declining to compare a result to an armour class,
+  reached from a different direction.
+
+⚠️ **[ADR 0011](0011-announcing-a-roll-rather-than-adjudicating-one.md)'s superseding table says
+"Slots exist, per class and level, **and a roll spends one**", and that last clause is wrong.** It is
+left uncorrected there, because ADRs are not edited after the fact; this is the record. Slots exist,
+per class and level, and a **person** spends one.
 
 🚫 **One of its decisions does not survive contact with the SRD.** It said that a feature which
 partially recovers on a short rest would be **written as long-rest**, deliberately, because expressing

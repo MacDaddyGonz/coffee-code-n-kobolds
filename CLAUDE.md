@@ -655,7 +655,11 @@ refused.**
 
 The four neighbouring gaps, with their marks brought up to date:
 
-- ✅ **Spell slots — reversed and built.** A spell's level is a resource. This closes ADR 0011's
+- ✅ **Spell slots — reversed and built.** A spell's level is a resource. ⚠️ **A *person* spends one,
+  and `convex/feed.ts` deducts nothing** — announcing a spell consumes no slot, refuses no cast and
+  picks no slot level, because a level 1 spell may legitimately be cast with a level 3 one and the
+  application has no way to know which. ADR 0011's supersede table says *"a roll spends one"* and that
+  clause is wrong; ADR 0016's resource-shape section is the record. This closes ADR 0011's
   decision **1**, superseded in place there.
 - ✅ **A hero's spell save DC and spell attack bonus — reversed and built.** Every 2024 caster has
   both, derived from a stored spellcasting ability plus the proficiency bonus, so declining them

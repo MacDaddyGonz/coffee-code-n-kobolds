@@ -3947,6 +3947,28 @@ describe('the permission matrix for sheets and vitals', () => {
         call: (t, who) =>
           t.mutation(api.characters.setSlots, { code, characterId, level: 1, spent: 0, ...who }),
       },
+      {
+        // ⚠️ **`setUses` predates this table and was never added to it**, which is how it
+        // ended up the one play-state write whose refusals nobody asserted — its permissions
+        // were covered ad hoc, one affirmative case at a time, and the stranger's-hero and
+        // no-seat rows below were never run against it at all. `lib/access.ts`' docblock
+        // names this matrix as the place a mutation answers for itself; a mutation that is
+        // not in it has answered nothing.
+        //
+        // `spent: 0` for `setSlots`' reason exactly: the hand-back is the branch that is
+        // always permitted once the caller is, so it isolates the permission and nothing else.
+        name: 'setUses',
+        call: (t, who) =>
+          t.mutation(api.characters.setUses, { code, characterId, key: 'second-wind', spent: 0, ...who }),
+      },
+      {
+        name: 'shortRest',
+        call: (t, who) => t.mutation(api.characters.shortRest, { code, characterId, ...who }),
+      },
+      {
+        name: 'longRest',
+        call: (t, who) => t.mutation(api.characters.longRest, { code, characterId, ...who }),
+      },
     ]
   }
 

@@ -2865,14 +2865,22 @@ finding out now rather than at content time.** That milestone reasoned from a co
 2024 rules describe eight resource shapes and this corpus contains three."* After this milestone the
 corpus contains **all of them**, and the sentence is deleted rather than qualified.
 
-### The absorbed milestone, corrected in one place
+### The absorbed milestone, corrected in two places
 
-Everything the character-resources milestone planned still holds — one shape covering discrete uses,
+Most of what the character-resources milestone planned still holds — one shape covering discrete uses,
 dice pools and point pools; **absent, never zero**; the declaration optional on content with an
-allow-list test on both sides; a spend on the first part a category offers and never twice for one
-cast; the spend after the dice are evaluated; `convex/feed.ts` still reading no guarded table; and the
-band variant of the vitals payload still having nowhere to put a number. Read that section in the git
-history of this file before starting — it is not restated here because it was right.
+allow-list test on both sides; `convex/feed.ts` still reading no guarded table; and the band variant of
+the vitals payload still having nowhere to put a number. Read that section in the git history of this
+file before starting — it is not restated here because it was right.
+
+🚫 **What did not survive is the automatic spend**, which this paragraph used to promise: *a spend on
+the first part a category offers and never twice for one cast; the spend after the dice are evaluated.*
+Nothing was built that way. A use and a slot both move because a **person** pressed the counter, and
+`convex/feed.ts` deducts nothing — see the resource-shape section of
+[ADR 0016](adr/0016-the-5e-2024-conversion.md), which argues it. The short version is that a cast
+which silently consumes a resource is the application deciding an announcement *was* an action and
+*succeeded*, and that for a spell slot it could not pick the right one anyway: a level 1 spell may be
+cast with a level 2 or 3 slot, and upcasting is how half the 2024 list scales.
 
 🚫 **One of its decisions does not survive contact with the SRD.** It said:
 
