@@ -193,19 +193,18 @@ export default defineSchema({
     currentHp: v.number(),
     // Player characters only, and optional because a monster has none to spend.
     hitDiceRemaining: v.optional(v.number()),
-    // Keys of once-per-long-rest abilities that have been spent — a Human's Heroic
-    // Inspiration, a Half-Orc's Relentless Endurance. Belongs here for the same
-    // reason hit points do: it is what changes during play, not what the character
-    // is. A rest clears it; an edit does not touch it.
+    // ⚠️ **`spentPerRest` USED TO BE HERE AND IS GONE, AND THE NARROWING WAS A DELETION
+    // RATHER THAN A RENAME.** It was a list of *keys*, where a key present meant the one
+    // thing the character had was used — a Human's Heroic Inspiration, a Half-Orc's
+    // Relentless Endurance. 2024 is full of features with two, three or
+    // proficiency-bonus-many uses, so `spentUses` below counts instead, and every legacy
+    // key folded in as exactly one spent use.
     //
-    // ⚠️ **NOTHING WRITES IT ANY MORE, AND NOTHING MAY.** `setPerRestSpent` is gone,
-    // `setUsesSpent` never touched it, and `longRest` stopped clearing it in the sweep
-    // commit — because a long rest taken between the sweep and the narrowing push would
-    // otherwise put back the exact field that push refuses. So this can now only shrink,
-    // which is what makes the narrowing a **deletion** rather than a migration of its own:
-    // `planVitalsMigration` in lib/characters.ts folds it into `spentUses` below and
-    // removes it, and the narrowing commit takes the field out.
-    spentPerRest: v.optional(v.array(v.string())),
+    // What made the fold safe to run once and then forget is that `setPerRestSpent` was
+    // deleted rather than kept beside its successor: with one writer, the legacy array only
+    // ever shrank. `planVitalsMigration` in lib/characters.ts did the fold; `spentUsesOf`
+    // still tolerates the field on read, for the window a non-atomic push opens.
+    //
     // ⚠️ ALL FIVE OPTIONAL BECAUSE THIS TABLE HAS HELD ROWS SINCE MILESTONE 3, AND ADDING
     // A REQUIRED FIELD TO A POPULATED TABLE FAILS THE SCHEMA PUSH.
     //
@@ -234,13 +233,13 @@ export default defineSchema({
     // A boolean, and the whole of the feature. The 2024 Human regains it on every long
     // rest, which is the one place it touches anything else in this schema.
     heroicInspiration: v.optional(v.boolean()),
-    // ⚠️ **The successor to `spentPerRest` above, which is KEPT until the narrowing.** That
-    // field counts nothing — a key is present or it is not, which is *one* use spent — and
-    // 2024 is full of features with two, three or a proficiency-bonus-many. So this counts,
-    // and `spentUsesOf` folds the legacy array in as *every key is one spent use*. Both are
-    // live at once on purpose: a schema push is not atomic, and a row written by an older
-    // deployment must keep meaning what it meant. The fold outlives the field, and goes with
-    // lib/migrate.ts rather than with the schema.
+    // ⚠️ **The successor to the `spentPerRest` described above, which it has now replaced.**
+    // That field counted nothing — a key was present or it was not, which is *one* use spent
+    // — and 2024 is full of features with two, three or a proficiency-bonus-many. So this
+    // counts, and `spentUsesOf` folds a legacy array in as *every key is one spent use*. The
+    // two were live at once on purpose while the sweep ran, and the fold is kept past the
+    // narrowing for the window a non-atomic push opens: a row written by an older deployment
+    // must keep meaning what it meant.
     spentUses: v.optional(v.array(v.object({ key: v.string(), spent: v.number() }))),
     // SPELL SLOTS SPENT, PER SPELL LEVEL — `spentUses`' sibling, and shaped like it on
     // purpose rather than by habit.

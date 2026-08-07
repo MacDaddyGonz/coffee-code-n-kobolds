@@ -783,26 +783,20 @@ export const RETIRED_SPECIES: Record<string, string> = {
 }
 
 /**
- * WHICH SPECIES A STORED PRESET IS, whichever of the two fields it happens to carry.
+ * WHICH SPECIES A STORED PRESET IS.
  *
- * ⚠️ **The only place `species` and `race` are ever both read**, which is the whole of what
- * makes a two-field transition survivable. `presetSheetValidator` carries both, both
- * optional, because three shapes are all real at once: `race` alone before the sweep,
- * `species` alone after it, and both where a run stopped half way.
+ * ⚠️ **One field now, and the accessor stays.** This was the whole of what made a two-field
+ * transition survivable: `presetSheetValidator` carried `race` (required, narrow) beside
+ * `species` (optional, wide) for a milestone, and this answered `species ?? race` so that
+ * every caller was already reading through one function by the time the migration started
+ * writing. **`species` winning was the direction that made that backfill idempotent and
+ * interruptible** — a run that stopped half way left half the rows answering from each
+ * field and both right, where the other order would have made the migration's own writes
+ * invisible until the narrowing deleted `race`.
  *
- * **`species` wins when both are present.** That is the direction that makes the migration
- * idempotent and interruptible — a run that stops half way leaves half the rows answering
- * from the new field and half from the old, and both are right. The other order would make
- * the migration's own writes invisible until the narrowing commit deleted `race`, which is
- * exactly the window a migration wants to be able to verify.
- *
- * ⚠️ **The empty string is the fourth shape and it is deliberately not a special case.** A
- * preset carrying neither field is not a row anything has ever written — `race` was required
- * for the whole of the field's life and the sweep only ever replaces it — so `''` exists to
- * be *refused* rather than handled: `species('')` answers null, and `storedSheetProblem`
- * turns that into a write-side refusal. Fail-closed, in one place, rather than an
- * `undefined` every caller has to think about. It collapses to `preset.species` in the
- * narrowing commit.
+ * It is kept rather than inlined at its nine call sites because a rename is not the last
+ * thing that will ever happen to this field, and because a `preset` reaching for `.species`
+ * directly is one more place the next transition has to find.
  *
  * **Returns `string` and not `SpeciesKey`**, like `species()` and `findClass` take one: the
  * stored union is wider than the live one by exactly one retired key, so a caller holding a
@@ -811,7 +805,7 @@ export const RETIRED_SPECIES: Record<string, string> = {
  * and neither of which throws on a key that has been retired.
  */
 export function speciesKeyOf(preset: PresetSheet): string {
-  return preset.species ?? preset.race ?? ''
+  return preset.species
 }
 
 // ─── THE ONE NARROWING THIS MILESTONE DECLINED ──────────────────────────────────────

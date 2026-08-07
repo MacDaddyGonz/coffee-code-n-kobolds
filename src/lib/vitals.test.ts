@@ -33,7 +33,6 @@ function exact(overrides: Partial<Extract<PublicVitals, { kind: 'exact' }>> = {}
     max: 30,
     hitDiceRemaining: 3,
     hitDiceCount: 3,
-    spentPerRest: [],
     temporaryHp: 0,
     deathSaveSuccesses: 0,
     deathSaveFailures: 0,
