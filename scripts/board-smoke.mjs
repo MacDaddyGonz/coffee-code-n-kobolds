@@ -3174,6 +3174,127 @@ async function main() {
     )
     await client.mutation('characters:longRest', { code, dmCode, characterId: human.characterId })
 
+    // ── Spell slots, and the one assertion this milestone was written around ─────────────
+    //
+    // ⚠️ **Two casters rather than one, because the claim is a DIFFERENCE and a single
+    // character cannot express one.** The acceptance criterion is *a Warlock takes a short
+    // rest and gets both Pact Magic slots back while the Wizard beside them gets none* — and
+    // the negative half is the one that matters, since a short rest that restored a Wizard's
+    // slots would be the application inventing a rule nobody would report as a bug. The two
+    // sit in one game and take the same rest so that nothing about the run differs except
+    // which class is asking.
+    //
+    // Here rather than only in `lib/slots.test.ts` because this is the round trip: the
+    // derivation is pure and already pinned against the SRD, but `spentSlots` is a **new
+    // stored field** and the local suite does not apply Convex's own value validation. A
+    // level and a count going through a real float64 column, and coming back on a real
+    // payload, is what this script exists for.
+    const wizard = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: 'Mira',
+      sheet: presetSheet({ species: 'gnome', lineageKey: 'forest', classKey: 'wizard', level: 5, subclassKey: 'evocation' }),
+    })
+    const warlock = await client.mutation('characters:create', {
+      code,
+      dmCode,
+      name: 'Sable',
+      sheet: presetSheet({ species: 'tiefling', lineageKey: 'infernal', classKey: 'warlock', level: 5, subclassKey: 'fiend' }),
+    })
+
+    // A level 5 full caster holds 4/3/2 and a level 5 Warlock holds two level 3 slots — the
+    // numbers are `lib/slots.test.ts`' business, so what is spent here is only ever a count
+    // the derivation must already admit. One of each track, both fully spent, so "came back"
+    // and "did not" are both visible.
+    await client.mutation('characters:setSlots', {
+      code,
+      dmCode,
+      characterId: wizard.characterId,
+      level: 1,
+      spent: 4,
+    })
+    await client.mutation('characters:setSlots', {
+      code,
+      dmCode,
+      characterId: warlock.characterId,
+      level: 3,
+      spent: 2,
+    })
+
+    const wizardSpent = await dmVitalsFor(wizard.characterId)
+    const warlockSpent = await dmVitalsFor(warlock.characterId)
+    check(
+      'characters:setSlots stored a spent count against a spell level, on both tracks',
+      wizardSpent &&
+        wizardSpent.kind === 'exact' &&
+        wizardSpent.spentSlots.length === 1 &&
+        wizardSpent.spentSlots[0].level === 1 &&
+        wizardSpent.spentSlots[0].spent === 4 &&
+        warlockSpent &&
+        warlockSpent.kind === 'exact' &&
+        warlockSpent.spentSlots.length === 1 &&
+        warlockSpent.spentSlots[0].level === 3 &&
+        warlockSpent.spentSlots[0].spent === 2,
+      `wizard ${JSON.stringify(wizardSpent?.spentSlots)}, warlock ${JSON.stringify(warlockSpent?.spentSlots)}`,
+    )
+
+    await client.mutation('characters:shortRest', { code, dmCode, characterId: wizard.characterId })
+    await client.mutation('characters:shortRest', {
+      code,
+      dmCode,
+      characterId: warlock.characterId,
+    })
+    const wizardAfterShort = await dmVitalsFor(wizard.characterId)
+    const warlockAfterShort = await dmVitalsFor(warlock.characterId)
+    check(
+      'a short rest returned the Warlock every Pact Magic slot and the Wizard none of theirs',
+      // The positive half.
+      warlockAfterShort &&
+        warlockAfterShort.kind === 'exact' &&
+        warlockAfterShort.spentSlots.every((row) => row.spent === 0) &&
+        // ⚠️ **The negative half, and the reason this check exists at all.** A Wizard's slots
+        // come back on a LONG rest. If this ever passes as `0` the application has started
+        // handing out a resource nobody asked for, on a rest a party takes several times a
+        // session.
+        wizardAfterShort &&
+        wizardAfterShort.kind === 'exact' &&
+        wizardAfterShort.spentSlots.length === 1 &&
+        wizardAfterShort.spentSlots[0].spent === 4,
+      `wizard ${JSON.stringify(wizardAfterShort?.spentSlots)}, warlock ${JSON.stringify(warlockAfterShort?.spentSlots)}`,
+    )
+
+    await client.mutation('characters:longRest', { code, dmCode, characterId: wizard.characterId })
+    const wizardAfterLong = await dmVitalsFor(wizard.characterId)
+    check(
+      'a long rest returned the Wizard every slot',
+      wizardAfterLong &&
+        wizardAfterLong.kind === 'exact' &&
+        wizardAfterLong.spentSlots.every((row) => row.spent === 0),
+      `${JSON.stringify(wizardAfterLong?.spentSlots)}`,
+    )
+
+    // ⚠️ **Nothing refuses a cast, and this is where that would show up first.** Spending
+    // the last slot is permitted, spending past it is clamped rather than refused, and no
+    // mutation anywhere asks how many are left before rolling. See ADR 0016's resource-shape
+    // section: a person spends a slot and `feed.roll` never will.
+    await refuses('characters:setSlots refused a spell level outside 1-3', () =>
+      client.mutation('characters:setSlots', {
+        code,
+        dmCode,
+        characterId: wizard.characterId,
+        level: 4,
+        spent: 1,
+      }),
+    )
+
+    for (const spent of [wizard, warlock]) {
+      await client.mutation('characters:remove', {
+        code,
+        dmCode,
+        characterId: spent.characterId,
+      })
+    }
+
     // Checked against the character's own species and its own sheet rather than taken as
     // given, so the stored array cannot fill with keys nothing will ever clear. A Human has
     // no Relentless Endurance to spend.
