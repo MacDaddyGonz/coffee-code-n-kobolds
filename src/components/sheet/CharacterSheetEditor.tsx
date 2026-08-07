@@ -2,26 +2,31 @@ import { useMemo, useState } from 'react'
 
 import { FieldError } from '@/components/FieldError'
 import { HpControls } from '@/components/HpControls'
+import { BuildPane } from '@/components/sheet/BuildPane'
 import type { BuilderSelections } from '@/components/sheet/CharacterBuilder'
 import { CharacterBuilder } from '@/components/sheet/CharacterBuilder'
+import { CharacterHeader } from '@/components/sheet/CharacterHeader'
 import { CreatureSheetForm } from '@/components/sheet/CreatureSheetForm'
 import { CreatureEntryMissing, CreatureSheetView } from '@/components/sheet/CreatureSheetView'
 import { EditorBody, EditorFooter } from '@/components/sheet/EditorColumn'
-import { HitDiceControls } from '@/components/sheet/HitDiceControls'
 import { PcSheetForm } from '@/components/sheet/PcSheetForm'
-import { PresetSheetView } from '@/components/sheet/PresetSheetView'
-import { RestControls } from '@/components/sheet/RestControls'
+import { PlayPane } from '@/components/sheet/PlayPane'
+import { OverrideMark, PresetNumbers, merge } from '@/components/sheet/PresetNumbers'
+import { SpellsPane } from '@/components/sheet/SpellsPane'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import type { SheetPane } from '@/lib/sheetPanes'
+import { SHEET_PANE_LABELS, paneOrFirst, panesFor } from '@/lib/sheetPanes'
 import type { PublicSheet, PublicVitals } from '@convex/lib/characters'
 import { MAX_CHARACTER_NAME_LENGTH, collapseWhitespace } from '@convex/lib/codes'
 import type { ChallengeRating } from '@convex/lib/creatures'
+import type { RestKind } from '@convex/lib/rest'
 import { perRestAbilities } from '@convex/lib/species'
-import type { NpcSheet, PcSheet, StoredSheet } from '@convex/lib/sheet'
+import type { NpcSheet, PcSheet, PresetSheet, StoredSheet } from '@convex/lib/sheet'
 import {
   normaliseStoredSheet,
   sheetProblem,
@@ -68,13 +73,41 @@ export type CharacterSheetEditorProps = {
    */
   onSetCreatureCr: (cr: ChallengeRating) => void
   onResetCreature: () => void
-  onSetPerRest: (key: string, spent: boolean) => void
-  onLongRest: () => void
+  /**
+   * The five vitals writes the panels reach for, all of which land the instant a control is
+   * used rather than waiting for Save — because every one of them is an *event at the
+   * table* rather than an edit to a form. Refusals report through the same toast the
+   * hit-point controls use.
+   *
+   * ⚠️ **`onSetUses` takes a count and not a boolean.** 2024 has features with two, three
+   * or proficiency-bonus-many uses, and the entry rows now carry a counter for exactly
+   * that; a species' one-per-rest ability sends `1` and `0` at the one call site where a
+   * tick is genuinely the whole vocabulary. **Nothing is refused at zero** — no roll
+   * consults the count and no cast is blocked.
+   */
+  onSetUses: (key: string, spent: number) => void
+  onRest: (kind: RestKind) => void
+  onSetTemporaryHp: (temporaryHp: number) => void
+  onSetDeathSaves: (successes: number, failures: number) => void
+  onSetHeroicInspiration: (heroicInspiration: boolean) => void
 }
 
 /**
- * The sheet, saved by one button — and, since Milestone 4, the sheet chosen by three
- * dropdowns as well.
+ * THE PANEL: a pinned header, three sub-tabs for a hero or a stat block for a creature, and
+ * one Save button welded to the bottom.
+ *
+ * ⚠️ **The column is three regions and the middle one is the only one that scrolls.** A
+ * `shrink-0` header, `EditorBody`, and `EditorFooter` — which is what makes the health bar
+ * and the tab strip visible from every pane and the Save button visible from every scroll
+ * position. Putting the header back inside `EditorBody` would take the hit points off screen
+ * exactly when somebody is reading a spell, which is the failure the pinning exists for.
+ *
+ * ⚠️ **A hero is Play / Build / Spells and a creature is neither, and that asymmetry is the
+ * design rather than an unfinished half.** A creature's sheet is a **stat block** — a
+ * different document, not a character sheet with the tabs taken away — and it is short
+ * enough to read in one column. `panesFor` decides which of the three a particular hero
+ * gets, and the Spells pane is *absent* for a non-caster rather than empty or disabled, on
+ * the same rule the builder keeps for the archetype control below level 3.
  *
  * **There is no read-only mode, and that is a property of the query rather than an
  * omission here.** `characters.sheet` answers through `requireEditableCharacter` — the
@@ -106,7 +139,16 @@ export type CharacterSheetEditorProps = {
  * Confirm, the level, and anything on the vitals row. Each is an event rather than an
  * edit: a decision made once, a level awarded to the whole party, a rest taken. Putting
  * a Save between the decision and the six people waiting for it would be the wrong
- * shape for all three.
+ * shape for all three. ⚠️ **The vitals row is now most of the header and every use counter
+ * on the sheet** — temporary hit points, the death-save tally, Heroic Inspiration and every
+ * spent use write immediately, for that same reason and not as an oversight.
+ *
+ * ⚠️ **NOTHING ON THIS PANEL ADJUDICATES ANYTHING**, and it is the screen where the
+ * temptation is worst. No roll is compared to an armour class or a save DC, no damage is
+ * applied, no resistance is halved, no mastery pushes anybody, no death save kills a
+ * character, and no cast is refused for want of a use. The application announces and counts;
+ * the table adjudicates. Each of those lines has a note where somebody would naturally add
+ * the comparison.
  */
 export function CharacterSheetEditor({
   code,
@@ -121,13 +163,25 @@ export function CharacterSheetEditor({
   onSetLocked,
   onSetCreatureCr,
   onResetCreature,
-  onSetPerRest,
-  onLongRest,
+  onSetUses,
+  onRest,
+  onSetTemporaryHp,
+  onSetDeathSaves,
+  onSetHeroicInspiration,
 }: CharacterSheetEditorProps) {
   // What the panel *offers*, and nothing more — see the note on the prop.
   const isDm = dmCode !== null
 
   const [draft, setDraft] = useState<StoredSheet>(() => storedOf(saved))
+  /**
+   * Which of the three sub-tabs is showing.
+   *
+   * Local, uncontrolled and **not remounted with the character**, which is deliberate: a DM
+   * comparing two heroes' skills clicks between them in the selector and should land on
+   * Build both times. `paneOrFirst` covers the case where the pane stops existing under it
+   * — a Wizard rebuilt as a Barbarian loses Spells — so the state can be as naive as this.
+   */
+  const [chosenPane, setChosenPane] = useState<SheetPane>('play')
   const [name, setName] = useState(saved.name)
   const [echoed, setEchoed] = useState(saved)
   const [failure, setFailure] = useState<string | null>(null)
@@ -362,6 +416,182 @@ export function CharacterSheetEditor({
   }
 
   /**
+   * The DM's overrides on a library character.
+   *
+   * ⚠️ **Through `withoutUndefined` rather than `overrides: next`**, for the reason `merge`
+   * in PresetNumbers.tsx gives at length: `undefined` is not a Convex value, so a document
+   * naming the field and giving it that is a different write from one omitting it — and the
+   * dirty check above serialises both sides, so a DM who sets an armour class and then
+   * presses *Use the library's* has to arrive back at a draft byte-identical to the saved
+   * one or the footer reads *Unsaved changes* against a sheet that has none.
+   *
+   * Lives here rather than in the pane because it is a write against the *stored* sheet,
+   * and the panes only ever see the resolved one. That is the same line `storedOf` draws.
+   */
+  const setPresetOverrides = (next: PresetSheet['overrides']) => {
+    setDraft((was) => (was.kind === 'preset' ? withoutUndefined({ ...was, overrides: next }) : was))
+  }
+
+  /**
+   * THE SHEET THE PANES DRAW, or null because this document is not a hero's.
+   *
+   * ⚠️ **The two hero kinds arrive here by different routes and it matters which.** A
+   * hand-built `pc` stores its numbers literally, so the *draft* is the sheet — that is
+   * what makes a typed armour class show up in the header as it is typed. A `preset`
+   * stores selections, so its sheet is `preview`: the library's numbers, resolved by the
+   * server, with the draft's overrides laid over them by the same `withOverrides` the
+   * server finishes with. Reading `saved.sheet` for either would show the panel a value one
+   * round trip old.
+   *
+   * Null is the creature case, and it is what the three sub-tabs are keyed off: a stat
+   * block is a different document, not a character sheet with the tabs removed.
+   */
+  const heroSheet: PcSheet | null =
+    draft.kind === 'pc' ? draft : draft.kind === 'preset' ? preview : null
+  const heroPreset: PresetSheet | null = draft.kind === 'preset' ? draft : null
+  /**
+   * Whether the entry lists are editable, which is exactly *is this sheet hand-built*.
+   *
+   * A library character's feats and spells are read live out of the corpus and reassembled
+   * on every level-up, so a box to edit one in is a box the next level silently empties —
+   * the override that *does* survive is `extraFeats`, which is the DM's and is not this.
+   * The same boolean decides whether the Spells tab is offered to somebody with no spells
+   * yet; see `panesFor`.
+   */
+  const handBuilt = draft.kind === 'pc'
+  const panes = heroSheet === null ? [] : panesFor(heroSheet, handBuilt)
+  const pane = paneOrFirst(panes, chosenPane)
+
+  /**
+   * Which of the three panes to draw.
+   *
+   * ⚠️ **A `switch` with a `never` arm rather than three conditions**, for the reason
+   * CLAUDE.md invariant 9 gives and the reason the kind dispatch below already carries: a
+   * chain of `pane === 'play' ? … :` compiles for a fourth pane and renders nothing, which
+   * is a blank body under a highlighted tab. Here the compiler refuses until somebody has
+   * written the fourth.
+   */
+  function paneBody(sheet: PcSheet, which: SheetPane) {
+    switch (which) {
+      case 'play':
+        return (
+          <PlayPane
+            sheet={sheet}
+            problem={problem}
+            disabled={saving}
+            vitals={vitals}
+            // Which abilities a character *has* comes from their species, which this client
+            // looks up itself out of lib/species.ts; only which ones are gone has to
+            // travel. A hand-built sheet stores no species and so has none to spend — the
+            // empty list is a case `RestControls` handles, because most species have
+            // nothing either and the rest buttons belong to all of them.
+            perRest={heroPreset ? perRestAbilities(heroPreset.race) : []}
+            onFeats={handBuilt ? (feats) => setDraft({ ...sheet, feats }) : undefined}
+            onAdjustHitDice={onAdjustHitDice}
+            onSetUses={onSetUses}
+            onRest={onRest}
+          />
+        )
+
+      case 'build':
+        return (
+          <BuildPane
+            sheet={sheet}
+            problem={problem}
+            disabled={saving}
+            extras={saved.extras}
+            selections={
+              <CharacterBuilder
+                // Null for a hand-built hero: the builder is then an *offer* rather than a
+                // description, and for anybody making their first character it is the whole
+                // answer while the form below is the escape hatch.
+                preset={saved.preset}
+                level={sheet.level}
+                isDm={isDm}
+                busy={saving}
+                onConfirm={confirm}
+                // There is no preset for `characters.setLevel` to act on yet on a
+                // hand-built sheet, so the level is `PcSheetForm`'s own field and this
+                // shows it rather than changing it.
+                onSetLevel={handBuilt ? null : onSetLevel}
+                onSetLocked={onSetLocked}
+              />
+            }
+            numbers={
+              handBuilt ? (
+                <PcSheetForm
+                  sheet={sheet}
+                  problem={problem}
+                  disabled={saving}
+                  onChange={setDraft}
+                />
+              ) : (
+                <PresetNumbers
+                  sheet={sheet}
+                  overrides={heroPreset?.overrides}
+                  problem={problem}
+                  disabled={saving}
+                  onChange={isDm ? setPresetOverrides : undefined}
+                />
+              )
+            }
+            abilityHint={
+              isDm && heroPreset ? (
+                <OverrideMark
+                  overridden={heroPreset.overrides?.abilities !== undefined}
+                  disabled={saving}
+                  onReset={() =>
+                    setPresetOverrides(merge(heroPreset.overrides, { abilities: undefined }))
+                  }
+                />
+              ) : null
+            }
+            onScores={
+              handBuilt
+                ? (abilities) => setDraft({ ...sheet, abilities })
+                : isDm
+                  ? // Scores yes, saving throws no, on a library character. A save
+                    // proficiency is what the class grants and there is no story at the
+                    // table about needing to move one; an ability score is what a DM reaches
+                    // for when a premade hero is a point off what a player pictured.
+                    // `presetOverridesValidator` carries a field for the saves too, so this
+                    // is a decision about what to offer rather than a limit.
+                    (abilities) => setPresetOverrides(merge(heroPreset?.overrides, { abilities }))
+                  : undefined
+            }
+            onSaves={
+              handBuilt
+                ? (saveProficiencies) => setDraft({ ...sheet, saveProficiencies })
+                : undefined
+            }
+            onSkills={
+              handBuilt
+                ? (skillProficiencies) => setDraft({ ...sheet, skillProficiencies })
+                : undefined
+            }
+          />
+        )
+
+      case 'spells':
+        return (
+          <SpellsPane
+            sheet={sheet}
+            problem={problem}
+            disabled={saving}
+            vitals={vitals}
+            onSpells={handBuilt ? (spells) => setDraft({ ...sheet, spells }) : undefined}
+            onSetUses={onSetUses}
+          />
+        )
+
+      default: {
+        const exhaustive: never = which
+        return exhaustive
+      }
+    }
+  }
+
+  /**
    * Which of the four panels this sheet gets.
    *
    * ⚠️ **A `switch` on the draft's kind rather than a chain of ternaries, and the
@@ -374,10 +604,12 @@ export function CharacterSheetEditor({
    * kind owns its own not-ready state, and the `never` default means the compiler refuses a
    * fifth stored kind that nobody has written a panel for.
    *
-   * Deliberately **not** a registry of view modules keyed by kind. The four take genuinely
-   * different props — one takes a builder's confirm handler, one a creature's rating
-   * stepper, one nothing but the draft — so a registry would buy indirection by giving up
-   * the exhaustiveness check that is the point of writing it this way.
+   * ⚠️ **The two hero kinds now answer the same thing, and that is the whole of what the
+   * redesign did to this function.** `pc` and `preset` used to be two entirely separate
+   * panels — a form and a read-only view — which is how the derived row, the abilities and
+   * the skills came to be assembled twice. They are one sheet drawn one way now, with the
+   * *editing* differences pushed down into optional callbacks and two slots. The creature
+   * kinds are still genuinely different documents and are still two arms.
    */
   function sheetBody() {
     switch (draft.kind) {
@@ -387,29 +619,12 @@ export function CharacterSheetEditor({
       // `CreatureSheetForm` is the control for.
       case 'npc':
         return (
-          <CreatureSheetForm sheet={draft} problem={problem} disabled={saving} onChange={setDraft} />
-        )
-
-      case 'preset':
-        // The preview is the library's numbers with the draft laid over them, and it is
-        // null only while `saved.sheet` is not yet the hero this preset resolves to — the
-        // gap between a conversion being saved and the server's answer landing.
-        return preview ? (
-          <PresetSheetView
-            draft={draft}
-            saved={saved.preset}
-            sheet={preview}
-            extras={saved.extras}
+          <CreatureSheetForm
+            sheet={draft}
             problem={problem}
-            isDm={isDm}
             disabled={saving}
             onChange={setDraft}
-            onConfirm={confirm}
-            onSetLevel={onSetLevel}
-            onSetLocked={onSetLocked}
           />
-        ) : (
-          <SheetBodyPending />
         )
 
       case 'bestiary':
@@ -437,28 +652,16 @@ export function CharacterSheetEditor({
         )
 
       case 'pc':
-        return (
-          <>
-            {/* The offer comes first, because for anybody making their first character
-                it is the whole answer and the form below is the escape hatch. A
-                hand-built sheet is still supported — a hero brought from another table,
-                or one made before the library existed — so it is offered rather than
-                replaced. */}
-            <CharacterBuilder
-              preset={null}
-              level={draft.level}
-              isDm={isDm}
-              busy={saving}
-              onConfirm={confirm}
-              // There is no preset for `characters.setLevel` to act on yet, so the level
-              // is the form's own field below and this shows it rather than changing it.
-              onSetLevel={null}
-              onSetLocked={onSetLocked}
-            />
-            <Separator />
-            <PcSheetForm sheet={draft} problem={problem} disabled={saving} onChange={setDraft} />
-          </>
-        )
+      case 'preset':
+        // ⚠️ **The live hero case is not here — it is the `Tabs` block in the return,
+        // because a sub-tab's content has to be inside the tab set that names it.** What
+        // is left is the not-ready state: `heroSheet` is null for a `preset` only while
+        // `saved.sheet` is not yet the hero this preset resolves to, which is the gap
+        // between a conversion being saved and the server's answer landing. A `pc` is its
+        // own sheet, so that branch is unreachable for one — and it is written as a
+        // condition rather than asserted, because "arguably unreachable" is the reasoning
+        // that produced the blank-panel fall-through this switch exists to prevent.
+        return heroSheet ? paneBody(heroSheet, pane) : <SheetBodyPending />
 
       default: {
         // Unreachable while the four cases above cover `StoredSheet`. If a fifth kind is
@@ -471,9 +674,23 @@ export function CharacterSheetEditor({
 
   return (
     <>
-      <EditorBody>
-        <div className="flex flex-col gap-3">
-          {/* **This is the panel's title, and the question it answers is "whose sheet am
+      {/* ⚠️ **THE PINNED BLOCK, and being outside `EditorBody` is the whole of what makes
+          it pinned.** `EditorBody` is the scrolling half of the column and `EditorFooter`
+          is the button welded to the bottom of it; this is a third region, `shrink-0`, that
+          gives up no height and scrolls away with nothing. The name, the health bar and the
+          death saves live here because they are read *while* the pane below is being used —
+          hit points most of all — and a header that scrolled with the Play pane would send
+          somebody back a tab to find out how hurt they are. (The sub-tab strip is pinned
+          too, and is one region further down: it has to be inside the `Tabs` root that owns
+          the panes, for the reason written there.)
+
+          ⚠️ **It has to stay short.** The pane is divider-width and can be dragged
+          narrower still, so every row added here is a row taken off the sheet underneath.
+          That is why the hit-dice *controls* moved to the Play pane and only the readout
+          stayed, and why the four statistics are a line of chips rather than the reference
+          sheet's captioned boxes. */}
+      <div className="flex shrink-0 flex-col gap-3 border-b p-4">
+        {/* **This is the panel's title, and the question it answers is "whose sheet am
               I looking at" — the one question the whole panel exists to answer.** It used
               to be a `SheetField`, so the name read at exactly the weight of the armour
               class three rows down, and both the player's Character tab and the DM's
@@ -504,23 +721,23 @@ export function CharacterSheetEditor({
               accessible name — `LobbyRenameForm` and `BestiaryPicker`'s search box take
               the same position, for the same reason. `htmlFor` was always the part doing
               the work; the visible caption never was. */}
-          <div className="flex items-center gap-2">
-            <Label htmlFor="character-name" className="sr-only">
-              Name
-            </Label>
-            <Input
-              id="character-name"
-              // `md:text-lg` as well as `text-lg`, because `Input`'s own class list drops
-              // to `md:text-sm` at the breakpoint this app is always past.
-              className="font-heading h-auto border-transparent px-1 py-0.5 text-lg font-semibold disabled:bg-transparent md:text-lg dark:bg-transparent dark:disabled:bg-transparent"
-              value={name}
-              maxLength={MAX_CHARACTER_NAME_LENGTH}
-              aria-invalid={nameProblem !== null || undefined}
-              disabled={saving}
-              autoComplete="off"
-              onChange={(event) => setName(event.target.value)}
-            />
-            {/* The *resolved* kind, because that is the one a reader means. A preset
+        <div className="flex items-center gap-2">
+          <Label htmlFor="character-name" className="sr-only">
+            Name
+          </Label>
+          <Input
+            id="character-name"
+            // `md:text-lg` as well as `text-lg`, because `Input`'s own class list drops
+            // to `md:text-sm` at the breakpoint this app is always past.
+            className="font-heading h-auto border-transparent px-1 py-0.5 text-lg font-semibold disabled:bg-transparent md:text-lg dark:bg-transparent dark:disabled:bg-transparent"
+            value={name}
+            maxLength={MAX_CHARACTER_NAME_LENGTH}
+            aria-invalid={nameProblem !== null || undefined}
+            disabled={saving}
+            autoComplete="off"
+            onChange={(event) => setName(event.target.value)}
+          />
+          {/* The *resolved* kind, because that is the one a reader means. A preset
                 resolves to a hero, and a badge reading "preset" would name the storage
                 form rather than the character.
 
@@ -533,81 +750,94 @@ export function CharacterSheetEditor({
                 that is wrong about half the DM's shelf, and copy that guesses is worse
                 than copy that does not. The control that does answer it is on the form
                 below. */}
-            <Badge variant={saved.sheet.kind === 'npc' ? 'secondary' : 'outline'}>
-              {saved.sheet.kind === 'npc' ? 'Creature' : 'Player character'}
-            </Badge>
-          </div>
-          <FieldError message={nameProblem} />
+          <Badge variant={saved.sheet.kind === 'npc' ? 'secondary' : 'outline'}>
+            {saved.sheet.kind === 'npc' ? 'Creature' : 'Player character'}
+          </Badge>
+        </div>
+        <FieldError message={nameProblem} />
 
-          {/* Hit points are not part of the sheet and are not saved with it. They live
-              in `characterVitals` and are written the instant a button is pressed,
-              because damage during a fight is the one number that has to be on
-              everyone's screen immediately — and because keeping them out of the sheet
-              document is what lets the board draw a health bar without ever reading one.
-              Requirements.md asks for the controls in both places. */}
+        {/* Hit points are not part of the sheet and are not saved with it. They live in
+              `characterVitals` and are written the instant a button is pressed, because
+              damage during a fight is the one number that has to be on everyone's screen
+              immediately — and because keeping them out of the sheet document is what lets
+              the board draw a health bar without ever reading one. Requirements.md asks for
+              the controls in both places.
+
+              A hero gets the whole header, which carries the bar inside it along with the
+              temporary hit points, the death saves and the four statistics. A creature gets
+              the bar alone: a stat block has no proficiency bonus, no hit dice, no death
+              saves and no inspiration — those are not fields it is being kept from, they
+              are facts it does not have. */}
+        {heroSheet ? (
+          <CharacterHeader
+            sheet={heroSheet}
+            preset={heroPreset}
+            vitals={vitals}
+            disabled={saving}
+            onAdjustHp={onAdjustHp}
+            onSetTemporaryHp={onSetTemporaryHp}
+            onSetDeathSaves={onSetDeathSaves}
+            onSetHeroicInspiration={onSetHeroicInspiration}
+          />
+        ) : (
           <div className="flex flex-col gap-1">
-            {/* A caption rather than a `<label for>`: the bar is a group of controls
-                with their own labels, not one field to point at. */}
+            {/* A caption rather than a `<label for>`: the bar is a group of controls with
+                  their own labels, not one field to point at. */}
             <span className="text-muted-foreground text-xs font-medium">Hit points</span>
             <HpControls vitals={vitals} onAdjust={onAdjustHp} />
           </div>
+        )}
+      </div>
 
-          {/* Beside the hit points rather than beside the `n × d10` on the form below,
-              because that is the distinction the two numbers actually have: this block
-              is how the character is doing right now and is written the instant a button
-              is pressed, while everything under it is what the character is and waits
-              for Save. The server draws the same line — hit dice are on the vitals row
-              for it.
+      {heroSheet ? (
+        /* ⚠️ **The tab set spans the strip AND the scrolling body, and it has to.** The
+           obvious arrangement — a `TabsList` up in the pinned header and the pane's content
+           down in `EditorBody` — leaves every trigger's `aria-controls` pointing at a panel
+           that does not exist, which is a broken promise to a screen reader rather than a
+           cosmetic one. So the `Tabs` root *is* the middle region of the column: it holds
+           the strip, and each pane is a real `TabsContent` wrapping its own `EditorBody`.
 
-              A creature gets nothing here, and the test is the resolved sheet's kind
-              rather than a null in the payload. The reduced sheet has no hit dice to have
-              spent, so there is no state to show, no permission being applied and nothing
-              the creature's DM is being kept from.
+           Radix mounts only the active content, which is what makes `paneBody` cheap to
+           call once per pane here. The draft lives in this component's state, so nothing a
+           person has typed is lost by switching — only `NumberInput`'s half-typed text,
+           which is a minus sign at worst.
 
-              The faces come from `saved` and not from the draft: `hitDiceCount` was read
-              off the stored sheet, so pairing it with a die size somebody is halfway
-              through changing would print a complement that has never existed — `3/5 d12`
-              while the stored sheet still says d8. */}
-          {resolved ? (
-            <HitDiceControls
-              vitals={vitals}
-              faces={resolved.hitDice.faces}
-              onAdjust={onAdjustHitDice}
-            />
+           ⚠️ **The strip is drawn only when there is more than one pane, which is the caster
+           rule showing through.** A non-caster has Play and Build; a strip of one tab would
+           be furniture. `panesFor` is where the *absent, never disabled* rule is argued — a
+           greyed Spells tab reads as a thing the player failed to fill in, and a Fighter has
+           not failed to become a Wizard. */
+        <Tabs
+          value={pane}
+          onValueChange={(next) => setChosenPane(next as SheetPane)}
+          // `gap-0`, because the primitive's own `gap-2` would put a gutter between the
+          // strip and the scrolling body that the border already marks.
+          className="flex min-h-0 flex-1 flex-col gap-0"
+        >
+          {panes.length > 1 ? (
+            <div className="shrink-0 border-b px-4 py-2">
+              <TabsList className="w-full">
+                {/* Iterated, and never three triggers written out — `SHEET_PANE_LABELS` is
+                    a `Record` keyed by the union, so a fourth pane fails to compile rather
+                    than existing with no tab to reach it by. */}
+                {panes.map((option) => (
+                  <TabsTrigger key={option} value={option}>
+                    {SHEET_PANE_LABELS[option]}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </div>
           ) : null}
-        </div>
 
-        {/* Every player character, not only one built from the library — and the test is
-            the *resolved* kind, exactly as the badge above is, because a rest is
-            something a character does and not a property of how their sheet happens to
-            be stored. This lived inside `PresetSheetView` and so was unreachable for a
-            hand-built hero, which this milestone still supports on purpose, even though
-            `characters.longRest` has always worked on any character.
-
-            A creature gets nothing, which is the same call `HitDiceControls` makes: the
-            reduced sheet has no hit dice to hand back and no race to have spent
-            anything, so there is no state to show rather than a permission being
-            applied.
-
-            Which abilities a character *has* comes from their race, which this client
-            looks up itself out of `lib/species.ts`; only which ones are gone has to
-            travel. A hand-built sheet stores no race and so has none to spend — the
-            empty list is a case `RestControls` already handles, because six of the eight
-            races have nothing either and the button belongs to all of them. A band
-            payload carries no spent keys, which is a state a hero's own sheet never
-            reaches: a player character is exact for everybody. */}
-        {resolved ? (
-          <RestControls
-            abilities={draft.kind === 'preset' ? perRestAbilities(draft.race) : []}
-            spent={vitals?.kind === 'exact' ? vitals.spentPerRest : null}
-            disabled={saving}
-            onSetPerRest={onSetPerRest}
-            onLongRest={onLongRest}
-          />
-        ) : null}
-
-        {sheetBody()}
-      </EditorBody>
+          {panes.map((option) => (
+            <TabsContent key={option} value={option} className="flex min-h-0 flex-1 flex-col">
+              <EditorBody>{paneBody(heroSheet, option)}</EditorBody>
+            </TabsContent>
+          ))}
+        </Tabs>
+      ) : (
+        <EditorBody>{sheetBody()}</EditorBody>
+      )}
 
       <EditorFooter>
         <span className="text-muted-foreground min-w-0 flex-1 text-xs">

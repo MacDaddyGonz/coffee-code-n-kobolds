@@ -21,9 +21,9 @@ import type { RollMode, RollRequest } from '@convex/lib/roll'
  *
  * Three contexts rather than props, and the reason is the shape of the tree rather than a
  * preference for context. A roll button lives on an ability row, a skill row and an entry
- * row — `AbilityTable`, `SkillList` and `SheetEntryList` — and each of those is three or
- * four components below the panel: `SheetTab` or `SheetsTab`, then `CharacterSheetView`,
- * then `CharacterSheetEditor`, then one of four sheet panels. Threading a `roll` callback
+ * row — `AbilityBlock` and `SheetEntryList` — and each of those is four or five components
+ * below the panel: `SheetTab` or `SheetsTab`, then `CharacterSheetView`, then
+ * `CharacterSheetEditor`, then one of its three sub-tab panes. Threading a `roll` callback
  * plus a mode plus a character id down all of that would be four props through a dozen
  * components, most of which have no business knowing that dice exist — and every one of
  * those components is heavily commented about what it *does* care about, so the diff would
@@ -137,8 +137,8 @@ export function useRollControls(): RollControls {
  *
  * ⚠️ **Mounted by `CharacterSheetView` and not by `RightPane`, which is where it used to
  * be.** That component takes the character id as a prop already and is the sole ancestor of
- * every `RollButton` in the application — `AbilityTable`, `SkillList` and `SheetEntryList`
- * are reached only through `CharacterSheetEditor`, which only it renders. The pane was
+ * every `RollButton` in the application — `AbilityBlock` and `SheetEntryList` are reached
+ * only through `CharacterSheetEditor`'s panes, which only it renders. The pane was
  * therefore re-deriving `focus.kind === 'character' ? focus.characterId : null` for a
  * provider whose whole subtree already had the answer, in a file that otherwise does not
  * need to know rolls have a target at all.

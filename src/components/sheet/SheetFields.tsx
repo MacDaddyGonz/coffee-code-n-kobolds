@@ -66,7 +66,7 @@ export function SheetField({
  * It also draws a number that *is* stored but that this reader has no way to change —
  * a library character's armour class on a player's screen. The rendering argument
  * carries across unchanged: there is no control to grey out, because for that reader
- * there is no control. `AbilityTable` makes the same choice one field at a time.
+ * there is no control. `AbilityBlock` makes the same choice one field at a time.
  */
 export function DerivedStat({
   label,
@@ -95,8 +95,8 @@ export function DerivedStat({
  *
  * Four columns, wrapping onto as many rows as the contents need — a hero has four
  * numbers and a creature has seven, and both want the same box rather than the same
- * count. It exists because the class string was spelled out twice, in `DerivedStats`
- * and in the creature statline, and a tinted panel assembled out of five utilities is
+ * count. It exists because the class string was spelled out twice, in the hero's derived
+ * row and in the creature statline, and a tinted panel assembled out of five utilities is
  * exactly the kind of thing that drifts one utility at a time. `HitDiceField` above
  * carries the same argument at more length.
  */

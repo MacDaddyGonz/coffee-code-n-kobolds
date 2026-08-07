@@ -95,13 +95,20 @@ export function SheetTab({
             indication that they were two choices away from a character, which is the
             state the DM then gets asked about.
 
-            It says *race and class* rather than naming the archetype, because there is
-            no archetype to choose until level 2 — `CharacterBuilder` draws that field
-            only from `SUBCLASS_LEVEL` up, so promising three choices would be wrong for
-            every character that has just been made. */}
+            It says *species and class* rather than naming the archetype, because there is
+            no archetype to choose until level 3 — `CharacterBuilder` draws that field only
+            from `SUBCLASS_LEVEL` up, so promising three choices would be wrong for every
+            character that has just been made. ⚠️ **The word is *species* now and *race*
+            before the 2024 conversion**, which is the rename reaching the last piece of
+            copy that had it; the stored field on a preset is still called `race`, and
+            `speciesKeyOf` is the accessor that crosses the two.
+
+            It also names the Build tab, which the sheet did not have when this was
+            written: landing on a blank Play pane and being told to choose a species is a
+            reader looking for a control that is one tab over. */}
         <p className="text-muted-foreground text-sm">
           You are not playing a character yet. Pick up one of the characters the DM has made and
-          you will choose its race and class here.
+          you will choose its species and class on the Build tab here.
         </p>
         <Button type="button" onClick={onGoToTable}>
           Pick a character

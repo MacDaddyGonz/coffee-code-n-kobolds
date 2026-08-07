@@ -26,9 +26,13 @@ export type HitDiceControlsProps = {
  * The pairing with hit points is the server's own and is worth keeping visible here.
  * `publicVitalsValidator` sends hit dice alongside current hit points because both
  * are *how the character is doing* rather than *what the character is*: a rest
- * changes them, an edit to the build does not. So this control sits in the panel's
- * top block beside the health bar, and the `n × d10` the sheet stores stays down in
- * the form with the rest of the build.
+ * changes them, an edit to the build does not. So the `n × d10` the sheet stores stays on
+ * the Build tab with the rest of the build, and this — what is left of them — is state.
+ *
+ * ⚠️ **It sits on the Play pane beside the rest buttons rather than in the pinned header,
+ * where it used to be, and only the readout stayed up there.** Spending a die is a decision
+ * somebody makes deliberately, at the moment they are already reading which features come
+ * back on which rest; the header has to stay short enough to leave a pane underneath it.
  *
  * Standing the two numbers next to each other was the obvious first layout and the
  * wrong one. `3` and `5` a centimetre apart, both captioned "hit dice", is a puzzle
@@ -38,11 +42,13 @@ export type HitDiceControlsProps = {
  * point at the other, costs a few centimetres of travel and removes the question
  * entirely.
  *
- * **Spending a die does not roll it and heals nobody.** Milestone 4 owns rolling, and
- * a stepper that quietly applied `1d10+CON` would be a rules engine hiding in a
- * button — no dice on screen, nothing in the feed, and no way for the DM to see what
- * the number was. Until then this records that a die was used, which is the half of a
- * short rest a table cannot keep in its head.
+ * ⚠️ **Spending a die does not roll it and heals nobody, and that is still true now that
+ * the application rolls dice.** A stepper that quietly applied `1d10+CON` would be a rules
+ * engine hiding in a button — no dice on screen, nothing in the feed, and no way for the DM
+ * to see what the number was. What it records is that a die was used, which is the half of
+ * a short rest a table cannot keep in its head; the roll itself is a person pressing the
+ * dice tray and then `+` on the health bar. `characters.shortRest` takes the same position
+ * on the server and its docblock says so.
  */
 export function HitDiceControls({ vitals, faces, onAdjust, className }: HitDiceControlsProps) {
   // Loading and "this payload carries no hit dice" deliberately collapse into one
@@ -117,9 +123,15 @@ export function HitDiceControls({ vitals, faces, onAdjust, className }: HitDiceC
         </Button>
       </div>
 
+      {/* ⚠️ **Both other places this number appears are named, because there are two now.**
+          The readout in the pinned header is the same pair, so somebody deciding whether a
+          short rest is worth it can see it without leaving the pane they are on; the *build*
+          number — how many the character has altogether — is on the Build tab. Three bare
+          digits under three captions is exactly the puzzle this component's header argues
+          against, so each caption points at the others. */}
       <span className="text-muted-foreground text-xs">
-        Spent on a short rest. The sheet below sets how many there are; a long rest hands them
-        all back.
+        Spent on a short rest, which heals nobody on its own — spending these is what it is
+        for. The Build tab sets how many there are; a long rest hands them all back.
       </span>
     </div>
   )

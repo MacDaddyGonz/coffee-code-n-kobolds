@@ -1,13 +1,12 @@
 import { FieldError } from '@/components/FieldError'
 import { CreatureGroupToggle } from '@/components/sheet/CreatureGroupToggle'
+import { CreatureStatBlock } from '@/components/sheet/CreatureStatBlock'
 import { SheetEntryList } from '@/components/sheet/SheetEntryList'
 import {
-  DerivedStat,
   NumberInput,
   SheetField,
   SheetTextArea,
   marksField,
-  speedHint,
 } from '@/components/sheet/SheetFields'
 import { Separator } from '@/components/ui/separator'
 import { NPC_ACTIONS } from '@convex/lib/rules'
@@ -18,7 +17,7 @@ import { NPC_ACTIONS } from '@convex/lib/rules'
 // words are no longer the same word: an NPC and a monster are both creatures, and `group`
 // is the field that says which.
 import type { NpcSheet, SheetProblem } from '@convex/lib/sheet'
-import { MAX_NPC_NOTES_LENGTH, creatureGroupOf, messageAtField, speedOf } from '@convex/lib/sheet'
+import { MAX_NPC_NOTES_LENGTH, creatureGroupOf, messageAtField } from '@convex/lib/sheet'
 
 export type CreatureSheetFormProps = {
   sheet: NpcSheet
@@ -53,8 +52,6 @@ export function CreatureSheetForm({ sheet, problem, disabled, onChange }: Creatu
   // and printed nothing beside it.
   const marks = (path: string) => marksField(problem, path)
 
-  const speed = speedOf(sheet)
-
   // What the document says, or what `creatureGroupOf` reads out of its silence — the same
   // accessor `groupOf` answers with on the server, so this form and the DM's sheet list
   // cannot draw one creature two ways. A creature built before the field existed, or by
@@ -66,6 +63,24 @@ export function CreatureSheetForm({ sheet, problem, disabled, onChange }: Creatu
 
   return (
     <div className="flex flex-col gap-5">
+      {/* ⚠️ **The same stat block a creature off the bestiary shelf draws, and that is the
+          change this milestone made here.** Ability scores arriving on `NpcSheet` is what
+          turned a hand-typed innkeeper and a transcribed dragon into the same *document* —
+          so they are read the same way, through one component, and a field added to the
+          block reaches both. It is a **display** decision and nothing else: the stored
+          union is still `pc | npc | preset | bestiary`, `isMonsterSheet` is untouched, and
+          `CHARACTER_GROUPS` still has three headings, because filing an innkeeper apart
+          from an owlbear is a question about the DM's picker rather than about how either
+          is drawn.
+
+          `labels={null}` because a hand-typed creature has no creature type, no size, no
+          alignment and no challenge rating — nothing ever asked for them. Absent rather
+          than dashes: there is no field the DM is being kept from.
+
+          Above the form rather than below it, mirroring the bestiary panel's order: what
+          the creature *is*, then the handful of numbers somebody may change. */}
+      <CreatureStatBlock sheet={sheet} labels={null} />
+
       {/* ⚠️ **The one control on this form that is not a number, and the reason it is
           here at all.** The two dialogs that build a creature ask this question once, at
           creation; with no control on the full editor a creature answered wrongly — or
@@ -119,25 +134,6 @@ export function CreatureSheetForm({ sheet, problem, disabled, onChange }: Creatu
         </SheetField>
       </div>
       <FieldError message={messageAtField(problem, 'armourClass', 'maxHp', 'initiativeBonus')} />
-
-      {/* Shown rather than left out, so the DM does not have to remember whether the
-          reduced sheet dropped it.
-
-          **Read through `speedOf` rather than printed as `SPEED_FEET`.** It was the
-          constant, with a comment saying a creature has no race to move it and gets an
-          action saying it is fast instead. That stopped being true when the bestiary gave
-          every creature a stored speed — a Dire Wolf moves 50 and a Zombie moves 20, and
-          the difference is most of what makes them feel unlike each other on a grid — so
-          the number was on the document and this form was quietly discarding it on display.
-          The hint is `speedHint`, shared with the hero's derived row and the creature
-          statline, because 20 with no explanation beside it reads as a bug on a page where
-          every other creature says 35.
-
-          Still printed rather than typed: a hand-built creature's speed is not a field this
-          form offers, and one taken from the shelf is overridden on its own sheet. */}
-      <div className="bg-muted/40 rounded-lg border p-3">
-        <DerivedStat label="Speed" value={`${speed} ft`} hint={speedHint(speed)} />
-      </div>
 
       <SheetField
         id="creature-notes"
