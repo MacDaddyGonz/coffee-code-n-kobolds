@@ -2630,7 +2630,7 @@ needs editing, the absent-base default is wrong.
 
 ---
 
-## Milestone 14 — The 5e 2024 conversion
+## ✅ Milestone 14 — The 5e 2024 conversion
 
 **This milestone replaces the character-resources milestone that stood in this slot** — spell slots,
 limited uses and the short rest. Replaced, and **absorbed rather than cancelled**: everything that
@@ -3082,13 +3082,34 @@ trap. And a player inspecting network traffic sees no ability score, no resource
 save DC for any creature whose sheet they may not already read — the same scan, with the same positive
 control, over a corpus twice the size.
 
-### ⏸ Where this stopped, and what the remaining branches owe
+### ✅ Done — how it was built, and what building it found
 
-The conversion is being built on an integration branch, `feature/m14-5e-2024`, which is **not merged
-into `dev` and is not mergeable yet**. This section is the resume point. It is written here rather
-than in a branch note because the thing a reader needs on picking this up is the *difference* between
-what the ten steps above promise and what the branch currently does — and that difference is a fact
-about the milestone, not about a working copy.
+**Shipped as two deploys**, because it had to be: PR #6 put the conversion on production on a wide
+schema, production was swept, and PR #7 narrowed the three validators. Both deploys green. The second
+one being **accepted** is the proof the sweep finished, since a deployment holding one unswept row
+would have refused it outright — `chore/narrow-token-layer`'s property a second time, and the reason
+this was safe rather than merely careful.
+
+**Production's sweep, for the record:** 2 games, 5 species keys, 3 retired archetypes, 2 pinned
+speeds and 3 spent-use lists. The receipt matched the rehearsal exactly and a second pass reported
+nothing to do. The Half-Orc survives with `species: 'half-orc'` stored and its archetype cleared and
+unlocked — which is why the fourth narrowing the plan asked for is **declined permanently**:
+`storedSpeciesKeyValidator` is ten literals for nine species, because *a character created before the
+conversion opens and says which species needs choosing again* requires the key to stay storable.
+
+⚠️ **The migration tool reported success against the wrong deployment, and that is the single most
+useful thing this milestone found.** `convex run` targets dev unless told otherwise; the script had no
+way to say otherwise, so a run aimed at production answered *"nothing to do — every game this pass
+examined is already swept"*. Then a `--prod` flag was added and **the flag itself silently did
+nothing**, because the paginating helper rebuilt its options object and dropped it — the banner said
+PRODUCTION while every call went to dev.
+
+**What caught it was reading the rows rather than believing the receipt.** No test could have: the
+script has none, and the defect was in *which deployment it addressed*, not in what it computed. The
+rule to carry forward is the one this project already applies to its own guards — **a tool that can be
+pointed at two places must say which one it is pointing at, every run, before it acts** — and the
+sharper half: *the most dangerous output a maintenance tool can produce is the phrasing that means
+success.*
 
 **Green on the branch as it stands:** `npm run lint`, `npm run build`, `npm test` (**1938 tests over
 49 files**) and `npm run test:smoke` (**331 checks against the real dev deployment**, run against both
@@ -3208,16 +3229,18 @@ describes.
 
 ### What is left
 
-1. ⚠️ **Production has NOT been swept, and that is the maintainer's to run.** Until it has,
-   `chore/m14-narrowings` must not reach `main` — the deploy would be refused. It is held off the
-   integration branch on purpose, exactly as `chore/narrow-token-layer` was: a branch that cannot
-   deploy until a sweep has run is a branch that does not sit on one somebody might deploy.
-   **Take a snapshot export first; there is no undo.** And run it promptly after deploying the sweep
-   — `convex/lib/migrate.ts` records why the speed pin cannot converge on a deployment people are
-   still playing on.
-2. **Hand verification in two browsers** — a Gnome Wizard built from nothing to level 3, a Wood Elf's
-   speed, a Warlock's short rest beside a Wizard's, a pre-conversion Half-Orc opening, and a full
-   round played from both chairs. Every milestone so far has found something this way and no other.
+**Hand verification in two browsers** — a Gnome Wizard built from nothing to level 3, a Wood Elf's
+speed beside a Human's, a Warlock's short rest beside a Wizard's, the pre-conversion Half-Orc opening,
+and a full round played from both chairs. Every milestone so far has found something this way and no
+other, and this is the only step of this milestone that has not been done.
+
+⚠️ **`convex/lib/migrate.ts`, `admin.listUnmigrated`, `admin.migrateGame`, `scripts/migrate-sheets.mjs`
+and the `migrate-sheets` npm script are transition code and are now spent.** Both deployments are
+swept. They stay until there is no deployment left that could hold a pre-conversion row — which, with
+two deployments and both swept, is already true — so **deleting them is a `chore/` branch somebody
+can take whenever.** ⚠️ Do not delete `PRE_2024_SPEED_FEET`'s docblock argument without reading it
+first: it is the record of why 35 was pinned before `SPEED_FEET` moved to 30, and that ordering is the
+kind of thing a future stored-value change will want to copy.
 
 **One thing worth carrying forward about how this was built.** Every defect the integration found was
 at a **seam** rather than inside any one agent's work: four in Milestone 13, and here a duplicated
