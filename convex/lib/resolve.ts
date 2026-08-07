@@ -42,6 +42,9 @@ import {
   type TierNumber,
 } from './creatures'
 import { librarySheet } from './library'
+// The slot derivation, which is pure and browser-shared. What lives here is the one line that
+// turns a *character document* into an argument for it — see `spellSlotsOf`.
+import { spellSlotsFor, type SpellSlots } from './slots'
 import { lineageOf, species, type Lineage, type Species, type SpeciesTrait } from './species'
 import type {
   BestiarySheet,
@@ -226,6 +229,38 @@ export function presetExtras(
   const found = librarySheet(preset.classKey, preset.subclassKey, preset.level)
   if (!found) return null
   return { equipment: found.equipment, levellingNotes: found.levellingNotes }
+}
+
+/**
+ * THE SLOTS THIS CHARACTER HAS, or null for anybody who has none.
+ *
+ * `presetExtras`' sibling: a fact that falls out of the stored *selections* — a class key and
+ * a level — rather than out of the resolved sheet, and one this module is the right home for
+ * because it is where `presetOf` already lives.
+ *
+ * ⚠️ **It has to be the selections, and a resolved sheet genuinely cannot answer.** `PcSheet`
+ * stores `className` as a **display name** — `Wizard (Evoker)` — and there is no route from
+ * that string back to a class key that is not string-matching a label somebody could rename.
+ * ADR 0011's decision 2 declined a hero's spell save DC partly on this exact observation, and
+ * the conversion answered it by storing a `spellcastingAbility`; that field is deliberately no
+ * help here, because *which ability you cast with* says nothing about whether you are a full
+ * caster, a half caster or a Warlock.
+ *
+ * ⚠️ **So a hand-built `pc` sheet gets no slots, and that is a real gap rather than an
+ * oversight.** A DM who types a Wizard in by hand has told the application a class *name* and
+ * nothing it can count with. The honest answers are either a slot track stored on `PcSheet`
+ * — a field the DM has to fill in, on a sheet form that is already the longest in the
+ * application — or building the character out of the library, which is what the library is
+ * for and what every premade hero does. Neither is a small change made on the way past, so
+ * the gap is named here rather than closed by guessing from `className`.
+ *
+ * Nothing about a *creature* is asked: `presetOf` answers null for a `bestiary` sheet, so a
+ * monster with a spell list has no slot bank, which matches the SRD's own stat blocks — they
+ * print *"1/Day"* and a spell list, not a table of slots.
+ */
+export function spellSlotsOf(doc: { sheet?: StoredSheet }): SpellSlots | null {
+  const preset = presetOf(doc)
+  return preset ? spellSlotsFor(preset.classKey, preset.level) : null
 }
 
 /** The stored selections, or null for a character that is not linked to the bestiary. */

@@ -2333,17 +2333,19 @@ async function main() {
         !('max' in npcVitals),
       npcVitals ? `keys: ${Object.keys(npcVitals).sort().join(', ')}` : 'no row for the NPC',
     )
-    // ⚠️ **THE BAND VARIANT GAINED NOTHING, AND FIVE NEW FIELDS AT ONCE IS THE PRESSURE THAT
-    // ASSERTION EXISTS AGAINST.** Two of the five are not numbers at all —
-    // `heroicInspiration` is a boolean and `spentUses` an array — so `publicVitalsValidator`'s
-    // *no bare float64 on the band member* guarantee, which `vitals.test.ts` pins, does not
-    // reach either of them. This does, against a real deployment's serialisation.
+    // ⚠️ **THE BAND VARIANT GAINED NOTHING, AND SIX NEW FIELDS AT ONCE IS THE PRESSURE THAT
+    // ASSERTION EXISTS AGAINST.** Three of the six are not numbers at all —
+    // `heroicInspiration` is a boolean, and `spentUses` and `spentSlots` are arrays — so
+    // `publicVitalsValidator`'s *no bare float64 on the band member* guarantee, which
+    // `vitals.test.ts` pins, does not reach any of them. This does, against a real
+    // deployment's serialisation.
     const bandForbidden = [
       'temporaryHp',
       'deathSaveSuccesses',
       'deathSaveFailures',
       'heroicInspiration',
       'spentUses',
+      'spentSlots',
     ]
     const dmExactRow = (await client.query('characters:vitals', { code, dmCode })).find(
       (row) => row.characterId === npc.characterId,
@@ -3101,6 +3103,12 @@ async function main() {
         afterRest.hitDiceRemaining === FIGHTER.base.hitDice.count &&
         afterRest.spentPerRest.length === 0 &&
         afterRest.spentUses.length === 0 &&
+        // ⚠️ **Shape only, and knowingly so.** This fixture is a Human Fighter, which casts
+        // nothing, so an empty array here proves the field survives a real deployment's
+        // serialisation and **not** that a slot round-trips. A genuine round trip needs a
+        // caster fixture — see the note beside `characters:setSlots` in the suite, and
+        // `characters.test.ts`' *spell slots* block, which is where the behaviour is asserted.
+        afterRest.spentSlots.length === 0 &&
         afterRest.temporaryHp === 0 &&
         afterRest.deathSaveSuccesses === 0 &&
         afterRest.deathSaveFailures === 0,

@@ -57,7 +57,12 @@ import {
   presetExtras,
   presetOf,
   resolveSheet,
+  spellSlotsOf,
 } from './resolve'
+// The slot vocabulary and its one clamp. No table is read for any of it — `spellSlotsOf`
+// above is a pure function of the stored selections, so a slot costs this module no read.
+import { SPELL_SLOT_RECHARGE, clampSpent, maxSlotsAt } from './slots'
+import type { SpellSlots, SpentSlot } from './slots'
 import {
   bestiaryOverridesValidator,
   bestiarySheetValidator,
@@ -633,6 +638,25 @@ export const publicVitalsValidator = v.union(
     // narrowing. `spentUsesOf` folds the legacy array in, so a client reading this one alone
     // is already correct for both.
     spentUses: v.array(v.object({ key: v.string(), spent: v.number() })),
+    // ⚠️ **Spell slots spent, on THIS MEMBER ONLY, and the band gains nothing.** It is an
+    // array rather than a bare number, so the `no member of the band variant is a bare
+    // float64` assertion in `vitals.test.ts` would not catch it being pasted onto the wrong
+    // member — which is exactly why that test pins the band's key set *whole* as well, and
+    // why `spentSlots` is named in `NO_2024_STATE` beside `spentUses` rather than asserted
+    // on its own.
+    //
+    // It belongs here for `spentUses`' reason and needs no separate argument: it is play
+    // state about a creature the caller is already being sent exact hit points for, so it
+    // publishes nothing to anybody who was not already receiving `current` and `max`. What a
+    // player must not learn from a health bar is how much magic a creature has left, and a
+    // band carries no such thing.
+    //
+    // **The maximum does not travel and must not.** It is `spellSlotsFor(classKey, level)`,
+    // which the browser can run for itself off `publicSheet.preset` — and for a creature the
+    // caller may not read a sheet for, the answer is null anyway. Sending it would put a
+    // second authority for a derived number on the highest-churn subscription in the
+    // application.
+    spentSlots: v.array(v.object({ level: v.number(), spent: v.number() })),
     // Published. See the ⚠️ above — on both members on purpose, and `null` is real.
     armourClass: v.union(v.number(), v.null()),
     passivePerception: v.union(v.number(), v.null()),
@@ -1130,6 +1154,12 @@ export async function visibleVitals(
         deathSaveFailures: deathSaves.failures,
         heroicInspiration: heroicInspirationOf(vitals),
         spentUses: spentUsesOf(vitals),
+        // Clamped against the derivation rather than sent raw, which is the one thing this
+        // field does that `spentUses` above deliberately does not — see `spentSlotsOf`. The
+        // lookup is a `Record` index on a stored class key and costs no read, so unlike
+        // `coinStatsOf` there is not even a resolved sheet to be reused: it is free in the
+        // stronger sense.
+        spentSlots: spentSlotsOf(vitals, spellSlotsOf(character)),
         ...stats,
       })
     }
@@ -1250,6 +1280,51 @@ export function spentUsesOf(
   return out
 }
 
+/**
+ * HOW MANY SPELL SLOTS OF EACH LEVEL HAVE BEEN SPENT. **The one place the optional
+ * `spentSlots` is read**, and empty when absent — which is every row written before this
+ * field existed and most rows at any moment.
+ *
+ * ⚠️ **It clamps against the derivation, and `spentUsesOf` beside it deliberately does not.**
+ * That asymmetry is the interesting part of this function and it is not an inconsistency:
+ *
+ * - A **counted use** has a maximum written on a *sheet entry*, which the DM can edit and
+ *   delete. `shortRest` therefore leaves an undeclared key alone on purpose —
+ *   `restores`' fail-conservative direction applied to data — because a key with no
+ *   declaration might have been anything, and clearing it hands out a resource nobody asked
+ *   for.
+ * - A **spell slot's** maximum is not editable at all. It is `spellSlotsFor(classKey,
+ *   level)`, a pure function of two stored selections, so *how many a character has* is never
+ *   unknown and never stale. Three spent 2nd-level slots on a character who has two is not a
+ *   fact that might mean something; it is arithmetic that has gone wrong, and the honest
+ *   reading is two.
+ *
+ * **Read is clamped and storage is not**, which is `clampHp`'s and `clampHitDice`'s
+ * arrangement: a row against a level the character has temporarily lost survives untouched,
+ * so a DM who drops somebody to level 1 to check something and puts it straight back finds
+ * the counts where they left them. `spellSlotBars` in lib/slots.ts is the other half of that
+ * — it iterates the derivation, so a stale row draws nothing rather than drawing wrongly.
+ *
+ * `slots` is a required parameter with no default. A default would be `null`, which means
+ * *this character has no slots* and would silently return the empty array for everybody —
+ * a plausible-looking accessor that erases the whole feature, on a field whose absence is
+ * also its resting state and therefore invisible in a fixture.
+ */
+export function spentSlotsOf(
+  vitals: Doc<'characterVitals'> | null,
+  slots: SpellSlots | null,
+): SpentSlot[] {
+  const out: SpentSlot[] = []
+  for (const row of vitals?.spentSlots ?? []) {
+    const spent = clampSpent(row.spent, maxSlotsAt(slots, row.level))
+    // Nought is absence, on this codebase's rule that two spellings of none is what every
+    // field-by-field comparison then has to agree about — and the same rule `setUsesSpent`
+    // states for a count of zero.
+    if (spent > 0) out.push({ level: row.level, spent })
+  }
+  return out
+}
+
 /** Hit dice left to spend, defaulting to the full complement on a sheet that has them. */
 export function hitDiceRemainingOf(
   vitals: Doc<'characterVitals'> | null,
@@ -1272,6 +1347,7 @@ type VitalsPatch = {
   deathSaveFailures?: number
   heroicInspiration?: boolean
   spentUses?: { key: string; spent: number }[]
+  spentSlots?: SpentSlot[]
 }
 
 /**
@@ -1608,6 +1684,55 @@ export async function setUsesSpent(
 }
 
 /**
+ * Set how many spell slots of one level have been spent, or hand some back.
+ *
+ * `setUsesSpent`'s sibling one function up, and it keeps that function's asymmetry for a
+ * different reason — see `characters.setSlots`, where the check lives. **A spend is refused
+ * against a level the character has no slots at, and a hand-back never is.** There the reason
+ * was a stale key becoming permanent; here it is a DM dropping somebody's level with slots
+ * spent, which leaves counts the character can no longer justify and which a person must
+ * still be able to clear.
+ *
+ * ⚠️ **Nothing calls this except a person pressing a pip.** No roll debits a slot, and
+ * `feed.roll` does not reach this module — the header of lib/slots.ts is where that line is
+ * argued. A caller who wants casting to spend a slot is proposing a rule and needs an ADR,
+ * not a call site.
+ *
+ * **Kept ascending by level**, which is a canonical stored form rather than a rendering
+ * decision: `spellSlotBars` iterates the derivation and would draw correctly from any order,
+ * so this is `normaliseMarkers`' reason — what is stored is canonical, so a browser's
+ * optimistic value and the server's are the same string of bytes and a field-by-field
+ * comparison in `board-smoke.mjs` has one answer rather than a set of them.
+ *
+ * A count of zero is stored as **absence from the array** rather than as `{ spent: 0 }`, on
+ * the rule `setUsesSpent` states.
+ */
+export async function setSlotsSpent(
+  ctx: MutationCtx,
+  character: Doc<'characters'>,
+  slots: SpellSlots | null,
+  level: number,
+  spent: number,
+): Promise<SpentSlot[]> {
+  const vitals = await vitalsFor(ctx, character._id)
+  const others = (vitals?.spentSlots ?? []).filter((row) => row.level !== level)
+  const whole = clampSpent(spent, maxSlotsAt(slots, level))
+  const next = (whole > 0 ? [...others, { level, spent: whole }] : others).sort(
+    (left, right) => left.level - right.level,
+  )
+
+  if (vitals) {
+    await ctx.db.patch('characterVitals', vitals._id, { spentSlots: next })
+  } else {
+    await upsertVitals(ctx, character, { spentSlots: next })
+  }
+  // Through the accessor, so the caller's answer and the subscription's are the same list
+  // clamped the same way — a client reading one from the mutation and the other from the
+  // query would otherwise see a stale row appear and disappear.
+  return spentSlotsOf({ ...(vitals ?? ({} as Doc<'characterVitals'>)), spentSlots: next }, slots)
+}
+
+/**
  * A SHORT REST: whatever comes back on one comes back, and **nothing else happens.**
  *
  * ⚠️ **It does NOT heal and does NOT return hit dice, and both absences are the feature.**
@@ -1636,6 +1761,25 @@ export async function setUsesSpent(
  *   key with no declaration might have been anything, and leaving it spent costs one click on
  *   a counter anybody can edit, where clearing it hands out a resource nobody asked for.
  *
+ * ⚠️ **SPELL SLOTS COME BACK FOR EXACTLY ONE CLASS, AND THE NEGATIVE IS THE LOAD-BEARING
+ * HALF.** A Warlock's Pact Magic recharges on a short rest and every other caster's slots do
+ * not — so a Warlock who sits down for an hour gets both slots back while the Wizard beside
+ * them gets none. **A short rest that restored the Wizard's slots would be the application
+ * inventing a rule**, which is the one failure this feature can have that nobody at the table
+ * would report as a bug, because it looks like generosity.
+ *
+ * It is decided by `restores(SPELL_SLOT_RECHARGE[track], 'short')` and by nothing else: one
+ * `Record` in lib/slots.ts says which rest a track answers to, and lib/rest.ts's one function
+ * compares it against the rest that was taken. There is deliberately **no `track === 'pact'`
+ * written here** — that is the same fact spelled a second time, in a file that would then have
+ * to be edited if a third track ever arrived, and the whole reason `SPELL_SLOT_RECHARGE` is a
+ * table.
+ *
+ * ⚠️ **It clears the whole array rather than restoring per level, and that is right rather
+ * than lazy.** A short-rest track comes back *in full* — `restores` answers a boolean because
+ * there is no partial case for slots, unlike `regainOnShortRest` above — so there is nothing
+ * to subtract. A per-level loop would be arithmetic with one possible answer.
+ *
  * `spentPerRest` is untouched, because everything in it is a once-per-**long**-rest species
  * ability by construction — a short rest has nothing to say about it, and saying nothing is
  * the correct answer rather than an omission. ⚠️ **Temporary hit points and the death-save
@@ -1646,10 +1790,13 @@ export async function setUsesSpent(
 export async function shortRest(ctx: MutationCtx, character: Doc<'characters'>): Promise<void> {
   const vitals = await vitalsFor(ctx, character._id)
   const counted = vitals?.spentUses ?? []
+  const spentSlots = vitals?.spentSlots ?? []
   // Nothing spent is nothing to do. An early return rather than a patch of the same value,
   // because a write here would invalidate the health-bar subscription for every client at the
-  // table every time somebody pressed a button that changed nothing.
-  if (counted.length === 0) return
+  // table every time somebody pressed a button that changed nothing. ⚠️ **Both fields, `&&`-ed
+  // — the version that tested only the counted uses would silently decline to give a Warlock
+  // its slots back whenever it happened to have spent nothing else.**
+  if (counted.length === 0 && spentSlots.length === 0) return
 
   const sheet = resolveSheet(character)
   const declared = new Map<string, Resource>()
@@ -1670,9 +1817,21 @@ export async function shortRest(ctx: MutationCtx, character: Doc<'characters'>):
     if (remaining > 0) next.push({ key: use.key, spent: remaining })
   }
 
-  // A row always exists by here — `counted` came out of one — so this is a patch rather than
+  const slots = spellSlotsOf(character)
+  const slotsReturn = slots !== null && restores(SPELL_SLOT_RECHARGE[slots.track], 'short')
+
+  // Named field by field rather than built whole, so a track that keeps its slots is not
+  // patched with the array it already holds: `characterVitals` is rewritten on every patch and
+  // feeds the health-bar subscription, so re-writing an unchanged field re-pushes every bar at
+  // the table. That is `clearedDeathSaves`' third property, applied to the other counter.
+  const patch: VitalsPatch = {}
+  if (counted.length > 0) patch.spentUses = next
+  if (slotsReturn && spentSlots.length > 0) patch.spentSlots = []
+  if (Object.keys(patch).length === 0) return
+
+  // A row always exists by here — both arrays came out of one — so this is a patch rather than
   // an upsert, and the early return above is what makes that true rather than a guess.
-  if (vitals) await ctx.db.patch('characterVitals', vitals._id, { spentUses: next })
+  if (vitals) await ctx.db.patch('characterVitals', vitals._id, patch)
 }
 
 /**
@@ -1686,10 +1845,14 @@ export async function shortRest(ctx: MutationCtx, character: Doc<'characters'>):
  * levelling, minimal resource tracking and no edge cases, and "you get everything
  * back" is a rule a child can hold.
  *
- * ⚠️ **Three of the 2024 fields are cleared here and one deliberately is not.** Temporary hit
- * points end, the death-save tally is wiped, and every counted use comes back, because all
- * three are things a night's sleep undoes and a field the rest never touches is a field that
- * accumulates until somebody notices. **`heroicInspiration` is left exactly as it was**, and
+ * ⚠️ **Four of the 2024 fields are cleared here and one deliberately is not.** Temporary hit
+ * points end, the death-save tally is wiped, every counted use comes back and **every spell
+ * slot comes back**, because all four are things a night's sleep undoes and a field the rest
+ * never touches is a field that accumulates until somebody notices. The slots are cleared
+ * unconditionally and without consulting the track: *long* is the longest rest there is, so
+ * `restores` answers true for both — asking would be a branch with one outcome, and the
+ * shortest way to make a Warlock's slots outlive a night is to write it.
+ * **`heroicInspiration` is left exactly as it was**, and
  * that is the interesting one: the 2024 Human *regains* it on a long rest, which is a
  * **species trait** rather than a property of resting — granting it to everybody here would
  * be the application inventing a rule for the eight species that do not have it, in a
@@ -1715,6 +1878,7 @@ export async function longRest(
     deathSaveSuccesses: 0,
     deathSaveFailures: 0,
     spentUses: [],
+    spentSlots: [],
   }
 
   if (vitals) {
