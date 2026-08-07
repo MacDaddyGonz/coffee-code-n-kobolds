@@ -804,7 +804,10 @@ describe('species and the library stay out of each other', () => {
     const offenders: string[] = []
     for (const classKey of CLASS_KEYS) {
       const library = LIBRARY[classKey]
-      const sheets = [library.base, ...Object.values(library.paths).flatMap((path) => Object.values(path))]
+      const sheets = [
+        ...Object.values(library.base),
+        ...Object.values(library.paths).flatMap((path) => Object.values(path)),
+      ]
       for (const sheet of sheets) {
         for (const entry of [...sheet.feats, ...sheet.spells]) {
           if (owned.has(entry.name)) offenders.push(`${classKey}/${sheet.level}: ${entry.name}`)
@@ -828,7 +831,10 @@ describe('species and the library stay out of each other', () => {
               classKey,
               race: key,
               lineageKey,
-              subclassKey: findClass(classKey)!.subclasses[1].key,
+              // The one archetype every class has. `subclasses` is a tuple of exactly
+              // one — no SRD contains more than one subclass per class — so there is
+              // no second index to reach for any more.
+              subclassKey: findClass(classKey)!.subclasses[0].key,
             }),
           )
           const ids = [...resolved.feats, ...resolved.spells].map((entry) => entry.id)
@@ -923,7 +929,10 @@ describe('a stored species key that no longer resolves', () => {
     // route, and it is why `resolveSheet` is not a place to raise an error.
     const orphan = resolved[1]
     expect(orphan.level).toBe(3)
-    expect(orphan.className).toContain('Evocation')
+    // `Wizard (Evoker)` — the 2024 name for the school this application used to call
+    // Evocation. The stored key `evocation` never moved, which is why nothing was
+    // orphaned by the rename and why it is absent from `RETIRED_SUBCLASSES`.
+    expect(orphan.className).toContain('Evoker')
     expect(orphan.maxHp).toBeGreaterThan(0)
     expect(Object.keys(orphan.skillProficiencies ?? {})).toHaveLength(18)
 

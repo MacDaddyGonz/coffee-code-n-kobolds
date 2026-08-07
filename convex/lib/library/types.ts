@@ -70,11 +70,26 @@ export type LibrarySheet = {
    * sheet and never a score going down.
    */
   abilities: AbilityScores
+  /**
+   * ⚠️ **The two the SRD's Core Traits table prints for the class, and nothing else adds
+   * one.** A background grants no saving throw proficiency and neither does a species, so
+   * unlike `abilities` and `skillProficiencies` below there is nothing absorbed here —
+   * which is worth stating precisely because those two fields *do* absorb, and a reader
+   * working down the type will be expecting a third.
+   */
   saveProficiencies: SaveProficiencies
   /**
    * The class's own choices **plus the absorbed background's two**. See `abilities`
    * above: there is no second source of proficiency, because a background is not a
    * thing a character has — it is a thing whoever wrote this sheet decided once.
+   *
+   * ⚠️ **Every content file builds this by spreading `noSkills()`, and that is a change
+   * of house style worth knowing about.** The old corpus wrote all thirteen flags out on
+   * all seventy-two sheets; change 4 of the conversion took the vocabulary to eighteen,
+   * and eighteen booleans on sixty sheets is a thousand lines in which the interesting
+   * fact — *which four* — is invisible, and in which a correction gets made on four sheets
+   * out of five. Every sheet still carries all eighteen flags, because the spread produces
+   * them, and `library.test.ts` asserts exactly that against `SKILL_KEYS`.
    */
   skillProficiencies: SkillProficiencies
   armourClass: number

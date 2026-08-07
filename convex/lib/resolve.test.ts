@@ -394,7 +394,9 @@ describe('levels the library does not cover', () => {
   test('a preset above level 1 with no archetype gets the level 1 sheet', () => {
     for (const level of [SUBCLASS_LEVEL, 3, 4, 5]) {
       const resolved = resolve(preset({ subclassKey: null, level }))
-      const base = LIBRARY.fighter.base
+      // `base` is a record of the two shared levels now, and level 1 is the one
+      // `librarySheet` falls back to when an archetype has not been chosen.
+      const base = LIBRARY.fighter.base[1]
       expect(resolved.armourClass, `level ${level}`).toBe(base.armourClass)
       expect(resolved.maxHp, `level ${level}`).toBe(base.maxHp)
       expect(resolved.abilities, `level ${level}`).toEqual(base.abilities)
@@ -575,7 +577,10 @@ describe('a preset the store would accept always resolves to a sheet it would ac
     const problems: string[] = []
     for (const classKey of Object.keys(LIBRARY) as ClassKey[]) {
       for (const subclass of findClass(classKey)!.subclasses) {
-        for (const level of [2, 3, 4, 5, 6, 20]) {
+        // From `SUBCLASS_LEVEL`, which is 3 in 2024. An archetype below it is a stored
+        // pair that contradicts itself and `storedSheetProblem` refuses it outright —
+        // the two shared levels are checked below instead.
+        for (const level of [SUBCLASS_LEVEL, 4, 5, 6, 20]) {
           const stored = preset({ classKey, subclassKey: subclass.key, level })
           const where = `${classKey}/${subclass.key}/${level}`
           if (storedSheetProblem(stored)) {
@@ -586,9 +591,12 @@ describe('a preset the store would accept always resolves to a sheet it would ac
           if (problem) problems.push(`${where} unreadable: ${problem.path} — ${problem.message}`)
         }
       }
-      const level1 = preset({ classKey, subclassKey: null, level: 1 })
-      expect(storedSheetProblem(level1), classKey).toBeNull()
-      expect(sheetProblem(resolve(level1)), classKey).toBeNull()
+      // The two shared levels, which have no archetype at all rather than an empty one.
+      for (const level of [1, 2]) {
+        const shared = preset({ classKey, subclassKey: null, level })
+        expect(storedSheetProblem(shared), `${classKey}/${level}`).toBeNull()
+        expect(sheetProblem(resolve(shared)), `${classKey}/${level}`).toBeNull()
+      }
     }
     expect(problems).toEqual([])
   })
