@@ -224,7 +224,7 @@ function bestiarySheet(overrides: Partial<BestiarySheet> = {}): BestiarySheet {
 function presetSheet(overrides: Partial<PresetSheet> = {}): PresetSheet {
   return {
     kind: 'preset',
-    race: 'human',
+    species: 'human',
     classKey: 'fighter',
     subclassKey: null,
     level: 1,

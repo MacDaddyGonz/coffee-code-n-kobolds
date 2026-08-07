@@ -199,11 +199,12 @@ function IdentityLine({ sheet, preset }: { sheet: PcSheet; preset: PresetSheet |
  * somebody deciding whether to take a short rest can see the answer without changing tab.
  *
  * Speed carries no *"faster than the usual"* hint, unlike the three other screens that
- * print one. `speedHint` compares against `SPEED_FEET`, which is still 35 while the nine
- * species print 30 — a stale constant the migration commit moves, named in CLAUDE.md — so
- * every character would currently be captioned *slower than the usual 35*. There is no
- * room for a caption here anyway, which is what makes leaving it out the honest answer
- * rather than a workaround.
+ * print one, and the reason is now purely one of space: this is a divider-width line of
+ * chips with no room under any of them. ⚠️ **The reason it used to give is gone** — it
+ * said `speedHint` compared against a `SPEED_FEET` of 35 while the nine species printed
+ * 30, so every character would read *slower than the usual 35*. The migration commit moved
+ * the constant to 30 and that caption is correct everywhere it appears; leaving it off
+ * here is a layout decision and no longer a workaround.
  */
 function StatLine({ sheet, vitals }: { sheet: PcSheet; vitals: PublicVitals | null }) {
   const exact = vitals?.kind === 'exact' ? vitals : null

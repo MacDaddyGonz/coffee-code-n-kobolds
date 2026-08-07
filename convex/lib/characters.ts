@@ -84,6 +84,16 @@ import {
 // imported here and none may be — `masteryGuard.test.ts` allows lib/sheet.ts alone.
 import { restores } from './rest'
 import type { Resource } from './rest'
+// The transition-only planner for Milestone 14's sweep. It is **pure** — it reads no
+// table and takes no `ctx` — which is precisely why the two functions at the foot of this
+// file, one taking a `QueryCtx` and one a `MutationCtx`, can share it and cannot disagree.
+import {
+  addMigrationCounts,
+  migrationCountsTotal,
+  noMigrationCounts,
+  planSheetMigration,
+} from './migrate'
+import type { MigrationCounts } from './migrate'
 
 /**
  * Deliberately indistinguishable from "no such character" and "character in
@@ -612,8 +622,10 @@ export const publicVitalsValidator = v.union(
     hitDiceRemaining: v.union(v.number(), v.null()),
     hitDiceCount: v.union(v.number(), v.null()),
     // Keys of once-per-long-rest abilities already spent. Which abilities a character
-    // *has* comes from their race, which the client can look up itself from
-    // lib/species.ts — only which ones are gone has to travel.
+    // *has* comes from their species, which the client can look up itself from
+    // lib/species.ts — only which ones are gone has to travel. **Nothing on either side
+    // reads it any more**: `spentUses` below is its counted successor and `spentUsesOf`
+    // folds this in, so it goes with the stored field in the narrowing commit.
     spentPerRest: v.array(v.string()),
     // ⚠️ **THE 2024 STATE, AND EVERY LINE OF IT IS ON THIS MEMBER ONLY.** Five fields
     // arrived on `characterVitals` and none of them appears on `band` below — which is the
@@ -636,7 +648,8 @@ export const publicVitalsValidator = v.union(
     heroicInspiration: v.boolean(),
     // The counted successor to `spentPerRest` above, which travels beside it until the
     // narrowing. `spentUsesOf` folds the legacy array in, so a client reading this one alone
-    // is already correct for both.
+    // is already correct for both — which is what will make removing the older field from
+    // this payload a deletion rather than a client change.
     spentUses: v.array(v.object({ key: v.string(), spent: v.number() })),
     // ⚠️ **Spell slots spent, on THIS MEMBER ONLY, and the band gains nothing.** It is an
     // array rather than a bare number, so the `no member of the band variant is a bare
@@ -1255,15 +1268,21 @@ export function heroicInspirationOf(vitals: Doc<'characterVitals'> | null): bool
  * rule — **every legacy key is exactly one spent use** — which is what the old field always
  * meant, said in the new field's vocabulary.
  *
- * The counted row wins on a collision. That is the direction that makes the eventual
- * backfill idempotent and interruptible, for `speciesKeyOf`'s reason: a migration that has
- * written the new field for half the rows leaves both halves answering correctly, and a
- * re-run changes nothing. The other order would make the migration's own writes invisible
- * until the narrowing commit deleted the legacy field.
+ * The counted row wins on a collision. That is the direction that makes the backfill
+ * idempotent and interruptible, for `speciesKeyOf`'s reason: a migration that has written the
+ * new field for half the rows leaves both halves answering correctly, and a re-run changes
+ * nothing. The other order would make the migration's own writes invisible until the
+ * narrowing commit deleted the legacy field.
  *
  * Legacy keys come first so that the order a client renders is stable across the migration —
  * a character whose Relentless Endurance jumped to the bottom of the list on the day the
  * backfill ran would look like something had been reset.
+ *
+ * ⚠️ **The fold outlives the field it reads, and must.** `planVitalsMigration` below uses this
+ * function rather than re-deriving the rule, so one place decides what a legacy key means;
+ * and a schema push is not atomic, so a row written by an older deployment has to keep
+ * meaning what it meant in the window between. It goes with lib/migrate.ts when the
+ * transition code does, and not with the schema field.
  */
 export function spentUsesOf(
   vitals: Doc<'characterVitals'> | null,
@@ -1278,6 +1297,45 @@ export function spentUsesOf(
   }
   for (const use of counted) out.push({ key: use.key, spent: byKey.get(use.key) ?? 0 })
   return out
+}
+
+/**
+ * What a vitals row has to become for `spentPerRest` to be droppable, or null when it
+ * already is. **Transition only** — see `convex/lib/migrate.ts` for the module this
+ * belongs to and the reason it cannot live there.
+ *
+ * It is here and not there because the fold is `spentUsesOf` above, and `spentUsesOf` is
+ * in this file because it reads a `characterVitals` document — invariant 8's table names
+ * this module as the only one allowed to. A planner in lib/migrate.ts would have to
+ * import it, and lib/characters.ts already imports lib/migrate.ts, so the pair would
+ * close a runtime cycle at module scope. One direction, and this is the end of it.
+ *
+ * ⚠️ **`spentPerRest: undefined` is deliberate and is the ONE place in this codebase
+ * where naming a field and handing it `undefined` is correct.** Everywhere else that is
+ * the field-by-field rebuild trap, and `withoutUndefined` exists to repair it. But
+ * `ctx.db.patch` reads `undefined` as *remove this field*, and removing it is the whole
+ * point: the narrowing drops `spentPerRest` from the schema, and a row that still carries
+ * one — even an empty array — refuses the push. `ctx.db.replace` would be the
+ * alternative and is worse: it would mean spelling every field of the row, which is the
+ * trap itself.
+ *
+ * **The predicate is *is `spentPerRest` present?*, not *does it contain anything?*** An
+ * empty array is as unpushable as a full one, and it is also the common case, so a sweep
+ * keyed off length would leave most of the table behind and report success.
+ *
+ * `spentUses` is written only when the fold produces something. *Absent, never zero* is
+ * this table's rule for every count on it, and writing `spentUses: []` over an absent
+ * field would grow every row in the deployment to say nothing.
+ */
+export function planVitalsMigration(
+  vitals: Doc<'characterVitals'>,
+): { spentPerRest: undefined; spentUses?: { key: string; spent: number }[] } | null {
+  if (vitals.spentPerRest === undefined) return null
+
+  const folded = spentUsesOf(vitals)
+  return folded.length === 0
+    ? { spentPerRest: undefined }
+    : { spentPerRest: undefined, spentUses: folded }
 }
 
 /**
@@ -1630,17 +1688,17 @@ export async function writeHeroicInspiration(
 }
 
 // ⚠️ **`setPerRestSpent` used to be here and is gone, deliberately — `spentPerRest` is now
-// READ-ONLY until the narrowing commit.** It marked a key spent by adding it to the legacy
-// array, and `setUsesSpent` below replaces it: 2024 has features with two, three or
-// proficiency-bonus-many uses, and a list of keys cannot say *two*.
+// READ-ONLY, and `longRest` no longer writes it either.** It marked a key spent by adding it
+// to the legacy array, and `setUsesSpent` below replaced it: 2024 has features with two,
+// three or proficiency-bonus-many uses, and a list of keys cannot say *two*.
 //
 // Deleted rather than kept beside it, and that is the important half. Two writers against one
 // fact is how the two fields would come to disagree — a spend through the old one and a
 // hand-back through the new one leaves a key present in `spentPerRest` and absent from
-// `spentUses`, which `spentUsesOf` then folds back into *one spent use* for ever. With one
-// writer, the legacy array only ever shrinks: `longRest` clears it, nothing adds to it, and
-// every existing row drains as characters sleep. That is what makes the narrowing a deletion
-// rather than a migration.
+// `spentUses`, which `spentUsesOf` then folds back into *one spent use* for ever. **With no
+// writer at all the legacy array can only ever shrink**, which is what lets the narrowing be
+// a **deletion** rather than a migration of its own: the sweep in lib/migrate.ts has one
+// shape to fold and nothing racing it.
 
 /**
  * Set how many uses of one thing have been spent, or hand some back.
@@ -1650,11 +1708,11 @@ export async function writeHeroicInspiration(
  * character actually has, and a hand-back never is.** That is what stops a stale key becoming
  * permanent when a DM changes somebody's species or deletes an entry.
  *
- * ⚠️ **It writes the counted field and leaves `spentPerRest` alone.** The legacy array is
- * folded in on *read* by `spentUsesOf`, and a write that also rewrote it would have to decide
- * what a legacy key means when its count goes to two — which is a question the old field
- * cannot answer. So the counted field is where every write from here lands, the legacy one
- * drains as characters take long rests, and the narrowing commit deletes it.
+ * ⚠️ **It writes the counted field and never writes `spentPerRest`**, which is what makes that
+ * field's removal a deletion rather than a migration of its own. A write that rewrote both
+ * would have to decide what a legacy key means when its count goes to two — a question the old
+ * field cannot answer — so the counted field is where every write lands, the legacy one can
+ * only shrink, and the narrowing commit deletes it.
  *
  * A count of zero is stored as **absence from the array** rather than as `{ spent: 0 }`, on
  * this codebase's usual rule: two spellings of none is what every field-by-field rebuild then
@@ -1780,9 +1838,7 @@ export async function setSlotsSpent(
  * there is no partial case for slots, unlike `regainOnShortRest` above — so there is nothing
  * to subtract. A per-level loop would be arithmetic with one possible answer.
  *
- * `spentPerRest` is untouched, because everything in it is a once-per-**long**-rest species
- * ability by construction — a short rest has nothing to say about it, and saying nothing is
- * the correct answer rather than an omission. ⚠️ **Temporary hit points and the death-save
+ * ⚠️ **Temporary hit points and the death-save
  * tally are untouched for the same reason and are the two a reader will expect otherwise:**
  * both end on a *long* rest, where `longRest` clears them, and an hour sitting down neither
  * expires a ward somebody cast nor erases what happened while a character was at nought.
@@ -1870,10 +1926,22 @@ export async function longRest(
   // this object as a whole row and the schema requires it there. Annotated rather than
   // inferred so that a field added to `VitalsPatch` and forgotten here is a type error at the
   // insert rather than a rest that quietly stops clearing something.
+  // ⚠️⚠️ **`spentPerRest: []` USED TO BE THE FIRST LINE OF THIS PATCH AND ITS GOING IS
+  // OPERATIONAL RATHER THAN TIDY. Do not put it back.** The field is still on the schema
+  // until the narrowing commit, and while this wrote it a long rest *re-created* it on every
+  // row it touched — so a rest taken between the sweep and that push would have put back the
+  // exact field the push refuses, and the deploy would fail for a reason nothing on screen
+  // could explain. **Nothing writes that key any more, and nothing may**; `setUsesSpent` never
+  // did, so the legacy array can now only ever shrink.
+  //
+  // The price, taken knowingly and paid only inside the sweep window: a long rest no longer
+  // *clears* a legacy key either, so an unswept character keeps whatever `spentPerRest` says
+  // until `admin.migrateGame` reaches it. `spentUsesOf` still folds it in, so the sheet is
+  // honest about it meanwhile, and the sweep empties it for good. That is the right way round
+  // — a stale counter somebody can see is better than a deploy that cannot land.
   const patch: VitalsPatch & { currentHp: number } = {
     currentHp: sheet.maxHp,
     ...(sheet.kind === 'pc' ? { hitDiceRemaining: sheet.hitDice.count } : {}),
-    spentPerRest: [],
     temporaryHp: 0,
     deathSaveSuccesses: 0,
     deathSaveFailures: 0,
@@ -1945,8 +2013,8 @@ export async function insertCharacter(
  * character means starting it whole; the copy inherits that by reuse rather than by
  * restating it. Note the consequence, which is the point of the feature: the source's
  * *current* hit points are not copied, so duplicating a goblin on 3 hp gives a fresh one
- * at full. `spentPerRest` is absent for the same reason — a copy is a fresh creature, not
- * a resumed one.
+ * at full. Nothing a rest would clear is copied either, for the same reason — a copy is a
+ * fresh creature, not a resumed one.
  *
  * ⚠️ **The stored sheet passes through verbatim**, without `requireUsableSheet` and
  * without `normaliseStoredSheet`. Re-validating would let a bestiary key retired since the
@@ -2163,5 +2231,138 @@ export async function deleteCharacter(
   const vitals = await vitalsFor(ctx, characterId)
   if (vitals) await ctx.db.delete('characterVitals', vitals._id)
   await ctx.db.delete('characters', characterId)
+}
+
+// ---------------------------------------------------------------------------
+// TRANSITION ONLY — the sweep half of Milestone 14's widen → migrate → narrow
+// ---------------------------------------------------------------------------
+//
+// Everything below is deleted once every deployment has been swept. The planners it
+// calls are in lib/migrate.ts, which carries the argument for the whole exercise and the
+// two-deploy ordering that makes it work at all.
+//
+// ⚠️ **These two live here rather than in `convex/admin.ts` because of invariant 8.**
+// This module is the only one in `convex/` allowed to read `characters` and
+// `characterVitals`, `leakGuard.test.ts` greps for exactly the four needles a read uses,
+// and a maintenance tool is precisely the sort of code that grows a private copy of a
+// table read when there is nowhere obvious to put one. `admin.ts` gets a number and never
+// a row, which is the same discipline `countCharactersInGame` and `deleteCharactersInGame`
+// already keep for that module.
+
+/**
+ * One document's worth of work, held between reading it and writing it.
+ *
+ * ⚠️ **Module-private, and it stays that way.** These carry a whole `StoredSheet` — a
+ * monster's stat block among them — which is the leaked *row* invariant 8's choke point
+ * exists to confine. Only `MigrationCounts` crosses out of this file.
+ */
+type SheetPlan = { characterId: Id<'characters'>; sheet: StoredSheet }
+type VitalsPlan = {
+  vitalsId: Id<'characterVitals'>
+  patch: { spentPerRest: undefined; spentUses?: { key: string; spent: number }[] }
+}
+
+/**
+ * Read one game and work out everything the sweep would do to it, **without writing
+ * anything.**
+ *
+ * Two bounded reads, both the ones `visibleVitals` already makes, and no filter at all:
+ * a migration does not ask who may see a sheet, because a monster's stored document is
+ * exactly as stale as a hero's. What holds invariant 8 is that the plans never leave this
+ * module.
+ */
+async function planMigration(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+): Promise<{ counts: MigrationCounts; sheets: SheetPlan[]; vitals: VitalsPlan[] }> {
+  const [characters, rows] = await Promise.all([
+    allCharacters(ctx, gameId),
+    ctx.db
+      .query('characterVitals')
+      .withIndex('by_gameId', (q) => q.eq('gameId', gameId))
+      .take(MAX_CHARACTERS_PER_GAME),
+  ])
+
+  let counts = noMigrationCounts()
+  const sheets: SheetPlan[] = []
+  const vitals: VitalsPlan[] = []
+
+  for (const character of characters) {
+    // A Milestone 1 character has no sheet at all. `resolveSheet` reads that as a
+    // default hero on the way out and stores nothing, so there is nothing here to
+    // migrate — and materialising one would be this sweep inventing a document.
+    if (character.sheet === undefined) continue
+    const plan = planSheetMigration(character.sheet)
+    if (plan === null) continue
+    sheets.push({ characterId: character._id, sheet: plan.next })
+    counts = addMigrationCounts(counts, plan.counts)
+  }
+
+  for (const row of rows) {
+    const patch = planVitalsMigration(row)
+    if (patch === null) continue
+    vitals.push({ vitalsId: row._id, patch })
+    counts = addMigrationCounts(counts, { ...noMigrationCounts(), uses: 1 })
+  }
+
+  return { counts, sheets, vitals }
+}
+
+/**
+ * WHAT THE SWEEP WOULD CHANGE ABOUT ONE GAME. The dry run, and the whole of it.
+ *
+ * ⚠️ **It takes a `QueryCtx`, which is what makes "a dry run writes nothing" structural
+ * rather than a promise.** A `QueryCtx` has no `patch`, no `insert` and no `replace`, so
+ * there is no edit to this function that could quietly start writing — the dry run and
+ * the real run are two different kinds of Convex function, not one function with a flag.
+ * A boolean parameter is the arrangement where somebody eventually passes the wrong
+ * default and a maintenance tool writes to production during what everybody believed was
+ * a rehearsal.
+ *
+ * The numbers it returns are the numbers `migrateCharactersInGame` will apply, because
+ * both call `planMigration` and neither has an opinion of its own.
+ */
+export async function planCharacterMigration(
+  ctx: QueryCtx,
+  gameId: Id<'games'>,
+): Promise<MigrationCounts> {
+  return (await planMigration(ctx, gameId)).counts
+}
+
+/**
+ * Apply the sweep to one game and hand back what it did.
+ *
+ * **One game per transaction**, matching `purgeGame` next door and for its reason: a
+ * game that refuses — a document limit, a row a schema push has already made
+ * unreadable — does not roll back the ones that worked, and the CLI can name it.
+ *
+ * ⚠️ **Idempotent by construction and not by care.** Every planner answers null for a
+ * document that is already what the narrowed schema says it is, so a second pass over a
+ * swept game writes **no document at all** and returns six zeroes. That property is what
+ * makes the tool safe to run repeatedly against a deployment somebody is playing on, and
+ * `admin.test.ts` asserts it by running the whole thing twice.
+ *
+ * The two writes are `patch` rather than `replace` throughout — the field-by-field
+ * rebuild trap, sixth outing, and a `replace` here would be a seventh.
+ */
+export async function migrateCharactersInGame(
+  ctx: MutationCtx,
+  gameId: Id<'games'>,
+): Promise<MigrationCounts> {
+  const plan = await planMigration(ctx, gameId)
+
+  for (const { characterId, sheet } of plan.sheets) {
+    await ctx.db.patch('characters', characterId, { sheet })
+  }
+  for (const { vitalsId, patch } of plan.vitals) {
+    await ctx.db.patch('characterVitals', vitalsId, patch)
+  }
+
+  return plan.counts
+}
+
+/** Nought means nothing to do — the one thing the listing needs to know per game. */
+export function needsMigration(counts: MigrationCounts): boolean {
+  return migrationCountsTotal(counts) > 0
 }
 

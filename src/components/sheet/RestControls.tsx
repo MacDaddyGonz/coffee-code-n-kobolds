@@ -13,7 +13,7 @@ export type RestControlsProps = {
   /**
    * How many uses of each key have gone, or null while the vitals subscription answers.
    *
-   * The counted `spentUses` rather than the legacy `spentPerRest` array beside it: the
+   * The counted `spentUses` rather than the `spentPerRest` array it replaced: the
    * server folds the second into the first on read, so a client that takes this one alone
    * is already correct for a row written by an older deployment. A species ability is a
    * boolean either way — one use — so anything above zero reads as spent.

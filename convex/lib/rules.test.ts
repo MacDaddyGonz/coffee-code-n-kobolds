@@ -699,10 +699,12 @@ describe('the D&D Lite scope', () => {
   })
 
   /**
-   * Speed is a constant — `SPEED_FEET`, 35 for everybody, deliberately not a field
-   * — so an entry that changes it is promising something nothing in the app can
-   * represent, and a sheet that says 45 while every other screen says 35 is worse
-   * than the feat being slightly smaller than its 5e original.
+   * Speed is a **default** — `SPEED_FEET`, 30, with a species printing its own over the
+   * top — and nothing in a catalogue entry can move it: a feat is a copy taken onto a
+   * sheet, and the sheet's speed comes from the species and the DM's override. So an
+   * entry that changes it is promising something nothing in the app can represent, and a
+   * sheet that says 40 while every other screen says 30 is worse than the feat being
+   * slightly smaller than its 5e original.
    *
    * `mobile` used to carry "your speed rises by 10 feet". This suite found it; the
    * clause was dropped rather than written down and ignored, leaving the half of

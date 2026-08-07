@@ -256,11 +256,18 @@ export function HitDiceField({
  * is the whole of what can honestly be claimed here. Speed used to be a constant, on the
  * grounds that a character whose speed differs is one the rules say cannot exist; then
  * the Goliath arrived at 45 and the bestiary gave a Dire Wolf 50 and a Zombie 20. Which
- * of race, entry or override moved it is *not on the wire* — the resolved sheet carries
- * one number with all three already folded in, and telling them apart would mean shipping
- * the corpora to the browser. So this compares against `SPEED_FEET`, which is the one
- * thing it can see, and the DM's own mark in `PresetNumbers` is where "you changed this"
- * is said.
+ * of species, lineage, entry or override moved it is *not on the wire* — the resolved
+ * sheet carries one number with all four already folded in, and telling them apart would
+ * mean shipping the corpora to the browser. So this compares against `SPEED_FEET`, which
+ * is the one thing it can see, and the DM's own mark in `PresetNumbers` is where "you
+ * changed this" is said.
+ *
+ * ⚠️ **This is the one client surface that reads that constant, and it was the visible
+ * cost of the constant being stale.** While `SPEED_FEET` said 35 and the nine species
+ * printed 30, every character in the game was captioned *slower than the usual 35* —
+ * mis-captioning almost the whole party, on the screen the caption exists to reassure.
+ * The migration commit moved it to 30, and the Goliath's 35 now reads *faster* as it
+ * should.
  */
 export function speedHint(speed: number): string {
   if (speed === SPEED_FEET) return 'the usual'

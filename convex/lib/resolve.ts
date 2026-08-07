@@ -45,7 +45,14 @@ import { librarySheet } from './library'
 // The slot derivation, which is pure and browser-shared. What lives here is the one line that
 // turns a *character document* into an argument for it — see `spellSlotsOf`.
 import { spellSlotsFor, type SpellSlots } from './slots'
-import { lineageOf, species, type Lineage, type Species, type SpeciesTrait } from './species'
+import {
+  lineageOf,
+  species,
+  speciesKeyOf,
+  type Lineage,
+  type Species,
+  type SpeciesTrait,
+} from './species'
 import type {
   AbilityKey,
   AbilityScores,
@@ -510,7 +517,9 @@ function resolvePreset(preset: PresetSheet): PcSheet {
   // `withOverrides` lives in lib/sheet.ts rather than here, so the override panel in
   // the browser can run the identical merge instead of maintaining a second copy of
   // it. Only the library lookup above is server-only.
-  const chosen = species(preset.race)
+  // Through `speciesKeyOf` rather than off the field, which is what let the
+  // `race` → `species` rename land under this line without it being edited twice.
+  const chosen = species(speciesKeyOf(preset))
   return withOverrides(
     applyLineage(applySpecies(base, chosen, level), lineageOf(chosen, preset.lineageKey ?? null)),
     preset.overrides,

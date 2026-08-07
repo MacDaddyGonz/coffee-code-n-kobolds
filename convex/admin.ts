@@ -29,13 +29,21 @@
 // can reach.
 
 import { ConvexError, v } from 'convex/values'
+import { paginationOptsValidator, paginationResultValidator } from 'convex/server'
 
 import { internalMutation, internalQuery } from './_generated/server'
 import type { QueryCtx } from './_generated/server'
 import type { Id } from './_generated/dataModel'
 import { countTokensInGame, deleteTokensInGame } from './lib/board'
-import { countCharactersInGame, deleteCharactersInGame } from './lib/characters'
+import {
+  countCharactersInGame,
+  deleteCharactersInGame,
+  migrateCharactersInGame,
+  needsMigration,
+  planCharacterMigration,
+} from './lib/characters'
 import { countFeedInGame, deleteFeedInGame } from './lib/feed'
+import { migrationCountsValidator } from './lib/migrate'
 import { MAX_GAMES_LISTED, MAX_GAMES_SWEPT, publicGameValidator } from './lib/games'
 import { deleteModalImagesInGame, listModalImages } from './lib/modalImages'
 import { deleteTracksInGame, listTracks } from './lib/music'
@@ -250,6 +258,123 @@ export const purgeGame = internalMutation({
       name: game.name,
       code: game.code,
       counts: { scenes, tokens, characters, seats, modalImages, tracks, feed },
+    }
+  },
+})
+
+// ---------------------------------------------------------------------------
+// TRANSITION ONLY — Milestone 14's sweep
+// ---------------------------------------------------------------------------
+//
+// The **migrate** half of widen → migrate → narrow, driven by
+// `scripts/migrate-sheets.mjs`. `convex/lib/migrate.ts` carries the six changes, the
+// argument for each, and the two-deploy ordering that is the only way this lands at all.
+//
+// The pair below is `listByPrefix`/`purgeGame`'s shape a second time, and deliberately so
+// — an `internalQuery` that says what would happen and an `internalMutation` that does it
+// to one game. ⚠️ **Neither gets a public mutation**, for the reason the header of this
+// file gives about `purgeGame`: an internal function does not have to answer *who* may
+// run it, and a public face puts that question back where it needs an ADR rather than a
+// line of code. Rewriting every character sheet in a deployment is if anything the
+// stronger case for staying internal.
+//
+// ⚠️ **This module still reads no guarded table.** Every character and every vitals row
+// is reached through `lib/characters.ts`, which hands back a `MigrationCounts` and never
+// a row — the same discipline `countsFor` above keeps, arriving at a module whose whole
+// job is rewriting the rows it may not look at.
+
+/**
+ * A game the sweep has work to do on: enough to recognise, no secret, and what would
+ * change.
+ *
+ * Derived from `publicGameValidator` with the same two omissions `purgeCandidateValidator`
+ * makes, and for the same reasons — a DM code printed to a terminal and pasted into a chat
+ * window is a game handed over, and a game about to be swept has no interesting board.
+ * Sharing the derivation rather than the constant, because the two tools print different
+ * counts and nothing else.
+ */
+const migrationCandidateValidator = publicGameValidator
+  .omit('activeSceneId', 'status')
+  .extend({ counts: migrationCountsValidator })
+
+/**
+ * Every game with unswept documents in it, a page at a time.
+ *
+ * ⚠️ **Paginated where `listByPrefix` is not, and the difference is that there is no
+ * prefix to be had.** That tool matches a name and counts only what it will print;
+ * this one cannot know whether a game needs work without reading its characters, so
+ * *every* game in the deployment is examined and the expensive half is unavoidable. At
+ * `MAX_CHARACTERS_PER_GAME` of 200 that is up to 400 rows per game, so a fixed
+ * `MAX_GAMES_SWEPT` of 500 would ask a single query for two hundred thousand documents
+ * and be refused. The caller chooses the page size and drives the cursor; the CLI keeps
+ * asking until `isDone`.
+ *
+ * **Filtered after the page rather than before it**, which is why a page can come back
+ * empty while `isDone` is false. That is correct and the CLI is written for it: there is
+ * no index on *needs migrating*, and there could not be — it is a question about the
+ * contents of a `sheet` field.
+ *
+ * ⚠️ **A `QueryCtx` all the way down.** `planCharacterMigration` cannot write, because a
+ * query cannot write, which is what makes the dry run's promise structural rather than a
+ * flag somebody eventually defaults wrongly.
+ */
+export const listUnmigrated = internalQuery({
+  args: { paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(migrationCandidateValidator),
+  handler: async (ctx, args) => {
+    const page = await ctx.db.query('games').paginate(args.paginationOpts)
+
+    const examined = await Promise.all(
+      page.page.map(async (game) => ({
+        _id: game._id,
+        _creationTime: game._creationTime,
+        name: game.name,
+        code: game.code,
+        createdByName: game.createdByName,
+        counts: await planCharacterMigration(ctx, game._id),
+      })),
+    )
+
+    return { ...page, page: examined.filter((game) => needsMigration(game.counts)) }
+  },
+})
+
+/**
+ * Sweep one game's characters and vitals, and hand back what changed.
+ *
+ * **One game per transaction**, matching `purgeGame` above and for its reason: a game
+ * that refuses does not roll back the ones that worked, and the loop can report which one
+ * it was instead of leaving the whole pass in doubt.
+ *
+ * ⚠️ **Safe to run twice, and the tests run it twice to prove it.** Every planner in
+ * lib/migrate.ts answers null for a document that already agrees with the narrowed
+ * schema, so a second pass writes nothing at all and returns six zeroes. That is what
+ * makes this runnable against a deployment somebody is playing on — a game swept while a
+ * session was in progress can simply be swept again.
+ *
+ * Takes a `gameId` rather than a code, for `purgeGame`'s reason: the CLI reads the id off
+ * the listing, so the thing being written is the thing that was printed.
+ */
+export const migrateGame = internalMutation({
+  args: { gameId: v.id('games') },
+  returns: v.object({
+    name: v.string(),
+    code: v.string(),
+    counts: migrationCountsValidator,
+  }),
+  handler: async (ctx, args) => {
+    const game = await ctx.db.get('games', args.gameId)
+    if (!game) {
+      // `purgeGame`'s stance, for `purgeGame`'s reason: the id came off a listing taken
+      // moments earlier, so its absence means the listing and the deployment disagree,
+      // and a tool rewriting documents is the wrong place to guess about that.
+      throw new ConvexError({ kind: 'GameNotFound', message: 'No game with that id.' })
+    }
+
+    return {
+      name: game.name,
+      code: game.code,
+      counts: await migrateCharactersInGame(ctx, game._id),
     }
   },
 })

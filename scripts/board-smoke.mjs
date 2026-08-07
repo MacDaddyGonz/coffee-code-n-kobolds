@@ -464,8 +464,18 @@ const NEW_PC_SHEET_FIELDS = [
 /** The same for an entry, and for a creature. */
 const NEW_ENTRY_FIELDS = ['mastery', 'uses']
 const NEW_NPC_SHEET_FIELDS = ['abilities', 'saveProficiencies']
-/** And for a preset, whose two are the species rename and the sixth pick. */
-const NEW_PRESET_FIELDS = ['species', 'lineageKey']
+/**
+ * And for a preset, which is now **one** field rather than two.
+ *
+ * ⚠️ **`species` was here and is not, and that is the migration landing rather than a
+ * field being forgotten.** It was the new half of the `race` → `species` rename, optional
+ * while both were live, so a deployment that materialised it early would have made
+ * `speciesKeyOf` answer from the new field for every character in every game before the
+ * backfill had run — exactly the absence this list exists to check. It is required now, so
+ * there is no absence left to assert and asserting one would fail on every preset.
+ * `lineageKey` is the sixth pick and is still genuinely optional.
+ */
+const NEW_PRESET_FIELDS = ['lineageKey']
 
 /**
  * The NPC the acceptance test is about. 271 and 137 are chosen to be searchable:
@@ -513,7 +523,7 @@ const NPC_SHEET = {
  * one.
  *
  * `featCount` is the length of the library's own feat list. Every resolved sheet
- * carries one more than that, because a race always contributes its trait — see the
+ * carries one more than that, because a species always contributes its traits — see the
  * ⚠️ **`+ ELF_TRAIT_ENTRIES` at each use, and it used to be `+ 1`.** That one was the single
  * trait a Milestone 4 race contributed — a Halfling's Lucky, an Elf's Fey Ancestry — and a
  * 2024 species has up to five. The Elf has five, so the sum is the library's own feat list
@@ -612,6 +622,12 @@ const FIGHTER = {
  * The Goliath moved 45 (35 + a 10 bonus) and now moves 35 (an absolute base). Same species,
  * same reason it exists, different arithmetic — `speedBonus` became `baseSpeed` so that a
  * number the SRD prints is stored rather than computed.
+ *
+ * ⚠️ **And the assertion below only started meaning anything once `SPEED_FEET` moved to
+ * 30.** While that constant said 35 the Goliath's printed 35 was *also* the default every
+ * other character got, so a `resolvePreset` that ignored `baseSpeed` entirely would have
+ * satisfied this check. The Goliath is now the one species above the default, which is what
+ * makes reading 35 here evidence that the species layer ran.
  */
 const DWARF_HP_PER_LEVEL = 1
 const GOLIATH_SPEED = 35
@@ -2666,7 +2682,7 @@ async function main() {
       code,
       dmCode,
       name: 'Nightingale of the Ninth Step',
-      sheet: presetSheet({ race: 'elf', classKey: 'rogue' }),
+      sheet: presetSheet({ species: 'elf', classKey: 'rogue' }),
     })
     createdCharacters.push(elf.characterId)
 
@@ -2677,7 +2693,7 @@ async function main() {
         elfAtOne.sheet.kind === 'pc' &&
         elfAtOne.preset !== null &&
         elfAtOne.preset.kind === 'preset' &&
-        elfAtOne.preset.race === 'elf' &&
+        elfAtOne.preset.species === 'elf' &&
         elfAtOne.preset.classKey === 'rogue' &&
         elfAtOne.preset.subclassKey === null &&
         elfAtOne.preset.level === 1 &&
@@ -2685,17 +2701,16 @@ async function main() {
       elfAtOne ? `preset ${JSON.stringify(elfAtOne.preset)}` : 'no sheet came back',
     )
 
-    // ⚠️ **THE PRESET HALF OF THE 2024 FIXTURE PAIR — the fourth stored kind, and the one
-    // whose two new fields carry a rename across.** `species` is `race` under its 2024 name
-    // and is what the migration will backfill; `lineageKey` is the sixth pick. The Elf above
-    // is the negative: it was created the way every existing character was, so neither key
-    // may come back on it.
+    // ⚠️ **THE PRESET HALF OF THE 2024 FIXTURE PAIR — the fourth stored kind.** It used to be
+    // a pair of new fields: `species`, which was `race` under its 2024 name and which the
+    // migration backfilled, and `lineageKey`, the sixth pick. The rename has narrowed, so
+    // `species` is required and only the lineage is optional now — the Elf above is the
+    // negative half, created without one, and that key must not come back on it.
     const woodElf = await client.mutation('characters:create', {
       code,
       dmCode,
       name: 'Faelar of the Deep Wood',
       sheet: presetSheet({
-        race: 'elf',
         species: 'elf',
         lineageKey: 'wood',
         classKey: 'rogue',
@@ -2706,14 +2721,13 @@ async function main() {
     createdCharacters.push(woodElf.characterId)
     const woodElfBack = await readSheet(woodElf.characterId)
     check(
-      'a preset carrying a species and a lineage round-tripped both, and the one without carried neither',
+      'a preset carrying a species and a lineage round-tripped both, and the one without carried no lineage',
       woodElfBack &&
         woodElfBack.preset &&
         woodElfBack.preset.species === 'elf' &&
         woodElfBack.preset.lineageKey === 'wood' &&
-        // The negative half. A deployment that materialised `species` from `race` would look
-        // entirely correct on the row above and would make `speciesKeyOf` answer from the new
-        // field for every character in every game before the migration had run.
+        // The negative half: a deployment that materialised a `lineageKey` for a character
+        // nobody asked would collapse *nobody was asked* into *asked, and there is none*.
         elfAtOne &&
         elfAtOne.preset &&
         NEW_PRESET_FIELDS.every((field) => !(field in elfAtOne.preset)),
@@ -2732,7 +2746,7 @@ async function main() {
       code,
       dmCode,
       name: 'Ilyra, Asked and Answered',
-      sheet: presetSheet({ race: 'elf', species: 'elf', lineageKey: null, classKey: 'rogue' }),
+      sheet: presetSheet({ species: 'elf', lineageKey: null, classKey: 'rogue' }),
     })
     createdCharacters.push(askedElf.characterId)
     const askedBack = await readSheet(askedElf.characterId)
@@ -2745,7 +2759,7 @@ async function main() {
       askedBack ? `preset ${JSON.stringify(askedBack.preset)}` : 'no sheet came back',
     )
 
-    // None of this was sent in. `characters:create` was given a name, a race, a
+    // None of this was sent in. `characters:create` was given a name, a species, a
     // class and a level; the scores, the armour class, the hit dice, the thirteen
     // skill flags and every feat below came back out of the library.
     const built = elfAtOne ? elfAtOne.sheet : null
@@ -2777,7 +2791,7 @@ async function main() {
     )
 
     // ⚠️ **THE LIBRARY'S OWN TO-HIT, THROUGH TWO REBUILDS.** A premade hero's feats are
-    // copied by `withId`'s spread in lib/resolve.ts and then copied again by the race
+    // copied by `withId`'s spread in lib/resolve.ts and then copied again by the species
     // overlay, which rebuilds the list to append the racial trait. A field added to the
     // library's entry type and dropped by either copy leaves a weapon on the sheet that
     // announces an attack and has nothing to roll for it — and no other check here would
@@ -2797,7 +2811,7 @@ async function main() {
         ? `${libraryWeapon.name}: ${JSON.stringify(libraryWeapon.toHit)} / ${JSON.stringify(libraryWeapon.roll)}, wanted ${JSON.stringify(ROGUE.base.weapon.toHit)} / ${JSON.stringify(ROGUE.base.weapon.roll)}`
         : `no ${ROGUE.base.weapon.name} among ${built ? built.feats.map((entry) => entry.name).join(', ') : '—'}`,
     )
-    // The race's own contribution, which is the entry the overlay *adds* rather than
+    // The species' own contribution, which is the entry the overlay *adds* rather than
     // copies — and a passive by construction, since a trait is built from two strings
     // and has no roll. Without this the check above passes on an overlay that dropped
     // the category from everything it appended.
@@ -2816,7 +2830,7 @@ async function main() {
         : 'no sheet came back',
     )
 
-    // THE ARITHMETIC THAT IS EASY TO APPLY TWICE. A race is added on top of a
+    // THE ARITHMETIC THAT IS EASY TO APPLY TWICE. A species is added on top of a
     // library sheet that was written without one in mind, so a resolver that
     // applied it in both the base and the overlay would give this Elf a Dexterity
     // of 19 and nothing on screen would look obviously wrong.
@@ -2824,7 +2838,7 @@ async function main() {
       code,
       dmCode,
       name: 'Hrada Stoneminder',
-      sheet: presetSheet({ race: 'dwarf', classKey: 'rogue', subclassKey: 'thief', level: 3 }),
+      sheet: presetSheet({ species: 'dwarf', classKey: 'rogue', subclassKey: 'thief', level: 3 }),
     })
     createdCharacters.push(dwarf.characterId)
     // Named through the constant because section 25 reserves this one and scans a
@@ -2834,7 +2848,7 @@ async function main() {
       code,
       dmCode,
       name: RESERVED_NAME,
-      sheet: presetSheet({ race: 'goliath', classKey: 'rogue' }),
+      sheet: presetSheet({ species: 'goliath', classKey: 'rogue' }),
     })
     createdCharacters.push(goliath.characterId)
 
@@ -2880,7 +2894,7 @@ async function main() {
         code,
         dmCode,
         characterId: elf.characterId,
-        sheet: presetSheet({ race: 'elf', classKey: 'rogue', subclassKey: 'thief', level: 2 }),
+        sheet: presetSheet({ species: 'elf', classKey: 'rogue', subclassKey: 'thief', level: 2 }),
       })
       .then(
         () => null,
@@ -2897,7 +2911,7 @@ async function main() {
       code,
       dmCode,
       characterId: elf.characterId,
-      sheet: presetSheet({ race: 'elf', classKey: 'rogue', subclassKey: 'thief', level: 3 }),
+      sheet: presetSheet({ species: 'elf', classKey: 'rogue', subclassKey: 'thief', level: 3 }),
     })
     const atThreeThief = await readSheet(elf.characterId)
     check(
@@ -2949,7 +2963,7 @@ async function main() {
       dmCode,
       characterId: elf.characterId,
       sheet: presetSheet({
-        race: 'elf',
+        species: 'elf',
         classKey: 'rogue',
         subclassKey: 'thief',
         level: 4,
@@ -2995,7 +3009,7 @@ async function main() {
       code,
       dmCode,
       name: 'Bramblefoot Tosscobble',
-      sheet: presetSheet({ race: 'halfling', classKey: 'rogue', locked: true }),
+      sheet: presetSheet({ species: 'halfling', classKey: 'rogue', locked: true }),
     })
     createdCharacters.push(bramble.characterId)
     await client.mutation('characters:claim', {
@@ -3004,12 +3018,12 @@ async function main() {
       characterId: bramble.characterId,
     })
 
-    await refuses('characters:updateSheet refused a locked race change by the seat holding it', () =>
+    await refuses('characters:updateSheet refused a locked species change by the seat holding it', () =>
       client.mutation('characters:updateSheet', {
         code,
         playerId: seat.playerId,
         characterId: bramble.characterId,
-        sheet: presetSheet({ race: 'elf', classKey: 'rogue', locked: true }),
+        sheet: presetSheet({ species: 'elf', classKey: 'rogue', locked: true }),
       }),
     )
     await client.mutation('characters:setUnlocked', {
@@ -3022,14 +3036,14 @@ async function main() {
       code,
       playerId: seat.playerId,
       characterId: bramble.characterId,
-      sheet: presetSheet({ race: 'elf', classKey: 'rogue', locked: false }),
+      sheet: presetSheet({ species: 'elf', classKey: 'rogue', locked: false }),
     })
     const unlocked = await readSheet(bramble.characterId)
     check(
       'characters:setUnlocked let the same change straight through',
-      unlocked && unlocked.preset && unlocked.preset.race === 'elf' && !unlocked.preset.locked,
+      unlocked && unlocked.preset && unlocked.preset.species === 'elf' && !unlocked.preset.locked,
       unlocked && unlocked.preset
-        ? `race ${unlocked.preset.race}, locked ${unlocked.preset.locked}`
+        ? `species ${unlocked.preset.species}, locked ${unlocked.preset.locked}`
         : 'no sheet came back',
     )
     await refuses('characters:setLevel refused a level without the DM code', () =>
@@ -3048,7 +3062,7 @@ async function main() {
       code,
       dmCode,
       name: 'Aldis Fenwake',
-      sheet: presetSheet({ race: 'human', classKey: 'fighter' }),
+      sheet: presetSheet({ species: 'human', classKey: 'fighter' }),
     })
     createdCharacters.push(human.characterId)
 
@@ -3203,7 +3217,7 @@ async function main() {
     }
 
     // 16. Selections the deployment has to refuse. The first two are the argument
-    // validator's — a race and a class are unions of literals, so a key that is not
+    // validator's — a species and a class are unions of literals, so a key that is not
     // one of the eight never reaches a handler. The rest are `storedSheetProblem`'s,
     // and every one of them is a value convex-test would store without a word.
     //
@@ -3223,7 +3237,7 @@ async function main() {
         code,
         dmCode,
         name: 'Uninvited Half-Orc',
-        sheet: presetSheet({ race: 'half-orc', classKey: 'rogue' }),
+        sheet: presetSheet({ species: 'half-orc', classKey: 'rogue' }),
       }),
     )
     await refuses('characters:create refused a class that is not one of the eight', () =>
@@ -3231,7 +3245,7 @@ async function main() {
         code,
         dmCode,
         name: 'Uninvited Artificer',
-        sheet: presetSheet({ race: 'human', classKey: 'artificer' }),
+        sheet: presetSheet({ species: 'human', classKey: 'artificer' }),
       }),
     )
     await refuses('characters:create refused an archetype belonging to another class', () =>
@@ -3240,7 +3254,7 @@ async function main() {
         dmCode,
         name: 'Champion Rogue',
         sheet: presetSheet({
-          race: 'human',
+          species: 'human',
           classKey: 'rogue',
           subclassKey: 'champion',
           level: 2,
@@ -3252,7 +3266,7 @@ async function main() {
         code,
         dmCode,
         name: 'Premature Thief',
-        sheet: presetSheet({ race: 'human', classKey: 'rogue', subclassKey: 'thief', level: 1 }),
+        sheet: presetSheet({ species: 'human', classKey: 'rogue', subclassKey: 'thief', level: 1 }),
       }),
     )
     // NaN and Infinity are perfectly ordinary float64s, so both survive the argument
@@ -3281,7 +3295,7 @@ async function main() {
         dmCode,
         characterId: elf.characterId,
         sheet: presetSheet({
-          race: 'elf',
+          species: 'elf',
           classKey: 'rogue',
           overrides: {
             armourClass: DM_ARMOUR_CLASS,
@@ -4003,7 +4017,7 @@ async function main() {
         code,
         dmCode,
         characterId: wolf.characterId,
-        sheet: presetSheet({ race: 'human', classKey: 'fighter' }),
+        sheet: presetSheet({ species: 'human', classKey: 'fighter' }),
       }),
     )
     await refuses('characters:claim refused a creature to a seat', () =>

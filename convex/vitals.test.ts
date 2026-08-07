@@ -1468,7 +1468,7 @@ describe('the advisory ceiling is real, and is not more than claimed', () => {
 // ceremony. Milestone 3's guarantee rested on a stored `sheet` field whose `kind`
 // decided everything. Milestone 4 puts a *resolver* between the document and every
 // consumer of it: `maySeeCharacter`, `visibleVitals` and the health bands all now
-// read a sheet that was built out of a static library, a race and the DM's
+// read a sheet that was built out of a static library, a species and the DM's
 // overrides a moment ago rather than one that was read off the row.
 //
 // That is exactly the sort of change that quietly moves a discriminator. So the
@@ -1479,7 +1479,7 @@ describe('the advisory ceiling is real, and is not more than claimed', () => {
 /** The selections a premade character stores. A level 3 Human Fighter by default. */
 function presetSheet(
   overrides: Partial<{
-    race:
+    species:
       | 'dragonborn'
       | 'dwarf'
       | 'elf'
@@ -1509,7 +1509,7 @@ function presetSheet(
 ) {
   return {
     kind: 'preset' as const,
-    race: 'human' as const,
+    species: 'human' as const,
     classKey: 'fighter' as const,
     subclassKey: 'champion' as string | null,
     level: 3,
@@ -1524,7 +1524,7 @@ const PRESET_HIT_DICE = 3
 const PRESET_NAME = 'Brannoc Emberhand'
 /**
  * The same character's two published sheet numbers, and neither is stored anywhere: a
- * `preset` document holds a race, a class, a subclass and a level. Both come out of
+ * `preset` document holds a species, a class, a subclass and a level. Both come out of
  * `resolveSheet`, which is what makes them worth asserting on a *premade* hero rather than
  * only on a hand-built one — the passive perception is derived from ability scores the
  * library supplied, through a chain that never touches the stored document.
@@ -1570,7 +1570,7 @@ describe('Milestone 4: resolution runs server-side, and Milestone 3’s guarante
     const { characterId: alsoHero } = await t.mutation(api.characters.create, {
       code,
       name: 'Second Opinion',
-      sheet: presetSheet({ race: 'dwarf' }),
+      sheet: presetSheet({ species: 'dwarf' }),
       dmCode,
     })
     const asPlayer = await t.query(api.characters.list, { code })
@@ -1682,12 +1682,12 @@ describe('Milestone 4: resolution runs server-side, and Milestone 3’s guarante
       code: fixture.code,
       dmCode: fixture.dmCode,
       name: PRESET_NAME,
-      sheet: presetSheet({ race: 'goliath', classKey: 'wizard', subclassKey: 'evocation' }),
+      sheet: presetSheet({ species: 'goliath', classKey: 'wizard', subclassKey: 'evocation' }),
     })
     await t.mutation(api.characters.create, {
       code: fixture.code,
       name: 'Second Opinion',
-      sheet: presetSheet({ race: 'dwarf', level: 1, subclassKey: null }),
+      sheet: presetSheet({ species: 'dwarf', level: 1, subclassKey: null }),
       dmCode: fixture.dmCode,
     })
 

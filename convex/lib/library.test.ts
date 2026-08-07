@@ -114,12 +114,12 @@ function entriesOf(sheet: LibrarySheet): LibraryEntry[] {
 /** The selections that produce this sheet, for the species and lineage given. */
 function preset(
   at: Coordinate,
-  race: PresetSheet['race'],
+  speciesKey: PresetSheet['species'],
   lineageKey: string | null = null,
 ): PresetSheet {
   return {
     kind: 'preset',
-    race,
+    species: speciesKey,
     lineageKey,
     classKey: at.classKey,
     subclassKey: at.subclassKey,
@@ -130,10 +130,10 @@ function preset(
 
 function resolvedAt(
   at: Coordinate,
-  race: PresetSheet['race'] = 'human',
+  speciesKey: PresetSheet['species'] = 'human',
   lineageKey: string | null = null,
 ): PcSheet {
-  return resolveSheet({ sheet: preset(at, race, lineageKey) }) as PcSheet
+  return resolveSheet({ sheet: preset(at, speciesKey, lineageKey) }) as PcSheet
 }
 
 /** Only the lines the library contributed — the resolver prefixes those `lib:`. */
@@ -148,11 +148,11 @@ function libraryEntries(sheet: PcSheet): SheetEntry[] {
  * entries, so the widest sheet the application can produce is a class's fullest level
  * plus the busiest species-and-lineage pair. Nothing below may assume which pair that is.
  */
-const ORIGINS: { race: PresetSheet['race']; lineageKey: string | null; label: string }[] =
+const ORIGINS: { speciesKey: PresetSheet['species']; lineageKey: string | null; label: string }[] =
   SPECIES.flatMap((entry) => [
-    { race: entry.key, lineageKey: null, label: entry.key },
+    { speciesKey: entry.key, lineageKey: null, label: entry.key },
     ...(entry.lineages ?? []).map((lineage) => ({
-      race: entry.key,
+      speciesKey: entry.key,
       lineageKey: lineage.key,
       label: `${entry.key}/${lineage.key}`,
     })),
@@ -1150,9 +1150,9 @@ describe('every combination resolves to a storable sheet', () => {
   test('for every class, archetype, level and species', () => {
     const problems: string[] = []
     for (const at of SHEETS) {
-      for (const race of SPECIES_KEYS) {
-        const problem = sheetProblem(resolvedAt(at, race))
-        if (problem) problems.push(`${at.label} + ${race}: ${problem.path} — ${problem.message}`)
+      for (const speciesKey of SPECIES_KEYS) {
+        const problem = sheetProblem(resolvedAt(at, speciesKey))
+        if (problem) problems.push(`${at.label} + ${speciesKey}: ${problem.path} — ${problem.message}`)
       }
     }
     expect(problems).toEqual([])
@@ -1162,8 +1162,8 @@ describe('every combination resolves to a storable sheet', () => {
   test('and there really are 540 of them, all player characters', () => {
     let count = 0
     for (const at of SHEETS) {
-      for (const race of SPECIES_KEYS) {
-        expect(resolvedAt(at, race).kind).toBe('pc')
+      for (const speciesKey of SPECIES_KEYS) {
+        expect(resolvedAt(at, speciesKey).kind).toBe('pc')
         count += 1
       }
     }
@@ -1192,7 +1192,7 @@ describe('every combination resolves to a storable sheet', () => {
     let widest = 0
     for (const at of SHEETS) {
       for (const origin of ORIGINS) {
-        const resolved = resolvedAt(at, origin.race, origin.lineageKey)
+        const resolved = resolvedAt(at, origin.speciesKey, origin.lineageKey)
         widest = Math.max(widest, resolved.feats.length, resolved.spells.length)
         if (resolved.feats.length > MAX_SHEET_ENTRIES) {
           over.push(`${at.label} + ${origin.label}: ${resolved.feats.length} feats`)
@@ -1218,7 +1218,7 @@ describe('every combination resolves to a storable sheet', () => {
     const problems: string[] = []
     for (const at of SHEETS) {
       for (const origin of ORIGINS) {
-        const problem = sheetProblem(resolvedAt(at, origin.race, origin.lineageKey))
+        const problem = sheetProblem(resolvedAt(at, origin.speciesKey, origin.lineageKey))
         if (problem) {
           problems.push(`${at.label} + ${origin.label}: ${problem.path} — ${problem.message}`)
         }
