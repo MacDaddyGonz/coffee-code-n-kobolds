@@ -39,6 +39,9 @@ function exact(overrides: Partial<Extract<PublicVitals, { kind: 'exact' }>> = {}
     deathSaveFailures: 0,
     heroicInspiration: false,
     spentUses: [],
+    // Landed on this member after this fixture was written, in a branch running
+    // alongside it. Required rather than optional, so the compiler is what noticed.
+    spentSlots: [],
     armourClass: 16,
     passivePerception: 13,
     ...overrides,

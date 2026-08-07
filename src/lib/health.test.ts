@@ -17,6 +17,9 @@ function exact(current: number, max: number, temporaryHp = 0): PublicVitals {
     deathSaveFailures: 0,
     heroicInspiration: false,
     spentUses: [],
+    // Landed on this member after this fixture was written, in a branch running
+    // alongside it. Required rather than optional, so the compiler is what noticed.
+    spentSlots: [],
     armourClass: 14,
     passivePerception: 11,
   }
