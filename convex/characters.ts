@@ -34,8 +34,11 @@ import {
   // the one a reader searching for `characters.setReserved` will be looking for.
   setReserved as writeReserved,
   visibleVitals,
+  writeDeathSaves,
+  writeHeroicInspiration,
   writeSheet,
   writeSheetRescalingHp,
+  writeTemporaryHp,
 } from './lib/characters'
 import { bestiaryEntry } from './lib/bestiary'
 import { crValidator } from './lib/creatures'
@@ -915,7 +918,9 @@ export const longRest = mutation({
  * ⚠️ **It does not heal and it does not return hit dice** — spending hit dice is what a short
  * rest is *for*. See `shortRest` in lib/characters.ts, where that argument lives, and
  * `REST_LABELS` in lib/rest.ts, which is where both rests' wording comes from so that the
- * button cannot promise something the mutation does not do.
+ * button cannot promise something the mutation does not do. It clears neither the temporary
+ * hit points nor the death-save tally either: both of those end on a **long** rest, which is
+ * where `longRest` wipes them.
  *
  * Beside `longRest` above and available on the same terms and for the same reason: a rest is
  * a thing the party decides on together, and making it DM-only would put the DM in the loop
@@ -1133,6 +1138,160 @@ export const adjustHitDice = mutation({
         ctx,
         character,
         (remaining) => remaining + args.delta,
+      ),
+    }
+  },
+})
+
+/**
+ * Set temporary hit points. The second row of numbers on the sheet, beside the first.
+ *
+ * Absolute rather than a delta, which is the opposite of `adjustHp` next door and is right
+ * for the opposite reason: temporary hit points arrive as *a number a spell or a feature
+ * said*, not as an amount somebody adds to what is there. Two people clicking `−5` on a
+ * goblin should compose; two people granting a ward should not sum into one.
+ *
+ * ⚠️ **THEY ARE NOT HEALING AND THEY ARE NOT PART OF THE MAXIMUM, so they have their own
+ * clamp: a floor of nought and a ceiling of `MAX_TEMPORARY_HP` — never the character's
+ * `max`.** A character on 3 of 8 hit points may legitimately be holding 20 temporary, and
+ * a character at full health with fifteen of them is an ordinary state. "Clamp it to max
+ * like everything else" is the obvious wrong edit and it is unwriteable on purpose:
+ * `clampTemporaryHp` has nowhere to pass a maximum. See its docblock in lib/sheet.ts and
+ * `writeTemporaryHp`'s in lib/characters.ts.
+ *
+ * ⚠️ **It stores what it is told, and does NOT take the maximum against the stored value.**
+ * 5e's rule is that temporary hit points do not stack — you take the higher of the two —
+ * and this application **announces and counts** while the table **adjudicates** (CLAUDE.md,
+ * *Rules scope*). Folding that rule in here would make the number on screen disagree with
+ * the number a person typed, and would leave a mistake uncorrectable downwards. A person
+ * picks the larger of two numbers, exactly as they would with a pencil.
+ *
+ * Non-finite is refused rather than repaired, and a fraction is rounded rather than
+ * refused — `setHp`'s split, for `clampHp`'s stated reason: a fraction can only arrive from
+ * a client bug and normalising is what this application does with a value it can repair,
+ * whereas `NaN` poisons every comparison made against it afterwards.
+ */
+export const setTemporaryHp = mutation({
+  args: {
+    code: v.string(),
+    characterId: v.id('characters'),
+    temporaryHp: v.number(),
+    playerId: v.optional(v.id('players')),
+    dmCode: v.optional(v.string()),
+  },
+  returns: v.object({ temporaryHp: v.number() }),
+  handler: async (ctx, args) => {
+    if (!Number.isFinite(args.temporaryHp)) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message: 'That is not a number of temporary hit points.',
+      })
+    }
+
+    const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
+    const character = await requireEditableCharacter(
+      ctx,
+      game,
+      args.characterId,
+      isDm,
+      args.playerId,
+      { allowControl: true },
+    )
+
+    return { temporaryHp: await writeTemporaryHp(ctx, character, args.temporaryHp) }
+  },
+})
+
+/**
+ * Set the death-save tally: how many of each column are ticked, clamped to 0–3.
+ *
+ * ⚠️ **NOTHING HERE KILLS ANYBODY, and this is where a reader will most want to make it.**
+ * Three failures is three pips filled in. No hit point moves, no marker is set, no feed
+ * line is written, no band is recomputed and no heal is refused — CLAUDE.md's *Rules scope*
+ * names *"no death save kills a character"* as a standing exclusion, and putting death
+ * saving throws in at all reversed a stated *never* on precisely the grounds that the
+ * counter decides nothing (ADR 0016, and `deathSavesOf` in lib/characters.ts). Adding the
+ * three lines that make the third failure do something is a spec amendment and an ADR, not
+ * a branch.
+ *
+ * **Both columns in one call**, because they are one tally on one row of boxes. Two
+ * mutations would let a client write half of it, and a sheet showing this round's successes
+ * beside last round's failures is a sheet somebody acts on.
+ *
+ * The clamp rounds and bounds rather than refusing, exactly as `setHp` does; only the
+ * non-finite values are refused outright, because `NaN` is a perfectly valid float64 and
+ * would poison every comparison made against it afterwards.
+ */
+export const setDeathSaves = mutation({
+  args: {
+    code: v.string(),
+    characterId: v.id('characters'),
+    successes: v.number(),
+    failures: v.number(),
+    playerId: v.optional(v.id('players')),
+    dmCode: v.optional(v.string()),
+  },
+  returns: v.object({ successes: v.number(), failures: v.number() }),
+  handler: async (ctx, args) => {
+    if (!Number.isFinite(args.successes) || !Number.isFinite(args.failures)) {
+      throw new ConvexError({
+        kind: 'BadInput',
+        message: 'That is not a number of death saving throws.',
+      })
+    }
+
+    const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
+    const character = await requireEditableCharacter(
+      ctx,
+      game,
+      args.characterId,
+      isDm,
+      args.playerId,
+      { allowControl: true },
+    )
+
+    return await writeDeathSaves(ctx, character, args.successes, args.failures)
+  },
+})
+
+/**
+ * Tick or clear Heroic Inspiration. A boolean, and the whole of the feature.
+ *
+ * Nothing grants it, nothing spends it automatically, and nothing re-rolls anything: no die
+ * in this application consults the flag, and the 2024 rule that lets a character reroll one
+ * is the table's to apply, exactly as a condition pip's effect is. The 2024 Human regains
+ * it on a long rest, which is why `longRest` deliberately leaves it alone — that is a
+ * species trait rather than a property of resting, and granting it there would invent a
+ * rule for the eight species that do not have it.
+ *
+ * No shape check ahead of the gate, unlike the two above: a boolean has no `NaN` and no
+ * out-of-range value, so Convex's own argument validator is the whole of the normalisation.
+ */
+export const setHeroicInspiration = mutation({
+  args: {
+    code: v.string(),
+    characterId: v.id('characters'),
+    heroicInspiration: v.boolean(),
+    playerId: v.optional(v.id('players')),
+    dmCode: v.optional(v.string()),
+  },
+  returns: v.object({ heroicInspiration: v.boolean() }),
+  handler: async (ctx, args) => {
+    const { game, isDm } = await resolveDmAccess(ctx, args.code, args.dmCode)
+    const character = await requireEditableCharacter(
+      ctx,
+      game,
+      args.characterId,
+      isDm,
+      args.playerId,
+      { allowControl: true },
+    )
+
+    return {
+      heroicInspiration: await writeHeroicInspiration(
+        ctx,
+        character,
+        args.heroicInspiration,
       ),
     }
   },
