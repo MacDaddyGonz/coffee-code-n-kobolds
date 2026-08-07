@@ -539,35 +539,60 @@ const ROGUE_SKILLS = {
   deception: true,
   intimidation: false,
   performance: false,
-  persuasion: true,
+  persuasion: false,
 }
 const ROGUE = {
   base: {
-    abilities: { str: 8, dex: 15, con: 14, int: 13, wis: 12, cha: 10 },
+    /**
+     * ⚠️ **The standard array WITH THE BACKGROUND ALREADY IN IT**, which is the sharpest
+     * single consequence of the 2024 conversion visible from outside.
+     *
+     * No 2024 species touches an ability score — the spread comes from a *background*, which
+     * requirements.md excludes and which stays excluded, so its numbers are absorbed into the
+     * premade sheet. The Rogue is a Criminal: +2 Dexterity and +1 Constitution on 15/14, giving
+     * 17 and 15 here.
+     *
+     * So the Elf check further down asserts these numbers arrive **unchanged**, where it used
+     * to assert `base.dex + 2`. That reads as a weaker test and is the stronger one: the
+     * library's number reaching the sheet untouched is *"allocated without considering
+     * species\"* having become true by construction rather than by discipline.
+     */
+    abilities: { str: 8, dex: 17, con: 15, int: 13, wis: 12, cha: 10 },
     armourClass: 14,
     maxHp: 10,
     hitDice: { count: 1, faces: 8 },
-    featCount: 5,
+    featCount: 8,
     /**
      * The Rogue's first weapon, copied by hand out of `convex/lib/library/rogue.ts`.
      *
-     * ⚠️ **This is the only thing that proves the library's new field survives the two
-     * copies resolution makes of every entry** — `withId`'s spread in lib/resolve.ts,
-     * and the race overlay's rebuild of the feat list on top of it. A `toHit` dropped
-     * by either would leave a weapon on a hero's sheet that announces an attack and
-     * has nothing to roll for it, and no other check in this script would notice: the
-     * feat *count* would still be right.
+     * ⚠️ **This is the only thing that proves the library's fields survive the two copies
+     * resolution makes of every entry** — `withId`'s spread in lib/resolve.ts, and the species
+     * overlay rebuilding the feat list on top of it. A `toHit` dropped by either would leave a
+     * weapon on a sheet that announces an attack and has nothing to roll for it, and no other
+     * check here would notice: the feat *count* would still be right.
      *
-     * `1d20+DEX+PROF` and not `1d20+STR+PROF`, which is the detail that makes it worth
-     * copying rather than deriving. A rapier is a finesse weapon aimed with Dexterity,
-     * and `DEX` is the one modifier token containing a `D` — the token `normaliseRoll`
-     * has already destroyed once.
+     * `1d20+DEX+PROF` and not `1d20+STR+PROF`, which is the detail that makes it worth copying
+     * rather than deriving: a shortsword is a finesse weapon aimed with Dexterity, and `DEX` is
+     * the one modifier token containing a `D` — the token `normaliseRoll` has already destroyed
+     * once.
+     *
+     * ⚠️ **`mastery` is carried too, and it is a WORD.** `vex` is on the weapon because the SRD
+     * prints it there; nothing in `convex/` reads it, `masteryGuard.test.ts` is what makes that
+     * a promise rather than an intention, and this asserts it survives the same two copies.
      */
-    weapon: { name: 'Rapier', roll: '1d8+DEX', toHit: '1d20+DEX+PROF' },
+    weapon: { name: 'Shortsword', roll: '1d6+DEX', toHit: '1d20+DEX+PROF', mastery: 'vex' },
   },
-  thief2: { maxHp: 17, hitDice: { count: 2, faces: 8 }, featCount: 7 },
-  thief3: { maxHp: 24, hitDice: { count: 3, faces: 8 }, featCount: 7 },
-  thief4: { maxHp: 31, hitDice: { count: 4, faces: 8 }, featCount: 8 },
+  /**
+   * ⚠️ **Levels 1 and 2 are the shared base now, and 3 to 5 are the one archetype.** The old
+   * shape was one base sheet plus two paths covering 2 to 5, because 2014 chose a subclass at
+   * level 2. The SRD is unanimous that 2024 chooses at 3, so `thief2` below is a *base* sheet
+   * with no archetype in it at all — which is exactly what the 'held the level 1 sheet until
+   * one was chosen\" check downstream is about.
+   */
+  base2: { maxHp: 17, hitDice: { count: 2, faces: 8 }, featCount: 9 },
+  thief3: { maxHp: 24, hitDice: { count: 3, faces: 8 }, featCount: 12 },
+  thief4: { maxHp: 31, hitDice: { count: 4, faces: 8 }, featCount: 13 },
+  thief5: { maxHp: 38, hitDice: { count: 5, faces: 8 }, featCount: 15 },
 }
 const FIGHTER = {
   base: { maxHp: 12, hitDice: { count: 1, faces: 10 } },
@@ -2834,26 +2859,61 @@ async function main() {
       level: 2,
     })
     const atTwo = await readSheet(elf.characterId)
+
+    // ⚠️ **AN ARCHETYPE AT LEVEL 2 IS NOW REFUSED, and this check used to assert the
+    // opposite.** It read *a level 2 with no archetype held the level 1 sheet until one was
+    // chosen* — which was the 2014 rule and was true of this application for eleven
+    // milestones. 2024 chooses a subclass at level 3 and the SRD is unanimous, which is worth
+    // knowing because 2014 was not.
+    //
+    // So level 2 is a *base* sheet in its own right rather than a level 1 sheet waiting for a
+    // decision, and the interesting assertion is the refusal: `requireUsableSheet` throws
+    // rather than quietly storing a selection the library would ignore. Nothing else in this
+    // script would notice a `SUBCLASS_LEVEL` silently reverting to 2 — the sheet it resolved
+    // would simply be the wrong one, with a plausible number on every line.
+    // Captured inline rather than through `refusalOf`, which is a local defined further down
+    // this function and is in its temporal dead zone here.
+    const earlyArchetype = await client
+      .mutation('characters:updateSheet', {
+        code,
+        dmCode,
+        characterId: elf.characterId,
+        sheet: presetSheet({ race: 'elf', classKey: 'rogue', subclassKey: 'thief', level: 2 }),
+      })
+      .then(
+        () => null,
+        (error) => (error && error.data ? error.data : { kind: String(error.message ?? error) }),
+      )
+
+    await client.mutation('characters:setLevel', {
+      code,
+      dmCode,
+      characterId: elf.characterId,
+      level: 3,
+    })
     await client.mutation('characters:updateSheet', {
       code,
       dmCode,
       characterId: elf.characterId,
-      sheet: presetSheet({ race: 'elf', classKey: 'rogue', subclassKey: 'thief', level: 2 }),
+      sheet: presetSheet({ race: 'elf', classKey: 'rogue', subclassKey: 'thief', level: 3 }),
     })
-    const atTwoThief = await readSheet(elf.characterId)
+    const atThreeThief = await readSheet(elf.characterId)
     check(
-      'a level 2 with no archetype held the level 1 sheet until one was chosen',
+      'level 2 is a sheet of its own, an archetype before level 3 is refused, and level 3 takes one',
       atTwo &&
         atTwo.sheet.level === 2 &&
-        atTwo.sheet.maxHp === ROGUE.base.maxHp &&
-        atTwo.sheet.hitDice.count === ROGUE.base.hitDice.count &&
-        atTwoThief &&
-        atTwoThief.sheet.className === 'Rogue (Thief)' &&
-        atTwoThief.sheet.maxHp === ROGUE.thief2.maxHp &&
-        atTwoThief.sheet.hitDice.count === ROGUE.thief2.hitDice.count &&
-        atTwoThief.sheet.feats.length === ROGUE.thief2.featCount + ELF_TRAIT_ENTRIES,
-      atTwo && atTwoThief
-        ? `undecided ${atTwo.sheet.maxHp} hp, then ${atTwoThief.sheet.maxHp} hp and ${atTwoThief.sheet.feats.length} feats as a ${atTwoThief.sheet.className}`
+        atTwo.sheet.maxHp === ROGUE.base2.maxHp &&
+        atTwo.sheet.hitDice.count === ROGUE.base2.hitDice.count &&
+        atTwo.sheet.className === 'Rogue' &&
+        earlyArchetype !== null &&
+        earlyArchetype.kind === 'BadInput' &&
+        atThreeThief &&
+        atThreeThief.sheet.className === 'Rogue (Thief)' &&
+        atThreeThief.sheet.maxHp === ROGUE.thief3.maxHp &&
+        atThreeThief.sheet.hitDice.count === ROGUE.thief3.hitDice.count &&
+        atThreeThief.sheet.feats.length === ROGUE.thief3.featCount + ELF_TRAIT_ENTRIES,
+      atTwo && atThreeThief
+        ? `level 2 as a ${atTwo.sheet.className} on ${atTwo.sheet.maxHp} hp, refused with ${JSON.stringify(earlyArchetype)}, then ${atThreeThief.sheet.maxHp} hp and ${atThreeThief.sheet.feats.length} feats as a ${atThreeThief.sheet.className}`
         : 'no sheet came back',
     )
 
@@ -2867,12 +2927,14 @@ async function main() {
     check(
       'setLevel alone moved hit points, hit dice and the feat list — no sheet was sent',
       atFour &&
-        atTwoThief &&
+        atThreeThief &&
         atFour.sheet.maxHp === ROGUE.thief4.maxHp &&
-        atFour.sheet.maxHp !== atTwoThief.sheet.maxHp &&
+        // Genuinely moved, rather than the level 3 sheet read twice.
+        atFour.sheet.maxHp !== atThreeThief.sheet.maxHp &&
         atFour.sheet.hitDice.count === ROGUE.thief4.hitDice.count &&
         atFour.sheet.feats.length === ROGUE.thief4.featCount + ELF_TRAIT_ENTRIES &&
-        atFour.sheet.feats.some((entry) => entry.name === 'Uncanny Dodge'),
+        // Level 4 is where a Rogue's improvement lands — Uncanny Dodge is level 5.
+        atFour.sheet.feats.some((entry) => entry.name === 'Ability Score Improvement'),
       atFour
         ? `${atFour.sheet.maxHp} hp, ${atFour.sheet.hitDice.count} hit dice, ${atFour.sheet.feats.length} feats`
         : 'no sheet came back',
