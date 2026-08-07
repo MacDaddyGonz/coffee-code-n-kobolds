@@ -1091,25 +1091,20 @@ describe('the stored species union carries what the narrow one will drop', () =>
 })
 
 /**
- * ⚠️ **The accessor that crosses the rename, and the one place `species` and `race` are ever
- * both read.** Both are optional on the validator while the sweep runs, so it has to answer
- * for three shapes: the old field alone, the new one alone, and both where a run stopped half
- * way. `species` winning is the direction that makes the backfill idempotent and
- * interruptible — the other order would make the migration's own writes invisible until the
- * narrowing deleted `race`.
+ * ⚠️ **This block used to be called *speciesKeyOf reads one fact out of two fields***, and
+ * the test beside this one proved the new field beat the old one — the direction that made
+ * the backfill idempotent and interruptible, since a run that stopped half way left half the
+ * rows answering from each and both right.
  *
- * The fourth shape, neither field, is deliberately **not** handled here: `''` exists to be
- * refused by `storedSheetProblem` rather than to be a state anything downstream thinks about.
+ * The migration has run and `race` is gone from the validator, so there is no second field
+ * for either claim to be about. The accessor is kept rather than inlined at its call sites
+ * because a rename is not the last thing that will happen to this field, and a `preset`
+ * reaching for `.species` directly is one more place the next transition has to find.
  */
-describe('speciesKeyOf reads one fact out of two fields', () => {
-  test('the stored key answers, whichever field holds it', () => {
+describe('speciesKeyOf reads the species off a stored preset', () => {
+  test('the stored key answers', () => {
     expect(speciesKeyOf(preset({ species: 'dwarf' }))).toBe('dwarf')
-    expect(speciesKeyOf(preset({ species: undefined, race: 'dwarf' }))).toBe('dwarf')
-    // The direction that makes the backfill interruptible.
-    expect(speciesKeyOf(preset({ race: 'dwarf', species: 'elf' }))).toBe('elf')
-    // And the fourth shape answers the empty string, which `storedSheetProblem` refuses on
-    // write rather than anything downstream having to handle.
-    expect(speciesKeyOf(preset({ species: undefined }))).toBe('')
+    expect(speciesKeyOf(preset({ species: 'elf' }))).toBe('elf')
   })
 
   test('a retired key comes back as itself rather than being repaired', () => {

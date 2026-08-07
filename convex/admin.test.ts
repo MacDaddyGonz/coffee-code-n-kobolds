@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from 'convex-test'
+import { defineSchema } from 'convex/server'
 import { describe, expect, test } from 'vitest'
 
 import { api, internal } from './_generated/api'
@@ -507,11 +508,34 @@ describe('admin.listByPrefix', () => {
  * ⚠️ **Every fixture is inserted through `ctx.db` rather than through a mutation, and the
  * awkwardness is the job rather than a nuisance.** These are rows as a deployment holds
  * them — a `race` with no `species`, thirteen skill flags, a `spentPerRest` — and no
- * mutation in the application produces one any more. They still *validate*, because this is
- * the wide half of the transition and the schema is deliberately wide enough to hold both
- * the shapes the sweep reads and the shapes it writes. The narrowing commit is what takes
- * that away, and it is what forces this block to relax the harness.
+ * mutation in the application produces one any more. There must not be one: a validator
+ * that still accepted a `race` would mean the narrowing had not happened.
  */
+
+/**
+ * The real schema with **validation switched off**, and nothing else different.
+ *
+ * ⚠️ **The fixtures below are rows the schema no longer describes, which is the entire
+ * reason this sweep exists — so a harness that validated them could not hold one.**
+ * `convex-test` applies the schema on `ctx.db.insert`, so `insertLegacy` writing a `race`,
+ * thirteen skill flags or a `spentPerRest` is refused outright against `schema`. **It was
+ * not, one commit ago**: while the schema was still wide these fixtures validated, and it
+ * is the narrowing that made this necessary.
+ *
+ * Built from `schema.tables` rather than re-declared, deliberately: a hand-written second
+ * schema is a second thing to keep in step, and one that drifted would silently stop
+ * exercising the tables and indexes the migration actually reads. Every index, every other
+ * table and every other validator is the same object.
+ *
+ * ⚠️ **It is used by this block alone.** `harness()` above still validates, so the purge
+ * suite and every other suite in the repository keep the check that a fixture is a
+ * document the application could really have written.
+ */
+const legacySchema = defineSchema(schema.tables, { schemaValidation: false })
+
+function legacyHarness() {
+  return convexTest(legacySchema, modules)
+}
 
 /** The thirteen skill flags a `pc` sheet carried before the 2024 conversion. */
 const THIRTEEN_SKILLS = {
@@ -658,7 +682,7 @@ const NOTHING = {
 
 describe('admin.listUnmigrated', () => {
   test('names a game with unswept documents and counts each kind of change', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'The Undercroft')
     await insertLegacy(t, game.gameId, 'Seraphine', legacyPreset())
     await insertLegacy(t, game.gameId, 'Thorn', legacyPc())
@@ -679,7 +703,7 @@ describe('admin.listUnmigrated', () => {
   })
 
   test('a game with nothing to do is absent rather than listed with six zeroes', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'Already Swept')
     // Built through the real mutation, so it is exactly what a premade character created
     // today looks like: a `species`, eighteen flags, and no legacy array.
@@ -727,7 +751,7 @@ describe('admin.listUnmigrated', () => {
    * operator has to guess a value for is its own hazard.
    */
   test('a blank hero created today is pinned too, because absent means the same thing', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'The Window')
     await t.mutation(api.characters.create, {
       code: game.code,
@@ -750,7 +774,7 @@ describe('admin.listUnmigrated', () => {
    * is no edit to it that could start writing.
    */
   test('listing a game changes nothing about it, and the real run then does', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'Rehearsal')
     await insertLegacy(t, game.gameId, 'Seraphine', legacyPreset())
     await insertLegacy(t, game.gameId, 'Thorn', legacyPc())
@@ -770,7 +794,7 @@ describe('admin.listUnmigrated', () => {
 
 describe('admin.migrateGame', () => {
   test('folds race into species and drops the old field', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'The Rename')
     const characterId = await insertLegacy(t, game.gameId, 'Seraphine', legacyPreset())
 
@@ -788,7 +812,7 @@ describe('admin.migrateGame', () => {
   })
 
   test('the new field wins when a half-finished pass left both', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'Interrupted')
     const characterId = await insertLegacy(
       t,
@@ -815,7 +839,7 @@ describe('admin.migrateGame', () => {
    * schema and hand somebody a different character.
    */
   test('a half-orc keeps its key through the sweep rather than being remapped', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'The Retired Species')
     const characterId = await insertLegacy(
       t,
@@ -841,7 +865,7 @@ describe('admin.migrateGame', () => {
    * builder refuses to save it and only the DM can unlock.
    */
   test('a retired archetype is cleared and the sheet unlocked', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'The Retired Archetype')
     const characterId = await insertLegacy(
       t,
@@ -870,7 +894,7 @@ describe('admin.migrateGame', () => {
    * checking whether the sweep covers *their* stuck character will look for this sentence.
    */
   test('an archetype chosen before level 3 is cleared and the sheet unlocked', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'The Early Archetype')
     const characterId = await insertLegacy(
       t,
@@ -893,7 +917,7 @@ describe('admin.migrateGame', () => {
   })
 
   test('an archetype that still resolves is left alone, lock included', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'The Surviving Archetype')
     const characterId = await insertLegacy(
       t,
@@ -913,7 +937,7 @@ describe('admin.migrateGame', () => {
   })
 
   test('back-fills the five 2024 skill flags on a hand-built hero', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'The Skills')
     const characterId = await insertLegacy(t, game.gameId, 'Thorn', legacyPc())
 
@@ -941,7 +965,7 @@ describe('admin.migrateGame', () => {
    * obvious reason why.
    */
   test('back-fills the five inside a preset override diff too', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'The Override Diff')
     const characterId = await insertLegacy(
       t,
@@ -973,7 +997,7 @@ describe('admin.migrateGame', () => {
    * flipping the constant re-resolves those correctly, Goliaths and Wood Elves included.
    */
   test('pins a hand-built sheet to the speed it already meant, and leaves a preset alone', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'The Speed Pin')
     const hero = await insertLegacy(t, game.gameId, 'Thorn', legacyPc())
     const goblin = await insertLegacy(t, game.gameId, 'Goblin', legacyNpc())
@@ -1003,7 +1027,7 @@ describe('admin.migrateGame', () => {
   })
 
   test('a sheet that already carries a speed is not repinned', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'The Fast Goblin')
     const characterId = await insertLegacy(t, game.gameId, 'Worg', legacyNpc({ speed: 50 }))
 
@@ -1018,7 +1042,7 @@ describe('admin.migrateGame', () => {
    * client's render order does not jump on the day the sweep runs.
    */
   test('folds the legacy per-rest array into the counted one and removes the field', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'The Spent Uses')
     const characterId = await insertLegacy(t, game.gameId, 'Grukk', legacyNpc({ speed: 30 }), {
       spentPerRest: ['second-wind', 'rage'],
@@ -1040,7 +1064,7 @@ describe('admin.migrateGame', () => {
   })
 
   test('an empty legacy array is removed rather than left, and writes no empty spentUses', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'The Empty Array')
     const characterId = await insertLegacy(t, game.gameId, 'Grukk', legacyNpc({ speed: 30 }), {
       spentPerRest: [],
@@ -1065,7 +1089,7 @@ describe('admin.migrateGame', () => {
    * snapshot is what proves it, `_creationTime` and all.
    */
   test('running it twice writes nothing the second time', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'Twice')
     await insertLegacy(
       t,
@@ -1098,7 +1122,7 @@ describe('admin.migrateGame', () => {
   })
 
   test('leaves a second game in the same deployment completely untouched', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const doomed = await makeGame(t, 'Swept')
     const spared = await makeGame(t, 'Spared')
     await insertLegacy(t, doomed.gameId, 'Seraphine', legacyPreset())
@@ -1113,7 +1137,7 @@ describe('admin.migrateGame', () => {
   })
 
   test('refuses an id it cannot find rather than reporting an empty success', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'Gone')
     await t.mutation(internal.admin.purgeGame, { gameId: game.gameId })
 
@@ -1128,7 +1152,7 @@ describe('admin.migrateGame', () => {
    * materialising one would be this sweep inventing a document nobody wrote.
    */
   test('a character with no sheet at all is left without one', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'Milestone One')
     const characterId = await t.run(
       async (ctx) => await ctx.db.insert('characters', { gameId: game.gameId, name: 'Nobody' }),
@@ -1149,7 +1173,7 @@ describe('admin.migrateGame', () => {
    * producible.
    */
   test('a legacy row reads correctly through the payload before the sweep touches it', async () => {
-    const t = harness()
+    const t = legacyHarness()
     const game = await makeGame(t, 'Before The Sweep')
     const characterId = await insertLegacy(t, game.gameId, 'Aldis', legacyNpc({ speed: 30 }), {
       spentPerRest: ['heroic-inspiration'],

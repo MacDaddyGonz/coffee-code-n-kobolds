@@ -456,25 +456,30 @@ export const skillProficienciesValidator = v.object({
   stealth: v.boolean(),
   arcana: v.boolean(),
   investigation: v.boolean(),
-  // ⚠️ **The five 2024 skills, OPTIONAL where the thirteen above are required, and the
-  // difference is this table's age rather than the skills' importance.** `characters` has
-  // held `pc` sheets since Milestone 3 and every one of them carries thirteen booleans, so
-  // making these required fails the schema push — the trap `games.status`, `speed` and
-  // `skillProficiencies` itself each hit in turn. They are read through
-  // `skillProficienciesOf`, which fills them in.
+  // ⚠️ **All eighteen required, and five of them were optional for a milestone.** History,
+  // Nature, Religion, Medicine and Survival are the 2024 additions; `characters` had held
+  // `pc` sheets since Milestone 3 and every one of them carried thirteen booleans, so
+  // requiring these failed the schema push — the trap `games.status`, `speed` and
+  // `skillProficiencies` itself each hit in turn. Widen → migrate → narrow: they were
+  // optional, `planSheetMigration` in lib/migrate.ts back-filled `false` on every stored
+  // `pc` sheet **and inside every `preset.overrides.skillProficiencies`** — the second place
+  // they live and the one a sweep forgets, since it is this same validator — and this is the
+  // narrow half.
   //
-  // `planSheetMigration` in lib/migrate.ts back-fills `false` on every stored `pc` sheet
-  // **and inside every `preset.overrides.skillProficiencies`** — the second place they live
-  // and the one a sweep forgets, since it is this same validator. They become required in
-  // the narrowing commit, which cannot be pushed until that sweep has run everywhere.
-  history: v.optional(v.boolean()),
-  nature: v.optional(v.boolean()),
-  religion: v.optional(v.boolean()),
+  // ⚠️ **`skillProficienciesOf` still spreads over `noSkills()` rather than passing the
+  // stored object through**, which the widening's own note said would collapse here. It does
+  // not, and the reason is the one `normaliseMarkers` gives: a schema push is not atomic, so
+  // a row written by an older deployment can be read by a newer one, and in that window a
+  // thirteen-key object handed back as an eighteen-key type is a type that lies. The spread
+  // costs one object per read and cannot be wrong.
+  history: v.boolean(),
+  nature: v.boolean(),
+  religion: v.boolean(),
   animalHandling: v.boolean(),
   insight: v.boolean(),
   perception: v.boolean(),
-  medicine: v.optional(v.boolean()),
-  survival: v.optional(v.boolean()),
+  medicine: v.boolean(),
+  survival: v.boolean(),
   deception: v.boolean(),
   intimidation: v.boolean(),
   performance: v.boolean(),
@@ -1054,39 +1059,25 @@ export type PresetOverrides = Infer<typeof presetOverridesValidator>
 export const presetSheetValidator = v.object({
   kind: v.literal('preset'),
   /**
-   * ⚠️ **THE OLD NAME, AND IT IS OPTIONAL NOW WHERE IT USED TO BE REQUIRED — WHICH IS THE
-   * ONE SCHEMA CHANGE THE SWEEP ITSELF DEPENDS ON.** Read this before "tidying" it back.
+   * WHICH SPECIES, on the union that admits a retired key. **Required, and the field it
+   * replaced is gone.**
    *
-   * Renaming a stored field in Convex is not an edit: it is a second field, a backfill of
-   * every row in every game, a window in which both are live, and then a narrowing. This
-   * is the middle of that, and the middle has a requirement of its own — **the sweep
-   * writes rows that have `species` and no `race`.** A validator that still *required*
-   * `race` would reject the migration's own writes, so widening it is not a courtesy to
-   * legacy rows, it is what makes `admin.migrateGame` able to write at all.
+   * ⚠️ **This is the narrow half of a completed rename, and the shape of the transition is
+   * worth keeping.** Renaming a stored field in Convex is not an edit: it is a second
+   * field, a backfill of every row in every game, a window in which both are live, and
+   * then a narrowing. So this validator carried `race` (required, narrow) beside `species`
+   * (optional, wide) for a milestone; `speciesKeyOf` in lib/species.ts answered
+   * `species ?? race` throughout, which is what made the backfill idempotent and
+   * interruptible; `planSheetMigration` in lib/migrate.ts wrote the new field and dropped
+   * the old one; and this is the far side.
    *
-   * Both optional therefore admits exactly three shapes, and all three are real:
-   * `race` alone (every row written before the conversion), `species` alone (every row the
-   * sweep has reached, and every character built from this commit onward), and both (a run
-   * that stopped half way). `speciesKeyOf` in lib/species.ts is the one place any of them
-   * is read, and it prefers `species`, which is what makes the backfill idempotent and
-   * interruptible.
-   *
-   * **Neither field is optional because absence is meaningful**, and the fourth shape —
-   * neither present — is refused on write by `storedSheetProblem` below rather than being
-   * a state anything has to handle. `species` becomes **required** and `race` disappears in
-   * the narrowing commit, which cannot be pushed until the sweep has run everywhere.
-   */
-  race: v.optional(storedSpeciesKeyValidator),
-  /**
-   * The new name for the same fact, on the union that admits a retired key.
-   *
-   * ⚠️⚠️ **IT TAKES THE WIDE UNION AND NOT THE NARROW ONE, AND THAT SURVIVES THE
-   * NARROWING.** `storedSpeciesKeyValidator` is ten literals for nine species,
-   * deliberately: a Half-Orc created before this milestone must still be **storable**, or
-   * `npx convex deploy` is refused over a character created months ago — which is how this
-   * was found the first time rather than how it was designed. Narrowing it to
-   * `speciesKeyValidator` is the one narrowing this milestone declined, and lib/species.ts
-   * argues it where the union is spelled.
+   * ⚠️⚠️ **IT TAKES THE WIDE UNION AND NOT THE NARROW ONE, AND THAT IS NOT AN OVERSIGHT
+   * LEFT OVER FROM THE TRANSITION.** `storedSpeciesKeyValidator` is ten literals for nine
+   * species, deliberately: a Half-Orc created before this milestone must still be
+   * **storable**, or `npx convex deploy` is refused over a character created months ago —
+   * which is how this was found the first time rather than how it was designed. Narrowing
+   * this to `speciesKeyValidator` is the one narrowing this milestone declined, and
+   * lib/species.ts argues it where the union is spelled.
    *
    * ⚠️ **Wide here means wide on the WRITE path too, which is handled elsewhere.**
    * `storedSheetValidator` is not only the schema's spelling of this document; it is also
@@ -1099,7 +1090,7 @@ export const presetSheetValidator = v.object({
    * (`storedTokenLayerValidator` in lib/layers.ts has no such problem, because a token's
    * layer arrives through an argument validator of its own.)
    */
-  species: v.optional(storedSpeciesKeyValidator),
+  species: storedSpeciesKeyValidator,
   /**
    * The **sixth pick**: a Wood Elf's lineage, a Rock Gnome's, a Tiefling's fiendish legacy,
    * a Dragonborn's draconic ancestry, a Goliath's giant ancestry. `null` for the species
@@ -1544,12 +1535,12 @@ export function noSkills(): SkillProficiencies {
  * Spread over `noSkills()` rather than `??`-ed field by field, so a nineteenth skill needs no
  * edit here.
  *
- * ⚠️ **It does NOT collapse back to a pass-through when the five become required**, which is
- * the obvious tidy-up and the wrong one. A schema push is not atomic, so a row written by an
- * older deployment can be read by a newer one, and in that window handing back a thirteen-key
- * object typed as eighteen is a type that lies — which is the whole failure this function
- * exists to prevent. `normaliseMarkers` keeps its fail-soft intersection past its own
- * narrowing for the same reason. One object per read is not a price worth arguing about.
+ * ⚠️ **The five ARE required now and this deliberately did not collapse back to the
+ * pass-through it used to be.** The note that stood here said it would; the reason it does
+ * not is the one `normaliseMarkers` gives about a non-atomic schema push — a row written by
+ * an older deployment can be read by a newer one, and in that window handing back a
+ * thirteen-key object typed as eighteen is a type that lies, which is the whole failure this
+ * function exists to prevent. One object per read is not a price worth arguing about.
  */
 export function skillProficienciesOf(sheet: CharacterSheet): SkillProficiencies {
   if (sheet.kind !== 'pc' || sheet.skillProficiencies === undefined) return noSkills()
@@ -2975,14 +2966,14 @@ export function normaliseStoredSheet(sheet: StoredSheet): StoredSheet {
 
   return {
     kind: 'preset',
+    species: sheet.species,
     // **The trap's sixth outing again, on the third of the four stored shapes.** Absent has
-    // to stay absent for all three: materialising a `species` here would make every
-    // character look migrated before the sweep ran, materialising a `race` would put back
-    // the field the sweep exists to remove, and `lineageKey` distinguishes *nobody was
-    // asked* (absent) from *asked, and this species has none* (`null`), which a rebuild
-    // that filled one in would collapse.
-    ...(sheet.race === undefined ? {} : { race: sheet.race }),
-    ...(sheet.species === undefined ? {} : { species: sheet.species }),
+    // to stay absent: `lineageKey` distinguishes *nobody was asked* (absent) from *asked,
+    // and this species has none* (`null`), which a rebuild that filled one in would
+    // collapse. ⚠️ **`species` used to be here under the same conditional, beside a
+    // required `race`** — the widen half of the rename, where materialising a copy would
+    // have made every character look migrated before the migration ran. The migration has
+    // run; the field is required; the conditional is gone with it.
     ...(sheet.lineageKey === undefined
       ? {}
       : { lineageKey: sheet.lineageKey === null ? null : sheet.lineageKey.trim() || null }),
@@ -3248,15 +3239,13 @@ export function storedSheetProblem(sheet: StoredSheet): SheetProblem | null {
   // character holding one opens, keeps its name, its class and its hit points, and cannot be
   // saved again until somebody picks one of the nine.
   //
-  // ⚠️ **Through `speciesKeyOf` and reported at `species`, whichever field the row holds.**
-  // The accessor is what lets one predicate serve all three shapes the validator now admits,
-  // and the path names the field the builder writes rather than the one it may have read —
-  // `messageAtField` matches on it, and a control called `builder-species` cannot be handed
-  // a problem at `race`.
-  //
-  // **It is also what refuses the fourth shape.** A preset carrying neither field makes
-  // `speciesKeyOf` answer the empty string, `species('')` answer null, and this refuse the
-  // write — fail-closed, rather than a state anything downstream has to handle.
+  // ⚠️ **The path moved `race` → `species` with the field**, which is the last thing the
+  // rename owed. `messageAtField` matches on it, so a stale `'race'` here would be a refusal
+  // the builder could not attach to the control that caused it.
+  // Still through `speciesKeyOf` although it now answers one field, on the convention every
+  // optional-or-renamed field on this type keeps: the accessor is the place the next
+  // transition has to find, and a `preset` reaching for `.species` directly is one more
+  // place it would have to look.
   const speciesKey = speciesKeyOf(sheet)
   if (species(speciesKey) === null) {
     return {

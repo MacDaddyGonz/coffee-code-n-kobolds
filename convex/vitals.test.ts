@@ -828,10 +828,6 @@ describe('the vitals union is doing real work', () => {
       // with the sheet because a rest changes them and an edit does not.
       hitDiceCount: 3,
       hitDiceRemaining: 3,
-      // Milestone 4 adds the once-per-long-rest abilities already spent, on the same
-      // row and for the same reason: it is state a rest clears, not something the
-      // character is. Empty here, and empty is the common case.
-      spentPerRest: [],
       // Published to both audiences. See ADR 0014 — the hero's was never a secret; what
       // this row proves is that the badge's number is on the payload rather than derived
       // in the browser, which is the half that matters for a creature.
@@ -853,7 +849,6 @@ describe('the vitals union is doing real work', () => {
         'kind',
         'max',
         'passivePerception',
-        'spentPerRest',
         ...NO_2024_STATE_KEYS,
       ].sort(),
     )
@@ -877,7 +872,6 @@ describe('the vitals union is doing real work', () => {
       max: NPC_MAX_HP,
       hitDiceCount: null,
       hitDiceRemaining: null,
-      spentPerRest: [],
       armourClass: NPC_ARMOUR_CLASS,
       passivePerception: NPC_PASSIVE_PERCEPTION,
       ...NO_2024_STATE,
@@ -948,7 +942,6 @@ describe('the bands a player is told, through characters.vitals', () => {
         // a monster carries no hit dice to spend on a rest it will never take.
         hitDiceCount: null,
         hitDiceRemaining: null,
-        spentPerRest: [],
         ...NO_2024_STATE,
         armourClass: NPC_ARMOUR_CLASS,
         passivePerception: NPC_PASSIVE_PERCEPTION,
@@ -1305,7 +1298,6 @@ describe('refusing an NPC is indistinguishable from it not existing', () => {
       passivePerception: NPC_PASSIVE_PERCEPTION,
       hitDiceCount: null,
       hitDiceRemaining: null,
-      spentPerRest: [],
       ...NO_2024_STATE,
     })
   })
@@ -1468,7 +1460,7 @@ describe('the advisory ceiling is real, and is not more than claimed', () => {
 // ceremony. Milestone 3's guarantee rested on a stored `sheet` field whose `kind`
 // decided everything. Milestone 4 puts a *resolver* between the document and every
 // consumer of it: `maySeeCharacter`, `visibleVitals` and the health bands all now
-// read a sheet that was built out of a static library, a species and the DM's
+// read a sheet that was built out of a static library, a race and the DM's
 // overrides a moment ago rather than one that was read off the row.
 //
 // That is exactly the sort of change that quietly moves a discriminator. So the
@@ -1524,7 +1516,7 @@ const PRESET_HIT_DICE = 3
 const PRESET_NAME = 'Brannoc Emberhand'
 /**
  * The same character's two published sheet numbers, and neither is stored anywhere: a
- * `preset` document holds a species, a class, a subclass and a level. Both come out of
+ * `preset` document holds a race, a class, a subclass and a level. Both come out of
  * `resolveSheet`, which is what makes them worth asserting on a *premade* hero rather than
  * only on a hand-built one — the passive perception is derived from ability scores the
  * library supplied, through a chain that never touches the stored document.
@@ -1643,7 +1635,6 @@ describe('Milestone 4: resolution runs server-side, and Milestone 3’s guarante
       max: PRESET_MAX_HP,
       hitDiceCount: PRESET_HIT_DICE,
       hitDiceRemaining: PRESET_HIT_DICE,
-      spentPerRest: [],
       // The library's, like every other number in this row — which is the same proof one
       // field further: a `preset` document stores no armour class and no ability scores, so
       // both of these had to come off the *resolved* sheet or they would be null.
@@ -2184,7 +2175,6 @@ describe('a granted seat is sent exact hit points, and only that seat', () => {
       // travel as null rather than as a zero somebody could spend.
       hitDiceCount: null,
       hitDiceRemaining: null,
-      spentPerRest: [],
       ...NO_2024_STATE,
       armourClass: NPC_ARMOUR_CLASS,
       passivePerception: NPC_PASSIVE_PERCEPTION,
@@ -2678,10 +2668,13 @@ describe('what an absent 2024 field means on a vitals row', () => {
   })
 
   test('the legacy per-rest keys fold in as one spent use each', () => {
-    // ⚠️ **`spentPerRest` is kept rather than migrated in place**, so this fold is the whole
-    // of what makes that survivable: the old field is a list of *keys*, where a key present
-    // means the one thing the character had is gone, and the new one counts. One legacy key
-    // is exactly one spent use, which is what the old field always meant.
+    // ⚠️ **The field is off the schema and the fold is not, which is the point of this
+    // test rather than a leftover.** `spentPerRest` was a list of *keys*, where a key present
+    // meant the one thing the character had was gone, and the new field counts; one legacy
+    // key is exactly one spent use, which is what the old field always meant. The narrowing
+    // deleted the field, and `spentUsesOf` still tolerates one for the window a non-atomic
+    // push opens — a row written by an older deployment must keep meaning what it meant. The
+    // cast is what says the database is not bound by the type.
     expect(
       spentUsesOf({
         ...legacy,

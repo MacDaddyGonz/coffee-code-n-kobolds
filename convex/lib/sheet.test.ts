@@ -1178,58 +1178,56 @@ describe('skillProficienciesValidator', () => {
   })
 
   /**
-   * ⚠️ **THE WIDEN HALF OF THE SKILLS MIGRATION, PINNED IN BOTH DIRECTIONS.**
+   * ⚠️ **EVERY ONE OF THEM A REQUIRED BOOLEAN, WHICH IS WHERE THIS TEST STARTED AND WHERE IT
+   * HAS COME BACK TO.** An optional flag would be a fourth state — trained, untrained, and
+   * *absent*, which `Object.keys`, `board-smoke.mjs`' key-set walk and the renderer's
+   * `SKILLS.map` would each see differently.
    *
-   * This test used to say *every one of them a required boolean — an optional flag would be a
-   * fourth state*, and that argument is still right. It is suspended for exactly five fields
-   * and exactly as long as the migration takes.
+   * The argument was suspended for exactly five fields and exactly as long as the migration
+   * took. History, Nature, Religion, Medicine and Survival are the 2024 additions; `characters`
+   * had held `pc` sheets since Milestone 3 and every one of them carried thirteen booleans, so
+   * requiring the five failed the schema push outright — the trap `games.status`, `speed` and
+   * `skillProficiencies` itself each hit in turn. The previous version of this test named those
+   * five in a `WIDENED_FOR_2024` list, asserted them optional, and said in as many words that
+   * **the narrowing commit would make it fail and that being the thing which says so was its
+   * whole point.** It did, and this is it.
    *
-   * `characters` has held `pc` sheets since Milestone 3 and every one of them carries thirteen
-   * booleans, so making the five 2024 skills required fails the schema push outright — the trap
-   * `games.status`, `speed` and `skillProficiencies` itself each hit in turn. The fourth state
-   * the old comment warns about is real and is handled where it has to be: `skillProficienciesOf`
-   * spreads over `noSkills()`, so **nothing downstream of the accessor ever sees an absent
-   * flag** and the union `SkillProficiencies` describes is still eighteen booleans.
-   *
-   * Both halves are pinned so the migration cannot half-finish in either direction:
-   *
-   * - The **thirteen** that predate 2024 must stay required. One of them turning optional would
-   *   be a real fourth state on a field nothing is migrating.
-   * - The **five** must be optional *now* and required *after the sweep*. When the narrowing
-   *   commit lands, this test fails and its whole point is to be the thing that says so —
-   *   move the five names into `ALWAYS_REQUIRED` and delete `WIDENED_FOR_2024`.
+   * What is not deleted with the list is the accessor: `skillProficienciesOf` still spreads
+   * over `noSkills()`, because a schema push is not atomic and a row written by an older
+   * deployment can be read by a newer one in the window between.
    */
-  const WIDENED_FOR_2024 = ['history', 'nature', 'religion', 'medicine', 'survival']
-  const ALWAYS_REQUIRED = SKILL_KEYS.filter((key) => !WIDENED_FOR_2024.includes(key))
-
-  test('every skill is a boolean, and only the five being migrated are optional', () => {
+  test('every skill is a required boolean', () => {
     for (const [key, field] of Object.entries(skillProficienciesValidator.fields)) {
       expect(field.kind, key).toBe('boolean')
-      expect(field.isOptional, key).toBe(
-        WIDENED_FOR_2024.includes(key) ? 'optional' : 'required',
-      )
+      expect(field.isOptional, key).toBe('required')
     }
-    // Anti-vacuity in the direction the loop cannot check: if somebody widened all eighteen,
-    // every assertion above would still pass for whichever list they also edited.
-    expect(ALWAYS_REQUIRED).toHaveLength(13)
-    expect(WIDENED_FOR_2024).toHaveLength(5)
+    // Anti-vacuity: the loop above passes over an empty object, and a validator that had lost
+    // half its fields is exactly the state in which it would.
+    expect(Object.keys(skillProficienciesValidator.fields)).toHaveLength(18)
   })
 
   /**
-   * ⚠️ **The accessor is what makes the widening safe, so it is asserted next to it.** A sheet
-   * stored with the thirteen old flags reads back as eighteen booleans — no `undefined`, which
-   * would be the fourth state the paragraph above is about, and which `Object.keys`,
-   * `board-smoke.mjs`' key-set walk and the renderer's `SKILLS.map` would each see differently.
+   * ⚠️ **The accessor outlived the widening it was written for, and this is why it is still
+   * asserted.** A sheet stored with the thirteen old flags — by a deployment that has not
+   * caught up, in the window a non-atomic push opens — reads back as eighteen booleans with
+   * no `undefined` in it. The fixture has to be cast, because the type now says such an object
+   * cannot exist and the database is not bound by the type.
    */
-  test('skillProficienciesOf fills the five in for a sheet stored before they existed', () => {
-    const legacy = Object.fromEntries(ALWAYS_REQUIRED.map((key) => [key, true]))
+  test('skillProficienciesOf still fills in a sheet stored before the five existed', () => {
+    const PREDATING_2024 = SKILL_KEYS.filter(
+      (key) => !['history', 'nature', 'religion', 'medicine', 'survival'].includes(key),
+    )
+    const legacy = Object.fromEntries(PREDATING_2024.map((key) => [key, true]))
     const sheet = { ...defaultPcSheet(), skillProficiencies: legacy as SkillProficiencies }
 
     const filled = skillProficienciesOf(sheet)
     expect(Object.keys(filled).sort()).toEqual([...SKILL_KEYS].sort())
-    for (const key of WIDENED_FOR_2024) expect(filled[key as SkillKey], key).toBe(false)
+    for (const key of ['history', 'nature', 'religion', 'medicine', 'survival']) {
+      expect(filled[key as SkillKey], key).toBe(false)
+    }
     // And the stored answers survive, which is what makes it a fill rather than a reset.
-    for (const key of ALWAYS_REQUIRED) expect(filled[key], key).toBe(true)
+    for (const key of PREDATING_2024) expect(filled[key], key).toBe(true)
+    expect(PREDATING_2024).toHaveLength(13)
   })
 
   /** And `noSkills` fills every field the validator declares, with nothing left over. */
@@ -2781,50 +2779,38 @@ describe('a preset carries a species and a lineage', () => {
   }
 
   /**
-   * ⚠️ **THE MIDDLE OF THE RENAME, WHERE THREE SHAPES ARE ALL REAL AT ONCE** — `race` alone
-   * for a row written before the conversion, `species` alone for one the sweep has reached
-   * or a character built from this commit onward, and both for a run that stopped half way.
-   * `speciesKeyOf` is the one place any of them is read, and the direction it prefers is what
-   * makes the backfill idempotent and interruptible.
+   * ⚠️ **This block used to be about a preset carrying `species` *beside* `race`**, and the
+   * three tests here were the widen half of that rename: one proving `speciesKeyOf` fell
+   * back to the old field, one proving the new one won when both were present — the
+   * direction that made the backfill interruptible — and one proving an absent `species`
+   * survived the field-by-field rebuild absent, so that no character looked migrated before
+   * the migration ran.
    *
-   * The narrowing commit collapses all of this to one required field. It cannot be pushed
-   * until the sweep has run everywhere, so until then these are the claims that matter.
+   * The migration has run and the narrowing has landed, so all three claims are now
+   * unstateable: there is one field, it is required, and `race` is gone from the validator.
+   * What survives is the accessor, which is kept rather than inlined because a rename is not
+   * the last thing that will happen to this field.
    */
-  test('speciesKeyOf prefers the new field and falls back to the old one', () => {
+  test('speciesKeyOf answers the one field there is', () => {
     expect(speciesKeyOf(base)).toBe('human')
-    expect(speciesKeyOf({ ...base, species: undefined, race: 'dwarf' })).toBe('dwarf')
-    // ⚠️ The direction that makes a migration interruptible: a run that stops half way leaves
-    // half the rows answering from the new field and half from the old, and both are right.
-    expect(speciesKeyOf({ ...base, race: 'dwarf', species: 'elf' })).toBe('elf')
+    expect(speciesKeyOf({ ...base, species: 'elf' })).toBe('elf')
   })
 
-  test('all three shapes survive the field-by-field rebuild, and absent stays absent', () => {
+  test('the species survives the field-by-field rebuild, and an absent lineage stays absent', () => {
     const rebuilt = normaliseStoredSheet({
       ...base,
-      race: 'dwarf',
       species: 'elf',
       lineageKey: 'wood',
     }) as PresetSheet
-    expect(rebuilt.race).toBe('dwarf')
     expect(rebuilt.species).toBe('elf')
     expect(rebuilt.lineageKey).toBe('wood')
 
-    // ⚠️ Absent must stay absent on all three. A materialised `species` makes every character
-    // look migrated before the sweep ran; a materialised `race` puts back the field the sweep
-    // exists to remove; and on `lineageKey` absence means *nobody was asked* where `null`
-    // means *asked, and this species has none*.
-    const swept = normaliseStoredSheet(base) as PresetSheet
-    expect(swept.species).toBe('human')
-    expect(swept).not.toHaveProperty('race')
-    expect(swept).not.toHaveProperty('lineageKey')
-
-    const unswept = normaliseStoredSheet({
-      ...base,
-      species: undefined,
-      race: 'dwarf',
-    }) as PresetSheet
-    expect(unswept.race).toBe('dwarf')
-    expect(unswept).not.toHaveProperty('species')
+    // ⚠️ Absent must stay absent on `lineageKey`, where absence means *nobody was asked* and
+    // `null` means *asked, and this species has none*. The two are different facts until the
+    // day that field narrows too.
+    const untouched = normaliseStoredSheet(base) as PresetSheet
+    expect(untouched.species).toBe('human')
+    expect(untouched).not.toHaveProperty('lineageKey')
   })
 
   test('an explicit null lineage stays null rather than collapsing to absent', () => {
