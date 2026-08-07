@@ -636,3 +636,44 @@ The plan calls this the milestone's one simplification. Rejected because `scaleC
 creature's **offset** against precisely those five fields, so deriving them would not simplify the
 scaler — it would delete it — and because the SRD **prints** all five, which is the rule the plan
 itself supplies.
+
+### An entry carrying an ordered list of labelled rolls — rejected by the corpus
+
+The plan's largest single design item for the sheet redesign, and the one it argued hardest for. A
+`SheetEntry` today has `roll: string | null` and an optional `toHit` — one of each — and the plan
+proposed replacing that pair with `rolls: SheetRoll[]`, each roll carrying a `kind`
+(`attack | damage | save | check`), a label, an expression and an optional DC. Two new vocabularies,
+two new `never`-arm switches, a fourth widen-migrate-narrow across every stored `pc` and `npc` sheet
+**and both override diffs**, and a `parts` array on `rollResultValidator` that could never be narrowed
+because a feed row is historical.
+
+The worked example it was argued from is the Adult Bronze Dragon's `Rend` — *one to-hit and two typed
+damage rolls, `16 (2d8+7) Slashing plus 5 (1d10) Lightning`*. **That creature is challenge rating 15
+and this application stops at 6**, so it is not in the corpus and could not be. The question is
+therefore not whether the shape is right in the abstract but whether anything this application
+contains needs it, and the transcribed corpus answers plainly: of **all 283 entries**, not one attack
+carries a second damage component. The transcription folded each rider into the single damage
+expression and the flavour text, which is what the reduced stat block has always done. The sixty
+library sheets do not even carry a damage *type*.
+
+So the machinery would be a discriminated union nothing discriminates, two `never` arms no member can
+reach, and a migration over two corpora to add a field every row would spell the same way. That is
+precisely the guard-that-cannot-fail this project has now declined three times — for `fogRects` in
+[ADR 0012](0012-three-layers-and-a-fog-that-is-honest-about-itself.md), for `TokenMarker` in
+invariant 9, and for a mastery switch in [the mastery guard](#weapon-mastery-is-a-word-and-its-guard-is-narrower-than-the-one-it-copies) —
+and the rule invariant 9 closes with is the one that decides it: *find the place a wrong answer does
+damage, and make the compiler refuse there.* For a roll list there is no such place, because there is
+no second roll.
+
+**What is kept instead is the two-press model that already works.** `FEED_PARTS` and `partsFor` give a
+weapon a *To hit* button and a *Damage* button, composed out of `rollShapeOf` rather than a second
+switch, and `rollShapeOf`'s mechanical refusal therefore **stays exactly where invariant 9 put it**
+rather than moving. A save prints its DC in the entry's text beside a result nothing compares it to,
+which is ADR 0011's line drawn in the place it was always drawn.
+
+⚠️ **What would reverse this is content, not taste.** The day an entry in this application genuinely
+has two damage rolls — a fourth spell tier, a creature above CR 6, a homebrew field a DM can type two
+expressions into — the shape above is the right one and this section is the argument for building it
+then. `BestiaryAttack.damageType` is already stored and already reaches the sheet as prose, so the
+first step is smaller than it looks. Until then the roll list would be a specification with no
+instance, and this project does not keep those.
