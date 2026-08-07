@@ -137,6 +137,42 @@ export type HpActions = {
    * exists to want it.
    */
   setPerRest: (characterId: Id<'characters'>, key: string, spent: boolean) => Promise<void>
+  /**
+   * Set temporary hit points outright.
+   *
+   * ⚠️ **Absolute where `adjust` is a delta, and the asymmetry is the rule rather than an
+   * inconsistency.** `adjustHp` sends a delta because two people clicking `−5` on the same
+   * goblin should compose into ten; temporary hit points arrive as *a number a spell said*,
+   * so two people granting a ward must not sum into one. `characters.setTemporaryHp` says
+   * the same thing at the other end and is where the argument is written out.
+   *
+   * ⚠️ **It does not take the higher of the two, and this hook must not start.** 5e's rule
+   * is that temporary hit points do not stack — and this application announces and counts
+   * while the table adjudicates, so the number on screen is the number a person typed and a
+   * mistake stays correctable downwards.
+   */
+  setTemporaryHp: (characterId: Id<'characters'>, temporaryHp: number) => Promise<void>
+  /**
+   * Set the death-save tally: how many of each column are ticked.
+   *
+   * ⚠️ **BOTH COLUMNS IN ONE CALL, AND NOTHING HERE KILLS ANYBODY.** They are one tally on
+   * one row of boxes, so a client that could write half of it could show this round's
+   * successes beside last round's failures. And three failures is three filled pips: no hit
+   * point moves, no marker is set, no feed line is written and no heal is refused — see
+   * `@/lib/vitals`' header and `characters.setDeathSaves`, which carry the same warning at
+   * the two ends this signature joins.
+   */
+  setDeathSaves: (
+    characterId: Id<'characters'>,
+    successes: number,
+    failures: number,
+  ) => Promise<void>
+  /**
+   * Tick or clear Heroic Inspiration. A boolean, and the whole of the feature — no die in
+   * this application consults it and no reroll is offered, which is why it is not folded
+   * into `setPerRest`: it has no maximum and no owning entry to count against.
+   */
+  setHeroicInspiration: (characterId: Id<'characters'>, heroicInspiration: boolean) => Promise<void>
   /** The last refusal, for the caller to toast. Cleared on the next successful call. */
   error: string | null
 }
@@ -219,6 +255,13 @@ export function useHpActions(args: {
   const longRestMutation = useMutation(api.characters.longRest)
   const shortRestMutation = useMutation(api.characters.shortRest)
   const setUsesMutation = useMutation(api.characters.setUses)
+  // None of these three gets an optimistic update either, on `longRest`'s reason applied one
+  // size down: each is pressed a handful of times a fight rather than on every hit of every
+  // round, so the round trip is not something anybody is watching a bar move through. The
+  // reason `adjustHp` earns one is entirely that a health bar moves on every hit.
+  const setTemporaryHpMutation = useMutation(api.characters.setTemporaryHp)
+  const setDeathSavesMutation = useMutation(api.characters.setDeathSaves)
+  const setHeroicInspirationMutation = useMutation(api.characters.setHeroicInspiration)
 
   const [error, setError] = useState<string | null>(null)
 
@@ -290,5 +333,39 @@ export function useHpActions(args: {
     [setUsesMutation, caller, code, run],
   )
 
-  return { adjust, adjustHitDice, longRest, shortRest, setPerRest, error }
+  const setTemporaryHp = useCallback(
+    (characterId: Id<'characters'>, temporaryHp: number) =>
+      run('Could not set those temporary hit points.', () =>
+        setTemporaryHpMutation({ code, characterId, temporaryHp, ...caller }),
+      ),
+    [setTemporaryHpMutation, caller, code, run],
+  )
+
+  const setDeathSaves = useCallback(
+    (characterId: Id<'characters'>, successes: number, failures: number) =>
+      run('Could not change those death saving throws.', () =>
+        setDeathSavesMutation({ code, characterId, successes, failures, ...caller }),
+      ),
+    [setDeathSavesMutation, caller, code, run],
+  )
+
+  const setHeroicInspiration = useCallback(
+    (characterId: Id<'characters'>, heroicInspiration: boolean) =>
+      run('Could not change heroic inspiration.', () =>
+        setHeroicInspirationMutation({ code, characterId, heroicInspiration, ...caller }),
+      ),
+    [setHeroicInspirationMutation, caller, code, run],
+  )
+
+  return {
+    adjust,
+    adjustHitDice,
+    longRest,
+    shortRest,
+    setPerRest,
+    setTemporaryHp,
+    setDeathSaves,
+    setHeroicInspiration,
+    error,
+  }
 }

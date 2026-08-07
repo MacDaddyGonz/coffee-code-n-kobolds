@@ -82,6 +82,13 @@ export type TokenLayersProps = {
   /** A click on a coin's health bar. The id comes back, not the token — see `TokenCoinProps`. */
   onOpenHp: (tokenId: Id<'tokens'>) => void
   onContextMenu?: (token: BoardToken, at: { clientX: number; clientY: number }) => void
+  /**
+   * The pointer resting on a coin and leaving it, for the detail card. `useTokenHover`'s
+   * two handlers, stable for the life of the board — see the ⚠️ on `TokenCoinProps`, which
+   * is where the rebinding cost is argued.
+   */
+  onHoverStart?: (token: BoardToken) => void
+  onHoverEnd?: (token: BoardToken) => void
 }
 
 /**
@@ -143,6 +150,8 @@ export const TokenLayers = memo(function TokenLayers({
   onDragEnd,
   onOpenHp,
   onContextMenu,
+  onHoverStart,
+  onHoverEnd,
 }: TokenLayersProps) {
   // On `tokens` and the fog toggle, because those are the only things any of it depends on.
   // A pan changes neither which tokens exist nor where they are, and paying for a bucketing
@@ -214,6 +223,8 @@ export const TokenLayers = memo(function TokenLayers({
                 onDragEnd={onDragEnd}
                 onOpenHp={onOpenHp}
                 onContextMenu={onContextMenu}
+                onHoverStart={onHoverStart}
+                onHoverEnd={onHoverEnd}
               />
             ))}
           </Layer>

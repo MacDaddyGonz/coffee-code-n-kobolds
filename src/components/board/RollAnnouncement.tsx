@@ -3,9 +3,10 @@ import { memo } from 'react'
 
 import { ProfileIcon } from '@/components/ProfileIcon'
 import { CRIT_LABEL, critColour } from '@/lib/crit'
+import { entryCaptions } from '@/lib/rollDetail'
 import { cn } from '@/lib/utils'
 import type { FeedSubject, RollResult } from '@convex/lib/roll'
-import { rollModeNote, rollSentence } from '@convex/lib/roll'
+import { droppedDie, rollModeNote, rollSentence, rollWorking } from '@convex/lib/roll'
 
 export type RollAnnouncementProps = {
   /**
@@ -68,10 +69,25 @@ export type RollAnnouncementProps = {
  * browser-shared for this reason and says so at the top; the evaluator next door to it is
  * not, and `bundleGuard.test.ts` is what keeps the two apart.
  *
- * **The total alone, never the arithmetic.** `rollResultValidator` divides the three
- * readers on this point: the feed prints the total *and* the working, the announcement
- * prints the total, and the dice show the faces. `18 + 5` under a glowing line that is on
- * screen for two seconds is a number nobody reads and one more thing over the map.
+ * ⚠️ **"The total alone, never the arithmetic" was this component's rule and it has been
+ * narrowed rather than dropped — read which half moved.** `rollResultValidator` divides its
+ * three readers on this point: the feed prints the total *and* the working, this printed the
+ * total, and the dice show the faces. The argument was that `18 + 5` set beside a glowing
+ * line for two seconds is a number nobody reads and one more thing over the map, and it is
+ * still right about a second number in a competing weight.
+ *
+ * Two things are now on this pill that were not, each with its own note at the element:
+ *
+ * - **The discarded d20**, when advantage or disadvantage genuinely dropped one. That is not
+ *   arithmetic at all — it is *which of the two dice on the table this total came from*, and
+ *   two dice are physically there in the tray with nothing else on screen saying so.
+ * - **The working**, as a grey clause a third of the total's size. A 2024 expression folds a
+ *   proficiency bonus, an ability modifier and sometimes a spell-attack bonus into one
+ *   number, so `27` alone is unauditable — and the one occasion anybody looks is the
+ *   occasion it is wrong.
+ *
+ * ⚠️⚠️ **What has emphatically not changed is that nothing here is compared to anything.**
+ * No armour class, no save DC, no tick, no *hit*. The element carries the long version.
  *
  * ## The three rules this inherits from `TokenHpPopover`
  *
@@ -133,6 +149,26 @@ export const RollAnnouncement = memo(function RollAnnouncement({
   // this line is about takes its tint from the same call.
   const colour = critColour(crit)
   const note = roll ? rollModeNote(roll) : null
+  /**
+   * The die advantage or disadvantage discarded, or `null` when the toggle did nothing.
+   *
+   * ⚠️ **This is the one number the announcement gained, and the rule it bends is stated
+   * rather than quietly dropped.** This component's docblock says *the total alone, never
+   * the arithmetic*, on the grounds that `18 + 5` under a line on screen for two seconds is
+   * a number nobody reads. That argument is about the *modifier*, and it still holds — the
+   * working is a small grey clause below the total rather than beside it. What genuinely
+   * changed is that **two d20s land on the table under advantage**, physically, in the 3D
+   * tray, and until now nothing on this screen said which of the two the total came from.
+   * A struck-through loser is the shortest possible answer to a question the table asks out
+   * loud every time it happens.
+   *
+   * `droppedDie` rather than `roll.dropped` and a hand-written `faces: 20`: that construction
+   * fact belongs in lib/roll.ts, so this and the tray cannot disagree about what landed.
+   */
+  const dropped = roll ? droppedDie(roll) : null
+  // What was pressed, when a sheet entry was — `Level 2 spell · Action`. Empty for the five
+  // subjects that are not an entry, so this costs nothing on an ability check.
+  const captions = subject === null ? [] : entryCaptions(subject)
 
   return (
     /**
@@ -220,9 +256,69 @@ export const RollAnnouncement = memo(function RollAnnouncement({
             `roll === null`, and the sentence *is* the whole announcement for them: there
             is no total, and `TableEffects` throws no dice either.
           */}
+          {/*
+            The captions, on the pill under the sentence — what was pressed, when a sheet
+            entry was. On the *first* pill rather than the second because it describes the
+            sentence rather than the number, and because the second pill does not exist for
+            the two and a half seconds the dice are settling, which is exactly the window in
+            which somebody is wondering which spell just went.
+          */}
+          {captions.length === 0 ? null : (
+            <div className="bg-background/85 text-muted-foreground rounded-full px-3 py-0.5 text-xs shadow-lg ring-1 ring-white/10 backdrop-blur-sm">
+              {captions.join(' · ')}
+            </div>
+          )}
+
           {revealed && roll !== null ? (
             <div className="bg-background/85 kk-announce-in flex items-center gap-3 rounded-full px-5 py-1.5 shadow-2xl ring-1 ring-white/15 backdrop-blur-sm">
               <span className="text-3xl leading-none font-bold tabular-nums">{roll.total}</span>
+              {/*
+                ⚠️⚠️ **NOTHING HERE IS COMPARED TO ANYTHING, AND THIS IS THE MOST VISIBLE
+                SCREEN IN THE APPLICATION TO BREAK THAT ON.** The total is over the map, in
+                front of the whole table, at the exact moment somebody wants to know whether
+                it hit — so this is where a difficulty class with a ✓ or a ✗ against it would
+                be added. It must not be. This application **announces and counts** and the
+                table **adjudicates** (ADR 0011, and CLAUDE.md's *Rules scope*), so a DC —
+                when a row ever carries one — is printed **beside** this number as a second
+                number, in the same ink, with no verdict, no colour and no word.
+
+                ⚠️ **No row carries one today.** `feedSubjectValidator` has six members and
+                none has a field for a DC, so there is nothing to print; adding one is a
+                change to `convex/lib/roll.ts` and `convex/feed.ts`, decided server-side
+                where the sheet the DC came off was read.
+              */}
+              {dropped === null ? null : (
+                // The pair that landed. Struck through rather than omitted, which is the
+                // whole point of `dropped` travelling: it is how a row says the toggle
+                // actually did something, and two d20s are physically on the table.
+                <span className="text-muted-foreground/70 text-sm tabular-nums line-through">
+                  {dropped.value}
+                </span>
+              )}
+              {/*
+                ⚠️ **The working, which this component's docblock used to refuse outright —
+                so read the narrowing rather than assuming the rule lapsed.** That rule said
+                *the total alone, never the arithmetic*, and it was right about the failure
+                it named: `18 + 5` set beside a glowing total, in the same weight, is one
+                more thing over the map that nobody reads.
+
+                What is here instead is the modifier as a **small grey clause after** the
+                total, at a third of its size, which is the arrangement the feed row already
+                uses and which reads as a footnote rather than as a competing number. It
+                earns its place because the 2024 sheets put a proficiency bonus, an ability
+                modifier and a spell-attack bonus into one expression: `27` on its own is a
+                number the table has no way to check, and the one time anybody wants to is
+                the one time it looks wrong.
+
+                Before the crit label rather than after it, because the label is the
+                punchline of the whole sequence and nothing goes between it and the edge.
+
+                Still nothing compared to anything — see the ⚠️⚠️ above.
+              */}
+              <span className="text-muted-foreground text-xs tabular-nums">
+                {rollWorking(roll)}
+              </span>
+
               {crit === null ? null : (
                 // ⚠️ **The one part of a crit that survives `prefers-reduced-motion`.**
                 // The shake, the pulse and the sparks are all motion and all suppressed
