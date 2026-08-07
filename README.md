@@ -83,3 +83,16 @@ Deploys happen automatically on push to `main`. Decisions made so far are record
 
 Branch strategy and workflow live in [CONTRIBUTING.md](CONTRIBUTING.md). The short version:
 work on a feature branch, merge into `dev`, and promote `dev` → `main` via pull request.
+
+## Licence and attribution
+
+This work includes material taken from the System Reference Document 5.2 ("SRD 5.2") by Wizards of
+the Coast LLC, available at <https://www.dndbeyond.com/srd>. The SRD 5.2 is licensed under the
+Creative Commons Attribution 4.0 International License, available at
+<https://creativecommons.org/licenses/by/4.0/legalcode>.
+
+The species, class, spell and creature content under `convex/lib/` is derived from **SRD 5.2.1**.
+Numbers — ability scores, armour classes, hit points, damage expressions, challenge ratings — are
+transcribed; **every description is paraphrased rather than copied**, so no SRD prose ships in this
+repository and no SRD file is vendored into it. See
+[ADR 0016](docs/adr/0016-the-5e-2024-conversion.md).
