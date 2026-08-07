@@ -1304,16 +1304,35 @@ async function upsertVitals(
   }
 
   const sheet = resolveSheet(character)
+
+  // ⚠️ **The rest of the patch is carried through, and the version that dropped it was
+  // silently lossy.** This insert used to name `currentHp` and `hitDiceRemaining` and
+  // nothing else, so a caller asking for anything *other* than those two — temporary hit
+  // points, a death-save tally, a spent count — got a fresh row with the field missing and
+  // a return value saying it had been written. Unreachable at the time, because the only
+  // such caller was `setUsesSpent` and the one character that can lack a row is a Milestone
+  // 1 one, which has no ability to spend; the 2024 fields make it reachable, and a write
+  // path that quietly discards half of what it was handed is not a thing to leave standing
+  // on the grounds that nobody has walked into it yet.
+  //
+  // Destructured rather than spread whole so the two fields the insert **decides for
+  // itself** cannot be overwritten by the same object that supplies them: a fresh row is
+  // undamaged and holds its full complement of hit dice, and a patch only ever says which
+  // of those two defaults to displace.
+  const { currentHp, hitDiceRemaining, ...rest } = patch
+
   await ctx.db.insert('characterVitals', {
     gameId: character.gameId,
     characterId: character._id,
-    currentHp: patch.currentHp ?? sheet.maxHp,
+    currentHp: currentHp ?? sheet.maxHp,
     // Spread, never `hitDiceRemaining: undefined` — `undefined` is not a Convex
     // value, so naming the field and giving it that is a different write from
-    // omitting it. See the note on `insertCharacter`.
+    // omitting it. See the note on `insertCharacter`. `rest` is safe for the same
+    // reason from the other side: a key is in it only because the caller named it.
     ...(sheet.kind === 'pc'
-      ? { hitDiceRemaining: patch.hitDiceRemaining ?? sheet.hitDice.count }
+      ? { hitDiceRemaining: hitDiceRemaining ?? sheet.hitDice.count }
       : {}),
+    ...rest,
   })
 }
 
@@ -1329,6 +1348,11 @@ async function upsertVitals(
  *
  * The clamp is applied here rather than trusted from the caller, so no client can
  * heal something past full or beat it below zero.
+ *
+ * ⚠️ **Coming back up from nought wipes the death-save tally, and this is the one place
+ * that happens** — which is why it is here rather than in the two mutations that heal.
+ * `adjustHp`, `setHp` and `longRest` are three doors onto one fact, and a rule written at
+ * a door is a rule the next door does not have. See `clearedDeathSaves`.
  */
 export async function changeCurrentHp(
   ctx: MutationCtx,
@@ -1338,13 +1362,61 @@ export async function changeCurrentHp(
   const sheet = resolveSheet(character)
   const vitals = await vitalsFor(ctx, character._id)
 
-  const next = clampHp(change(currentHpOf(vitals, sheet)), sheet.maxHp)
+  const before = currentHpOf(vitals, sheet)
+  const next = clampHp(change(before), sheet.maxHp)
+  const patch: VitalsPatch = {
+    currentHp: next,
+    ...clearedDeathSaves(vitals, before, next),
+  }
+
   if (vitals) {
-    await ctx.db.patch('characterVitals', vitals._id, { currentHp: next })
+    await ctx.db.patch('characterVitals', vitals._id, patch)
   } else {
-    await upsertVitals(ctx, character, { currentHp: next })
+    await upsertVitals(ctx, character, patch)
   }
   return next
+}
+
+/**
+ * The death-save half of a hit-point write: `{}` almost always, and both columns zeroed on
+ * the one transition that makes the tally meaningless.
+ *
+ * ⚠️ **A COUNTER BEING RESET BY THE THING THAT ENDED THE SITUATION IT COUNTED, AND NOT AN
+ * ADJUDICATION.** Nobody died and nobody was stabilised. Three ticked boxes were a record
+ * of rolls made *while a character was at nought hit points*, and a character who is no
+ * longer at nought is a character those boxes have stopped being about — so clearing them
+ * is the same act as rubbing out a tally on a whiteboard when the fight moves on. Nothing
+ * here decides that the third failure kills anybody, nothing refuses a heal at three, and
+ * no die anywhere rolls differently. See `deathSavesOf` and `MAX_DEATH_SAVES`, where the
+ * reversal of a stated *never* is argued rather than assumed; **the moment something reads
+ * this tally to decide an outcome, that argument stops holding** and needs an amendment and
+ * an ADR of its own.
+ *
+ * Three properties, and each of them is the answer to an edit somebody would otherwise
+ * make:
+ *
+ * - **Only on a transition from nought to above it.** Not on every heal, because a
+ *   character on 5 who goes to 8 was never dying and has no tally to wipe — and clearing
+ *   there would mean a DM who had been keeping the tally by hand for a *player* they had
+ *   just topped up lost it to a point of healing.
+ * - **Never on damage.** A character taken *to* nought is a character the tally is about to
+ *   be for; zeroing it on the way down would be the only formulation where the counter is
+ *   destroyed at the exact moment it starts mattering.
+ * - **Nothing written when there is nothing to clear**, which is the common case by a very
+ *   long way. `characterVitals` is rewritten whole on every patch and this row feeds the
+ *   health-bar subscription, so naming two fields that are already nought — or, worse,
+ *   *adding* them to a row that never had them — would re-push every bar at the table on
+ *   every point of healing in the game.
+ */
+function clearedDeathSaves(
+  vitals: Doc<'characterVitals'> | null,
+  before: number,
+  after: number,
+): { deathSaveSuccesses?: number; deathSaveFailures?: number } {
+  if (before > 0 || after <= 0) return {}
+  const { successes, failures } = deathSavesOf(vitals)
+  if (successes === 0 && failures === 0) return {}
+  return { deathSaveSuccesses: 0, deathSaveFailures: 0 }
 }
 
 /**
@@ -1371,6 +1443,114 @@ export async function changeHitDiceRemaining(
     await upsertVitals(ctx, character, { hitDiceRemaining: next })
   }
   return next
+}
+
+/**
+ * Write temporary hit points outright. **The one writer of the field**, paired with
+ * `temporaryHpOf` as the one reader.
+ *
+ * ⚠️ **The clamp takes no ceiling off the sheet, and supplying one is the obvious wrong
+ * edit.** Temporary hit points are **not part of `maxHp` and are not healing**: a character
+ * on 3 of 8 may legitimately be holding 20 of them, and a character at full health with
+ * fifteen is an ordinary state rather than an error to repair. `clampTemporaryHp` has no
+ * parameter to pass a maximum to precisely so that `clampTemporaryHp(value, sheet.maxHp)`
+ * is unwriteable — its docblock in lib/sheet.ts is where that argument lives, and
+ * `MAX_TEMPORARY_HP` is a guard against a non-finite float64 reaching a stored row rather
+ * than a statement about the character.
+ *
+ * ⚠️ **It SETS, and it deliberately does not take the maximum against what is stored.**
+ * 5e's rule is that temporary hit points do not stack — a second source replaces the first
+ * only if it is larger — and this application **announces and counts** while the table
+ * **adjudicates** (CLAUDE.md, *Rules scope*). `Math.max(stored, wanted)` is three
+ * characters and it is the application deciding an outcome nobody asked it to decide: it
+ * would make the number on screen disagree with the number a person typed, and it would
+ * leave no way at all to correct a mistake downwards. So a person picks the larger of two
+ * numbers, exactly as they do at a table with a pencil, and this stores what they picked.
+ */
+export async function writeTemporaryHp(
+  ctx: MutationCtx,
+  character: Doc<'characters'>,
+  temporaryHp: number,
+): Promise<number> {
+  const vitals = await vitalsFor(ctx, character._id)
+  const next = clampTemporaryHp(temporaryHp)
+
+  if (vitals) {
+    await ctx.db.patch('characterVitals', vitals._id, { temporaryHp: next })
+  } else {
+    await upsertVitals(ctx, character, { temporaryHp: next })
+  }
+  return next
+}
+
+/**
+ * Write both columns of the death-save tally. **The one writer**, paired with
+ * `deathSavesOf` as the one reader.
+ *
+ * ⚠️ **NOTHING HERE KILLS ANYBODY, AND THIS IS THE FUNCTION A READER WILL BE MOST TEMPTED
+ * TO MAKE KILL SOMEBODY.** Three failures is three pips filled in: no hit point moves, no
+ * marker is set, no feed line is written, no band is recomputed and no heal is refused.
+ * CLAUDE.md's *Rules scope* names *"no death save kills a character"* as a standing
+ * exclusion of the 5e (2024) conversion, in the same register as a condition pip that
+ * halves no speed and a spell row that prints *Concentration* and drops nothing — and
+ * `deathSavesOf` carries the longer argument, because putting death saving throws in at all
+ * reversed a stated *never* and was admissible only on the grounds that the counter decides
+ * nothing. **A branch that reads three and does something is a spec amendment and an ADR,
+ * not a tidy-up.**
+ *
+ * ⚠️ **Both columns in one call, and splitting this into two writers would be a bug with a
+ * shape.** They are one tally on one row of boxes: two mutations means a client that writes
+ * half of it, and a sheet showing two successes and a stale failure is a sheet somebody acts
+ * on. It is the same reasoning `deathSavesOf` gives for answering both from one accessor.
+ */
+export async function writeDeathSaves(
+  ctx: MutationCtx,
+  character: Doc<'characters'>,
+  successes: number,
+  failures: number,
+): Promise<{ successes: number; failures: number }> {
+  const vitals = await vitalsFor(ctx, character._id)
+  const next = {
+    deathSaveSuccesses: clampDeathSaves(successes),
+    deathSaveFailures: clampDeathSaves(failures),
+  }
+
+  if (vitals) {
+    await ctx.db.patch('characterVitals', vitals._id, next)
+  } else {
+    await upsertVitals(ctx, character, next)
+  }
+  return { successes: next.deathSaveSuccesses, failures: next.deathSaveFailures }
+}
+
+/**
+ * Write the Heroic Inspiration flag. **The one writer**, paired with `heroicInspirationOf`
+ * as the one reader.
+ *
+ * A boolean, and the whole of the feature: nothing grants it, nothing spends it, and no
+ * reroll anywhere in this application consults it. The 2024 Human regains it on a long
+ * rest, which is why `longRest` pointedly leaves it alone — that is a **species trait**
+ * rather than a property of resting, and a rest that granted it would be the application
+ * inventing a rule for the eight species that do not have it. Until species content says
+ * otherwise it is a flag a person ticks, which is what this writes.
+ *
+ * No clamp, because a boolean has no out-of-range value to repair — the argument validator
+ * is the whole of the normalisation, and the absence of a `clampHeroicInspiration` beside
+ * the other two is that fact rather than an omission.
+ */
+export async function writeHeroicInspiration(
+  ctx: MutationCtx,
+  character: Doc<'characters'>,
+  heroicInspiration: boolean,
+): Promise<boolean> {
+  const vitals = await vitalsFor(ctx, character._id)
+
+  if (vitals) {
+    await ctx.db.patch('characterVitals', vitals._id, { heroicInspiration })
+  } else {
+    await upsertVitals(ctx, character, { heroicInspiration })
+  }
+  return heroicInspiration
 }
 
 // ⚠️ **`setPerRestSpent` used to be here and is gone, deliberately — `spentPerRest` is now
@@ -1458,7 +1638,10 @@ export async function setUsesSpent(
  *
  * `spentPerRest` is untouched, because everything in it is a once-per-**long**-rest species
  * ability by construction — a short rest has nothing to say about it, and saying nothing is
- * the correct answer rather than an omission.
+ * the correct answer rather than an omission. ⚠️ **Temporary hit points and the death-save
+ * tally are untouched for the same reason and are the two a reader will expect otherwise:**
+ * both end on a *long* rest, where `longRest` clears them, and an hour sitting down neither
+ * expires a ward somebody cast nor erases what happened while a character was at nought.
  */
 export async function shortRest(ctx: MutationCtx, character: Doc<'characters'>): Promise<void> {
   const vitals = await vitalsFor(ctx, character._id)

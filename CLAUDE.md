@@ -225,7 +225,12 @@ Rationale and rejected alternatives: [ADR 0001](docs/adr/0001-platform-and-hosti
      second question about the same two hundred rows should not read them twice.)
    - **It carries hit points and stops at authorship.** `visibleVitals` sends a controller the
      `exact` variant rather than a band, and `requireEditableCharacter` takes an explicit
-     `allowControl` — true on the five hit-point paths, false on `updateSheet`. A granted pet takes
+     `allowControl` — true on every write that changes what is true of a creature *during play*
+     (hit points, temporary hit points, hit dice, the death-save tally, heroic inspiration, what is
+     spent, what a rest gives back), false on `updateSheet`. ⚠️ **That used to read "the five
+     hit-point paths" and the count was already wrong**; the docblock in `convex/lib/access.ts` now
+     argues why the enumeration is not kept anywhere, and `characters.test.ts`' permission matrix is
+     where a new mutation answers for itself. A granted pet takes
      damage; a granted monster is not a stat block a player rewrites.
 
    See [ADR 0009](docs/adr/0009-who-plays-what-and-what-control-grants.md). A **second, unrelated**

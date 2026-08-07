@@ -24,6 +24,7 @@ import type {
 import {
   MAX_ABILITY_SCORE,
   MAX_ARMOUR_CLASS,
+  MAX_DEATH_SAVES,
   MAX_ENTRY_ID_LENGTH,
   MAX_ENTRY_NAME_LENGTH,
   MAX_ENTRY_TEXT_LENGTH,
@@ -34,6 +35,7 @@ import {
   MAX_NPC_NOTES_LENGTH,
   MAX_SHEET_ENTRIES,
   MAX_SPELL_LEVEL,
+  MAX_TEMPORARY_HP,
   MIN_ABILITY_SCORE,
   MIN_ARMOUR_CLASS,
   MIN_LEVEL,
@@ -3102,6 +3104,759 @@ describe('characters.adjustHitDice', () => {
   })
 })
 
+/**
+ * The whole `exact` vitals row for one character, insisting it is the exact variant.
+ *
+ * `exactVitals` above returns the two hit-point numbers alone, which is what every caller
+ * written before the 2024 fields wanted. Widening *it* would have meant either changing what
+ * a hundred and forty `toEqual({ current, max })` assertions compare against, or leaving them
+ * comparing a subset — so this is a second reader of the same payload rather than a change to
+ * the first.
+ */
+async function exactRow(
+  t: Harness,
+  code: string,
+  characterId: Id<'characters'>,
+  who: Actor = {},
+) {
+  const rows = await t.query(api.characters.vitals, { code, ...who })
+  const row = rows.find((entry) => entry.characterId === characterId)
+  if (!row) throw new Error(`no vitals for ${characterId}`)
+  if (row.kind !== 'exact') throw new Error(`expected exact vitals, got a ${row.kind}`)
+  return row
+}
+
+/**
+ * ⚠️ **THREE COUNTERS, AND NOT ONE OF THEM DECIDES ANYTHING — which is the property this
+ * whole block exists to pin rather than a preamble to skip.**
+ *
+ * Temporary hit points are a number beside the hit points, a death-save tally is a row of
+ * ticked boxes, and Heroic Inspiration is a flag. Nothing is compared to an armour class,
+ * no damage is applied, no death save kills a character, no reroll consults the flag and no
+ * heal is refused at three failures. That is CLAUDE.md's *Rules scope* line — this
+ * application **announces and counts**, and the table **adjudicates** — and death saving
+ * throws are the one entry that reversed a stated *never* to get here, admissible only on
+ * exactly these grounds (ADR 0016). Several tests below therefore assert what did **not**
+ * happen, and those are the load-bearing ones.
+ */
+describe('temporary hit points, death saves and heroic inspiration', () => {
+  /** A hero with a small maximum, so "above the maximum" is easy to write down. */
+  async function fixture() {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const thorin = await makePc(t, code, 'Thorin', pcSheet({ maxHp: 8 }))
+    return { t, code, dmCode, thorin }
+  }
+
+  test('setTemporaryHp stores the number, and the row and the payload agree', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+
+    expect(
+      await t.mutation(api.characters.setTemporaryHp, {
+        code,
+        characterId: thorin,
+        temporaryHp: 5,
+        dmCode,
+      }),
+    ).toEqual({ temporaryHp: 5 })
+    expect((await rawVitals(t, thorin))?.temporaryHp).toBe(5)
+    expect((await exactRow(t, code, thorin, { dmCode })).temporaryHp).toBe(5)
+  })
+
+  /**
+   * ⚠️ **THE ONE THAT SAYS WHY THIS FIELD HAS A CLAMP OF ITS OWN.** Temporary hit points
+   * are **not part of `maxHp` and are not healing**: a character on 3 of 8 holding 20 of
+   * them is an ordinary state, so the ceiling is `MAX_TEMPORARY_HP` and never the
+   * character's own maximum. The obvious wrong edit — `clampTemporaryHp(value, sheet.maxHp)`
+   * — is unwriteable by construction, and this is the assertion that would catch a second
+   * clamp being introduced beside it.
+   */
+  test('temporary hit points far above the character’s maximum are stored exactly as given', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -5, dmCode })
+
+    expect(
+      await t.mutation(api.characters.setTemporaryHp, {
+        code,
+        characterId: thorin,
+        temporaryHp: 20,
+        dmCode,
+      }),
+    ).toEqual({ temporaryHp: 20 })
+
+    // And the hit points either side of it are untouched: 3 of 8, with 20 temporary.
+    const row = await exactRow(t, code, thorin, { dmCode })
+    expect(row).toMatchObject({ current: 3, max: 8, temporaryHp: 20 })
+  })
+
+  test('they clamp at nought and at the ceiling, and a fraction is rounded', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+
+    for (const [given, stored] of [
+      [-40, 0],
+      [MAX_TEMPORARY_HP + 500, MAX_TEMPORARY_HP],
+      [MAX_TEMPORARY_HP, MAX_TEMPORARY_HP],
+      [7.6, 8],
+      [0, 0],
+    ] as const) {
+      expect(
+        await t.mutation(api.characters.setTemporaryHp, {
+          code,
+          characterId: thorin,
+          temporaryHp: given,
+          dmCode,
+        }),
+        String(given),
+      ).toEqual({ temporaryHp: stored })
+      expect(Number.isInteger((await rawVitals(t, thorin))?.temporaryHp), String(given)).toBe(true)
+    }
+  })
+
+  test('NaN and both infinities are refused, leaving the stored value alone', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.setTemporaryHp, {
+      code,
+      characterId: thorin,
+      temporaryHp: 6,
+      dmCode,
+    })
+
+    for (const temporaryHp of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      await expectKind(
+        t.mutation(api.characters.setTemporaryHp, {
+          code,
+          characterId: thorin,
+          temporaryHp,
+          dmCode,
+        }),
+        'BadInput',
+      )
+    }
+    expect((await rawVitals(t, thorin))?.temporaryHp).toBe(6)
+  })
+
+  /**
+   * ⚠️ **5e says temporary hit points do not stack — you take the higher — and this
+   * application deliberately does not enforce it.** Announcing and counting is the line
+   * (CLAUDE.md, *Rules scope*): a `Math.max` against the stored value is three characters
+   * and it would make the number on screen disagree with the number a person typed, with no
+   * way at all to correct one downwards. A person picks the larger of two numbers.
+   */
+  test('a lower value than the stored one is written — the no-stacking rule is the table’s', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.setTemporaryHp, {
+      code,
+      characterId: thorin,
+      temporaryHp: 20,
+      dmCode,
+    })
+
+    expect(
+      await t.mutation(api.characters.setTemporaryHp, {
+        code,
+        characterId: thorin,
+        temporaryHp: 5,
+        dmCode,
+      }),
+    ).toEqual({ temporaryHp: 5 })
+    expect((await rawVitals(t, thorin))?.temporaryHp).toBe(5)
+  })
+
+  test('setting them changes no hit point, and taking damage does not spend them', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -5, dmCode })
+    await t.mutation(api.characters.setTemporaryHp, {
+      code,
+      characterId: thorin,
+      temporaryHp: 9,
+      dmCode,
+    })
+    expect((await rawVitals(t, thorin))?.currentHp).toBe(3)
+
+    // ⚠️ **Damage does not come off them here**, and the absence is the feature: 5e takes
+    // damage out of temporary hit points first, and doing that in the mutation would be the
+    // application applying damage rather than counting it. Two numbers, two controls.
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -2, dmCode })
+    expect(await rawVitals(t, thorin)).toMatchObject({ currentHp: 1, temporaryHp: 9 })
+  })
+
+  test('setDeathSaves writes both columns in one call', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+
+    expect(
+      await t.mutation(api.characters.setDeathSaves, {
+        code,
+        characterId: thorin,
+        successes: 2,
+        failures: 1,
+        dmCode,
+      }),
+    ).toEqual({ successes: 2, failures: 1 })
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      deathSaveSuccesses: 2,
+      deathSaveFailures: 1,
+    })
+    expect(await exactRow(t, code, thorin, { dmCode })).toMatchObject({
+      deathSaveSuccesses: 2,
+      deathSaveFailures: 1,
+    })
+  })
+
+  test('each column clamps to nought and to three, and a fraction is rounded', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+
+    for (const [successes, failures, stored] of [
+      [-4, -1, { successes: 0, failures: 0 }],
+      [99, MAX_DEATH_SAVES + 1, { successes: 3, failures: 3 }],
+      [1.6, 0.4, { successes: 2, failures: 0 }],
+      [MAX_DEATH_SAVES, 0, { successes: 3, failures: 0 }],
+    ] as const) {
+      expect(
+        await t.mutation(api.characters.setDeathSaves, {
+          code,
+          characterId: thorin,
+          successes,
+          failures,
+          dmCode,
+        }),
+        `${successes}/${failures}`,
+      ).toEqual(stored)
+    }
+  })
+
+  test('NaN and the infinities are refused in either column, leaving the tally alone', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: thorin,
+      successes: 2,
+      failures: 1,
+      dmCode,
+    })
+
+    for (const [successes, failures] of [
+      [Number.NaN, 0],
+      [0, Number.NaN],
+      [Number.POSITIVE_INFINITY, 1],
+      [1, Number.NEGATIVE_INFINITY],
+    ]) {
+      await expectKind(
+        t.mutation(api.characters.setDeathSaves, {
+          code,
+          characterId: thorin,
+          successes,
+          failures,
+          dmCode,
+        }),
+        'BadInput',
+      )
+    }
+    // Neither column moved, so the refusal is whole rather than half-applied.
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      deathSaveSuccesses: 2,
+      deathSaveFailures: 1,
+    })
+  })
+
+  /**
+   * ⚠️ **THE MOST IMPORTANT TEST IN THIS FILE'S 2024 SECTION.** Three failures is three pips
+   * filled in — CLAUDE.md's *Rules scope* names *"no death save kills a character"* as a
+   * standing exclusion, and this is the assertion that would fail the day somebody adds the
+   * three reasonable lines that make the third failure do something.
+   */
+  test('three failures kills nobody, announces nothing and refuses nothing', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.setHp, { code, characterId: thorin, currentHp: 0, dmCode })
+
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: thorin,
+      successes: 0,
+      failures: 3,
+      dmCode,
+    })
+
+    // No hit point moved, and no sheet did either.
+    expect(await rawVitals(t, thorin)).toMatchObject({ currentHp: 0, deathSaveFailures: 3 })
+    expect((await rawCharacter(t, thorin))?.sheet).toEqual(pcSheet({ maxHp: 8 }))
+    // Nothing was announced. The feed is the one table a rules decision would leave a trace
+    // in, and it is empty.
+    expect(await t.run(async (ctx) => (await ctx.db.query('feed').collect()).length)).toBe(0)
+    // And a heal is not refused to a character with three failures against them.
+    expect(
+      await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: 5, dmCode }),
+    ).toEqual({ currentHp: 5 })
+  })
+
+  test('setHeroicInspiration ticks the flag and clears it again', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+
+    expect(
+      await t.mutation(api.characters.setHeroicInspiration, {
+        code,
+        characterId: thorin,
+        heroicInspiration: true,
+        dmCode,
+      }),
+    ).toEqual({ heroicInspiration: true })
+    expect((await rawVitals(t, thorin))?.heroicInspiration).toBe(true)
+    expect((await exactRow(t, code, thorin, { dmCode })).heroicInspiration).toBe(true)
+
+    expect(
+      await t.mutation(api.characters.setHeroicInspiration, {
+        code,
+        characterId: thorin,
+        heroicInspiration: false,
+        dmCode,
+      }),
+    ).toEqual({ heroicInspiration: false })
+    expect((await rawVitals(t, thorin))?.heroicInspiration).toBe(false)
+  })
+
+  test('nothing spends heroic inspiration — it goes when a person clears it', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.setHeroicInspiration, {
+      code,
+      characterId: thorin,
+      heroicInspiration: true,
+      dmCode,
+    })
+
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -3, dmCode })
+    await t.mutation(api.characters.adjustHitDice, { code, characterId: thorin, delta: -1, dmCode })
+    await t.mutation(api.characters.shortRest, { code, characterId: thorin, dmCode })
+
+    expect((await rawVitals(t, thorin))?.heroicInspiration).toBe(true)
+  })
+
+  // -------------------------------------------------------------------------
+  // The tally against the thing that ended the situation it counted
+  // -------------------------------------------------------------------------
+
+  /**
+   * ⚠️ **A COUNTER RESET BY THE THING THAT ENDED THE SITUATION IT COUNTED, AND NOT AN
+   * ADJUDICATION.** Nobody died and nobody was stabilised: the pips were a record of rolls
+   * made while a character was at nought hit points, and a character who is no longer at
+   * nought is a character they have stopped being about. The three tests after this one are
+   * the bound on it — clearing on *every* heal, or on damage, would each be the application
+   * deciding something.
+   */
+  test('coming back up from nought clears the tally, through both hit-point mutations', async () => {
+    for (const heal of ['adjustHp', 'setHp'] as const) {
+      const { t, code, dmCode, thorin } = await fixture()
+      await t.mutation(api.characters.setHp, { code, characterId: thorin, currentHp: 0, dmCode })
+      await t.mutation(api.characters.setDeathSaves, {
+        code,
+        characterId: thorin,
+        successes: 1,
+        failures: 2,
+        dmCode,
+      })
+
+      if (heal === 'adjustHp') {
+        await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: 4, dmCode })
+      } else {
+        await t.mutation(api.characters.setHp, { code, characterId: thorin, currentHp: 4, dmCode })
+      }
+
+      expect(await rawVitals(t, thorin), heal).toMatchObject({
+        currentHp: 4,
+        deathSaveSuccesses: 0,
+        deathSaveFailures: 0,
+      })
+    }
+  })
+
+  test('taking damage never clears the tally, including the blow that reaches nought', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: thorin,
+      successes: 1,
+      failures: 2,
+      dmCode,
+    })
+
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -3, dmCode })
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      currentHp: 5,
+      deathSaveSuccesses: 1,
+      deathSaveFailures: 2,
+    })
+
+    // ⚠️ **The blow that takes somebody to nought is the one that matters.** Zeroing there
+    // would destroy the counter at the exact moment it starts being for something.
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -99, dmCode })
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      currentHp: 0,
+      deathSaveSuccesses: 1,
+      deathSaveFailures: 2,
+    })
+  })
+
+  test('healing somebody who was never at nought leaves the tally exactly where it was', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.setHp, { code, characterId: thorin, currentHp: 5, dmCode })
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: thorin,
+      successes: 1,
+      failures: 2,
+      dmCode,
+    })
+
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: 3, dmCode })
+
+    // 5 → 8, and a DM keeping a tally by hand for a player they had just topped up has not
+    // lost it to a point of healing.
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      currentHp: 8,
+      deathSaveSuccesses: 1,
+      deathSaveFailures: 2,
+    })
+  })
+
+  /**
+   * The write side of the same rule. `characterVitals` is rewritten whole on every patch and
+   * feeds the health-bar subscription, so a heal that *added* two nought-valued fields to a
+   * row which never had them would re-push every bar at the table for no change at all.
+   */
+  test('a heal from nought with nothing ticked writes no death-save field at all', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.setHp, { code, characterId: thorin, currentHp: 0, dmCode })
+
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: 4, dmCode })
+
+    const row = await rawVitals(t, thorin)
+    expect(row?.currentHp).toBe(4)
+    expect(row?.deathSaveSuccesses).toBeUndefined()
+    expect(row?.deathSaveFailures).toBeUndefined()
+    // The control: the field does appear once somebody ticks one, so the assertion above is
+    // about this write path rather than about a field the schema never stores.
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: thorin,
+      successes: 1,
+      failures: 0,
+      dmCode,
+    })
+    expect((await rawVitals(t, thorin))?.deathSaveSuccesses).toBe(1)
+  })
+
+  // -------------------------------------------------------------------------
+  // The two rests
+  // -------------------------------------------------------------------------
+
+  test('a long rest clears the tally and the temporary hit points, and leaves the flag', async () => {
+    const { t, code, dmCode, thorin } = await fixture()
+    await t.mutation(api.characters.adjustHp, { code, characterId: thorin, delta: -6, dmCode })
+    await t.mutation(api.characters.setTemporaryHp, {
+      code,
+      characterId: thorin,
+      temporaryHp: 12,
+      dmCode,
+    })
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: thorin,
+      successes: 2,
+      failures: 1,
+      dmCode,
+    })
+    await t.mutation(api.characters.setHeroicInspiration, {
+      code,
+      characterId: thorin,
+      heroicInspiration: true,
+      dmCode,
+    })
+
+    await t.mutation(api.characters.longRest, { code, characterId: thorin, dmCode })
+
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      currentHp: 8,
+      temporaryHp: 0,
+      deathSaveSuccesses: 0,
+      deathSaveFailures: 0,
+      // ⚠️ **The negative half, and it is deliberate.** The 2024 Human *regains* Heroic
+      // Inspiration on a long rest, which is a species trait rather than a property of
+      // resting — granting it here would invent a rule for the eight species that do not
+      // have it, in a function with no way to know which one it is looking at.
+      heroicInspiration: true,
+    })
+  })
+
+  /**
+   * One positive and one negative assertion, which is the convention this project keeps
+   * everywhere: without the positive control both halves below pass on a short rest that did
+   * nothing whatsoever.
+   */
+  test('a short rest clears neither, and the positive control says the rest happened', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const kaelen = await makePc(
+      t,
+      code,
+      'Kaelen',
+      pcSheet({
+        maxHp: 8,
+        feats: [
+          {
+            id: 'feat-focus',
+            name: 'Focus Points',
+            text: 'A pool that comes back the moment you sit down.',
+            roll: null,
+            level: null,
+            catalogueKey: null,
+            category: 'passive',
+            uses: { max: 5, recharge: 'short' },
+          },
+        ],
+      }),
+    )
+
+    await t.mutation(api.characters.setTemporaryHp, {
+      code,
+      characterId: kaelen,
+      temporaryHp: 12,
+      dmCode,
+    })
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: kaelen,
+      successes: 2,
+      failures: 1,
+      dmCode,
+    })
+    await t.mutation(api.characters.setUses, {
+      code,
+      characterId: kaelen,
+      key: 'feat-focus',
+      spent: 4,
+      dmCode,
+    })
+
+    await t.mutation(api.characters.shortRest, { code, characterId: kaelen, dmCode })
+
+    const rested = await rawVitals(t, kaelen)
+    // The positive control: the short-rest pool came back, so the rest genuinely ran.
+    expect(rested?.spentUses, 'the short rest did nothing at all').toEqual([])
+    // And the negative half: both of these end on a *long* rest, not on an hour sitting down.
+    expect(rested, 'the short rest cleared something a long rest is for').toMatchObject({
+      temporaryHp: 12,
+      deathSaveSuccesses: 2,
+      deathSaveFailures: 1,
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Who may write them
+  // -------------------------------------------------------------------------
+
+  /**
+   * The claim-holder half. The exhaustive matrix — a stranger's hero, a caller with no seat,
+   * a monster — lives in *the permission matrix for sheets and vitals* above, where all three
+   * mutations are now members of `writes()`; this is the affirmative case stated in one
+   * place, because "a player may tick their own death saves" is the whole point of these not
+   * being DM-gated.
+   */
+  test('the seat playing the character may write all three, and another seat may not', async () => {
+    const t = convexTest(schema, modules)
+    const { code } = await makeGame(t)
+    const ana = await makeSeat(t, code, 'Ana')
+    const ben = await makeSeat(t, code, 'Ben')
+    const thorin = await makePc(t, code, 'Thorin', pcSheet({ maxHp: 8 }))
+    await t.mutation(api.characters.claim, { code, playerId: ana, characterId: thorin })
+
+    await t.mutation(api.characters.setTemporaryHp, {
+      code,
+      characterId: thorin,
+      temporaryHp: 4,
+      playerId: ana,
+    })
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: thorin,
+      successes: 1,
+      failures: 1,
+      playerId: ana,
+    })
+    await t.mutation(api.characters.setHeroicInspiration, {
+      code,
+      characterId: thorin,
+      heroicInspiration: true,
+      playerId: ana,
+    })
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      temporaryHp: 4,
+      deathSaveSuccesses: 1,
+      deathSaveFailures: 1,
+      heroicInspiration: true,
+    })
+
+    for (const call of [
+      () =>
+        t.mutation(api.characters.setTemporaryHp, {
+          code,
+          characterId: thorin,
+          temporaryHp: 0,
+          playerId: ben,
+        }),
+      () =>
+        t.mutation(api.characters.setDeathSaves, {
+          code,
+          characterId: thorin,
+          successes: 0,
+          failures: 0,
+          playerId: ben,
+        }),
+      () =>
+        t.mutation(api.characters.setHeroicInspiration, {
+          code,
+          characterId: thorin,
+          heroicInspiration: false,
+          playerId: ben,
+        }),
+    ]) {
+      await expectKind(call(), 'CharacterNotYours')
+    }
+    // Untouched by the three refusals, which is what makes them refusals rather than
+    // failures after the fact.
+    expect(await rawVitals(t, thorin)).toMatchObject({
+      temporaryHp: 4,
+      deathSaveSuccesses: 1,
+      deathSaveFailures: 1,
+      heroicInspiration: true,
+    })
+  })
+
+  /**
+   * ⚠️ **The grant half, and it is `allowControl: true` doing exactly what it does for the
+   * other five hit-point paths.** A DM who hands the party a pet has decided that seat may
+   * spend its hit points; a ward on it and a tally under it are the same kind of fact. The
+   * ungranted seat gets `CharacterNotFound` rather than `CharacterNotYours`, because a
+   * creature's existence is itself the spoiler.
+   */
+  test('a granted seat may write all three, and an ungranted one cannot find the creature', async () => {
+    const t = convexTest(schema, modules)
+    const fixture = await grantFixture(t)
+    const { code, ana, ben, wolf } = fixture
+    await grant(t, fixture, fixture.wolfToken, [ana])
+
+    await t.mutation(api.characters.setTemporaryHp, {
+      code,
+      characterId: wolf,
+      temporaryHp: 7,
+      playerId: ana,
+    })
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: wolf,
+      successes: 0,
+      failures: 2,
+      playerId: ana,
+    })
+    await t.mutation(api.characters.setHeroicInspiration, {
+      code,
+      characterId: wolf,
+      heroicInspiration: true,
+      playerId: ana,
+    })
+    expect(await rawVitals(t, wolf)).toMatchObject({
+      temporaryHp: 7,
+      deathSaveFailures: 2,
+      heroicInspiration: true,
+    })
+
+    await expectKind(
+      t.mutation(api.characters.setTemporaryHp, {
+        code,
+        characterId: wolf,
+        temporaryHp: 0,
+        playerId: ben,
+      }),
+      'CharacterNotFound',
+    )
+    await expectKind(
+      t.mutation(api.characters.setDeathSaves, {
+        code,
+        characterId: wolf,
+        successes: 0,
+        failures: 0,
+        playerId: ben,
+      }),
+      'CharacterNotFound',
+    )
+    await expectKind(
+      t.mutation(api.characters.setHeroicInspiration, {
+        code,
+        characterId: wolf,
+        heroicInspiration: false,
+        playerId: ben,
+      }),
+      'CharacterNotFound',
+    )
+    expect(await rawVitals(t, wolf)).toMatchObject({ temporaryHp: 7, deathSaveFailures: 2 })
+  })
+
+  /**
+   * ⚠️ **The insert branch, which used to drop everything but the two hit-point fields.** A
+   * Milestone 1 character has no `characterVitals` row at all, so any of these three writes
+   * has to create one — and `upsertVitals` named `currentHp` and `hitDiceRemaining` and
+   * nothing else, so the mutation returned the number it had been given and stored none of
+   * it. Unreachable before the 2024 fields existed; reachable the moment they did.
+   */
+  test('a character with no vitals row at all gets one, carrying what was written', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const legacy = await insertLegacyCharacter(t, code, 'Milestone One')
+    expect(await rawVitals(t, legacy)).toBeNull()
+
+    expect(
+      await t.mutation(api.characters.setTemporaryHp, {
+        code,
+        characterId: legacy,
+        temporaryHp: 7,
+        dmCode,
+      }),
+    ).toEqual({ temporaryHp: 7 })
+
+    expect(await rawVitals(t, legacy)).toMatchObject({
+      temporaryHp: 7,
+      // The fresh row is still an undamaged one with its full complement of hit dice: the
+      // patch says which of those two defaults to displace, and this one displaces neither.
+      currentHp: defaultPcSheet().maxHp,
+      hitDiceRemaining: defaultPcSheet().hitDice.count,
+    })
+  })
+
+  test('a death-save tally and a flag also create the row they need', async () => {
+    const t = convexTest(schema, modules)
+    const { code, dmCode } = await makeGame(t)
+    const one = await insertLegacyCharacter(t, code, 'Tally')
+    const two = await insertLegacyCharacter(t, code, 'Flag')
+
+    await t.mutation(api.characters.setDeathSaves, {
+      code,
+      characterId: one,
+      successes: 2,
+      failures: 3,
+      dmCode,
+    })
+    await t.mutation(api.characters.setHeroicInspiration, {
+      code,
+      characterId: two,
+      heroicInspiration: true,
+      dmCode,
+    })
+
+    expect(await rawVitals(t, one)).toMatchObject({
+      deathSaveSuccesses: 2,
+      deathSaveFailures: 3,
+    })
+    expect((await rawVitals(t, two))?.heroicInspiration).toBe(true)
+  })
+})
+
 describe('the permission matrix for sheets and vitals', () => {
   /**
    * One game, two seats and three characters: a hero Ana has claimed, a hero
@@ -3122,7 +3877,15 @@ describe('the permission matrix for sheets and vitals', () => {
 
   type Write = { name: string; call: (t: Harness, who: Actor) => Promise<unknown> }
 
-  /** The four mutations that change a sheet or its numbers, parameterised on the caller. */
+  /**
+   * The mutations that change a sheet or its numbers, parameterised on the caller.
+   *
+   * ⚠️ **Every write that goes through `requireEditableCharacter` belongs in this list**,
+   * which is why the 2024 three were added to it rather than given a permission block of
+   * their own: the whole value of this table is that it is exhaustive, and a mutation
+   * tested somewhere else is a mutation whose refusal for a stranger's hero, for a caller
+   * with no seat and for a monster is asserted by nobody.
+   */
   function writes(
     code: string,
     characterId: Id<'characters'>,
@@ -3145,6 +3908,32 @@ describe('the permission matrix for sheets and vitals', () => {
         name: 'adjustHitDice',
         call: (t, who) =>
           t.mutation(api.characters.adjustHitDice, { code, characterId, delta: -1, ...who }),
+      },
+      {
+        name: 'setTemporaryHp',
+        call: (t, who) =>
+          t.mutation(api.characters.setTemporaryHp, { code, characterId, temporaryHp: 4, ...who }),
+      },
+      {
+        name: 'setDeathSaves',
+        call: (t, who) =>
+          t.mutation(api.characters.setDeathSaves, {
+            code,
+            characterId,
+            successes: 1,
+            failures: 1,
+            ...who,
+          }),
+      },
+      {
+        name: 'setHeroicInspiration',
+        call: (t, who) =>
+          t.mutation(api.characters.setHeroicInspiration, {
+            code,
+            characterId,
+            heroicInspiration: true,
+            ...who,
+          }),
       },
     ]
   }
