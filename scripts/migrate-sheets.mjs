@@ -43,12 +43,19 @@
 //   1. **Deploy the sweep commit** — the wide schema plus `convex/lib/migrate.ts`,
 //      `convex/admin.ts`'s `listUnmigrated` and `migrateGame`, and this script. It is the
 //      first of the two commits on `chore/m14-migration` and it stands on its own.
-//   2. **Rehearse.** `npm run migrate-sheets` — a dry run, which writes nothing because
-//      it only ever calls a query. Read the per-game counts.
-//   3. **Sweep.** `npm run migrate-sheets -- --yes`, repeated until it reports nothing
-//      left. Safe to re-run: a swept game patches no document at all on a second pass.
+//   2. **Rehearse.** `npm run migrate-sheets -- --prod` — a dry run, which writes nothing
+//      because it only ever calls a query. Read the per-game counts.
+//   3. **Sweep.** `npm run migrate-sheets -- --prod --yes`, repeated until it reports
+//      nothing left. Safe to re-run: a swept game patches no document at all on a second
+//      pass.
 //   4. **Deploy the narrowing commit.** If it is refused, the sweep is not finished —
 //      go back to 3 rather than editing the schema.
+//
+// ⚠️ **`--prod` OR YOU SWEEP THE WRONG DEPLOYMENT AND ARE TOLD IT WENT WELL.** `convex run`
+// targets **dev** by default. Dev is swept first, so running these without the flag answers
+// `nothing to do — every game this pass examined is already swept` — the exact words that
+// mean success, about a deployment nobody asked about. Every run now prints which
+// deployment it is touching before it does anything; read that line, every time.
 //
 // 🚫 **DO NOT push a tree containing the narrowing commit before step 3 is done.** The
 // deployment refuses it with `Document … in table "characters" does not match the
@@ -126,8 +133,10 @@ const PAGE_SIZE = 25
 const MAX_PAGES = 200
 
 const USAGE = `
-  node scripts/migrate-sheets.mjs [--yes] [--push]
+  node scripts/migrate-sheets.mjs [--prod] [--yes] [--push]
 
+    --prod     sweep PRODUCTION. Without it this targets the dev deployment, which is
+               the Convex CLI's own default and is almost never what you want here.
     --yes      actually rewrite the sheets. Without it this is a dry run and nothing
                is written.
     --push     push the local convex/ code to the deployment first, for when
@@ -135,11 +144,33 @@ const USAGE = `
                refused by the deployment if the working tree already narrows the schema.
 `
 
+/**
+ * ⚠️ **`--prod` EXISTS BECAUSE ITS ABSENCE WAS A TRAP, AND THE TRAP IS WORTH DESCRIBING
+ * BECAUSE IT IS SILENT.** `convex run` targets the **dev** deployment unless told
+ * otherwise. This script shipped without a way to say otherwise, so somebody following
+ * the runbook against production would have run it against dev instead — and because dev
+ * gets swept first, the answer would have been a cheerful *"nothing to do — every game
+ * this pass examined is already swept"*.
+ *
+ * That is the worst possible failure for a migration tool: **it reports the exact words
+ * that mean success**, on a deployment nobody asked about, leaving production unswept and
+ * the operator certain it was done. The next thing they do is push the narrowed schema and
+ * watch the deploy fail for reasons the tool just told them could not apply.
+ *
+ * So the flag is only half the fix. The other half is that this script now **prints which
+ * deployment it is about to touch, every run, before it does anything** — see `main`. A
+ * tool that can be pointed at two places and does not say which one it is pointing at is a
+ * tool whose output cannot be read.
+ *
+ * ⚠️ **Deliberately not defaulting to production.** A destructive default that has to be
+ * opted *out* of is how somebody sweeps the live game while testing the script.
+ */
 function parseArgs(argv) {
-  const options = { yes: false, push: false, help: false }
+  const options = { prod: false, yes: false, push: false, help: false }
 
   for (const arg of argv) {
-    if (arg === '--yes') options.yes = true
+    if (arg === '--prod') options.prod = true
+    else if (arg === '--yes') options.yes = true
     else if (arg === '--push') options.push = true
     else if (arg === '--help' || arg === '-h') options.help = true
     else throw new Error(`Unknown argument: ${arg}`)
@@ -160,6 +191,10 @@ function parseArgs(argv) {
  */
 function convexRun(functionName, args, options) {
   const argv = ['run', functionName, JSON.stringify(args)]
+  // Before `--push`, because the CLI reads it as *which deployment am I pushing to* as
+  // well as *which am I calling*. Getting that pair the wrong way round would push the
+  // local code to dev and then call the function on production.
+  if (options.prod) argv.push('--prod')
   if (options.push) argv.push('--push')
 
   const result = spawnSync(process.execPath, [CONVEX_CLI, ...argv], {
@@ -303,7 +338,15 @@ function main() {
     throw new Error(`Cannot find ${CONVEX_CLI}. Run \`npm install\` first.`)
   }
 
-  console.log('\nSweeping stored sheets onto the 5e (2024) schema\n')
+  // ⚠️ **Which deployment, said out loud, on every run, before anything happens.** The
+  // one failure this tool cannot recover from is being right about a deployment nobody
+  // asked about — see the note on `parseArgs`. `nothing to do` and `swept 10/10` are both
+  // unreadable without this line above them.
+  console.log(
+    `\nSweeping stored sheets onto the 5e (2024) schema — ${
+      options.prod ? 'PRODUCTION' : 'the DEV deployment (pass --prod for production)'
+    }\n`,
+  )
 
   const listing = collectCandidates(options)
   const games = listing.games

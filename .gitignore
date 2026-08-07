@@ -70,3 +70,15 @@ desktop.ini
 # `npm run build` and a fresh clone typechecking without running the Convex CLI
 # first. Convex regenerates it on every dev/deploy anyway.
 # The deployment URL and dev deploy key live in .env.local, covered by .env.* above.
+
+# ⚠️ **PRODUCTION SNAPSHOT EXPORTS. NEVER COMMIT ONE.** A Convex backup zip is every
+# table verbatim — every game's DM code and recovery hash, every NPC stat block, every
+# scene name and every private feed line, none of it filtered by the queries that exist
+# to filter it. This repository is public and its bundle is readable (CLAUDE.md
+# invariant 1), so a committed backup publishes in one file everything the whole guard
+# apparatus exists to withhold, and rewriting history afterwards does not un-publish it.
+#
+# Kept out by directory rather than by extension, because the next export will be saved
+# somewhere with a different name and the thing to make safe is the habit of putting
+# backups here.
+convex_backups/
