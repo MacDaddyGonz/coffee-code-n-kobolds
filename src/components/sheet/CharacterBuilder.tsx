@@ -12,6 +12,7 @@ import {
   MAX_LIBRARY_LEVEL,
   SUBCLASS_LEVEL,
   findClass,
+  subclassLabel,
   subclassOf,
 } from '@convex/lib/classes'
 import type { SpeciesKey } from '@convex/lib/species'
@@ -115,6 +116,22 @@ export function CharacterBuilder({
   const chosenClass = chosen.classKey === null ? null : findClass(chosen.classKey)
   const chosenSubclass =
     chosen.classKey === null ? null : subclassOf(chosen.classKey, chosen.subclassKey)
+
+  // ⚠️ **What to call a stored archetype that has gone, which is the other half of "says
+  // plainly which one needs choosing again".** Eight of them were retired by the 2024
+  // conversion, so a character can genuinely hold a key `subclassOf` does not know — and
+  // the dropdown offers only the one that resolves, so the control would otherwise sit
+  // blank beside a hint about picking a path, which reads as a thing the player failed to
+  // fill in rather than as a decision the rules took back. `RETIRED_SUBCLASSES` is what
+  // gives it a name; `subclassLabel` falls through to the raw key for an invented one,
+  // which is still better than nothing at all. The species control makes exactly this
+  // move one field up. Confirm stays dead either way: `storedSheetProblem` refuses an
+  // archetype `subclassOf` does not know, so this is the sentence explaining a button
+  // that was already disabled rather than a second guard.
+  const retiredSubclass =
+    chosen.classKey !== null && chosen.subclassKey !== null && chosenSubclass === null
+      ? subclassLabel(chosen.classKey, chosen.subclassKey)
+      : null
 
   // Built and checked with the same function `characters.updateSheet` throws from, so
   // the button goes dead with the wording the server would have used. It is a courtesy
@@ -263,17 +280,26 @@ export function CharacterBuilder({
         </SheetField>
       ) : null}
 
-      {/* Absent below level 2, because below level 2 there is nothing to have chosen.
+      {/* Absent below `SUBCLASS_LEVEL`, because below it there is nothing to have chosen.
           An archetype already stored is not shown down there either — `characters.
           setLevel` clears one on the way down, so anything drawn here would be a value
-          the server has already discarded. */}
+          the server has already discarded.
+
+          ⚠️ **"One path", not "one of two", and that is a licensing fact rather than a
+          design one.** No SRD, 2014 or 2024, contains more than one subclass per class;
+          the eight second archetypes this application used to offer appeared in no source
+          at all and are retired by name in `RETIRED_SUBCLASSES`. The dropdown still exists
+          because the *choice* still has to be committed — a character sitting at level 3
+          with nothing chosen resolves to its level 1 sheet until somebody picks. */}
       {chosenClass !== null && level >= SUBCLASS_LEVEL ? (
         <SheetField
           id="builder-subclass"
           label="Archetype"
           hint={
-            chosenSubclass?.blurb ??
-            `Your ${chosenClass.name} picks one of two paths at level ${SUBCLASS_LEVEL}.`
+            retiredSubclass !== null
+              ? `${retiredSubclass} is no longer one of this game's archetypes. Choose again.`
+              : (chosenSubclass?.blurb ??
+                `Your ${chosenClass.name} picks one path at level ${SUBCLASS_LEVEL}.`)
           }
         >
           <NativeSelect
