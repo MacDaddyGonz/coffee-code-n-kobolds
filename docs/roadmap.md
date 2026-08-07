@@ -3074,6 +3074,81 @@ trap. And a player inspecting network traffic sees no ability score, no resource
 save DC for any creature whose sheet they may not already read — the same scan, with the same positive
 control, over a corpus twice the size.
 
+### ⏸ Where this stopped, and what the remaining branches owe
+
+The conversion is being built on an integration branch, `feature/m14-5e-2024`, which is **not merged
+into `dev` and is not mergeable yet**. This section is the resume point. It is written here rather
+than in a branch note because the thing a reader needs on picking this up is the *difference* between
+what the ten steps above promise and what the branch currently does — and that difference is a fact
+about the milestone, not about a working copy.
+
+**Green on the branch as it stands:** `npm run lint`, `npm run build`, `npm test` (1814 tests over 45
+files) and `npm run test:smoke` (327 checks against the real dev deployment). No guard test was
+weakened, skipped or exempted to get there, which was the condition the whole fan-out was run under.
+`leakGuard.test.ts`, `corpusGuard.test.ts`, `markerGuard.test.ts`, `storageGuard.test.ts`,
+`lib/layers.test.ts` and `lib/markers.test.ts` are byte-identical to `dev`. `bundleGuard.test.ts` is
+the only one that moved, and it moved in the two permitted directions: the `races` → `species` rename
+its existing needles already carried, and one *addition* — the needle keeping `scripts/srd/` out of
+the bundle, with both halves of its anti-vacuity pair. There is a new one beside it,
+`masteryGuard.test.ts`, written from `markerGuard.test.ts` line for line, and the module it exists to
+keep the mastery vocabulary out of is `convex/lib/dice.ts`.
+
+**Landed:** steps 1 through 9, plus the documents. The vocabulary rename and the eighteen skills; the
+`findClass` treatment for `species()`; the schema widening with the resource shape, the short rest and
+weapon mastery as a label; the nine species with 33 traits and their lineages; the twelve classes at
+one archetype each; 183 spells; 253 creatures with `benchmarks.ts` re-fitted to them; the sixty
+library sheets. ADR 0016, the requirements amendment, the CLAUDE.md *Rules scope* rewrite and the SRD
+attribution went in **ahead of** the content they describe, deliberately — an ADR that argues a
+decision is worth more before the code than after it — which is why the next paragraph exists.
+
+**The documents led the code on three things, and two of them have since landed.** `SUBCLASS_LEVEL`
+is 3 and the library is sixty sheets. **The one still outstanding is `SPEED_FEET`, which is still
+35**, and it is outstanding on purpose: it is the milestone's only genuine stored-value change
+disguised as a constant edit. A `preset` sheet stores no speed — `resolvePreset` writes the constant
+into the *resolved* sheet, so flipping it re-resolves correctly, Goliaths included. What breaks is
+every hand-built `pc` and `npc` sheet, whose stored-absent field would silently turn a DM-typed goblin
+from 35 into 30. **The pin sweep runs first and the constant moves after it**, in that order, in
+`chore/m14-migration`.
+
+**Two branches remain, and here is what each owes.**
+
+*Step 10, the panels* — split in two because the redesign is larger than the ten components the step
+names, and because the two halves are disjoint. `feature/m14-sheets` owns `src/components/sheet/**`
+and the shell's sheet tabs: the pinned header, the Play / Build / Spells sub-tabs, and the second
+renderer that a hand-typed `npc` now shares with a `bestiary` creature. `feature/m14-board-feed` owns
+the coin's temporary-hit-point segment and exhaustion pip, the selected-token card, the feed row and
+the floating roll announcement. ⚠️ **The card is where the guard bites**: armour class and passive
+perception are ADR 0014's two published stats and initiative and speed are not, so those two render
+for the DM and for a controlled creature only, and `publicVitalsValidator`'s `band` variant gains
+nothing. A third published stat is a separate decision with its own ADR, which is exactly what that
+ADR says.
+
+*`chore/m14-migration`* — last, because it cannot be written until every rename is known, and it now
+is. It owes the pin sweep and `SPEED_FEET` above; clearing eight retired archetype keys to `null`
+with `locked: false` rather than remapping them, because remapping changes a character nobody asked
+to change; rewriting `preset.race` to `species` and back-filling five `false` skill booleans on every
+stored `pc` sheet and inside both override diffs; folding `characterVitals.spentPerRest` into
+`spentUses`; and then the narrowings that make the widenings temporary — dropping `race`, dropping
+`half-orc` from `storedSpeciesKeyValidator`, making all eighteen booleans required, and dropping
+`spentPerRest`. **One widening is deliberately never narrowed**: `rollResultValidator`'s optional
+multi-part array, because a feed row is historical and must render forever.
+
+⚠️ **`half-orc` is why the branch cannot merge early.** `storedSpeciesKeyValidator` carries ten
+literals today, nine live species and the retired one, because a schema push validates *existing*
+rows — the dev deployment refused the push outright until it did. The tenth literal comes out on the
+far side of the sweep and not before, and until then the branch is honestly mid-migration rather than
+finished.
+
+**One thing worth carrying forward about how this was built.** Every defect the integration found was
+at a **seam** rather than inside any one agent's work: four in Milestone 13, three here. A duplicated
+`lineageKey` line where two branches each added one and the weaker won; a stale
+`storedSpeciesKeyValidator` listing the old eight species; a smoke script whose eight `fog:draw` call
+sites still passed flat numbers after the signature became a discriminated union — **lint and the
+whole vitest suite were green through that last one**, because `convex-test` calls the typed API and
+the smoke script calls the real one. Parallel branches do not usually break each other's code. They
+break the agreement between it, and the only two things that have ever found that are reading the
+merge and running `npm run test:smoke`.
+
 ---
 
 ## Milestone 15 — Tools and polish
