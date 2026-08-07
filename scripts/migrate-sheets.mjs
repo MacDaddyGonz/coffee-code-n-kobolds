@@ -316,7 +316,10 @@ function collectCandidates(options) {
     const result = convexRun(
       'admin:listUnmigrated',
       { paginationOpts: { numItems: PAGE_SIZE, cursor } },
-      { push },
+      // ⚠️ **Spread, never rebuilt.** This said `{ push }` and dropped `prod` on the
+      // floor — so the flag parsed, the banner said PRODUCTION, and every call went to dev.
+      // A fresh object here is a second place that has to know every option by name.
+      { ...options, push },
     )
     pages += 1
     games.push(...result.page)
@@ -374,7 +377,15 @@ function main() {
     console.log(
       `\nDRY RUN — ${count(games.length, 'game')} would be rewritten, nothing was written`,
     )
-    console.log('  to actually rewrite them: node scripts/migrate-sheets.mjs --yes\n')
+    // Echoes the flags this run actually used, so copying the line cannot silently
+    // retarget the sweep at dev — which is the failure `--prod` exists to prevent, and a
+    // hint that dropped it would reintroduce it at the exact moment somebody is about to
+    // write for the first time.
+    console.log(
+      `  to actually rewrite them: node scripts/migrate-sheets.mjs${
+        options.prod ? ' --prod' : ''
+      } --yes\n`,
+    )
     return 0
   }
 
@@ -387,7 +398,13 @@ function main() {
       // One call per game rather than one call for all of them, so each is its own
       // transaction. A game that refuses does not roll back the ones that worked, and
       // the loop can name it instead of leaving the whole pass in doubt.
-      const receipt = convexRun('admin:migrateGame', { gameId: game._id }, { push: false })
+      const receipt = convexRun(
+        'admin:migrateGame',
+        { gameId: game._id },
+        // Same rule as the read above: spread, so the deployment travels with it. `push` is
+        // false because the code went up on the first page or not at all.
+        { ...options, push: false },
+      )
       migrated += 1
       applied = addCounts(applied, receipt.counts)
       console.log(
