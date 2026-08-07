@@ -13,7 +13,7 @@ import {
   deathSavesOf,
   heroicInspirationOf,
   nextDeathSaveCount,
-  signedBonus,
+  signed,
 } from '@/lib/vitals'
 import type { PublicVitals } from '@convex/lib/characters'
 import { MAX_DEATH_SAVES } from '@convex/lib/sheet'
@@ -172,16 +172,16 @@ describe('nextDeathSaveCount', () => {
   })
 })
 
-describe('signedBonus', () => {
+describe('signed', () => {
   it('always shows a sign, including on nought', () => {
-    expect(signedBonus(3)).toBe('+3')
-    expect(signedBonus(0)).toBe('+0')
+    expect(signed(3)).toBe('+3')
+    expect(signed(0)).toBe('+0')
   })
 
   it('uses a true minus sign rather than a hyphen', () => {
     // `rollWorking` in lib/roll.ts makes the same choice, and the two appear a centimetre
     // apart when a feed row and a hover card are both on screen.
-    expect(signedBonus(-2)).toBe('−2')
-    expect(signedBonus(-2)).not.toBe('-2')
+    expect(signed(-2)).toBe('−2')
+    expect(signed(-2)).not.toBe('-2')
   })
 })

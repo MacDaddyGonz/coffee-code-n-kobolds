@@ -2,18 +2,14 @@ import { useId, useState } from 'react'
 import { useQuery } from 'convex/react'
 import { Minus, Plus, RotateCcw } from 'lucide-react'
 
+import { signed } from '@/lib/vitals'
 import { FieldError } from '@/components/FieldError'
 import { ConfirmDialog } from '@/components/lobby/ConfirmDialog'
 import type { PublicCreature } from '@/components/sheet/CreatureStatBlock'
 import { CreatureStatBlock } from '@/components/sheet/CreatureStatBlock'
 import { OverrideMark, OverrideNumberField, merge } from '@/components/sheet/PresetNumbers'
 import { SheetEntryList } from '@/components/sheet/SheetEntryList'
-import {
-  SheetField,
-  SheetTextArea,
-  marksField,
-  signed,
-} from '@/components/sheet/SheetFields'
+import { SheetField, SheetTextArea, marksField } from '@/components/sheet/SheetFields'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'

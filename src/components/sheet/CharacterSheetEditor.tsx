@@ -86,6 +86,14 @@ export type CharacterSheetEditorProps = {
    * consults the count and no cast is blocked.
    */
   onSetUses: (key: string, spent: number) => void
+  /**
+   * Spend or hand back a spell slot of one level.
+   *
+   * ⚠️ Keyed on the LEVEL rather than on an entry, unlike `onSetUses` above, because a slot
+   * belongs to the character and not to the spell it paid for — and because nothing here
+   * knows which slot a cast used. See `SlotTrack`.
+   */
+  onSetSlots: (level: number, spent: number) => void
   onRest: (kind: RestKind) => void
   onSetTemporaryHp: (temporaryHp: number) => void
   onSetDeathSaves: (successes: number, failures: number) => void
@@ -164,6 +172,7 @@ export function CharacterSheetEditor({
   onSetCreatureCr,
   onResetCreature,
   onSetUses,
+  onSetSlots,
   onRest,
   onSetTemporaryHp,
   onSetDeathSaves,
@@ -579,6 +588,11 @@ export function CharacterSheetEditor({
             problem={problem}
             disabled={saving}
             vitals={vitals}
+            // The STORED selection, not the resolved sheet. A slot track is a function of
+            // the class key and the level, and a resolved sheet keeps neither — it holds
+            // the class as a printed name. See the note on `saved.preset` above.
+            preset={saved.preset}
+            onSetSlots={onSetSlots}
             onSpells={handBuilt ? (spells) => setDraft({ ...sheet, spells }) : undefined}
             onSetUses={onSetUses}
           />

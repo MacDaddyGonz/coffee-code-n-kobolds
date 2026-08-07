@@ -157,6 +157,22 @@ export type HpActions = {
    */
   setUses: (characterId: Id<'characters'>, key: string, spent: number) => Promise<void>
   /**
+   * Spend spell slots of one level, or hand some back.
+   *
+   * ⚠️ **Keyed on the spell level and not on an entry, because a slot belongs to the
+   * character rather than to the spell it was spent on.** That is the whole difference from
+   * `setUses` above: Second Wind's uses are Second Wind's, and a level 2 slot is a level 2
+   * slot whatever cast it.
+   *
+   * ⚠️ **A PERSON SPENDS ONE, AND `feed.roll` NEVER WILL.** Announcing a spell consumes
+   * nothing and refuses nothing. The application also *could not* choose correctly if it
+   * tried — a level 1 spell may be cast with a level 2 or 3 slot, and upcasting is how half
+   * the 2024 list scales — so the pip is a person's to press. ADR 0016's resource-shape
+   * section is the record, and ADR 0011's supersede table is wrong where it says a roll
+   * spends one.
+   */
+  setSlots: (characterId: Id<'characters'>, level: number, spent: number) => Promise<void>
+  /**
    * Temporary hit points, which are **not healing and not part of the maximum.**
    *
    * An absolute rather than a delta, unlike `adjust`, and the difference is what each one
@@ -270,6 +286,7 @@ export function useHpActions(args: {
   const longRestMutation = useMutation(api.characters.longRest)
   const shortRestMutation = useMutation(api.characters.shortRest)
   const setUsesMutation = useMutation(api.characters.setUses)
+  const setSlotsMutation = useMutation(api.characters.setSlots)
   // None of these three gets an optimistic update either, for the reason above and one
   // more: all three are written by a control the person is looking at, at a moment nothing
   // else is happening, so a round trip is a round trip rather than a stutter in a fight.
@@ -369,6 +386,14 @@ export function useHpActions(args: {
     [setUsesMutation, caller, code, run],
   )
 
+  const setSlots = useCallback(
+    (characterId: Id<'characters'>, level: number, spent: number) =>
+      run('Could not change those spell slots.', () =>
+        setSlotsMutation({ code, characterId, level, spent, ...caller }),
+      ),
+    [setSlotsMutation, caller, code, run],
+  )
+
   const setTemporaryHp = useCallback(
     (characterId: Id<'characters'>, temporaryHp: number) =>
       run('Could not change those temporary hit points.', () =>
@@ -400,6 +425,7 @@ export function useHpActions(args: {
     shortRest,
     rest,
     setUses,
+    setSlots,
     setTemporaryHp,
     setDeathSaves,
     setHeroicInspiration,

@@ -1,5 +1,6 @@
+import { signed } from '@/lib/vitals'
 import { Badge } from '@/components/ui/badge'
-import { DerivedStat, StatGrid, signed, speedHint, tagName } from '@/components/sheet/SheetFields'
+import { DerivedStat, StatGrid, speedHint, tagName } from '@/components/sheet/SheetFields'
 import type { PublicSheet } from '@convex/lib/characters'
 import { CREATURE_SIZE_NAMES, crLabel, findRole, findTier } from '@convex/lib/creatures'
 import { SKILLS } from '@convex/lib/skills'

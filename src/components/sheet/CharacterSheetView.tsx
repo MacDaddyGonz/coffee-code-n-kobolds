@@ -145,6 +145,7 @@ export function CharacterSheetView({
         // mutation. `rest` takes the vocabulary member rather than being two callbacks, so
         // no component has to turn a `RestKind` back into a name.
         onSetUses={(key, spent) => void hp.setUses(characterId, key, spent)}
+        onSetSlots={(level, spent) => void hp.setSlots(characterId, level, spent)}
         onRest={(kind) => void hp.rest(characterId, kind)}
         onSetTemporaryHp={(temporaryHp) => void hp.setTemporaryHp(characterId, temporaryHp)}
         onSetDeathSaves={(successes, failures) =>

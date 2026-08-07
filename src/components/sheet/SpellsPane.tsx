@@ -1,9 +1,12 @@
-import { DerivedStat, StatGrid, signed } from '@/components/sheet/SheetFields'
+import { signed } from '@/lib/vitals'
+import { DerivedStat, StatGrid } from '@/components/sheet/SheetFields'
 import { SheetEntryList } from '@/components/sheet/SheetEntryList'
+import { SlotTrack } from '@/components/sheet/SlotTrack'
 import { Separator } from '@/components/ui/separator'
 import type { PublicVitals } from '@convex/lib/characters'
 import { SPELLS } from '@convex/lib/rules'
-import type { PcSheet, SheetEntry, SheetProblem } from '@convex/lib/sheet'
+import { spellSlotsFor } from '@convex/lib/slots'
+import type { PcSheet, PresetSheet, SheetEntry, SheetProblem } from '@convex/lib/sheet'
 import {
   ABILITY_NAMES,
   abilityModifier,
@@ -18,6 +21,14 @@ export type SpellsPaneProps = {
   disabled?: boolean
   /** What the server was willing to tell this client. Null while it is still loading. */
   vitals: PublicVitals | null
+  /**
+   * The stored selection, for the slot derivation. Null for a hand-built sheet, which
+   * stores a class NAME rather than a class key and therefore has no track to derive —
+   * argued in `SlotTrack`.
+   */
+  preset: PresetSheet | null
+  /** Spend or hand back a slot of one level. Absent means the pips are printed. */
+  onSetSlots?: (level: number, spent: number) => void
   /** Absent means the list is printed rather than edited — see `PlayPane`. */
   onSpells?: (entries: SheetEntry[]) => void
   onSetUses: (key: string, spent: number) => void
@@ -51,6 +62,8 @@ export function SpellsPane({
   problem,
   disabled,
   vitals,
+  preset,
+  onSetSlots,
   onSpells,
   onSetUses,
 }: SpellsPaneProps) {
@@ -58,6 +71,10 @@ export function SpellsPane({
   const ability = spellcastingAbilityOf(sheet)
   const saveDc = spellSaveDcOf(sheet)
   const attack = spellAttackBonusOf(sheet)
+  // Derived in the browser from the stored selection, which is already on the payload.
+  // `spellSlotsOf` in lib/resolve.ts is the server-side twin and cannot be reached from
+  // here — bundleGuard keeps that module out of the bundle, and it pulls both corpora in.
+  const slots = preset === null ? null : spellSlotsFor(preset.classKey, preset.level)
 
   return (
     <div className="flex flex-col gap-5">
@@ -103,29 +120,12 @@ export function SpellsPane({
       )}
 
       {/*
-        ═════════════════════════════════════════════════════════════════════════════
-        SPELL SLOTS GO HERE, AND NOTHING ELSE DOES.
-
-        This is the seam, deliberately empty. Slot counting lands separately, in
-        `convex/lib/slots.ts` and the vitals payload beside it, and a track invented here
-        would be a second shape for the same fact — the failure this codebase records under
-        "two `lineageKey` lines landed in one rebuild and the weaker one won".
-
-        What goes in: one row per spell level the character has slots at, showing how many
-        are left of how many, stepped the way `UseCounter` in SheetEntryList.tsx steps an
-        entry's uses. It belongs *above* the list rather than beside each level's heading,
-        because the question "have I a second-level slot" is asked before choosing which
-        spell to cast rather than while reading one.
-
-        ⚠️ What must NOT go in, whatever the slot shape turns out to be: **no cast is
-        refused.** A spell with no slot left is still a spell you can press, exactly as a
-        feature with no uses left is. Counting a slot compares nothing and changes no die of
-        damage, which is the whole reason ADR 0011's decision 1 could be reversed at all
-        (ADR 0016). Greying out a row at zero slots is the edit that turns this pane into a
-        rules engine, and it needs an amendment and an ADR rather than a condition on a
-        button.
-        ═════════════════════════════════════════════════════════════════════════════
+        The seam this pane shipped with, now filled. `SlotTrack` carries the two warnings
+        that stood here — no cast is refused at zero, and `feed.roll` spends nothing — at
+        the place a reader would break them rather than in a comment above the component
+        that would.
       */}
+      <SlotTrack slots={slots} spent={exact?.spentSlots ?? null} onSetSlots={onSetSlots} disabled={disabled} />
 
       <Separator />
 

@@ -86,18 +86,28 @@ export function coinStatOf(vitals: PublicVitals, stat: CoinStat): number | null 
 /**
  * `+3`, `−1`, `+0` — a modifier with its sign always shown.
  *
- * ⚠️ **A second copy of `signed` in `@/components/sheet/SheetFields`, and it is recorded as
- * one rather than left to be discovered.** The two halves of this milestone are being built
- * in parallel and that module belongs to the other one, so importing across would be a
- * coupling neither side agreed to. They should become one function — this file is the better
- * home, since it has no React in it — and until then this comment is what stops a third copy
- * being written by somebody who found neither.
+ * ⚠️ **This was two functions for one job, in two modules, for the length of one
+ * milestone.** The sheet panels and the board's coin card were built in parallel and each
+ * wrote its own — `signed` in `@/components/sheet/SheetFields` and `signedBonus` here — with
+ * the second carrying a comment saying so rather than leaving it to be discovered. They are
+ * one function now, and this is the home the comment argued for: **a number formatter with
+ * no React in it does not belong in a component module**, and a board component reaching
+ * into `components/sheet/` for a string helper is a coupling that reads as an accident.
+ *
+ * The surviving name is `signed`, because it had five call sites to the other's one and
+ * because a bonus is only one of the things it formats — an ability modifier and an
+ * initiative are not bonuses.
  *
  * A true minus sign rather than a hyphen, which is `rollWorking`'s choice in lib/roll.ts and
- * is worth matching: the two appear a centimetre apart when a feed row and a card are both
- * on screen.
+ * `sheetProblem`'s in the initiative bounds. The two appear a centimetre apart when a feed
+ * row and a card are both on screen.
+ *
+ * ⚠️ **Non-finite prints an em dash rather than `+NaN`.** That guard came from the sheet
+ * copy and is kept: a derived modifier is built out of a stored score, and a sheet written
+ * by a newer deployment can be read by an older one.
  */
-export function signedBonus(value: number): string {
+export function signed(value: number): string {
+  if (!Number.isFinite(value)) return '—'
   return value < 0 ? `−${Math.abs(value)}` : `+${value}`
 }
 

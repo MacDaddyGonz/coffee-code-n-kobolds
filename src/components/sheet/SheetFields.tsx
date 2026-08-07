@@ -245,17 +245,6 @@ export function HitDiceField({
 }
 
 /**
- * A derived modifier as a person writes one: `+2`, `−1`, `+0`.
- *
- * A true minus sign rather than a hyphen, matching the wording `sheetProblem`
- * already uses for the initiative bounds.
- */
-export function signed(value: number): string {
-  if (!Number.isFinite(value)) return '—'
-  return value < 0 ? `−${Math.abs(value)}` : `+${value}`
-}
-
-/**
  * What goes under a speed: `the usual`, or how this one differs from it.
  *
  * Three screens print a speed — a hero's derived row, a hand-built monster's form and a

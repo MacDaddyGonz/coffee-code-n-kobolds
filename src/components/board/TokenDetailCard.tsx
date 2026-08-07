@@ -18,7 +18,7 @@ import {
   deathSaveTicks,
   deathSavesOf,
   heroicInspirationOf,
-  signedBonus,
+  signed,
 } from '@/lib/vitals'
 import { cn } from '@/lib/utils'
 import type { PublicSheet } from '@convex/lib/characters'
@@ -227,7 +227,7 @@ const CardBody = memo(function CardBody({
           */}
           {sheet === null ? null : (
             <>
-              <Row label="Initiative" value={signedBonus(initiativeBonusOf(sheet.sheet))} />
+              <Row label="Initiative" value={signed(initiativeBonusOf(sheet.sheet))} />
               <Row label="Speed" value={`${speedOf(sheet.sheet)} ft`} />
             </>
           )}

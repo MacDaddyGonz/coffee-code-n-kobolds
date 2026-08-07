@@ -1,8 +1,9 @@
 import { Fragment } from 'react'
 
+import { signed } from '@/lib/vitals'
 import { FieldError } from '@/components/FieldError'
 import { RollButton } from '@/components/sheet/RollButton'
-import { NumberInput, SheetCheckbox, signed } from '@/components/sheet/SheetFields'
+import { NumberInput, SheetCheckbox } from '@/components/sheet/SheetFields'
 import type { Skill, SkillProficiencies } from '@convex/lib/skills'
 import { SKILLS, skillBonus } from '@convex/lib/skills'
 import type {
