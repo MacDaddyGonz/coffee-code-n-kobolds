@@ -47,6 +47,8 @@ import { librarySheet } from './library'
 import { spellSlotsFor, type SpellSlots } from './slots'
 import { lineageOf, species, type Lineage, type Species, type SpeciesTrait } from './species'
 import type {
+  AbilityKey,
+  AbilityScores,
   BestiarySheet,
   CharacterGroup,
   CharacterKind,
@@ -56,12 +58,15 @@ import type {
   NpcSheet,
   PcSheet,
   PresetSheet,
+  SaveProficiencies,
   SheetEntry,
   StoredSheet,
 } from './sheet'
 import {
+  ABILITY_KEYS,
   MAX_ENTRY_ID_LENGTH,
   SPEED_FEET,
+  abilityModifier,
   attackBonusOf,
   categoryForRoll,
   creatureGroupOf,
@@ -694,6 +699,8 @@ function resolveBestiary(stored: BestiarySheet): NpcSheet {
       attackBonus: scaled.attackBonus,
       saveDc: scaled.saveDc ?? undefined,
       skills: creatureSkillsFrom(scaled.skills),
+      abilities: scaled.abilityScores,
+      saveProficiencies: saveProficienciesFrom(scaled.abilityScores, scaled.saveBonuses),
     }),
     stored.overrides,
   )
@@ -816,6 +823,44 @@ function sentence(text: string): string {
   const trimmed = text.trim()
   if (trimmed === '') return ''
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`
+}
+
+/**
+ * The SAVE column as the six booleans a sheet holds.
+ *
+ * ⚠️ **This is a lossy projection and the loss is deliberate, so read what is dropped before
+ * "fixing" it.** A 2024 stat block prints a *number* in the save column — the Aboleth's is
+ * `DEX −1, save +3` — and `npcSheetValidator.saveProficiencies` is six booleans. There is
+ * nowhere on a sheet to put a printed save bonus, and there should not be: the stat block
+ * renderer prints a **tick** beside the ability's own modifier, which is the summary this
+ * application shows, and a second stored number would be a second thing for `scaleCombat`
+ * to keep in step with no screen reading it.
+ *
+ * **Proficient means the printed save differs from the plain ability modifier**, which is
+ * exactly what the SRD's own arithmetic says: an unproficient save *is* the modifier, and
+ * every deviation from it — proficiency, an unusual bonus, a legendary resistance's cousin
+ * — is a creature that saves better than its raw score. Comparing rather than subtracting a
+ * proficiency bonus is what makes it right for the Aboleth, whose +4 gap is not a
+ * proficiency bonus at any challenge rating in range.
+ *
+ * ⚠️ **`saveBonuses` and `abilityScores` are both untouched by `scaleCombat`** — see the
+ * note on `BestiaryCombat` — so this answer does not move when a DM shifts a creature's
+ * rating, and a tick cannot flicker on and off as the stepper runs. If either ever becomes
+ * scaled, this comparison is the thing that quietly changes meaning.
+ *
+ * Nothing adjudicates a saving throw anywhere in this application. The tick is a label, in
+ * the register of a mastery and a condition pip: no roll is compared to a DC, and the DC
+ * printed beside it is printed and not used.
+ */
+function saveProficienciesFrom(
+  scores: AbilityScores,
+  saves: BestiaryCombat['saveBonuses'],
+): SaveProficiencies {
+  // Built by iterating the vocabulary rather than naming six keys, for invariant 9's
+  // reason: a seventh ability would fail to compile here instead of arriving unanswered.
+  const out = {} as Record<AbilityKey, boolean>
+  for (const key of ABILITY_KEYS) out[key] = saves[key] !== abilityModifier(scores[key])
+  return out
 }
 
 /**

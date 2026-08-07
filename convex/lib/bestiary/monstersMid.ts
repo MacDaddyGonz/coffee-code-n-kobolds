@@ -2186,8 +2186,21 @@ export const MONSTERS_MID: BestiaryFile = {
         passivePerception: 12,
         speed: 5,
         saveDc: 10,
-        abilityScores: { str: -5, dex: 28, con: 10, int: 13, wis: 14, cha: 11 },
-        saveBonuses: { str: NaN, dex: 9, con: 0, int: 1, wis: 2, cha: 0 },
+        // ⚠️ **The SCORE is 1 and the MODIFIER is −5, and this row held the modifier in the
+        // score's column.** The SRD prints `STR 1 (-5)`; a score of −5 is not a number any
+        // creature can have, and `saveBonuses.str` was the literal `NaN` that transcribing
+        // `(-5)` through `Number` produces.
+        //
+        // It sat here undetected because nothing read either field: `scaleCombat` leaves
+        // both untouched, and `resolveBestiary` did not project them onto the sheet until
+        // the stat block needed them. `scale.ts`' comparisons are written as `!(x > 0)`
+        // precisely so a `NaN` fails them rather than propagating, which is why this was a
+        // wrong number sitting still rather than an arithmetic crash — and why the thing
+        // that finally caught it was the corpus test running the sheet validator over all
+        // 283 creatures at all 10 ratings. **A field nothing reads is a field nothing
+        // checks.**
+        abilityScores: { str: 1, dex: 28, con: 10, int: 13, wis: 14, cha: 11 },
+        saveBonuses: { str: -5, dex: 9, con: 0, int: 1, wis: 2, cha: 0 },
         skills: [],
         attacks: [
           {
