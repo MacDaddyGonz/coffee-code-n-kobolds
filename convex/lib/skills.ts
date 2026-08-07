@@ -1,4 +1,4 @@
-// The thirteen D&D Lite skills and the arithmetic behind them.
+// The eighteen skills of SRD 5.2.1 and the arithmetic behind them.
 //
 // Shared by the Convex functions and the browser through the `@convex/…` alias,
 // like lib/grid.ts and lib/sheet.ts, so a bonus the form prints and a bonus the
@@ -88,7 +88,7 @@ export type SkillProficiencies = Record<SkillKey, boolean>
 // There is deliberately no `noSkillProficiencies` here. `noSkills` in lib/sheet.ts
 // is the one that everything uses, and it cannot be replaced by a version living
 // here: `sheet.ts` may import only *types* from this module, because this one imports
-// values from it. A second function for "thirteen falses" was written, went
+// values from it. A second function for "eighteen falses" was written, went
 // uncalled, and has been removed rather than left as a choice nobody should have to
 // make.
 

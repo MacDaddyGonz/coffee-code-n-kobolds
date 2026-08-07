@@ -414,7 +414,7 @@ export const saveProficienciesValidator = v.object({
 export type SaveProficiencies = Infer<typeof saveProficienciesValidator>
 
 /**
- * The thirteen skills, as a flag each.
+ * The eighteen skills, as a flag each.
  *
  * The names, the ability behind each one and the arithmetic all live in
  * lib/skills.ts; only the validator is here, and the split is about import
@@ -462,18 +462,18 @@ export const skillProficienciesValidator = v.object({
  * has nothing to work from — the bonus is stored ready-made, which is the same trade
  * `initiativeBonus` made when the reduced sheet was designed and the same reasoning.
  * Sparse because a creature is listed with the two or three things it is *good at*;
- * thirteen entries mostly reading +0 would be noise on a sheet meant to fit one screen.
+ * eighteen entries mostly reading +0 would be noise on a sheet meant to fit one screen.
  *
  * **Spelled out by hand rather than built from `SKILL_KEYS`**, for the import-direction
  * reason given on `skillProficienciesValidator` above: lib/skills.ts imports values
  * from this module, so a value import back would close a runtime cycle at module scope.
- * The same test that pins those thirteen fields against `SKILL_KEYS` pins these.
+ * The same test that pins those eighteen fields against `SKILL_KEYS` pins these.
  *
  * **And not `v.record(v.string(), v.number())`**, which is the shorter thing to write
  * and gives away the only guarantee that matters here. A record accepts a fourteenth
  * skill, a misspelled `steath`, and any key string a client cares to invent — and "only
- * the thirteen D&D Lite skills, no monster-only fourteenth" is a spec rule that has
- * nowhere else it can be enforced mechanically. Here it is thirteen named fields and
+ * the eighteen SRD skills, no monster-only nineteenth" is a spec rule that has
+ * nowhere else it can be enforced mechanically. Here it is eighteen named fields and
  * Convex refuses the rest at the function boundary.
  */
 export const creatureSkillsValidator = v.object({

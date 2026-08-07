@@ -213,7 +213,7 @@ export type BestiarySocial = {
    * plus a test. `['gruff', 'loyal', 'thirsty']`.
    */
   personality: readonly [string, string, string]
-  /** What this NPC is worth asking about. From the thirteen, no fourteenth. */
+  /** What this NPC is worth asking about. From the eighteen, no fourteenth. */
   usefulSkills: SkillKey[]
   /** The important knowledge: what they can tell the party, in a sentence or two. */
   knows: string
@@ -295,3 +295,44 @@ export type BestiaryFile = {
   category: BestiaryCategory
   entries: readonly BestiaryEntry[]
 }
+
+/**
+ * THE THREE CONTENT CAPS ON A COMBAT BLOCK — what makes a library entry fast to run at
+ * the table, rather than what the schema will accept.
+ *
+ * ⚠️ **Enforced by `lib/bestiary.test.ts` against the corpus and by nothing else, and that
+ * is the decision rather than an omission.** `MAX_SHEET_ENTRIES` is 40 and stays 40: three
+ * attacks is a rule about what belongs in *this shelf*, and a DM hand-building a boss with
+ * five legendary actions is not doing anything wrong. A content rule checked against the
+ * content is a content rule; the same rule in the schema is a refusal aimed at the wrong
+ * person. ADR 0007 argued this when the caps were written and it is unchanged.
+ *
+ * They are named here rather than left as literals in the test for `MAX_ROLL_DICE`'s reason:
+ * a bare `6` in an assertion is a number with no argument attached, and the next person to
+ * meet it cannot tell whether it was measured or guessed.
+ */
+
+/**
+ * ⚠️ **Six, and it was four until the 2024 corpus was transcribed.** Read off the SRD rather
+ * than carried over: six is the most any creature at CR 0–6 lists, exactly one creature
+ * reaches it, two reach five and three reach four — so this admits everything the SRD prints
+ * and refuses the first thing that is not. Ninety-nine list none at all.
+ *
+ * Tight on purpose. A cap set comfortably above the corpus stops being a check.
+ */
+export const MAX_CREATURE_SKILLS = 6
+
+/**
+ * Three, unchanged by the conversion and genuinely enough: only four creatures in range imply
+ * a longer routine, and three of those only through an either/or branch that is a choice at
+ * the table rather than a fourth attack.
+ */
+export const MAX_CREATURE_ATTACKS = 3
+
+/**
+ * Three, unchanged — and this one **is** a selection rather than a measurement, which is the
+ * difference worth knowing. A 2024 stat block can print seven traits, bonus actions and
+ * reactions between them, so the corpus chooses. The generator orders damaging abilities
+ * first, because `scalesWithCr` means nothing on an ability with no roll.
+ */
+export const MAX_CREATURE_ABILITIES = 3

@@ -1,4 +1,9 @@
 import { describe, expect, test } from 'vitest'
+import {
+  MAX_CREATURE_ABILITIES,
+  MAX_CREATURE_ATTACKS,
+  MAX_CREATURE_SKILLS,
+} from './bestiary/types'
 
 import {
   BESTIARY,
@@ -879,9 +884,12 @@ describe('every fighting creature sits a sensible distance from its benchmark ro
   test('lists at most three attacks, three abilities and six distinct skills', () => {
     const offenders: string[] = []
     for (const { label, combat } of FIGHTERS) {
-      if (combat.attacks.length > 3) offenders.push(`${label}: ${combat.attacks.length} attacks`)
-      if (combat.abilities.length > 3) offenders.push(`${label}: ${combat.abilities.length} abilities`)
-      if (combat.skills.length > 6) offenders.push(`${label}: ${combat.skills.length} skills`)
+      if (combat.attacks.length > MAX_CREATURE_ATTACKS)
+        offenders.push(`${label}: ${combat.attacks.length} attacks`)
+      if (combat.abilities.length > MAX_CREATURE_ABILITIES)
+        offenders.push(`${label}: ${combat.abilities.length} abilities`)
+      if (combat.skills.length > MAX_CREATURE_SKILLS)
+        offenders.push(`${label}: ${combat.skills.length} skills`)
       for (const skill of combat.skills) {
         if (!(SKILL_KEYS as readonly string[]).includes(skill.key)) {
           offenders.push(`${label}: unknown skill ${skill.key}`)
