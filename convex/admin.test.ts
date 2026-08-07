@@ -860,6 +860,38 @@ describe('admin.migrateGame', () => {
     expect(sheet).toMatchObject({ classKey: 'rogue', level: 3, species: 'human' })
   })
 
+  /**
+   * ⚠️ **The SECOND cause of a bad archetype, and the one nothing retired.**
+   * `SUBCLASS_LEVEL` moved from 2 to 3 in this conversion, so a character stored at level 2
+   * holding a perfectly valid Champion is a row that resolves fine and that
+   * `storedSheetProblem` refuses on **every save** — leaving the owner unable to edit
+   * anything at all on a sheet they did not break. Same remedy as a retired key, same
+   * count, and the test is here rather than folded into the one above because a reader
+   * checking whether the sweep covers *their* stuck character will look for this sentence.
+   */
+  test('an archetype chosen before level 3 is cleared and the sheet unlocked', async () => {
+    const t = harness()
+    const game = await makeGame(t, 'The Early Archetype')
+    const characterId = await insertLegacy(
+      t,
+      game.gameId,
+      'Bram',
+      // `champion` still resolves — this is not a retired key. What is wrong with it is
+      // only that level 2 is no longer old enough to hold one.
+      legacyPreset({ classKey: 'fighter', subclassKey: 'champion', level: 2, locked: true }),
+    )
+
+    const receipt = await t.mutation(internal.admin.migrateGame, { gameId: game.gameId })
+    expect(receipt.counts).toEqual({ ...NOTHING, species: 1, archetypes: 1 })
+
+    const sheet = await storedSheet(t, characterId)
+    expect(sheet.subclassKey).toBeNull()
+    expect(sheet.locked).toBe(false)
+    // The level is untouched. A sweep that "fixed" this by promoting somebody to level 3
+    // would be handing out a level nobody awarded.
+    expect(sheet).toMatchObject({ classKey: 'fighter', level: 2 })
+  })
+
   test('an archetype that still resolves is left alone, lock included', async () => {
     const t = harness()
     const game = await makeGame(t, 'The Surviving Archetype')

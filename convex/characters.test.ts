@@ -4987,6 +4987,14 @@ describe('characters.updateSheet — the permission split over a premade charact
       // refuse. This used to reach for `battle-master`, an archetype that appears in no
       // SRD and is now retired by name.
       ['archetype', { ...locked, subclassKey: null }],
+      // ⚠️ **The fourth selection, and the one the lock did not cover until it was fixed.**
+      // A lineage arrived with the species branch and was not added to `selectionsChanged`,
+      // so a locked Wood Elf could be saved as a High Elf — losing five feet of speed and
+      // every trait entry the lineage grants, on a sheet whose refusal message already
+      // promised the species was set. Asserted here rather than in its own test because the
+      // claim is *this list is the whole of what a lock freezes*, and a list is checked by
+      // walking it.
+      ['lineage', { ...locked, species: 'elf' as const, lineageKey: 'high' }],
     ]
 
     for (const [label, wanted] of changes) {

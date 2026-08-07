@@ -575,12 +575,22 @@ function applyPresetPermissions(
   // unlock them.
   // ⚠️ **Through `speciesKeyOf` rather than off the field**, which is what let the
   // `race` → `species` rename move under this comparison without it being edited twice.
-  // ⚠️ And `lineageKey` is deliberately **not** in this list, which is a gap rather than a
-  // decision — a locked Wood Elf can still be made a High Elf. Named here rather than
-  // fixed in a migration commit, because widening what a lock refuses is a change to what
-  // a player is told "no" about.
+  // ⚠️ **`lineageKey` IS in this list now, and its absence was a hole rather than a
+  // decision.** It arrived with the species branch, which added a fourth stored selection
+  // and did not add it here, so a locked Wood Elf could be saved as a High Elf — changing
+  // the character's speed from 35 to 30 and swapping every trait entry the lineage grants.
+  // That is precisely the class of change the lock exists to freeze, and the refusal below
+  // already claimed to cover it: a lineage is *part of* the species choice, so the message
+  // was true and the check was not.
+  //
+  // Widening what a lock refuses is a change to what a player is told "no" about, and that
+  // is worth being deliberate about rather than sliding in — but the honest reading is that
+  // this was always inside the promise. A player who could not change Wood to High before
+  // the lineage existed is not gaining a restriction; they are getting the one they were
+  // told they had.
   const selectionsChanged =
     speciesKeyOf(before) !== speciesKeyOf(after) ||
+    before.lineageKey !== after.lineageKey ||
     before.classKey !== after.classKey ||
     before.subclassKey !== after.subclassKey
 

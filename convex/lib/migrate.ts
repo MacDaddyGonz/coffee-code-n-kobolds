@@ -38,7 +38,7 @@
 
 import { v } from 'convex/values'
 
-import { subclassOf } from './classes'
+import { SUBCLASS_LEVEL, subclassOf } from './classes'
 import type { PcSheet, PresetSheet, StoredSheet } from './sheet'
 import { noSkills } from './sheet'
 // Type-only, so no runtime edge is added between this module and lib/skills.ts — the
@@ -282,7 +282,30 @@ function planPresetMigration(
   // `RETIRED_SUBCLASSES`, so a key that was never valid at all is swept by the same
   // rule. That is the same question `storedSheetProblem` refuses a *write* on, asked
   // once about the rows already stored.
-  if (next.subclassKey !== null && subclassOf(next.classKey, next.subclassKey) === null) {
+  // ⚠️ **AND an archetype that still resolves but is now chosen too early, which is a
+  // second cause with the same remedy.** `SUBCLASS_LEVEL` moved from 2 to 3 in this
+  // conversion, so a premade character stored at level 2 holding a perfectly valid
+  // `champion` or `thief` is a row nothing retired and nothing has repaired. It is not a
+  // cosmetic difference: `storedSheetProblem` refuses that sheet on **every save**, with
+  // *"An archetype is chosen at level 3, not before"* — so the owner cannot edit anything
+  // at all, on a sheet they did not break, until somebody changes their level. That is
+  // worse than the retired case, where at least the reason is visible on screen.
+  //
+  // Both causes are `||`-ed into one condition rather than written as two blocks, because
+  // the remedy, the count and the argument for unlocking are identical, and two blocks
+  // would be two places to keep the `locked: false` in step. What differs is only *why*
+  // the key is no good, and neither answer is something the sweep tells anybody: the
+  // builder says which archetype needs choosing again either way.
+  //
+  // The first predicate is `subclassOf` answering null rather than a lookup in
+  // `RETIRED_SUBCLASSES`, so a key that was never valid at all is swept by the same rule.
+  // Between them they are exactly what `storedSheetProblem` refuses a *write* on, asked
+  // once about the rows already stored — which is the property to preserve if that
+  // function ever grows a third reason to refuse an archetype.
+  if (
+    next.subclassKey !== null &&
+    (subclassOf(next.classKey, next.subclassKey) === null || next.level < SUBCLASS_LEVEL)
+  ) {
     next = { ...next, subclassKey: null, locked: false }
     counts.archetypes = 1
   }
